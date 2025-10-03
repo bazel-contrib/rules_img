@@ -43,7 +43,7 @@ jobs:
         repository-cache: true
         bazelrc: import %workspace%/.github/workflows/ci.bazelrc
     - name: Execute Tests
-      run: bazelisk test //... @rules_img_tool//...
+      run: bazelisk test //... @rules_img_tool//... @rules_img_pull_tool//...
   integration_test_matrix:
     strategy:
       fail-fast: false

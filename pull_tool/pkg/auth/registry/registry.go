@@ -1,9 +1,9 @@
 package registry
 
 import (
-	"github.com/malt3/go-containerregistry/pkg/authn"
-	"github.com/malt3/go-containerregistry/pkg/v1/google"
-	"github.com/malt3/go-containerregistry/pkg/v1/remote"
+	"github.com/google/go-containerregistry/pkg/authn"
+	"github.com/google/go-containerregistry/pkg/v1/google"
+	"github.com/google/go-containerregistry/pkg/v1/remote"
 )
 
 // WithAuthFromMultiKeychain returns a remote.Option that uses a MultiKeychain
