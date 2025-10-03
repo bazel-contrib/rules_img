@@ -17,7 +17,6 @@ import (
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/layermeta"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/manifest"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/ocilayout"
-	"github.com/bazel-contrib/rules_img/img_tool/cmd/pull"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/push"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/validate"
 )
@@ -34,7 +33,6 @@ Commands:
   manifest         creates an image manifest and config from layers
   oci-layout       assembles an OCI layout directory from manifest and layers
   validate         validates layers and images
-  pull             pulls an image from a registry
   push             pushes an image to a registry
   deploy-metadata  calculates metadata for deploying an image (push/load)
   deploy-merge     merges multiple deploy manifests into a single deployment`
@@ -66,8 +64,6 @@ func Run(ctx context.Context, args []string) {
 		index.IndexProcess(ctx, args[2:])
 	case "validate":
 		validate.ValidationProcess(ctx, args[2:])
-	case "pull":
-		pull.PullProcess(ctx, args[2:])
 	case "push":
 		push.PushProcess(ctx, args[2:])
 	case "deploy-metadata":
