@@ -9,13 +9,24 @@ import (
 
 // Load pipes the tar stream to docker load
 func Load(tarReader io.Reader) error {
-	cmd := exec.Command("docker", "load")
+	loaderBinary, ok := os.LookupEnv("LOADER_BINARY")
+	if !ok {
+		loaderBinary = "docker"
+	}
+
+	if _, err := exec.LookPath(loaderBinary); err != nil {
+		return fmt.Errorf("%s not found in PATH: %w", loaderBinary, err)
+	}
+
+	fmt.Fprintf(os.Stderr, "Using %s as loader binary\n", loaderBinary)
+
+	cmd := exec.Command(loaderBinary, "load")
 	cmd.Stdin = tarReader
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("docker load failed: %w", err)
+		return fmt.Errorf("%s load failed: %w", loaderBinary, err)
 	}
 
 	return nil
