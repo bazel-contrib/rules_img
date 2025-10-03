@@ -17,7 +17,6 @@ go_library(
         "//cmd/layermeta",
         "//cmd/manifest",
         "//cmd/ocilayout",
-        "//cmd/pull",
         "//cmd/push",
         "//cmd/validate",
         "@rules_go//go/runfiles",
