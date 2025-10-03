@@ -1,0 +1,19 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "downloadblob",
+    srcs = ["downloadblob.go"],
+    importpath = "github.com/bazel-contrib/rules_img/pull_tool/cmd/downloadblob",
+    visibility = ["//cmd/pull_tool:__pkg__"],
+    deps = [
+        "//pkg/auth/registry",
+        "@com_github_google_go_containerregistry//pkg/name",
+        "@com_github_google_go_containerregistry//pkg/v1/remote",
+    ],
+)
+
+filegroup(
+    name = "go_srcs",
+    srcs = glob(["*.go"]),
+    visibility = ["//visibility:public"],
+)
