@@ -176,7 +176,7 @@ func (l *loader) loadViaDocker(ctx context.Context, op api.IndexedLoadDeployOper
 
 	// Return the first error
 	if err != nil {
-		return err
+		return fmt.Errorf("streaming tar to docker load: stream error: %w, load error: %w", err, loadErr)
 	}
 	return loadErr
 }
