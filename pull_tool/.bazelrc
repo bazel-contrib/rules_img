@@ -1,0 +1,5 @@
+common --override_module=rules_img=%workspace%/..
+
+import %workspace%/.bazelrc.common
+
+try-import %workspace%/.bazelrc.user

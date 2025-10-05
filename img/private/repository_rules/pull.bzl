@@ -1,7 +1,7 @@
 """Repository rules for pulling container images."""
 
 load("@bazel_skylib//lib:sets.bzl", "sets")
-load("@img_toolchain//:defs.bzl", "tool_for_repository_os")
+load("@pull_hub_repo//:defs.bzl", "tool_for_repository_os")
 load("//img/private/platforms:platforms.bzl", "has_constraint_setting")
 load(
     ":download.bzl",
