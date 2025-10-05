@@ -1,6 +1,6 @@
 """Repository rule for pulling individual blobs from a container registry."""
 
-load("@img_toolchain//:defs.bzl", "tool_for_repository_os")
+load("@pull_hub_repo//:defs.bzl", "tool_for_repository_os")
 
 def _pull_blob_file_impl(rctx):
     tool = tool_for_repository_os(rctx)

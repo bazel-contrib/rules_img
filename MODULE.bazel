@@ -7,6 +7,13 @@ module(
 bazel_dep(name = "bazel_skylib", version = "1.7.1")
 bazel_dep(name = "platforms", version = "0.0.11")
 
+# TODO: we probably don't want to depend on the Bazel module by default
+bazel_dep(name = "rules_img_pull_tool")
+local_path_override(
+    module_name = "rules_img_pull_tool",
+    path = "pull_tool",
+)
+
 prebuilt_img_tool = use_extension("@rules_img//img/private/prebuilt:prebuilt.bzl", "prebuilt_img_tool")
 prebuilt_img_tool.collection(
     name = "img_toolchain",
@@ -23,6 +30,19 @@ use_repo(
 # register a prebuilt toolchain of the img tool.
 register_toolchains(
     "@img_toolchain//:all",
+)
+
+pull_tool = use_extension("@rules_img//img/private/prebuilt:prebuilt.bzl", "pull_tool")
+pull_tool.collection(name = "pull_hub_repo")
+
+# TODO: download pull tool on release builds
+# pull_tool.from_file(
+#     collection = "pull_hub_repo",
+#     file = "@rules_img//:pull_tool_lockfile.json",
+# )
+use_repo(
+    pull_tool,
+    "pull_hub_repo",
 )
 
 # ✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂

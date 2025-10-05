@@ -1,6 +1,7 @@
 exports_files(["MODULE.bazel"])
 
 # gazelle:prefix github.com/bazel-contrib/rules_img
+# gazelle:exclude pull_tool
 
 filegroup(
     name = "all_files",

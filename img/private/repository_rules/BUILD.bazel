@@ -14,7 +14,7 @@ bzl_library(
         ":download",
         "//img/private/platforms",
         "@bazel_skylib//lib:sets",
-        "@img_toolchain//:defs",
+        "@pull_hub_repo//:defs",
     ],
 )
 
@@ -28,7 +28,7 @@ bzl_library(
     name = "pull_blob",
     srcs = ["pull_blob.bzl"],
     visibility = ["//img:__subpackages__"],
-    deps = ["@img_toolchain//:defs"],
+    deps = ["@pull_hub_repo//:defs"],
 )
 
 bzl_library(

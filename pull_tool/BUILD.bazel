@@ -1,0 +1,10 @@
+filegroup(
+    name = "pull_tool_srcs",
+    srcs = glob([
+        "**/*.go",
+    ]) + [
+        "go.mod",
+        "go.sum",
+    ],
+    visibility = ["//visibility:public"],
+)
