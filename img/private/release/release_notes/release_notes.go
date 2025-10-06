@@ -96,9 +96,12 @@ load("@rules_img//img:dependencies.bzl", "rules_img_dependencies")
 rules_img_dependencies()
 
 # Register prebuilt toolchains
-load("@rules_img//img:repositories.bzl", "img_register_prebuilt_toolchains")
+load("@rules_img//img:repositories.bzl", "img_register_prebuilt_toolchains", "pull_tool_register_prebuilt_repositories")
 img_register_prebuilt_toolchains()
 register_toolchains("@img_toolchain//:all")
+
+# Register prebuilt pull_tool repositories (for pull functionality)
+pull_tool_register_prebuilt_repositories()
 
 # Example: Pull a base image
 load("@rules_img//img:pull.bzl", "pull")
