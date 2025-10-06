@@ -2,6 +2,8 @@
 
 This guide provides instructions for developers working on rules_img.
 
+**Note**: As of v0.2.6, development has been simplified. You no longer need to manually manage lockfiles or build custom binaries. Instead, use Bazel module overrides to work with source-built versions of the Go tools. See [Development with Source-Built Tools](#development-with-source-built-tools) for details.
+
 ## Development Environment
 
 ### Prerequisites
@@ -126,65 +128,106 @@ cd e2e/go && bazel test //...
 cd e2e/go && bazel run //:push
 ```
 
-### Testing with Prebuilt img Tool
+### Development with Source-Built Tools
 
-When developing rules_img, you may need to test with a prebuilt version of the `img` tool. Since the tool is in a separate `rules_img_tool` module, there are a few approaches:
+When developing rules_img, you can use source-built versions of the Go tools (`img` and `pull_tool`) instead of prebuilt binaries. This is useful for testing changes to the tool implementations or applying patches.
 
-#### Option 1: Local Development with HTTP Server
+#### Setting Up Development Dependencies
 
-Build the tool locally and serve it via HTTP:
+Add dependencies on the tool modules and register the source-built toolchains in your `MODULE.bazel`:
 
-```bash
-# Build the img tool from the rules_img_tool module
-bazel build @rules_img_tool//cmd/img
+```starlark
+# Add dependencies on the tool modules
+bazel_dep(name = "rules_img_tool", version = "<version>", dev_dependency = True)
+bazel_dep(name = "rules_img_pull_tool", version = "<version>", dev_dependency = True)
 
-# Copy to a local directory and serve
-TMPDIR=$(mktemp -d)
-cp bazel-bin/external/rules_img_tool+/cmd/img/img_/img ${TMPDIR}/img
-cd ${TMPDIR} && python3 -m http.server 8000
+# Register source-built toolchain
+register_toolchains(
+    "@rules_img_tool//toolchain:all",
+    dev_dependency = True,
+)
 ```
 
-Then create a custom lockfile (`prebuilt_lockfile.json`):
+#### Module Override Options
 
-```json
-[
-    {
-        "version": "v0.2.5",
-        "integrity": "sha256-FG5F8mJuRzvL1oiXCRXyOQ94RvJ+43HH+/yLGbWNvP8=",
-        "os": "linux",
-        "cpu": "amd64",
-        "url_templates": [
-            "http://localhost:8000/img"
-        ]
-    }
-]
+You can override the tool modules using various Bazel module override mechanisms:
+
+##### Local Development Override
+
+For local development with modifications:
+
+```starlark
+# Override with local directory
+local_path_override(
+    module_name = "rules_img_tool",
+    path = "../img_tool",  # Path to your local checkout
+)
+
+local_path_override(
+    module_name = "rules_img_pull_tool",
+    path = "../pull_tool",
+)
 ```
 
-#### Option 2: Airgapped BCR Module
+##### Git Repository Override
 
-Build a complete local BCR (Bazel Central Registry) module:
+For testing against a specific Git commit or branch:
 
-```bash
-# Build the BCR module and distribution directory
-bazel build //img/private/release:bcr
-bazel build //img/private/release/distdir
+```starlark
+# Override with Git repository
+git_override(
+    module_name = "rules_img_tool",
+    remote = "https://github.com/your-fork/rules_img.git",
+    strip_prefix = "img_tool",
+    commit = "abc123def456",  # Specific commit
+    # Or use: branch = "feature-branch"
+)
 
-# Set environment variables
-export RULES_IMG_BCR=file://$(realpath bazel-bin/img/private/release/bcr.local)
-export DISTDIR=$(realpath bazel-bin/img/private/release/distdir/distdir_/distdir)
+git_override(
+    module_name = "rules_img_pull_tool",
+    remote = "https://github.com/your-fork/rules_img.git",
+    strip_prefix = "pull_tool",
+    commit = "abc123def456",
+)
 ```
 
-Then configure your test project's `.bazelrc`:
+##### Archive Override
 
-```bash
-# .bazelrc
-# Use the local BCR first, then fall back to the official registry
-# (you need to replace the placeholder with the values from above).
-common --registry=${RULES_IMG_BCR} --registry=https://bcr.bazel.build/
-common --distdir=${DISTDIR}
+For testing with a custom archive:
+
+```starlark
+archive_override(
+    module_name = "rules_img_tool",
+    urls = ["https://github.com/your-fork/rules_img/archive/abc123def456.tar.gz"],
+    integrity = "sha256-...",
+    strip_prefix = "rules_img-abc123def456/img_tool",  # Note: includes img_tool subdirectory
+)
+
+archive_override(
+    module_name = "rules_img_pull_tool",
+    urls = ["https://github.com/your-fork/rules_img/archive/abc123def456.tar.gz"],
+    integrity = "sha256-...",
+    strip_prefix = "rules_img-abc123def456/pull_tool",  # Note: includes pull_tool subdirectory
+)
 ```
 
-This approach provides a complete isolated testing environment with all dependencies.
+##### Single Version Override with Patches
+
+For applying patches to a specific version:
+
+```starlark
+single_version_override(
+    module_name = "rules_img_tool",
+    patches = ["//patches:img_tool_performance.patch"],
+    patch_strip = 2,  # For patches created from rules_img root (strips img_tool/ prefix)
+)
+
+single_version_override(
+    module_name = "rules_img_pull_tool",
+    patches = ["//patches:pull_tool_auth_fix.patch"],
+    patch_strip = 2,  # For patches created from rules_img root (strips pull_tool/ prefix)
+)
+```
 
 ## Documentation
 
