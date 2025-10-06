@@ -133,14 +133,51 @@ _prebuilt_attrs = {
     ),
 }
 
+_prebuilt_pull_tool_attrs = {
+    "version": attr.string(mandatory = True),
+    "integrity": attr.string(mandatory = True),
+    "os": attr.string(values = ["darwin", "linux", "windows"]),
+    "cpu": attr.string(values = ["amd64", "arm64"]),
+    "url_templates": attr.string_list(
+        default = ["https://github.com/bazel-contrib/rules_img/releases/download/{version}/pull_tool_{os}_{cpu}{dot}{extension}"],
+    ),
+}
+
 prebuilt_img_tool_repo = repository_rule(
     implementation = _prebuilt_img_tool_repo_impl,
     attrs = _prebuilt_attrs,
 )
 
+def _prebuilt_pull_tool_repo_impl(rctx):
+    extension = "exe" if rctx.attr.os == "windows" else ""
+    dot = "." if len(extension) > 0 else ""
+    urls = [template.format(
+        version = rctx.attr.version,
+        os = rctx.attr.os,
+        cpu = rctx.attr.cpu,
+        dot = dot,
+        extension = extension,
+    ) for template in rctx.attr.url_templates]
+    rctx.download(
+        urls,
+        output = "pull_tool.exe",
+        executable = True,
+        integrity = rctx.attr.integrity,
+    )
+    rctx.file(
+        "BUILD.bazel",
+        content = """exports_files(["pull_tool.exe"])""",
+    )
+
+prebuilt_pull_tool_repo = repository_rule(
+    implementation = _prebuilt_pull_tool_repo_impl,
+    attrs = _prebuilt_pull_tool_attrs,
+)
+
 _prebuilt_tool_collection = tag_class(attrs = {"name": attr.string(), "override": attr.bool(default = False)})
 _prebuilt_tool_from_file = tag_class(attrs = {"collection": attr.string(), "file": attr.label()})
 _prebuilt_tool_download = tag_class(attrs = {"collection": attr.string()} | _prebuilt_attrs)
+_prebuilt_pull_tool_download = tag_class(attrs = {"collection": attr.string()} | _prebuilt_pull_tool_attrs)
 _host_tool = tag_class(attrs = {"binary": attr.label()})
 
 def _lockfile_to_dict(lockfile, basename):
@@ -172,7 +209,7 @@ def _prebuilt_img_tool_collection_for_module(ctx, mod):
         host_tool = mod.tags.host_tool[0].binary
     return (requested_tools, collections, host_tool)
 
-def _prebuilt_tool_helper(ctx, tool_path, hub_repo_fn):
+def _prebuilt_tool_helper(ctx, tool_path, hub_repo_fn, tool_repo_fn = prebuilt_img_tool_repo):
     requested_tools = {}
     collections = {}
     host_tool = None
@@ -203,7 +240,7 @@ def _prebuilt_tool_helper(ctx, tool_path, hub_repo_fn):
         host_tool = for_root_module[2]
 
     for item in requested_tools.items():
-        prebuilt_img_tool_repo(
+        tool_repo_fn(
             name = item[0],
             **item[1]
         )
@@ -248,6 +285,7 @@ def _pull_tool_impl(ctx):
         ctx,
         tool_path = "pull_tool.exe",
         hub_repo_fn = prebuilt_pull_hub_repo,
+        tool_repo_fn = prebuilt_pull_tool_repo,
     )
 
 pull_tool = module_extension(
@@ -255,7 +293,7 @@ pull_tool = module_extension(
     tag_classes = {
         "collection": _prebuilt_tool_collection,
         "from_file": _prebuilt_tool_from_file,
-        "download": _prebuilt_tool_download,
+        "download": _prebuilt_pull_tool_download,
         "host_tool": _host_tool,
     },
 )

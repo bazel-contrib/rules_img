@@ -56,7 +56,7 @@ var (
 
 func main() {
 	flag.StringVar(&version, "version", "0.0.0", "Version of the project.")
-	flag.Var(&binaries, "img-tool", "Key-value pairs of platform name to img binary path.")
+	flag.Var(&binaries, "tool", "Key-value pairs of platform name to tool binary path.")
 	flag.Parse()
 	if flag.NArg() != 1 {
 		fmt.Fprintln(os.Stderr, "expected lockfile output")

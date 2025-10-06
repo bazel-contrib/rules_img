@@ -1,10 +1,19 @@
+# gazelle:resolve_regexp go github.com/bazel-contrib/rules_img/pull_tool/(.*) //$1
+
 filegroup(
     name = "pull_tool_srcs",
-    srcs = glob([
-        "**/*.go",
-    ]) + [
+    srcs = [
         "go.mod",
         "go.sum",
+        "//cmd/downloadblob:go_srcs",
+        "//cmd/internal/pull:go_srcs",
+        "//cmd/pull_tool:go_srcs",
+        "//pkg/auth/registry:go_srcs",
     ],
     visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "source_bootstrapped_pull_tool",
+    actual = "@pull_bootstrap//:pull_tool.exe",
 )

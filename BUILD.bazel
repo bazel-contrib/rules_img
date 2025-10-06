@@ -1,7 +1,6 @@
 exports_files(["MODULE.bazel"])
 
 # gazelle:prefix github.com/bazel-contrib/rules_img
-# gazelle:exclude pull_tool
 
 filegroup(
     name = "all_files",
@@ -28,7 +27,24 @@ filegroup(
     visibility = ["//img/private/release:__subpackages__"],
 )
 
+filegroup(
+    name = "pull_tool_source_files",
+    srcs = glob(
+        ["pull_tool/**"],
+        allow_empty = True,
+        exclude = [
+            "pull_tool/.bazelrc.common",
+            "pull_tool/.bazelrc",
+            "pull_tool/.vscode/**",
+            "pull_tool/tools/**",
+        ],
+    ),
+    visibility = ["//img/private/release:__subpackages__"],
+)
+
 exports_files([
     ".bcr/metadata.template.json",
+    ".bcr/pull_tool/metadata.template.json",
     "prebuilt_lockfile.json",
+    "pull_tool_lockfile.json",
 ])

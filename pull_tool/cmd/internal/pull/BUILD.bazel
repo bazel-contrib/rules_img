@@ -1,0 +1,21 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "pull",
+    srcs = ["pull.go"],
+    importpath = "github.com/bazel-contrib/rules_img/pull_tool/cmd/internal/pull",
+    # keep
+    visibility = ["//cmd:__subpackages__"],
+    deps = [
+        "//pkg/auth/registry",
+        "@com_github_google_go_containerregistry//pkg/name:go_default_library",
+        "@com_github_google_go_containerregistry//pkg/v1:go_default_library",
+        "@com_github_google_go_containerregistry//pkg/v1/remote:go_default_library",
+    ],
+)
+
+filegroup(
+    name = "go_srcs",
+    srcs = glob(["*.go"]),
+    visibility = ["//visibility:public"],
+)

@@ -28,3 +28,8 @@ img_tool/bazel-bin
 img_tool/bazel-img_tool
 img_tool/bazel-out
 img_tool/bazel-testlogs
+pull_tool/bazel-bin
+pull_tool/bazel-out
+pull_tool/bazel-pull_tool
+pull_tool/bazel-rules_img_pull_tool
+pull_tool/bazel-testlogs
