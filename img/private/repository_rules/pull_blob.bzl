@@ -19,7 +19,9 @@ def _pull_blob_file_impl(rctx):
     ]
     if rctx.attr.executable:
         args.append("--executable")
-    rctx.execute(args)
+    result = rctx.execute(args)
+    if result.return_code != 0:
+        fail("Failed to download blob: {}".format(result.stderr))
     rctx.file(
         "BUILD.bazel",
         content = """filegroup(
@@ -82,7 +84,9 @@ def _pull_blob_archive_impl(rctx):
         "--output",
         output_name,
     ]
-    rctx.execute(args)
+    result = rctx.execute(args)
+    if result.return_code != 0:
+        fail("Failed to download blob: {}".format(result.stderr))
     rctx.extract(
         archive = output_name,
         strip_prefix = rctx.attr.strip_prefix,
