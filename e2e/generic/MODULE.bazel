@@ -7,6 +7,12 @@ local_path_override(
     path = "../..",
 )
 
+bazel_dep(name = "rules_img_pull_tool")
+local_path_override(
+    module_name = "rules_img_pull_tool",
+    path = "../../pull_tool",
+)
+
 bazel_dep(name = "rules_img_tool")
 local_path_override(
     module_name = "rules_img_tool",
