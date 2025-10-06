@@ -19,16 +19,16 @@ bzl_library(
 )
 
 bzl_library(
-    name = "download",
-    srcs = ["download.bzl"],
-    visibility = ["//img:__subpackages__"],
-)
-
-bzl_library(
     name = "pull_blob",
     srcs = ["pull_blob.bzl"],
     visibility = ["//img:__subpackages__"],
     deps = ["@pull_hub_repo//:defs"],
+)
+
+bzl_library(
+    name = "download",
+    srcs = ["download.bzl"],
+    visibility = ["//img:__subpackages__"],
 )
 
 bzl_library(

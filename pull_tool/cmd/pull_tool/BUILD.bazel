@@ -1,0 +1,30 @@
+load("@bazel_skylib//rules:build_test.bzl", "build_test")
+load("@rules_go//go:def.bzl", "go_binary", "go_library")
+
+go_library(
+    name = "pull_tool_lib",
+    srcs = ["pull_tool.go"],
+    importpath = "github.com/bazel-contrib/rules_img/pull_tool/cmd/pull_tool",
+    visibility = ["//visibility:private"],
+    deps = [
+        "//cmd/downloadblob",
+        "//cmd/internal/pull",
+    ],
+)
+
+go_binary(
+    name = "pull_tool",
+    embed = [":pull_tool_lib"],
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "go_srcs",
+    srcs = glob(["*.go"]),
+    visibility = ["//visibility:public"],
+)
+
+build_test(
+    name = "test",
+    targets = [":pull_tool"],
+)

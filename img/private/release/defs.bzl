@@ -170,7 +170,7 @@ def _release_files(ctx):
         attributes[filename] = EXECUTABLE_ATTRIBUTES
         distdir_contents[filename_basename] = executable
         output_group_info["%s_files" % platform] = depset([executable])
-        lockfile_args.add("--img-tool", "%s=%s" % (platform, executable.path))
+        lockfile_args.add("--tool", "%s=%s" % (platform, executable.path))
     lockfile = ctx.actions.declare_file("%s_lockfile.json" % ctx.attr.name)
     lockfile_args.add(lockfile)
     ctx.actions.run(
@@ -186,8 +186,8 @@ def _release_files(ctx):
         OutputGroupInfo(**output_group_info),
         PackageFilesInfo(attributes = attributes, dest_src_map = dest_src_map),
         OverrideSourceFilesInfo(
-            attributes = {"prebuilt_lockfile.json": DEFAULT_ATTRIBUTES},
-            dest_src_map = {"prebuilt_lockfile.json": lockfile},
+            attributes = {ctx.attr.lockfile_name: DEFAULT_ATTRIBUTES},
+            dest_src_map = {ctx.attr.lockfile_name: lockfile},
         ),
         OfflineBuildDistdirInfo(
             basename_file_map = distdir_contents,
@@ -208,6 +208,9 @@ release_files = rule(
             default = Label("//img/private/release/lockfile"),
             cfg = "exec",
         ),
+        "lockfile_name": attr.string(
+            mandatory = True,
+        ),
         "version": attr.label(
             default = "@rules_img_version",
             providers = [ModuleVersionInfo],
@@ -216,13 +219,17 @@ release_files = rule(
 )
 
 def _offline_bundle_impl(ctx):
-    mapped_contents = ctx.attr.distdir_contents[OfflineBuildDistdirInfo].basename_file_map
-    extra_files = ctx.attr.distdir_contents[OfflineBuildDistdirInfo].files
     contents = {}
-    for f in extra_files.to_list():
-        contents[f.basename] = f
-    for basename, f in mapped_contents.items():
-        contents[basename] = f
+
+    # Handle multiple distdir_contents inputs
+    for distdir_content in ctx.attr.distdir_contents:
+        if distdir_content:  # Check if not None
+            mapped_contents = distdir_content[OfflineBuildDistdirInfo].basename_file_map
+            extra_files = distdir_content[OfflineBuildDistdirInfo].files
+            for f in extra_files.to_list():
+                contents[f.basename] = f
+            for basename, f in mapped_contents.items():
+                contents[basename] = f
 
     distdir_args = ctx.actions.args()
     for basename, f in contents.items():
@@ -242,7 +249,7 @@ def _offline_bundle_impl(ctx):
 offline_bundle = rule(
     implementation = _offline_bundle_impl,
     attrs = {
-        "distdir_contents": attr.label(
+        "distdir_contents": attr.label_list(
             providers = [OfflineBuildDistdirInfo],
             mandatory = True,
         ),

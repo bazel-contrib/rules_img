@@ -18,6 +18,16 @@ pkg_tar(
     tags = ["manual"],
 )
 
+pkg_tar(
+    name = "pull_tool_src_tar",
+    srcs = ["//:pull_tool_source_files"],
+    out = "rules_img_pull_tool.tar.gz",
+    extension = "tar.gz",
+    mode = "0755",
+    strip_prefix = "/pull_tool",
+    tags = ["manual"],
+)
+
 [
     platform(
         name = name(p),
@@ -34,18 +44,33 @@ release_platform_flag(
 release_files(
     name = "prebuilt_toolchain",
     executable = "@rules_img_tool//cmd/img",
+    lockfile_name = "prebuilt_lockfile.json",
+    tags = ["manual"],
+)
+
+release_files(
+    name = "pull_tool_toolchain",
+    basename = "pull_tool",
+    executable = "@rules_img_pull_tool//cmd/pull_tool",
+    lockfile_name = "pull_tool_lockfile.json",
     tags = ["manual"],
 )
 
 offline_bundle(
     name = "airgapped",
-    distdir_contents = ":prebuilt_toolchain",
+    distdir_contents = [
+        ":prebuilt_toolchain",
+        ":pull_tool_toolchain",
+    ],
 )
 
 source_bundle(
     name = "srcs",
     srcs = ["//img/private/release/source_files:release_src_files"],
-    overrides = [":prebuilt_toolchain"],
+    overrides = [
+        ":prebuilt_toolchain",
+        ":pull_tool_toolchain",
+    ],
     tags = ["manual"],
 )
 
@@ -75,11 +100,20 @@ versioned_filename_info(
     tags = ["manual"],
 )
 
+versioned_filename_info(
+    name = "versioned_pull_tool_tar",
+    src = ":pull_tool_src_tar",
+    extension = "tar.gz",
+    module_name = "rules_img_pull_tool",
+    tags = ["manual"],
+)
+
 offline_bcr(
     name = "bcr",
     src_tars = [
         ":versioned_src_tar",
         ":versioned_tool_tar",
+        ":versioned_pull_tool_tar",
     ],
 )
 
@@ -87,6 +121,8 @@ pkg_tar(
     name = "dist_tar",
     srcs = [
         ":prebuilt_toolchain",
+        ":pull_tool_toolchain",
+        ":versioned_pull_tool_tar",
         ":versioned_src_tar",
         ":versioned_tool_tar",
     ],
