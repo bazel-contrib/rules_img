@@ -45,7 +45,10 @@ pull = use_repo_rule("@rules_img//img:pull.bzl", "pull")
 pull(
     name = "debian",
     digest = "sha256:833c135acfe9521d7a0035a296076f98c182c542a2b6b5a0fd7063d355d696be",
-    registry = "index.docker.io",
+    registries = [
+        "mirror.gcr.io",
+        "index.docker.io",
+    ],
     repository = "library/debian",
     tag = "latest",
 )

@@ -33,7 +33,10 @@ pull = use_repo_rule("@rules_img//img:pull.bzl", "pull")
 pull(
     name = "alpine",
     digest = "sha256:4bcff63911fcb4448bd4fdacec207030997caf25e9bea4045fa6c8c44de311d1",
-    registry = "index.docker.io",
+    registries = [
+        "mirror.gcr.io",
+        "index.docker.io",
+    ],
     repository = "library/alpine",
     tag = "3.22",
 )
@@ -41,7 +44,10 @@ pull(
 pull(
     name = "cuda",
     digest = "sha256:198208c45877a84c8fb35a06956e7fbef4ffabfa36f9c82148dc7bac454ba02a",
-    registry = "index.docker.io",
+    registries = [
+        "mirror.gcr.io",
+        "index.docker.io",
+    ],
     repository = "nvidia/cuda",
     tag = "13.0.0-tensorrt-runtime-ubuntu24.04",
 )
@@ -53,7 +59,10 @@ pull(
 pull(
     name = "nginx",
     digest = "sha256:2945a0bfa07bf1d3cb9ba5f03678e2827f11c240e4c9d38e075037938310062a",
-    registry = "index.docker.io",
+    registries = [
+        "mirror.gcr.io",
+        "index.docker.io",
+    ],
     repository = "library/nginx",
 )
 
