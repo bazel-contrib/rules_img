@@ -25,12 +25,14 @@ jobs:
       release_files: |
         dist/rules_img-*.tar.gz
         dist/rules_img_tool-*.tar.gz
+        dist/rules_img_pull_tool-*.tar.gz
         dist/img_linux_*
         dist/img_darwin_*
         dist/img_windows_*.exe
         dist/pull_tool_linux_*
         dist/pull_tool_darwin_*
         dist/pull_tool_windows_*.exe
+        dist/*.docs.tar.gz
       prerelease: false
       tag_name: ${{ inputs.tag_name || github.ref_name }}
     secrets:

@@ -1,4 +1,5 @@
 {
     "integrity": "",
-    "url": "https://github.com/{OWNER}/{REPO}/releases/download/{TAG}/rules_img-{TAG}.tar.gz"
+    "url": "https://github.com/{OWNER}/{REPO}/releases/download/{TAG}/rules_img-{TAG}.tar.gz",
+    "docs_url": "https://github.com/{OWNER}/{REPO}/releases/download/{TAG}/rules_img-{TAG}.docs.tar.gz"
 }
