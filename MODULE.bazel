@@ -54,6 +54,13 @@ bazel_dep(name = "rules_img_tool", version = "0.2.5", dev_dependency = True)
 bazel_dep(name = "rules_pkg", version = "1.1.0", dev_dependency = True)
 bazel_dep(name = "rules_python", version = "1.6.3", dev_dependency = True)
 
+# Remove once https://github.com/aspect-build/toolchains_protoc/issues/102 is fixed
+git_override(
+    module_name = "toolchains_protoc",
+    commit = "6c85ce61cbe01bc4bbc728209457a773f2c4a847",
+    remote = "https://github.com/aspect-build/toolchains_protoc.git",
+)
+
 # Register a source-built toolchain of the img tool
 # for use in this repository (in dev mode).
 register_toolchains(
@@ -105,3 +112,6 @@ http_file(
     integrity = "sha256-Vc5IJJOis3bBooauVUOr77JwiZLHC3lA9dbAjMZvNFw=",
     urls = ["https://ash-speed.hetzner.com/10GB.bin"],
 )
+
+protoc = use_extension("@toolchains_protoc//protoc:extensions.bzl", "protoc", dev_dependency = True)
+protoc.toolchain(version = "v32.1")
