@@ -61,7 +61,7 @@ def _compute_push_metadata(*, ctx, configuration_json):
     args.add("--configuration-file", configuration_json.path)
     target_info = _target_info(ctx)
     if "original_registries" in target_info:
-        args.add_all("--original-registry", target_info["original_registries"])
+        args.add_all(target_info["original_registries"], before_each = "--original-registry")
     if "original_repository" in target_info:
         args.add("--original-repository", target_info["original_repository"])
     if "original_tag" in target_info and target_info["original_tag"] != None:
