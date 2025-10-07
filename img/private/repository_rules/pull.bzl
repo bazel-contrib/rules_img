@@ -246,6 +246,12 @@ alias(
             tag = repr(rctx.attr.tag) if rctx.attr.tag else "None",
         ),
     )
+    if len(rctx.attr.digest) > 0 and hasattr(rctx, "repo_metadata"):
+        # allows participating in repo contents cache
+        return rctx.repo_metadata(reproducible = True)
+
+    # only to make buildifier happy
+    return None
 
 pull = repository_rule(
     implementation = _pull_impl,
