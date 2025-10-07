@@ -45,6 +45,19 @@ def _pull_bootstrap_impl(rctx):
         """exports_files(["pull_tool.exe"])""",
     )
 
+    # cleanup symlinks
+    rctx.delete("go.mod")
+    rctx.delete("go.sum")
+    rctx.delete("cmd")
+    rctx.delete("pkg")
+
+    if hasattr(rctx, "repo_metadata"):
+        # allows participating in repo contents cache
+        return rctx.repo_metadata(reproducible = True)
+
+    # only to make buildifier happy
+    return None
+
 pull_bootstrap = repository_rule(
     implementation = _pull_bootstrap_impl,
     attrs = {
