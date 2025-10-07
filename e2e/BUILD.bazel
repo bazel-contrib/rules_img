@@ -51,6 +51,10 @@ bazel_integration_tests(
 
 bazel_integration_tests(
     name = "js",
+    additional_env_inherit = [
+        "BAZEL_INTEGRATION_TEST_REPO_CONTENTS_CACHE",
+        "BAZEL_INTEGRATION_TEST_REPOSITORY_CACHE",
+    ],
     bazel_versions = bazel_binaries.versions.all,
     tags = TAGS,
     target_compatible_with = select({

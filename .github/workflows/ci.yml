@@ -64,6 +64,25 @@ jobs:
         disk-cache: ${{ github.workflow }}-${{ matrix.runner }}-integration_test_matrix
         repository-cache: true
         bazelrc: import %workspace%/.github/workflows/ci.bazelrc
+    - name: Set repository cache path
+      run: |
+        if [[ "${{ runner.os }}" == "Windows" ]]; then
+          mkdir -p D:/_bazel-repocontents
+          mkdir -p D:/_bazel-repo
+          echo "BAZEL_INTEGRATION_TEST_REPO_CONTENTS_CACHE=D:/_bazel-repocontents" >> $GITHUB_ENV
+          echo "BAZEL_INTEGRATION_TEST_REPOSITORY_CACHE=D:/_bazel-repo" >> $GITHUB_ENV
+        elif [[ "${{ runner.os }}" == "macOS" ]]; then
+          mkdir -p /Users/runner/.cache/bazel-repocontents
+          mkdir -p /Users/runner/.cache/bazel-repo
+          echo "BAZEL_INTEGRATION_TEST_REPO_CONTENTS_CACHE=/Users/runner/.cache/bazel-repocontents" >> $GITHUB_ENV
+          echo "BAZEL_INTEGRATION_TEST_REPOSITORY_CACHE=/Users/runner/.cache/bazel-repo" >> $GITHUB_ENV
+        else
+          mkdir -p /home/runner/.cache/bazel-repocontents
+          mkdir -p /home/runner/.cache/bazel-repo
+          echo "BAZEL_INTEGRATION_TEST_REPO_CONTENTS_CACHE=/home/runner/.cache/bazel-repocontents" >> $GITHUB_ENV
+          echo "BAZEL_INTEGRATION_TEST_REPOSITORY_CACHE=/home/runner/.cache/bazel-repo" >> $GITHUB_ENV
+        fi
+      shell: bash
     - name: Execute Integration Tests
       run: bazelisk test "//e2e:integration_tests"
   sticky-warning:

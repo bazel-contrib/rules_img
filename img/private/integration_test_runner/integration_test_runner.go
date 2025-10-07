@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -18,6 +19,18 @@ import (
 type commandLine struct {
 	name string
 	args []string
+}
+
+func expandTilde(path string) (string, error) {
+	if !strings.HasPrefix(path, "~") {
+		return path, nil
+	}
+
+	usr, err := user.Current()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(usr.HomeDir, path[2:]), nil
 }
 
 func prepareWorkspace(workspaceDir, sourceDir string) error {
@@ -163,6 +176,20 @@ common --distdir=%s
 		bazelrc = fmt.Sprintf(`common --registry=%s --registry=https://bcr.bazel.build/
 common --distdir=%s
 `, localBCRUrlPath, filepath.ToSlash(distdir))
+	}
+
+	// Add cache configurations if environment variables are set
+	if repoContentsCache := os.Getenv("BAZEL_INTEGRATION_TEST_REPO_CONTENTS_CACHE"); repoContentsCache != "" {
+		if expandedPath, err := expandTilde(repoContentsCache); err == nil {
+			repoContentsCache = expandedPath
+		}
+		bazelrc += fmt.Sprintf("common --repo_contents_cache=%s\n", repoContentsCache)
+	}
+	if repositoryCache := os.Getenv("BAZEL_INTEGRATION_TEST_REPOSITORY_CACHE"); repositoryCache != "" {
+		if expandedPath, err := expandTilde(repositoryCache); err == nil {
+			repositoryCache = expandedPath
+		}
+		bazelrc += fmt.Sprintf("common --repository_cache=%s\n", repositoryCache)
 	}
 	return os.WriteFile(filepath.Join(workspaceDir, ".bazelrc.generated"), []byte(bazelrc), 0o644)
 }
