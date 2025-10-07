@@ -97,10 +97,12 @@ func DeployMetadataProcess(ctx context.Context, args []string) {
 	})
 
 	if err := flagSet.Parse(args); err != nil {
+		fmt.Fprintln(os.Stderr, err.Error())
 		flagSet.Usage()
 		os.Exit(1)
 	}
 	if flagSet.NArg() != 1 {
+		fmt.Fprintln(os.Stderr, "Error: exactly one output path argument is required")
 		flagSet.Usage()
 		os.Exit(1)
 	}
