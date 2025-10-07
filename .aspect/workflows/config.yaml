@@ -1,36 +1,20 @@
 # See https://docs.aspect.build/workflows/configuration
-# Nested workspaces with MODULE.bazel files
-workspaces:
-    .:
-        icon: docker
-        label: rules_img
-    # TODO(malte): fix and re-enable
-    # img_tool:
-    #     label: Go application
-    # TODO(malte): enable e2e tests when green
-    # e2e/cc:
-    #     label: C++ integration tests
-    # e2e/go:
-    #     label: Go integration tests
-    # e2e/generic:
-    #     label: Generic integration tests
-    # e2e/js:
-    #     label: JavaScript integration tests
-    # e2e/python:
-    #     label: Python e2e tests
+---
 tasks:
     # Note: we don't support Bazel 6 or earlier
-    # TODO(malte): enable Bazel 7 when green
-    # - test:
-    #       name: Bazel 7
-    #       id: bazel-7
-    #       env:
-    #           USE_BAZEL_VERSION: 7.x
     - test:
           name: Bazel 8
           id: bazel-8
           env:
               USE_BAZEL_VERSION: 8.x
+          targets:
+              - "//..."
+              - "@rules_img_tool//..."
+              - "@rules_img_pull_tool//..."
+    - test:
+          name: Integration Tests
+          id: integration-tests
+          targets: ["//e2e:integration_tests"]
     # TODO(malte): enable Bazel 9 when green
     # - test:
     #       name: Bazel 9
