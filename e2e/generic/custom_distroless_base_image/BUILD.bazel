@@ -100,6 +100,11 @@ passwd(
 cacerts(
     name = "ca_certificates",
     package = "@bookworm//ca-certificates/amd64:data",
+    # the cacerts rule currently doesn't support running on Windows
+    target_compatible_with = select({
+        "@platforms//os:windows": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
 )
 
 # Create a Java keystore with custom certificates
@@ -161,6 +166,13 @@ image_index(
         "//platform:linux_amd64",
         "//platform:linux_arm64",
     ],
+    target_compatible_with = select({
+        # the cacerts target referenced
+        # from here currently doesn't
+        # support running on Windows
+        "@platforms//os:windows": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
 )
 
 [
@@ -215,6 +227,13 @@ image_index(
         "//platform:linux_amd64",
         "//platform:linux_arm64",
     ],
+    target_compatible_with = select({
+        # the cacerts target referenced
+        # from here currently doesn't
+        # support running on Windows
+        "@platforms//os:windows": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
 )
 
 image_push(
