@@ -186,6 +186,7 @@ bazel run //:push
 * [Go](/e2e/go/)
 * [JS / TS](/e2e/js/)
 * [Python](/e2e/python/)
+* [Custom Distroless base image](/e2e/generic/custom_distroless_base_image/)
 
 ## Comparison with rules_oci
 
