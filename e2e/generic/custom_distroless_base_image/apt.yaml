@@ -1,0 +1,27 @@
+version: 1
+
+sources:
+  - channel: bookworm main
+    url: https://snapshot.debian.org/archive/debian/20250501T203212Z
+  - channel: bookworm-updates main
+    url: https://snapshot.debian.org/archive/debian/20250501T203212Z
+  - channel: bookworm-security main
+    url: https://snapshot.debian.org/archive/debian-security/20250501T203212Z
+
+archs:
+  - "amd64"
+  - "arm64"
+
+packages:
+  # Base system packages
+  - base-files
+  - netbase
+  - tzdata
+  - media-types
+
+  # CA certificates package
+  - ca-certificates
+
+  # Python environment
+  - python3
+  - python3-pip

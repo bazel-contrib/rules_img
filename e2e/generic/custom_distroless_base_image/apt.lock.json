@@ -1,0 +1,2203 @@
+{
+	"packages": [
+		{
+			"arch": "amd64",
+			"dependencies": [
+				{
+					"key": "mawk_1.3.4.20200120-3.1_amd64",
+					"name": "mawk",
+					"version": "1.3.4.20200120-3.1"
+				},
+				{
+					"key": "libc6_2.36-9-p-deb12u10_amd64",
+					"name": "libc6",
+					"version": "2.36-9+deb12u10"
+				},
+				{
+					"key": "libgcc-s1_12.2.0-14_amd64",
+					"name": "libgcc-s1",
+					"version": "12.2.0-14"
+				},
+				{
+					"key": "gcc-12-base_12.2.0-14_amd64",
+					"name": "gcc-12-base",
+					"version": "12.2.0-14"
+				}
+			],
+			"key": "base-files_12.4-p-deb12u10_amd64",
+			"name": "base-files",
+			"sha256": "1a6413c69d865036b6c3ffc90c92f8c028e4b9fd942fb62befe55ec04e8a362d",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/b/base-files/base-files_12.4+deb12u10_amd64.deb"
+			],
+			"version": "12.4+deb12u10"
+		},
+		{
+			"arch": "amd64",
+			"dependencies": [],
+			"key": "mawk_1.3.4.20200120-3.1_amd64",
+			"name": "mawk",
+			"sha256": "bcbc83f391854ea9d50ce2a4101aacf330de3b8b71d81a798faadba14a157f78",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/m/mawk/mawk_1.3.4.20200120-3.1_amd64.deb"
+			],
+			"version": "1.3.4.20200120-3.1"
+		},
+		{
+			"arch": "amd64",
+			"dependencies": [],
+			"key": "libc6_2.36-9-p-deb12u10_amd64",
+			"name": "libc6",
+			"sha256": "5dc83256f10ca4d0f2a53dd6583ffd0d0e319af30074ea6c82fb0ae77bd16365",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/g/glibc/libc6_2.36-9+deb12u10_amd64.deb"
+			],
+			"version": "2.36-9+deb12u10"
+		},
+		{
+			"arch": "amd64",
+			"dependencies": [],
+			"key": "libgcc-s1_12.2.0-14_amd64",
+			"name": "libgcc-s1",
+			"sha256": "f3d1d48c0599aea85b7f2077a01d285badc42998c1a1e7473935d5cf995c8141",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/g/gcc-12/libgcc-s1_12.2.0-14_amd64.deb"
+			],
+			"version": "12.2.0-14"
+		},
+		{
+			"arch": "amd64",
+			"dependencies": [],
+			"key": "gcc-12-base_12.2.0-14_amd64",
+			"name": "gcc-12-base",
+			"sha256": "1a03df5a57833d65b5bb08cfa19d50e76f29088dc9e64fb934af42d9023a0807",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/g/gcc-12/gcc-12-base_12.2.0-14_amd64.deb"
+			],
+			"version": "12.2.0-14"
+		},
+		{
+			"arch": "amd64",
+			"dependencies": [],
+			"key": "netbase_6.4_amd64",
+			"name": "netbase",
+			"sha256": "29b23c48c0fe6f878e56c5ddc9f65d1c05d729360f3690a593a8c795031cd867",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/n/netbase/netbase_6.4_all.deb"
+			],
+			"version": "6.4"
+		},
+		{
+			"arch": "amd64",
+			"dependencies": [
+				{
+					"key": "debconf_1.5.82_amd64",
+					"name": "debconf",
+					"version": "1.5.82"
+				}
+			],
+			"key": "tzdata_2025b-0-p-deb12u1_amd64",
+			"name": "tzdata",
+			"sha256": "a17042cb951b80d0c9462a73dec6ad31fc6adeae4ed92209601dc97d1019d7f2",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/t/tzdata/tzdata_2025b-0+deb12u1_all.deb"
+			],
+			"version": "2025b-0+deb12u1"
+		},
+		{
+			"arch": "amd64",
+			"dependencies": [],
+			"key": "debconf_1.5.82_amd64",
+			"name": "debconf",
+			"sha256": "74ab14194a3762b2fc717917dcfda42929ab98e3c59295a063344dc551cd7cc8",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/d/debconf/debconf_1.5.82_all.deb"
+			],
+			"version": "1.5.82"
+		},
+		{
+			"arch": "amd64",
+			"dependencies": [],
+			"key": "media-types_10.0.0_amd64",
+			"name": "media-types",
+			"sha256": "aaa46dcb3b39948ae2e0fdb72cfcb2f48c0b59f19785a3da8045c05eb19955dd",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/m/media-types/media-types_10.0.0_all.deb"
+			],
+			"version": "10.0.0"
+		},
+		{
+			"arch": "amd64",
+			"dependencies": [
+				{
+					"key": "debconf_1.5.82_amd64",
+					"name": "debconf",
+					"version": "1.5.82"
+				},
+				{
+					"key": "openssl_3.0.15-1_deb12u1_amd64",
+					"name": "openssl",
+					"version": "3.0.15-1~deb12u1"
+				},
+				{
+					"key": "libssl3_3.0.15-1_deb12u1_amd64",
+					"name": "libssl3",
+					"version": "3.0.15-1~deb12u1"
+				},
+				{
+					"key": "libc6_2.36-9-p-deb12u10_amd64",
+					"name": "libc6",
+					"version": "2.36-9+deb12u10"
+				},
+				{
+					"key": "libgcc-s1_12.2.0-14_amd64",
+					"name": "libgcc-s1",
+					"version": "12.2.0-14"
+				},
+				{
+					"key": "gcc-12-base_12.2.0-14_amd64",
+					"name": "gcc-12-base",
+					"version": "12.2.0-14"
+				}
+			],
+			"key": "ca-certificates_20230311_amd64",
+			"name": "ca-certificates",
+			"sha256": "5308b9bd88eebe2a48be3168cb3d87677aaec5da9c63ad0cf561a29b8219115c",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/c/ca-certificates/ca-certificates_20230311_all.deb"
+			],
+			"version": "20230311"
+		},
+		{
+			"arch": "amd64",
+			"dependencies": [],
+			"key": "openssl_3.0.15-1_deb12u1_amd64",
+			"name": "openssl",
+			"sha256": "c9c37660d902f2a43dfbbf619b3f5f413cee298d8f317829e3c11cfff9e174aa",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/o/openssl/openssl_3.0.15-1~deb12u1_amd64.deb"
+			],
+			"version": "3.0.15-1~deb12u1"
+		},
+		{
+			"arch": "amd64",
+			"dependencies": [],
+			"key": "libssl3_3.0.15-1_deb12u1_amd64",
+			"name": "libssl3",
+			"sha256": "d7897e6c55a8d9e229dcf16b0b1d472d7f7be741b2b3b2ac624908ff63215a93",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/o/openssl/libssl3_3.0.15-1~deb12u1_amd64.deb"
+			],
+			"version": "3.0.15-1~deb12u1"
+		},
+		{
+			"arch": "amd64",
+			"dependencies": [
+				{
+					"key": "libpython3-stdlib_3.11.2-1-p-b1_amd64",
+					"name": "libpython3-stdlib",
+					"version": "3.11.2-1+b1"
+				},
+				{
+					"key": "libpython3.11-stdlib_3.11.2-6-p-deb12u5_amd64",
+					"name": "libpython3.11-stdlib",
+					"version": "3.11.2-6+deb12u5"
+				},
+				{
+					"key": "libuuid1_2.38.1-5-p-deb12u3_amd64",
+					"name": "libuuid1",
+					"version": "2.38.1-5+deb12u3"
+				},
+				{
+					"key": "libc6_2.36-9-p-deb12u10_amd64",
+					"name": "libc6",
+					"version": "2.36-9+deb12u10"
+				},
+				{
+					"key": "libgcc-s1_12.2.0-14_amd64",
+					"name": "libgcc-s1",
+					"version": "12.2.0-14"
+				},
+				{
+					"key": "gcc-12-base_12.2.0-14_amd64",
+					"name": "gcc-12-base",
+					"version": "12.2.0-14"
+				},
+				{
+					"key": "libtirpc3_1.3.3-p-ds-1_amd64",
+					"name": "libtirpc3",
+					"version": "1.3.3+ds-1"
+				},
+				{
+					"key": "libtirpc-common_1.3.3-p-ds-1_amd64",
+					"name": "libtirpc-common",
+					"version": "1.3.3+ds-1"
+				},
+				{
+					"key": "libgssapi-krb5-2_1.20.1-2-p-deb12u2_amd64",
+					"name": "libgssapi-krb5-2",
+					"version": "1.20.1-2+deb12u2"
+				},
+				{
+					"key": "libkrb5support0_1.20.1-2-p-deb12u2_amd64",
+					"name": "libkrb5support0",
+					"version": "1.20.1-2+deb12u2"
+				},
+				{
+					"key": "libkrb5-3_1.20.1-2-p-deb12u2_amd64",
+					"name": "libkrb5-3",
+					"version": "1.20.1-2+deb12u2"
+				},
+				{
+					"key": "libssl3_3.0.15-1_deb12u1_amd64",
+					"name": "libssl3",
+					"version": "3.0.15-1~deb12u1"
+				},
+				{
+					"key": "libkeyutils1_1.6.3-2_amd64",
+					"name": "libkeyutils1",
+					"version": "1.6.3-2"
+				},
+				{
+					"key": "libk5crypto3_1.20.1-2-p-deb12u2_amd64",
+					"name": "libk5crypto3",
+					"version": "1.20.1-2+deb12u2"
+				},
+				{
+					"key": "libcom-err2_1.47.0-2_amd64",
+					"name": "libcom-err2",
+					"version": "1.47.0-2"
+				},
+				{
+					"key": "libtinfo6_6.4-4_amd64",
+					"name": "libtinfo6",
+					"version": "6.4-4"
+				},
+				{
+					"key": "libsqlite3-0_3.40.1-2-p-deb12u1_amd64",
+					"name": "libsqlite3-0",
+					"version": "3.40.1-2+deb12u1"
+				},
+				{
+					"key": "libreadline8_8.2-1.3_amd64",
+					"name": "libreadline8",
+					"version": "8.2-1.3"
+				},
+				{
+					"key": "readline-common_8.2-1.3_amd64",
+					"name": "readline-common",
+					"version": "8.2-1.3"
+				},
+				{
+					"key": "dpkg_1.21.22_amd64",
+					"name": "dpkg",
+					"version": "1.21.22"
+				},
+				{
+					"key": "tar_1.34-p-dfsg-1.2-p-deb12u1_amd64",
+					"name": "tar",
+					"version": "1.34+dfsg-1.2+deb12u1"
+				},
+				{
+					"key": "libselinux1_3.4-1-p-b6_amd64",
+					"name": "libselinux1",
+					"version": "3.4-1+b6"
+				},
+				{
+					"key": "libpcre2-8-0_10.42-1_amd64",
+					"name": "libpcre2-8-0",
+					"version": "10.42-1"
+				},
+				{
+					"key": "libacl1_2.3.1-3_amd64",
+					"name": "libacl1",
+					"version": "2.3.1-3"
+				},
+				{
+					"key": "zlib1g_1-1.2.13.dfsg-1_amd64",
+					"name": "zlib1g",
+					"version": "1:1.2.13.dfsg-1"
+				},
+				{
+					"key": "libzstd1_1.5.4-p-dfsg2-5_amd64",
+					"name": "libzstd1",
+					"version": "1.5.4+dfsg2-5"
+				},
+				{
+					"key": "libmd0_1.0.4-2_amd64",
+					"name": "libmd0",
+					"version": "1.0.4-2"
+				},
+				{
+					"key": "liblzma5_5.4.1-1_amd64",
+					"name": "liblzma5",
+					"version": "5.4.1-1"
+				},
+				{
+					"key": "libbz2-1.0_1.0.8-5-p-b1_amd64",
+					"name": "libbz2-1.0",
+					"version": "1.0.8-5+b1"
+				},
+				{
+					"key": "libnsl2_1.3.0-2_amd64",
+					"name": "libnsl2",
+					"version": "1.3.0-2"
+				},
+				{
+					"key": "libncursesw6_6.4-4_amd64",
+					"name": "libncursesw6",
+					"version": "6.4-4"
+				},
+				{
+					"key": "libffi8_3.4.4-1_amd64",
+					"name": "libffi8",
+					"version": "3.4.4-1"
+				},
+				{
+					"key": "libdb5.3_5.3.28-p-dfsg2-1_amd64",
+					"name": "libdb5.3",
+					"version": "5.3.28+dfsg2-1"
+				},
+				{
+					"key": "libcrypt1_1-4.4.33-2_amd64",
+					"name": "libcrypt1",
+					"version": "1:4.4.33-2"
+				},
+				{
+					"key": "media-types_10.0.0_amd64",
+					"name": "media-types",
+					"version": "10.0.0"
+				},
+				{
+					"key": "libpython3.11-minimal_3.11.2-6-p-deb12u5_amd64",
+					"name": "libpython3.11-minimal",
+					"version": "3.11.2-6+deb12u5"
+				},
+				{
+					"key": "python3.11_3.11.2-6-p-deb12u5_amd64",
+					"name": "python3.11",
+					"version": "3.11.2-6+deb12u5"
+				},
+				{
+					"key": "python3.11-minimal_3.11.2-6-p-deb12u5_amd64",
+					"name": "python3.11-minimal",
+					"version": "3.11.2-6+deb12u5"
+				},
+				{
+					"key": "libexpat1_2.5.0-1-p-deb12u1_amd64",
+					"name": "libexpat1",
+					"version": "2.5.0-1+deb12u1"
+				},
+				{
+					"key": "python3-minimal_3.11.2-1-p-b1_amd64",
+					"name": "python3-minimal",
+					"version": "3.11.2-1+b1"
+				}
+			],
+			"key": "python3_3.11.2-1-p-b1_amd64",
+			"name": "python3",
+			"sha256": "33f6dafbd1a6902d9063172ec7dbd4b2225e12009e0d7ec5c933a72c2f5f3b74",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/p/python3-defaults/python3_3.11.2-1+b1_amd64.deb"
+			],
+			"version": "3.11.2-1+b1"
+		},
+		{
+			"arch": "amd64",
+			"dependencies": [],
+			"key": "libpython3-stdlib_3.11.2-1-p-b1_amd64",
+			"name": "libpython3-stdlib",
+			"sha256": "4e58891d5c951a1e360ed9eaa814413cb5e84deadce3f08e801ac680434c786e",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/p/python3-defaults/libpython3-stdlib_3.11.2-1+b1_amd64.deb"
+			],
+			"version": "3.11.2-1+b1"
+		},
+		{
+			"arch": "amd64",
+			"dependencies": [],
+			"key": "libpython3.11-stdlib_3.11.2-6-p-deb12u5_amd64",
+			"name": "libpython3.11-stdlib",
+			"sha256": "80a24d4c74c0c39ec4ca9ea7d0949bce811d546288ed989f6f5de7fd7c8447fe",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/p/python3.11/libpython3.11-stdlib_3.11.2-6+deb12u5_amd64.deb"
+			],
+			"version": "3.11.2-6+deb12u5"
+		},
+		{
+			"arch": "amd64",
+			"dependencies": [],
+			"key": "libuuid1_2.38.1-5-p-deb12u3_amd64",
+			"name": "libuuid1",
+			"sha256": "5fff398321da62d28a842bcbabd193d72ae21724962c029dc32b1dc6b2deaeaf",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/u/util-linux/libuuid1_2.38.1-5+deb12u3_amd64.deb"
+			],
+			"version": "2.38.1-5+deb12u3"
+		},
+		{
+			"arch": "amd64",
+			"dependencies": [],
+			"key": "libtirpc3_1.3.3-p-ds-1_amd64",
+			"name": "libtirpc3",
+			"sha256": "2a46d5a5e9486da11ffeff5740931740d6deae4f92cd6098df060dc5dff1e1c7",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/libt/libtirpc/libtirpc3_1.3.3+ds-1_amd64.deb"
+			],
+			"version": "1.3.3+ds-1"
+		},
+		{
+			"arch": "amd64",
+			"dependencies": [],
+			"key": "libtirpc-common_1.3.3-p-ds-1_amd64",
+			"name": "libtirpc-common",
+			"sha256": "3e3ef129b4bf61513144236e15e1b4ec57fa5ae3dc8a72137abdbefb7a63af85",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/libt/libtirpc/libtirpc-common_1.3.3+ds-1_all.deb"
+			],
+			"version": "1.3.3+ds-1"
+		},
+		{
+			"arch": "amd64",
+			"dependencies": [],
+			"key": "libgssapi-krb5-2_1.20.1-2-p-deb12u2_amd64",
+			"name": "libgssapi-krb5-2",
+			"sha256": "454eb2ecb79e03682b176f04a54b8820ccf8868c074995d96fb6f4736f546cec",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian-security/20250501T203212Z/pool/updates/main/k/krb5/libgssapi-krb5-2_1.20.1-2+deb12u2_amd64.deb"
+			],
+			"version": "1.20.1-2+deb12u2"
+		},
+		{
+			"arch": "amd64",
+			"dependencies": [],
+			"key": "libkrb5support0_1.20.1-2-p-deb12u2_amd64",
+			"name": "libkrb5support0",
+			"sha256": "3bb1a8f9cfdd31f92e0cdd0a040c738a2de0d343afe7f830850e3ab7695e649c",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian-security/20250501T203212Z/pool/updates/main/k/krb5/libkrb5support0_1.20.1-2+deb12u2_amd64.deb"
+			],
+			"version": "1.20.1-2+deb12u2"
+		},
+		{
+			"arch": "amd64",
+			"dependencies": [],
+			"key": "libkrb5-3_1.20.1-2-p-deb12u2_amd64",
+			"name": "libkrb5-3",
+			"sha256": "9ce3d67db89417e1539f33a62ce85959dc96e3865ecad77606e2af1e6680d6da",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian-security/20250501T203212Z/pool/updates/main/k/krb5/libkrb5-3_1.20.1-2+deb12u2_amd64.deb"
+			],
+			"version": "1.20.1-2+deb12u2"
+		},
+		{
+			"arch": "amd64",
+			"dependencies": [],
+			"key": "libkeyutils1_1.6.3-2_amd64",
+			"name": "libkeyutils1",
+			"sha256": "cfac89e6a7a54ff3c6a4f843310e25efeddaa771baeae470bd98bd588c373563",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/k/keyutils/libkeyutils1_1.6.3-2_amd64.deb"
+			],
+			"version": "1.6.3-2"
+		},
+		{
+			"arch": "amd64",
+			"dependencies": [],
+			"key": "libk5crypto3_1.20.1-2-p-deb12u2_amd64",
+			"name": "libk5crypto3",
+			"sha256": "de8ae0c2bb31c926b24c374c1159e8b8d5f9817421f45dd29f22cd201982ee3d",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian-security/20250501T203212Z/pool/updates/main/k/krb5/libk5crypto3_1.20.1-2+deb12u2_amd64.deb"
+			],
+			"version": "1.20.1-2+deb12u2"
+		},
+		{
+			"arch": "amd64",
+			"dependencies": [],
+			"key": "libcom-err2_1.47.0-2_amd64",
+			"name": "libcom-err2",
+			"sha256": "8010e4285276bb344c05ae780deae2fffb45e237116c3a78481365c5954125ec",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/e/e2fsprogs/libcom-err2_1.47.0-2_amd64.deb"
+			],
+			"version": "1.47.0-2"
+		},
+		{
+			"arch": "amd64",
+			"dependencies": [],
+			"key": "libtinfo6_6.4-4_amd64",
+			"name": "libtinfo6",
+			"sha256": "072d908f38f51090ca28ca5afa3b46b2957dc61fe35094c0b851426859a49a51",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/n/ncurses/libtinfo6_6.4-4_amd64.deb"
+			],
+			"version": "6.4-4"
+		},
+		{
+			"arch": "amd64",
+			"dependencies": [],
+			"key": "libsqlite3-0_3.40.1-2-p-deb12u1_amd64",
+			"name": "libsqlite3-0",
+			"sha256": "f152f8a4c4c78bf5762e324bcdabd18a7211944a928435ff270ad337a27aaa5f",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/s/sqlite3/libsqlite3-0_3.40.1-2+deb12u1_amd64.deb"
+			],
+			"version": "3.40.1-2+deb12u1"
+		},
+		{
+			"arch": "amd64",
+			"dependencies": [],
+			"key": "libreadline8_8.2-1.3_amd64",
+			"name": "libreadline8",
+			"sha256": "e02ebbd3701cf468dbf98d6d917fbe0325e881f07fe8b316150c8d2a64486e66",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/r/readline/libreadline8_8.2-1.3_amd64.deb"
+			],
+			"version": "8.2-1.3"
+		},
+		{
+			"arch": "amd64",
+			"dependencies": [],
+			"key": "readline-common_8.2-1.3_amd64",
+			"name": "readline-common",
+			"sha256": "69317523fe56429aa361545416ad339d138c1500e5a604856a80dd9074b4e35c",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/r/readline/readline-common_8.2-1.3_all.deb"
+			],
+			"version": "8.2-1.3"
+		},
+		{
+			"arch": "amd64",
+			"dependencies": [],
+			"key": "dpkg_1.21.22_amd64",
+			"name": "dpkg",
+			"sha256": "9d97f27d8a8a06dd4800e8e0291337ca02e11cdfd7df09a4566a982a6d9fe4c4",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/d/dpkg/dpkg_1.21.22_amd64.deb"
+			],
+			"version": "1.21.22"
+		},
+		{
+			"arch": "amd64",
+			"dependencies": [],
+			"key": "tar_1.34-p-dfsg-1.2-p-deb12u1_amd64",
+			"name": "tar",
+			"sha256": "24fb92e98c2969171f81a8b589263d705f6b1670f95d121cd74c810d4605acc3",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/t/tar/tar_1.34+dfsg-1.2+deb12u1_amd64.deb"
+			],
+			"version": "1.34+dfsg-1.2+deb12u1"
+		},
+		{
+			"arch": "amd64",
+			"dependencies": [],
+			"key": "libselinux1_3.4-1-p-b6_amd64",
+			"name": "libselinux1",
+			"sha256": "2b07f5287b9105f40158b56e4d70cc1652dac56a408f3507b4ab3d061eed425f",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/libs/libselinux/libselinux1_3.4-1+b6_amd64.deb"
+			],
+			"version": "3.4-1+b6"
+		},
+		{
+			"arch": "amd64",
+			"dependencies": [],
+			"key": "libpcre2-8-0_10.42-1_amd64",
+			"name": "libpcre2-8-0",
+			"sha256": "030db54f4d76cdfe2bf0e8eb5f9efea0233ab3c7aa942d672c7b63b52dbaf935",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/p/pcre2/libpcre2-8-0_10.42-1_amd64.deb"
+			],
+			"version": "10.42-1"
+		},
+		{
+			"arch": "amd64",
+			"dependencies": [],
+			"key": "libacl1_2.3.1-3_amd64",
+			"name": "libacl1",
+			"sha256": "8be9df5795114bfe90e2be3d208ef47a5edd3fc7b3e20d387a597486d444e5e2",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/a/acl/libacl1_2.3.1-3_amd64.deb"
+			],
+			"version": "2.3.1-3"
+		},
+		{
+			"arch": "amd64",
+			"dependencies": [],
+			"key": "zlib1g_1-1.2.13.dfsg-1_amd64",
+			"name": "zlib1g",
+			"sha256": "d7dd1d1411fedf27f5e27650a6eff20ef294077b568f4c8c5e51466dc7c08ce4",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/z/zlib/zlib1g_1.2.13.dfsg-1_amd64.deb"
+			],
+			"version": "1:1.2.13.dfsg-1"
+		},
+		{
+			"arch": "amd64",
+			"dependencies": [],
+			"key": "libzstd1_1.5.4-p-dfsg2-5_amd64",
+			"name": "libzstd1",
+			"sha256": "6315b5ac38b724a710fb96bf1042019398cb656718b1522279a5185ed39318fa",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/libz/libzstd/libzstd1_1.5.4+dfsg2-5_amd64.deb"
+			],
+			"version": "1.5.4+dfsg2-5"
+		},
+		{
+			"arch": "amd64",
+			"dependencies": [],
+			"key": "libmd0_1.0.4-2_amd64",
+			"name": "libmd0",
+			"sha256": "03539fd30c509e27101d13a56e52eda9062bdf1aefe337c07ab56def25a13eab",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/libm/libmd/libmd0_1.0.4-2_amd64.deb"
+			],
+			"version": "1.0.4-2"
+		},
+		{
+			"arch": "amd64",
+			"dependencies": [],
+			"key": "liblzma5_5.4.1-1_amd64",
+			"name": "liblzma5",
+			"sha256": "d321b9502b16aac534e1c691afbe3dc5e125e5091aa35bea026c59b25ebe82e7",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian-security/20250501T203212Z/pool/updates/main/x/xz-utils/liblzma5_5.4.1-1_amd64.deb"
+			],
+			"version": "5.4.1-1"
+		},
+		{
+			"arch": "amd64",
+			"dependencies": [],
+			"key": "libbz2-1.0_1.0.8-5-p-b1_amd64",
+			"name": "libbz2-1.0",
+			"sha256": "54149da3f44b22d523b26b692033b84503d822cc5122fed606ea69cc83ca5aeb",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/b/bzip2/libbz2-1.0_1.0.8-5+b1_amd64.deb"
+			],
+			"version": "1.0.8-5+b1"
+		},
+		{
+			"arch": "amd64",
+			"dependencies": [],
+			"key": "libnsl2_1.3.0-2_amd64",
+			"name": "libnsl2",
+			"sha256": "c0d83437fdb016cb289436f49f28a36be44b3e8f1f2498c7e3a095f709c0d6f8",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/libn/libnsl/libnsl2_1.3.0-2_amd64.deb"
+			],
+			"version": "1.3.0-2"
+		},
+		{
+			"arch": "amd64",
+			"dependencies": [],
+			"key": "libncursesw6_6.4-4_amd64",
+			"name": "libncursesw6",
+			"sha256": "98fa7a53dc565a38b65fb70422ad08001bf5361d8fbc74255280c329996a6bec",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/n/ncurses/libncursesw6_6.4-4_amd64.deb"
+			],
+			"version": "6.4-4"
+		},
+		{
+			"arch": "amd64",
+			"dependencies": [],
+			"key": "libffi8_3.4.4-1_amd64",
+			"name": "libffi8",
+			"sha256": "6d9f6c25c30efccce6d4bceaa48ea86c329a3432abb360a141f76ac223a4c34a",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/libf/libffi/libffi8_3.4.4-1_amd64.deb"
+			],
+			"version": "3.4.4-1"
+		},
+		{
+			"arch": "amd64",
+			"dependencies": [],
+			"key": "libdb5.3_5.3.28-p-dfsg2-1_amd64",
+			"name": "libdb5.3",
+			"sha256": "7dc5127b8dd0da80e992ba594954c005ae4359d839a24eb65d0d8129b5235c84",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/d/db5.3/libdb5.3_5.3.28+dfsg2-1_amd64.deb"
+			],
+			"version": "5.3.28+dfsg2-1"
+		},
+		{
+			"arch": "amd64",
+			"dependencies": [],
+			"key": "libcrypt1_1-4.4.33-2_amd64",
+			"name": "libcrypt1",
+			"sha256": "f5f60a5cdfd4e4eaa9438ade5078a57741a7a78d659fcb0c701204f523e8bd29",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/libx/libxcrypt/libcrypt1_4.4.33-2_amd64.deb"
+			],
+			"version": "1:4.4.33-2"
+		},
+		{
+			"arch": "amd64",
+			"dependencies": [],
+			"key": "libpython3.11-minimal_3.11.2-6-p-deb12u5_amd64",
+			"name": "libpython3.11-minimal",
+			"sha256": "4d80534e33d8cdc1e952b0061642f6b3e8f86f96450a08554e5e140e1da9e469",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/p/python3.11/libpython3.11-minimal_3.11.2-6+deb12u5_amd64.deb"
+			],
+			"version": "3.11.2-6+deb12u5"
+		},
+		{
+			"arch": "amd64",
+			"dependencies": [],
+			"key": "python3.11_3.11.2-6-p-deb12u5_amd64",
+			"name": "python3.11",
+			"sha256": "2286a844fc820c0e79454bbbb41100db4592076bbc09dff2b9b8bd5add0a7275",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/p/python3.11/python3.11_3.11.2-6+deb12u5_amd64.deb"
+			],
+			"version": "3.11.2-6+deb12u5"
+		},
+		{
+			"arch": "amd64",
+			"dependencies": [],
+			"key": "python3.11-minimal_3.11.2-6-p-deb12u5_amd64",
+			"name": "python3.11-minimal",
+			"sha256": "34d52b4f90daa7938b8c8a115e72559843caf305243153c74242b1b966cc4a79",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/p/python3.11/python3.11-minimal_3.11.2-6+deb12u5_amd64.deb"
+			],
+			"version": "3.11.2-6+deb12u5"
+		},
+		{
+			"arch": "amd64",
+			"dependencies": [],
+			"key": "libexpat1_2.5.0-1-p-deb12u1_amd64",
+			"name": "libexpat1",
+			"sha256": "c2bd305125bcece5816b2521f293a99499d674cd2dd744416caa4952158ad99d",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian-security/20250501T203212Z/pool/updates/main/e/expat/libexpat1_2.5.0-1+deb12u1_amd64.deb"
+			],
+			"version": "2.5.0-1+deb12u1"
+		},
+		{
+			"arch": "amd64",
+			"dependencies": [],
+			"key": "python3-minimal_3.11.2-1-p-b1_amd64",
+			"name": "python3-minimal",
+			"sha256": "30f9618670e686d781afbfc713eb0830c29d2819e9cb2a0488800dad6bb99faa",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/p/python3-defaults/python3-minimal_3.11.2-1+b1_amd64.deb"
+			],
+			"version": "3.11.2-1+b1"
+		},
+		{
+			"arch": "amd64",
+			"dependencies": [
+				{
+					"key": "python3_3.11.2-1-p-b1_amd64",
+					"name": "python3",
+					"version": "3.11.2-1+b1"
+				},
+				{
+					"key": "libpython3-stdlib_3.11.2-1-p-b1_amd64",
+					"name": "libpython3-stdlib",
+					"version": "3.11.2-1+b1"
+				},
+				{
+					"key": "libpython3.11-stdlib_3.11.2-6-p-deb12u5_amd64",
+					"name": "libpython3.11-stdlib",
+					"version": "3.11.2-6+deb12u5"
+				},
+				{
+					"key": "libuuid1_2.38.1-5-p-deb12u3_amd64",
+					"name": "libuuid1",
+					"version": "2.38.1-5+deb12u3"
+				},
+				{
+					"key": "libc6_2.36-9-p-deb12u10_amd64",
+					"name": "libc6",
+					"version": "2.36-9+deb12u10"
+				},
+				{
+					"key": "libgcc-s1_12.2.0-14_amd64",
+					"name": "libgcc-s1",
+					"version": "12.2.0-14"
+				},
+				{
+					"key": "gcc-12-base_12.2.0-14_amd64",
+					"name": "gcc-12-base",
+					"version": "12.2.0-14"
+				},
+				{
+					"key": "libtirpc3_1.3.3-p-ds-1_amd64",
+					"name": "libtirpc3",
+					"version": "1.3.3+ds-1"
+				},
+				{
+					"key": "libtirpc-common_1.3.3-p-ds-1_amd64",
+					"name": "libtirpc-common",
+					"version": "1.3.3+ds-1"
+				},
+				{
+					"key": "libgssapi-krb5-2_1.20.1-2-p-deb12u2_amd64",
+					"name": "libgssapi-krb5-2",
+					"version": "1.20.1-2+deb12u2"
+				},
+				{
+					"key": "libkrb5support0_1.20.1-2-p-deb12u2_amd64",
+					"name": "libkrb5support0",
+					"version": "1.20.1-2+deb12u2"
+				},
+				{
+					"key": "libkrb5-3_1.20.1-2-p-deb12u2_amd64",
+					"name": "libkrb5-3",
+					"version": "1.20.1-2+deb12u2"
+				},
+				{
+					"key": "libssl3_3.0.15-1_deb12u1_amd64",
+					"name": "libssl3",
+					"version": "3.0.15-1~deb12u1"
+				},
+				{
+					"key": "libkeyutils1_1.6.3-2_amd64",
+					"name": "libkeyutils1",
+					"version": "1.6.3-2"
+				},
+				{
+					"key": "libk5crypto3_1.20.1-2-p-deb12u2_amd64",
+					"name": "libk5crypto3",
+					"version": "1.20.1-2+deb12u2"
+				},
+				{
+					"key": "libcom-err2_1.47.0-2_amd64",
+					"name": "libcom-err2",
+					"version": "1.47.0-2"
+				},
+				{
+					"key": "libtinfo6_6.4-4_amd64",
+					"name": "libtinfo6",
+					"version": "6.4-4"
+				},
+				{
+					"key": "libsqlite3-0_3.40.1-2-p-deb12u1_amd64",
+					"name": "libsqlite3-0",
+					"version": "3.40.1-2+deb12u1"
+				},
+				{
+					"key": "libreadline8_8.2-1.3_amd64",
+					"name": "libreadline8",
+					"version": "8.2-1.3"
+				},
+				{
+					"key": "readline-common_8.2-1.3_amd64",
+					"name": "readline-common",
+					"version": "8.2-1.3"
+				},
+				{
+					"key": "dpkg_1.21.22_amd64",
+					"name": "dpkg",
+					"version": "1.21.22"
+				},
+				{
+					"key": "tar_1.34-p-dfsg-1.2-p-deb12u1_amd64",
+					"name": "tar",
+					"version": "1.34+dfsg-1.2+deb12u1"
+				},
+				{
+					"key": "libselinux1_3.4-1-p-b6_amd64",
+					"name": "libselinux1",
+					"version": "3.4-1+b6"
+				},
+				{
+					"key": "libpcre2-8-0_10.42-1_amd64",
+					"name": "libpcre2-8-0",
+					"version": "10.42-1"
+				},
+				{
+					"key": "libacl1_2.3.1-3_amd64",
+					"name": "libacl1",
+					"version": "2.3.1-3"
+				},
+				{
+					"key": "zlib1g_1-1.2.13.dfsg-1_amd64",
+					"name": "zlib1g",
+					"version": "1:1.2.13.dfsg-1"
+				},
+				{
+					"key": "libzstd1_1.5.4-p-dfsg2-5_amd64",
+					"name": "libzstd1",
+					"version": "1.5.4+dfsg2-5"
+				},
+				{
+					"key": "libmd0_1.0.4-2_amd64",
+					"name": "libmd0",
+					"version": "1.0.4-2"
+				},
+				{
+					"key": "liblzma5_5.4.1-1_amd64",
+					"name": "liblzma5",
+					"version": "5.4.1-1"
+				},
+				{
+					"key": "libbz2-1.0_1.0.8-5-p-b1_amd64",
+					"name": "libbz2-1.0",
+					"version": "1.0.8-5+b1"
+				},
+				{
+					"key": "libnsl2_1.3.0-2_amd64",
+					"name": "libnsl2",
+					"version": "1.3.0-2"
+				},
+				{
+					"key": "libncursesw6_6.4-4_amd64",
+					"name": "libncursesw6",
+					"version": "6.4-4"
+				},
+				{
+					"key": "libffi8_3.4.4-1_amd64",
+					"name": "libffi8",
+					"version": "3.4.4-1"
+				},
+				{
+					"key": "libdb5.3_5.3.28-p-dfsg2-1_amd64",
+					"name": "libdb5.3",
+					"version": "5.3.28+dfsg2-1"
+				},
+				{
+					"key": "libcrypt1_1-4.4.33-2_amd64",
+					"name": "libcrypt1",
+					"version": "1:4.4.33-2"
+				},
+				{
+					"key": "media-types_10.0.0_amd64",
+					"name": "media-types",
+					"version": "10.0.0"
+				},
+				{
+					"key": "libpython3.11-minimal_3.11.2-6-p-deb12u5_amd64",
+					"name": "libpython3.11-minimal",
+					"version": "3.11.2-6+deb12u5"
+				},
+				{
+					"key": "python3.11_3.11.2-6-p-deb12u5_amd64",
+					"name": "python3.11",
+					"version": "3.11.2-6+deb12u5"
+				},
+				{
+					"key": "python3.11-minimal_3.11.2-6-p-deb12u5_amd64",
+					"name": "python3.11-minimal",
+					"version": "3.11.2-6+deb12u5"
+				},
+				{
+					"key": "libexpat1_2.5.0-1-p-deb12u1_amd64",
+					"name": "libexpat1",
+					"version": "2.5.0-1+deb12u1"
+				},
+				{
+					"key": "python3-minimal_3.11.2-1-p-b1_amd64",
+					"name": "python3-minimal",
+					"version": "3.11.2-1+b1"
+				},
+				{
+					"key": "python3-wheel_0.38.4-2_amd64",
+					"name": "python3-wheel",
+					"version": "0.38.4-2"
+				},
+				{
+					"key": "python3-distutils_3.11.2-3_amd64",
+					"name": "python3-distutils",
+					"version": "3.11.2-3"
+				},
+				{
+					"key": "python3-lib2to3_3.11.2-3_amd64",
+					"name": "python3-lib2to3",
+					"version": "3.11.2-3"
+				},
+				{
+					"key": "python3-setuptools_66.1.1-1-p-deb12u1_amd64",
+					"name": "python3-setuptools",
+					"version": "66.1.1-1+deb12u1"
+				},
+				{
+					"key": "python3-pkg-resources_66.1.1-1-p-deb12u1_amd64",
+					"name": "python3-pkg-resources",
+					"version": "66.1.1-1+deb12u1"
+				},
+				{
+					"key": "ca-certificates_20230311_amd64",
+					"name": "ca-certificates",
+					"version": "20230311"
+				},
+				{
+					"key": "debconf_1.5.82_amd64",
+					"name": "debconf",
+					"version": "1.5.82"
+				},
+				{
+					"key": "openssl_3.0.15-1_deb12u1_amd64",
+					"name": "openssl",
+					"version": "3.0.15-1~deb12u1"
+				}
+			],
+			"key": "python3-pip_23.0.1-p-dfsg-1_amd64",
+			"name": "python3-pip",
+			"sha256": "d8024ededc6c7fe941ca96aabebdcf2d846fd130eae9d66aad1aa32a84454291",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/p/python-pip/python3-pip_23.0.1+dfsg-1_all.deb"
+			],
+			"version": "23.0.1+dfsg-1"
+		},
+		{
+			"arch": "amd64",
+			"dependencies": [],
+			"key": "python3-wheel_0.38.4-2_amd64",
+			"name": "python3-wheel",
+			"sha256": "623a8f7c70ba713b0d8d5a321f157405861f0a0b1a652edad2cda5f70f5773f9",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/w/wheel/python3-wheel_0.38.4-2_all.deb"
+			],
+			"version": "0.38.4-2"
+		},
+		{
+			"arch": "amd64",
+			"dependencies": [],
+			"key": "python3-distutils_3.11.2-3_amd64",
+			"name": "python3-distutils",
+			"sha256": "a620b555f301860a08e30534c7e6f7d79818e5e1977bfec39a612e7003074318",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/p/python3-stdlib-extensions/python3-distutils_3.11.2-3_all.deb"
+			],
+			"version": "3.11.2-3"
+		},
+		{
+			"arch": "amd64",
+			"dependencies": [],
+			"key": "python3-lib2to3_3.11.2-3_amd64",
+			"name": "python3-lib2to3",
+			"sha256": "4e7f5e01e49a0622d10db3d0995666a6ead6a369cd127a996e9a4f9e91696a51",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/p/python3-stdlib-extensions/python3-lib2to3_3.11.2-3_all.deb"
+			],
+			"version": "3.11.2-3"
+		},
+		{
+			"arch": "amd64",
+			"dependencies": [],
+			"key": "python3-setuptools_66.1.1-1-p-deb12u1_amd64",
+			"name": "python3-setuptools",
+			"sha256": "880e4be142c2dc113afdf043cb8a471c331876a62850071605ddb908cb3be982",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/s/setuptools/python3-setuptools_66.1.1-1+deb12u1_all.deb"
+			],
+			"version": "66.1.1-1+deb12u1"
+		},
+		{
+			"arch": "amd64",
+			"dependencies": [],
+			"key": "python3-pkg-resources_66.1.1-1-p-deb12u1_amd64",
+			"name": "python3-pkg-resources",
+			"sha256": "17e3381df24e003d94395a393a3e29e29fb5d320b879fe5ba05a75babe7f4ef8",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/s/setuptools/python3-pkg-resources_66.1.1-1+deb12u1_all.deb"
+			],
+			"version": "66.1.1-1+deb12u1"
+		},
+		{
+			"arch": "arm64",
+			"dependencies": [
+				{
+					"key": "mawk_1.3.4.20200120-3.1_arm64",
+					"name": "mawk",
+					"version": "1.3.4.20200120-3.1"
+				},
+				{
+					"key": "libc6_2.36-9-p-deb12u10_arm64",
+					"name": "libc6",
+					"version": "2.36-9+deb12u10"
+				},
+				{
+					"key": "libgcc-s1_12.2.0-14_arm64",
+					"name": "libgcc-s1",
+					"version": "12.2.0-14"
+				},
+				{
+					"key": "gcc-12-base_12.2.0-14_arm64",
+					"name": "gcc-12-base",
+					"version": "12.2.0-14"
+				}
+			],
+			"key": "base-files_12.4-p-deb12u10_arm64",
+			"name": "base-files",
+			"sha256": "4c8effbc713228b8dffe2fcaf463e2e049470c80435e34abb22cacacda6f185e",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/b/base-files/base-files_12.4+deb12u10_arm64.deb"
+			],
+			"version": "12.4+deb12u10"
+		},
+		{
+			"arch": "arm64",
+			"dependencies": [],
+			"key": "mawk_1.3.4.20200120-3.1_arm64",
+			"name": "mawk",
+			"sha256": "af76445b28d3de5b9587b231893d5fc594a6eecdc842cc9a7f401f788cc0288f",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/m/mawk/mawk_1.3.4.20200120-3.1_arm64.deb"
+			],
+			"version": "1.3.4.20200120-3.1"
+		},
+		{
+			"arch": "arm64",
+			"dependencies": [],
+			"key": "libc6_2.36-9-p-deb12u10_arm64",
+			"name": "libc6",
+			"sha256": "9b25c7c2aaa9328b2cfd92b47cc48b24631bfdff0c61afe05cba937911fcf239",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/g/glibc/libc6_2.36-9+deb12u10_arm64.deb"
+			],
+			"version": "2.36-9+deb12u10"
+		},
+		{
+			"arch": "arm64",
+			"dependencies": [],
+			"key": "libgcc-s1_12.2.0-14_arm64",
+			"name": "libgcc-s1",
+			"sha256": "6fce2268d8f3152a4e84634f5a24133d3c62903b2f9b11b9c59235cbbc1b23a8",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/g/gcc-12/libgcc-s1_12.2.0-14_arm64.deb"
+			],
+			"version": "12.2.0-14"
+		},
+		{
+			"arch": "arm64",
+			"dependencies": [],
+			"key": "gcc-12-base_12.2.0-14_arm64",
+			"name": "gcc-12-base",
+			"sha256": "e1f2fb7212546c0e360af8df26303608f7b09e123ac9c96e15872d1ec1ce3275",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/g/gcc-12/gcc-12-base_12.2.0-14_arm64.deb"
+			],
+			"version": "12.2.0-14"
+		},
+		{
+			"arch": "arm64",
+			"dependencies": [],
+			"key": "netbase_6.4_arm64",
+			"name": "netbase",
+			"sha256": "29b23c48c0fe6f878e56c5ddc9f65d1c05d729360f3690a593a8c795031cd867",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/n/netbase/netbase_6.4_all.deb"
+			],
+			"version": "6.4"
+		},
+		{
+			"arch": "arm64",
+			"dependencies": [
+				{
+					"key": "debconf_1.5.82_arm64",
+					"name": "debconf",
+					"version": "1.5.82"
+				}
+			],
+			"key": "tzdata_2025b-0-p-deb12u1_arm64",
+			"name": "tzdata",
+			"sha256": "a17042cb951b80d0c9462a73dec6ad31fc6adeae4ed92209601dc97d1019d7f2",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/t/tzdata/tzdata_2025b-0+deb12u1_all.deb"
+			],
+			"version": "2025b-0+deb12u1"
+		},
+		{
+			"arch": "arm64",
+			"dependencies": [],
+			"key": "debconf_1.5.82_arm64",
+			"name": "debconf",
+			"sha256": "74ab14194a3762b2fc717917dcfda42929ab98e3c59295a063344dc551cd7cc8",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/d/debconf/debconf_1.5.82_all.deb"
+			],
+			"version": "1.5.82"
+		},
+		{
+			"arch": "arm64",
+			"dependencies": [],
+			"key": "media-types_10.0.0_arm64",
+			"name": "media-types",
+			"sha256": "aaa46dcb3b39948ae2e0fdb72cfcb2f48c0b59f19785a3da8045c05eb19955dd",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/m/media-types/media-types_10.0.0_all.deb"
+			],
+			"version": "10.0.0"
+		},
+		{
+			"arch": "arm64",
+			"dependencies": [
+				{
+					"key": "debconf_1.5.82_arm64",
+					"name": "debconf",
+					"version": "1.5.82"
+				},
+				{
+					"key": "openssl_3.0.15-1_deb12u1_arm64",
+					"name": "openssl",
+					"version": "3.0.15-1~deb12u1"
+				},
+				{
+					"key": "libssl3_3.0.15-1_deb12u1_arm64",
+					"name": "libssl3",
+					"version": "3.0.15-1~deb12u1"
+				},
+				{
+					"key": "libc6_2.36-9-p-deb12u10_arm64",
+					"name": "libc6",
+					"version": "2.36-9+deb12u10"
+				},
+				{
+					"key": "libgcc-s1_12.2.0-14_arm64",
+					"name": "libgcc-s1",
+					"version": "12.2.0-14"
+				},
+				{
+					"key": "gcc-12-base_12.2.0-14_arm64",
+					"name": "gcc-12-base",
+					"version": "12.2.0-14"
+				}
+			],
+			"key": "ca-certificates_20230311_arm64",
+			"name": "ca-certificates",
+			"sha256": "5308b9bd88eebe2a48be3168cb3d87677aaec5da9c63ad0cf561a29b8219115c",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/c/ca-certificates/ca-certificates_20230311_all.deb"
+			],
+			"version": "20230311"
+		},
+		{
+			"arch": "arm64",
+			"dependencies": [],
+			"key": "openssl_3.0.15-1_deb12u1_arm64",
+			"name": "openssl",
+			"sha256": "28d03482e8c550bd65930bd41af99bbc9bff1125474010ccec9024ceffc39744",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/o/openssl/openssl_3.0.15-1~deb12u1_arm64.deb"
+			],
+			"version": "3.0.15-1~deb12u1"
+		},
+		{
+			"arch": "arm64",
+			"dependencies": [],
+			"key": "libssl3_3.0.15-1_deb12u1_arm64",
+			"name": "libssl3",
+			"sha256": "468debe7aad7bd73592dcdbdab4d778558a4f538efd1b960f24e343fdbc0654d",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/o/openssl/libssl3_3.0.15-1~deb12u1_arm64.deb"
+			],
+			"version": "3.0.15-1~deb12u1"
+		},
+		{
+			"arch": "arm64",
+			"dependencies": [
+				{
+					"key": "libpython3-stdlib_3.11.2-1-p-b1_arm64",
+					"name": "libpython3-stdlib",
+					"version": "3.11.2-1+b1"
+				},
+				{
+					"key": "libpython3.11-stdlib_3.11.2-6-p-deb12u5_arm64",
+					"name": "libpython3.11-stdlib",
+					"version": "3.11.2-6+deb12u5"
+				},
+				{
+					"key": "libuuid1_2.38.1-5-p-deb12u3_arm64",
+					"name": "libuuid1",
+					"version": "2.38.1-5+deb12u3"
+				},
+				{
+					"key": "libc6_2.36-9-p-deb12u10_arm64",
+					"name": "libc6",
+					"version": "2.36-9+deb12u10"
+				},
+				{
+					"key": "libgcc-s1_12.2.0-14_arm64",
+					"name": "libgcc-s1",
+					"version": "12.2.0-14"
+				},
+				{
+					"key": "gcc-12-base_12.2.0-14_arm64",
+					"name": "gcc-12-base",
+					"version": "12.2.0-14"
+				},
+				{
+					"key": "libtirpc3_1.3.3-p-ds-1_arm64",
+					"name": "libtirpc3",
+					"version": "1.3.3+ds-1"
+				},
+				{
+					"key": "libtirpc-common_1.3.3-p-ds-1_arm64",
+					"name": "libtirpc-common",
+					"version": "1.3.3+ds-1"
+				},
+				{
+					"key": "libgssapi-krb5-2_1.20.1-2-p-deb12u2_arm64",
+					"name": "libgssapi-krb5-2",
+					"version": "1.20.1-2+deb12u2"
+				},
+				{
+					"key": "libkrb5support0_1.20.1-2-p-deb12u2_arm64",
+					"name": "libkrb5support0",
+					"version": "1.20.1-2+deb12u2"
+				},
+				{
+					"key": "libkrb5-3_1.20.1-2-p-deb12u2_arm64",
+					"name": "libkrb5-3",
+					"version": "1.20.1-2+deb12u2"
+				},
+				{
+					"key": "libssl3_3.0.15-1_deb12u1_arm64",
+					"name": "libssl3",
+					"version": "3.0.15-1~deb12u1"
+				},
+				{
+					"key": "libkeyutils1_1.6.3-2_arm64",
+					"name": "libkeyutils1",
+					"version": "1.6.3-2"
+				},
+				{
+					"key": "libk5crypto3_1.20.1-2-p-deb12u2_arm64",
+					"name": "libk5crypto3",
+					"version": "1.20.1-2+deb12u2"
+				},
+				{
+					"key": "libcom-err2_1.47.0-2_arm64",
+					"name": "libcom-err2",
+					"version": "1.47.0-2"
+				},
+				{
+					"key": "libtinfo6_6.4-4_arm64",
+					"name": "libtinfo6",
+					"version": "6.4-4"
+				},
+				{
+					"key": "libsqlite3-0_3.40.1-2-p-deb12u1_arm64",
+					"name": "libsqlite3-0",
+					"version": "3.40.1-2+deb12u1"
+				},
+				{
+					"key": "libreadline8_8.2-1.3_arm64",
+					"name": "libreadline8",
+					"version": "8.2-1.3"
+				},
+				{
+					"key": "readline-common_8.2-1.3_arm64",
+					"name": "readline-common",
+					"version": "8.2-1.3"
+				},
+				{
+					"key": "dpkg_1.21.22_arm64",
+					"name": "dpkg",
+					"version": "1.21.22"
+				},
+				{
+					"key": "tar_1.34-p-dfsg-1.2-p-deb12u1_arm64",
+					"name": "tar",
+					"version": "1.34+dfsg-1.2+deb12u1"
+				},
+				{
+					"key": "libselinux1_3.4-1-p-b6_arm64",
+					"name": "libselinux1",
+					"version": "3.4-1+b6"
+				},
+				{
+					"key": "libpcre2-8-0_10.42-1_arm64",
+					"name": "libpcre2-8-0",
+					"version": "10.42-1"
+				},
+				{
+					"key": "libacl1_2.3.1-3_arm64",
+					"name": "libacl1",
+					"version": "2.3.1-3"
+				},
+				{
+					"key": "zlib1g_1-1.2.13.dfsg-1_arm64",
+					"name": "zlib1g",
+					"version": "1:1.2.13.dfsg-1"
+				},
+				{
+					"key": "libzstd1_1.5.4-p-dfsg2-5_arm64",
+					"name": "libzstd1",
+					"version": "1.5.4+dfsg2-5"
+				},
+				{
+					"key": "libmd0_1.0.4-2_arm64",
+					"name": "libmd0",
+					"version": "1.0.4-2"
+				},
+				{
+					"key": "liblzma5_5.4.1-1_arm64",
+					"name": "liblzma5",
+					"version": "5.4.1-1"
+				},
+				{
+					"key": "libbz2-1.0_1.0.8-5-p-b1_arm64",
+					"name": "libbz2-1.0",
+					"version": "1.0.8-5+b1"
+				},
+				{
+					"key": "libnsl2_1.3.0-2_arm64",
+					"name": "libnsl2",
+					"version": "1.3.0-2"
+				},
+				{
+					"key": "libncursesw6_6.4-4_arm64",
+					"name": "libncursesw6",
+					"version": "6.4-4"
+				},
+				{
+					"key": "libffi8_3.4.4-1_arm64",
+					"name": "libffi8",
+					"version": "3.4.4-1"
+				},
+				{
+					"key": "libdb5.3_5.3.28-p-dfsg2-1_arm64",
+					"name": "libdb5.3",
+					"version": "5.3.28+dfsg2-1"
+				},
+				{
+					"key": "libcrypt1_1-4.4.33-2_arm64",
+					"name": "libcrypt1",
+					"version": "1:4.4.33-2"
+				},
+				{
+					"key": "media-types_10.0.0_arm64",
+					"name": "media-types",
+					"version": "10.0.0"
+				},
+				{
+					"key": "libpython3.11-minimal_3.11.2-6-p-deb12u5_arm64",
+					"name": "libpython3.11-minimal",
+					"version": "3.11.2-6+deb12u5"
+				},
+				{
+					"key": "python3.11_3.11.2-6-p-deb12u5_arm64",
+					"name": "python3.11",
+					"version": "3.11.2-6+deb12u5"
+				},
+				{
+					"key": "python3.11-minimal_3.11.2-6-p-deb12u5_arm64",
+					"name": "python3.11-minimal",
+					"version": "3.11.2-6+deb12u5"
+				},
+				{
+					"key": "libexpat1_2.5.0-1-p-deb12u1_arm64",
+					"name": "libexpat1",
+					"version": "2.5.0-1+deb12u1"
+				},
+				{
+					"key": "python3-minimal_3.11.2-1-p-b1_arm64",
+					"name": "python3-minimal",
+					"version": "3.11.2-1+b1"
+				}
+			],
+			"key": "python3_3.11.2-1-p-b1_arm64",
+			"name": "python3",
+			"sha256": "d31a6f8bdea49711f221baee0e27197c314d0cbe748c020262d32650aca5f017",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/p/python3-defaults/python3_3.11.2-1+b1_arm64.deb"
+			],
+			"version": "3.11.2-1+b1"
+		},
+		{
+			"arch": "arm64",
+			"dependencies": [],
+			"key": "libpython3-stdlib_3.11.2-1-p-b1_arm64",
+			"name": "libpython3-stdlib",
+			"sha256": "3ceea13a9d2eff6e850d47b4f03ebd0162acb2aa5646a84ccbe77783be104302",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/p/python3-defaults/libpython3-stdlib_3.11.2-1+b1_arm64.deb"
+			],
+			"version": "3.11.2-1+b1"
+		},
+		{
+			"arch": "arm64",
+			"dependencies": [],
+			"key": "libpython3.11-stdlib_3.11.2-6-p-deb12u5_arm64",
+			"name": "libpython3.11-stdlib",
+			"sha256": "b56748de9755febeb10f8b2eee68d0d3d477924acf14f989f93f65afcabec283",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/p/python3.11/libpython3.11-stdlib_3.11.2-6+deb12u5_arm64.deb"
+			],
+			"version": "3.11.2-6+deb12u5"
+		},
+		{
+			"arch": "arm64",
+			"dependencies": [],
+			"key": "libuuid1_2.38.1-5-p-deb12u3_arm64",
+			"name": "libuuid1",
+			"sha256": "3b2d19df0f3190108cf54228c4cfc822226c06d8f3615a5ab16a7dffb1f58aed",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/u/util-linux/libuuid1_2.38.1-5+deb12u3_arm64.deb"
+			],
+			"version": "2.38.1-5+deb12u3"
+		},
+		{
+			"arch": "arm64",
+			"dependencies": [],
+			"key": "libtirpc3_1.3.3-p-ds-1_arm64",
+			"name": "libtirpc3",
+			"sha256": "deaf9ea54f74cab6690b4bc0b427f05cbe62cc073580d84f5f18a8d9e2ece401",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/libt/libtirpc/libtirpc3_1.3.3+ds-1_arm64.deb"
+			],
+			"version": "1.3.3+ds-1"
+		},
+		{
+			"arch": "arm64",
+			"dependencies": [],
+			"key": "libtirpc-common_1.3.3-p-ds-1_arm64",
+			"name": "libtirpc-common",
+			"sha256": "3e3ef129b4bf61513144236e15e1b4ec57fa5ae3dc8a72137abdbefb7a63af85",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/libt/libtirpc/libtirpc-common_1.3.3+ds-1_all.deb"
+			],
+			"version": "1.3.3+ds-1"
+		},
+		{
+			"arch": "arm64",
+			"dependencies": [],
+			"key": "libgssapi-krb5-2_1.20.1-2-p-deb12u2_arm64",
+			"name": "libgssapi-krb5-2",
+			"sha256": "b45d45af61d01bc2ec9418de43a0cd68b335eac09dcedfa50b51a4886050d719",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian-security/20250501T203212Z/pool/updates/main/k/krb5/libgssapi-krb5-2_1.20.1-2+deb12u2_arm64.deb"
+			],
+			"version": "1.20.1-2+deb12u2"
+		},
+		{
+			"arch": "arm64",
+			"dependencies": [],
+			"key": "libkrb5support0_1.20.1-2-p-deb12u2_arm64",
+			"name": "libkrb5support0",
+			"sha256": "b07c71b63b6db1b8afff17cff9a9abb36a1a80272ccba71be6768f72b640d52e",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian-security/20250501T203212Z/pool/updates/main/k/krb5/libkrb5support0_1.20.1-2+deb12u2_arm64.deb"
+			],
+			"version": "1.20.1-2+deb12u2"
+		},
+		{
+			"arch": "arm64",
+			"dependencies": [],
+			"key": "libkrb5-3_1.20.1-2-p-deb12u2_arm64",
+			"name": "libkrb5-3",
+			"sha256": "5896a3ca948d7c287e2eaa19baeec7cd6873fd9cdebeeea7f4069420da028185",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian-security/20250501T203212Z/pool/updates/main/k/krb5/libkrb5-3_1.20.1-2+deb12u2_arm64.deb"
+			],
+			"version": "1.20.1-2+deb12u2"
+		},
+		{
+			"arch": "arm64",
+			"dependencies": [],
+			"key": "libkeyutils1_1.6.3-2_arm64",
+			"name": "libkeyutils1",
+			"sha256": "aac46cb6faec4e737502b3c2290b7b02f8ba04e8accd5af7fd07934df0c867b1",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/k/keyutils/libkeyutils1_1.6.3-2_arm64.deb"
+			],
+			"version": "1.6.3-2"
+		},
+		{
+			"arch": "arm64",
+			"dependencies": [],
+			"key": "libk5crypto3_1.20.1-2-p-deb12u2_arm64",
+			"name": "libk5crypto3",
+			"sha256": "e10046d423820bff3e7aa9fda0f9f1a5344c2c4222db3ac539a606165c8275b6",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian-security/20250501T203212Z/pool/updates/main/k/krb5/libk5crypto3_1.20.1-2+deb12u2_arm64.deb"
+			],
+			"version": "1.20.1-2+deb12u2"
+		},
+		{
+			"arch": "arm64",
+			"dependencies": [],
+			"key": "libcom-err2_1.47.0-2_arm64",
+			"name": "libcom-err2",
+			"sha256": "0bd07f2a030f9e0346a80bbdf211fe3a55835dda70ed0e9d9da23f0e24cf4e99",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/e/e2fsprogs/libcom-err2_1.47.0-2_arm64.deb"
+			],
+			"version": "1.47.0-2"
+		},
+		{
+			"arch": "arm64",
+			"dependencies": [],
+			"key": "libtinfo6_6.4-4_arm64",
+			"name": "libtinfo6",
+			"sha256": "baef0f6776f84c7eed4f1146d6e5774689567dad43216894d41da02e6608e4b3",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/n/ncurses/libtinfo6_6.4-4_arm64.deb"
+			],
+			"version": "6.4-4"
+		},
+		{
+			"arch": "arm64",
+			"dependencies": [],
+			"key": "libsqlite3-0_3.40.1-2-p-deb12u1_arm64",
+			"name": "libsqlite3-0",
+			"sha256": "9213f61ebb2f1a8cdea655fbd669c3abc049bcde5670f5acb51d684e1fadf659",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/s/sqlite3/libsqlite3-0_3.40.1-2+deb12u1_arm64.deb"
+			],
+			"version": "3.40.1-2+deb12u1"
+		},
+		{
+			"arch": "arm64",
+			"dependencies": [],
+			"key": "libreadline8_8.2-1.3_arm64",
+			"name": "libreadline8",
+			"sha256": "f3b162b7c1e05430607e792ebdbfc417cbd1f1d32cf83664133ae63d811a72d2",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/r/readline/libreadline8_8.2-1.3_arm64.deb"
+			],
+			"version": "8.2-1.3"
+		},
+		{
+			"arch": "arm64",
+			"dependencies": [],
+			"key": "readline-common_8.2-1.3_arm64",
+			"name": "readline-common",
+			"sha256": "69317523fe56429aa361545416ad339d138c1500e5a604856a80dd9074b4e35c",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/r/readline/readline-common_8.2-1.3_all.deb"
+			],
+			"version": "8.2-1.3"
+		},
+		{
+			"arch": "arm64",
+			"dependencies": [],
+			"key": "dpkg_1.21.22_arm64",
+			"name": "dpkg",
+			"sha256": "4775b5f27315054c6860f402d1ef74614090e61a4192ec9c63cec9c88a75f9c2",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/d/dpkg/dpkg_1.21.22_arm64.deb"
+			],
+			"version": "1.21.22"
+		},
+		{
+			"arch": "arm64",
+			"dependencies": [],
+			"key": "tar_1.34-p-dfsg-1.2-p-deb12u1_arm64",
+			"name": "tar",
+			"sha256": "04a945d4f24068f9d4c44294014ef5a33fc6179a57021978afc7d08358e13df3",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/t/tar/tar_1.34+dfsg-1.2+deb12u1_arm64.deb"
+			],
+			"version": "1.34+dfsg-1.2+deb12u1"
+		},
+		{
+			"arch": "arm64",
+			"dependencies": [],
+			"key": "libselinux1_3.4-1-p-b6_arm64",
+			"name": "libselinux1",
+			"sha256": "29201edf23ebae40844d6c289afdb9bba52f927d55096ed1b1cd37e040135edc",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/libs/libselinux/libselinux1_3.4-1+b6_arm64.deb"
+			],
+			"version": "3.4-1+b6"
+		},
+		{
+			"arch": "arm64",
+			"dependencies": [],
+			"key": "libpcre2-8-0_10.42-1_arm64",
+			"name": "libpcre2-8-0",
+			"sha256": "b2448d0a8a3db7fbeac231e7ef93811346c1fb5f96ccf6f631701d8a4eb39206",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/p/pcre2/libpcre2-8-0_10.42-1_arm64.deb"
+			],
+			"version": "10.42-1"
+		},
+		{
+			"arch": "arm64",
+			"dependencies": [],
+			"key": "libacl1_2.3.1-3_arm64",
+			"name": "libacl1",
+			"sha256": "2b0eef11a2e271e7355adaf1f6cbf8d2e83835ae1b6cf15165d59b8289c08342",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/a/acl/libacl1_2.3.1-3_arm64.deb"
+			],
+			"version": "2.3.1-3"
+		},
+		{
+			"arch": "arm64",
+			"dependencies": [],
+			"key": "zlib1g_1-1.2.13.dfsg-1_arm64",
+			"name": "zlib1g",
+			"sha256": "52b8b8a145bbe1956bba82034f77022cbef0c3d0885c9e32d9817a7932fe1913",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/z/zlib/zlib1g_1.2.13.dfsg-1_arm64.deb"
+			],
+			"version": "1:1.2.13.dfsg-1"
+		},
+		{
+			"arch": "arm64",
+			"dependencies": [],
+			"key": "libzstd1_1.5.4-p-dfsg2-5_arm64",
+			"name": "libzstd1",
+			"sha256": "95e173c9538f96ede4fc275ec7863f395a97dd0ea62454be9bc914efa1b9be93",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/libz/libzstd/libzstd1_1.5.4+dfsg2-5_arm64.deb"
+			],
+			"version": "1.5.4+dfsg2-5"
+		},
+		{
+			"arch": "arm64",
+			"dependencies": [],
+			"key": "libmd0_1.0.4-2_arm64",
+			"name": "libmd0",
+			"sha256": "99a8c7dd591fae9fb37d8bf8dfdffa850e207fa405b3198c5b24711a5f972381",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/libm/libmd/libmd0_1.0.4-2_arm64.deb"
+			],
+			"version": "1.0.4-2"
+		},
+		{
+			"arch": "arm64",
+			"dependencies": [],
+			"key": "liblzma5_5.4.1-1_arm64",
+			"name": "liblzma5",
+			"sha256": "3d9b12d3f93d08205335624c2238518911f7b1ce3355c630b433561b3ca25cd4",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian-security/20250501T203212Z/pool/updates/main/x/xz-utils/liblzma5_5.4.1-1_arm64.deb"
+			],
+			"version": "5.4.1-1"
+		},
+		{
+			"arch": "arm64",
+			"dependencies": [],
+			"key": "libbz2-1.0_1.0.8-5-p-b1_arm64",
+			"name": "libbz2-1.0",
+			"sha256": "d3a96ece03326498b39ff093a76800dfcbcb1d4049d6ae6e9f6fa1aa7a590ad6",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/b/bzip2/libbz2-1.0_1.0.8-5+b1_arm64.deb"
+			],
+			"version": "1.0.8-5+b1"
+		},
+		{
+			"arch": "arm64",
+			"dependencies": [],
+			"key": "libnsl2_1.3.0-2_arm64",
+			"name": "libnsl2",
+			"sha256": "8f9ba58b219779b43c4ccc78c79b0a23f721fc96323c202abb31e02f942104b3",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/libn/libnsl/libnsl2_1.3.0-2_arm64.deb"
+			],
+			"version": "1.3.0-2"
+		},
+		{
+			"arch": "arm64",
+			"dependencies": [],
+			"key": "libncursesw6_6.4-4_arm64",
+			"name": "libncursesw6",
+			"sha256": "cf32cb6751718872c6def448b82211eec494f688e2f1a3e6c71bfdaf6b0722c5",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/n/ncurses/libncursesw6_6.4-4_arm64.deb"
+			],
+			"version": "6.4-4"
+		},
+		{
+			"arch": "arm64",
+			"dependencies": [],
+			"key": "libffi8_3.4.4-1_arm64",
+			"name": "libffi8",
+			"sha256": "80b5c36177dc0e29d531c7eddbed3cc7355cb490e49f8cfa5959572d161f27b3",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/libf/libffi/libffi8_3.4.4-1_arm64.deb"
+			],
+			"version": "3.4.4-1"
+		},
+		{
+			"arch": "arm64",
+			"dependencies": [],
+			"key": "libdb5.3_5.3.28-p-dfsg2-1_arm64",
+			"name": "libdb5.3",
+			"sha256": "344367608d622298a3d916f4cee3dc3173286f3b21f8f497ab21e7178ba930f9",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/d/db5.3/libdb5.3_5.3.28+dfsg2-1_arm64.deb"
+			],
+			"version": "5.3.28+dfsg2-1"
+		},
+		{
+			"arch": "arm64",
+			"dependencies": [],
+			"key": "libcrypt1_1-4.4.33-2_arm64",
+			"name": "libcrypt1",
+			"sha256": "eea0ad76ea5eb507127fea0c291622ea4ecdbb71c4b9a8ed9c76ae33fc1a0127",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/libx/libxcrypt/libcrypt1_4.4.33-2_arm64.deb"
+			],
+			"version": "1:4.4.33-2"
+		},
+		{
+			"arch": "arm64",
+			"dependencies": [],
+			"key": "libpython3.11-minimal_3.11.2-6-p-deb12u5_arm64",
+			"name": "libpython3.11-minimal",
+			"sha256": "d4a703a1e2dbd4ff7d4f26357d2ab7d8042dc7b7b57a613a6363f2fd416eba63",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/p/python3.11/libpython3.11-minimal_3.11.2-6+deb12u5_arm64.deb"
+			],
+			"version": "3.11.2-6+deb12u5"
+		},
+		{
+			"arch": "arm64",
+			"dependencies": [],
+			"key": "python3.11_3.11.2-6-p-deb12u5_arm64",
+			"name": "python3.11",
+			"sha256": "68e005b289be8cdaa114a76b0904f33b69ff011dd41d7f2cbe7f3ddb92cfab8f",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/p/python3.11/python3.11_3.11.2-6+deb12u5_arm64.deb"
+			],
+			"version": "3.11.2-6+deb12u5"
+		},
+		{
+			"arch": "arm64",
+			"dependencies": [],
+			"key": "python3.11-minimal_3.11.2-6-p-deb12u5_arm64",
+			"name": "python3.11-minimal",
+			"sha256": "78d67a1816ed8ded9ca43828ace70512da560e02a0dac6c8c0a14859aa5847ec",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/p/python3.11/python3.11-minimal_3.11.2-6+deb12u5_arm64.deb"
+			],
+			"version": "3.11.2-6+deb12u5"
+		},
+		{
+			"arch": "arm64",
+			"dependencies": [],
+			"key": "libexpat1_2.5.0-1-p-deb12u1_arm64",
+			"name": "libexpat1",
+			"sha256": "01e2a9ebd2197b1466283723ee1795713de765a3c3cef29549e6136e4c77d65e",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian-security/20250501T203212Z/pool/updates/main/e/expat/libexpat1_2.5.0-1+deb12u1_arm64.deb"
+			],
+			"version": "2.5.0-1+deb12u1"
+		},
+		{
+			"arch": "arm64",
+			"dependencies": [],
+			"key": "python3-minimal_3.11.2-1-p-b1_arm64",
+			"name": "python3-minimal",
+			"sha256": "f01c94963ace8a6fec59300427c95fc4ac204d752567dd2e4b36ee930755110f",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/p/python3-defaults/python3-minimal_3.11.2-1+b1_arm64.deb"
+			],
+			"version": "3.11.2-1+b1"
+		},
+		{
+			"arch": "arm64",
+			"dependencies": [
+				{
+					"key": "python3_3.11.2-1-p-b1_arm64",
+					"name": "python3",
+					"version": "3.11.2-1+b1"
+				},
+				{
+					"key": "libpython3-stdlib_3.11.2-1-p-b1_arm64",
+					"name": "libpython3-stdlib",
+					"version": "3.11.2-1+b1"
+				},
+				{
+					"key": "libpython3.11-stdlib_3.11.2-6-p-deb12u5_arm64",
+					"name": "libpython3.11-stdlib",
+					"version": "3.11.2-6+deb12u5"
+				},
+				{
+					"key": "libuuid1_2.38.1-5-p-deb12u3_arm64",
+					"name": "libuuid1",
+					"version": "2.38.1-5+deb12u3"
+				},
+				{
+					"key": "libc6_2.36-9-p-deb12u10_arm64",
+					"name": "libc6",
+					"version": "2.36-9+deb12u10"
+				},
+				{
+					"key": "libgcc-s1_12.2.0-14_arm64",
+					"name": "libgcc-s1",
+					"version": "12.2.0-14"
+				},
+				{
+					"key": "gcc-12-base_12.2.0-14_arm64",
+					"name": "gcc-12-base",
+					"version": "12.2.0-14"
+				},
+				{
+					"key": "libtirpc3_1.3.3-p-ds-1_arm64",
+					"name": "libtirpc3",
+					"version": "1.3.3+ds-1"
+				},
+				{
+					"key": "libtirpc-common_1.3.3-p-ds-1_arm64",
+					"name": "libtirpc-common",
+					"version": "1.3.3+ds-1"
+				},
+				{
+					"key": "libgssapi-krb5-2_1.20.1-2-p-deb12u2_arm64",
+					"name": "libgssapi-krb5-2",
+					"version": "1.20.1-2+deb12u2"
+				},
+				{
+					"key": "libkrb5support0_1.20.1-2-p-deb12u2_arm64",
+					"name": "libkrb5support0",
+					"version": "1.20.1-2+deb12u2"
+				},
+				{
+					"key": "libkrb5-3_1.20.1-2-p-deb12u2_arm64",
+					"name": "libkrb5-3",
+					"version": "1.20.1-2+deb12u2"
+				},
+				{
+					"key": "libssl3_3.0.15-1_deb12u1_arm64",
+					"name": "libssl3",
+					"version": "3.0.15-1~deb12u1"
+				},
+				{
+					"key": "libkeyutils1_1.6.3-2_arm64",
+					"name": "libkeyutils1",
+					"version": "1.6.3-2"
+				},
+				{
+					"key": "libk5crypto3_1.20.1-2-p-deb12u2_arm64",
+					"name": "libk5crypto3",
+					"version": "1.20.1-2+deb12u2"
+				},
+				{
+					"key": "libcom-err2_1.47.0-2_arm64",
+					"name": "libcom-err2",
+					"version": "1.47.0-2"
+				},
+				{
+					"key": "libtinfo6_6.4-4_arm64",
+					"name": "libtinfo6",
+					"version": "6.4-4"
+				},
+				{
+					"key": "libsqlite3-0_3.40.1-2-p-deb12u1_arm64",
+					"name": "libsqlite3-0",
+					"version": "3.40.1-2+deb12u1"
+				},
+				{
+					"key": "libreadline8_8.2-1.3_arm64",
+					"name": "libreadline8",
+					"version": "8.2-1.3"
+				},
+				{
+					"key": "readline-common_8.2-1.3_arm64",
+					"name": "readline-common",
+					"version": "8.2-1.3"
+				},
+				{
+					"key": "dpkg_1.21.22_arm64",
+					"name": "dpkg",
+					"version": "1.21.22"
+				},
+				{
+					"key": "tar_1.34-p-dfsg-1.2-p-deb12u1_arm64",
+					"name": "tar",
+					"version": "1.34+dfsg-1.2+deb12u1"
+				},
+				{
+					"key": "libselinux1_3.4-1-p-b6_arm64",
+					"name": "libselinux1",
+					"version": "3.4-1+b6"
+				},
+				{
+					"key": "libpcre2-8-0_10.42-1_arm64",
+					"name": "libpcre2-8-0",
+					"version": "10.42-1"
+				},
+				{
+					"key": "libacl1_2.3.1-3_arm64",
+					"name": "libacl1",
+					"version": "2.3.1-3"
+				},
+				{
+					"key": "zlib1g_1-1.2.13.dfsg-1_arm64",
+					"name": "zlib1g",
+					"version": "1:1.2.13.dfsg-1"
+				},
+				{
+					"key": "libzstd1_1.5.4-p-dfsg2-5_arm64",
+					"name": "libzstd1",
+					"version": "1.5.4+dfsg2-5"
+				},
+				{
+					"key": "libmd0_1.0.4-2_arm64",
+					"name": "libmd0",
+					"version": "1.0.4-2"
+				},
+				{
+					"key": "liblzma5_5.4.1-1_arm64",
+					"name": "liblzma5",
+					"version": "5.4.1-1"
+				},
+				{
+					"key": "libbz2-1.0_1.0.8-5-p-b1_arm64",
+					"name": "libbz2-1.0",
+					"version": "1.0.8-5+b1"
+				},
+				{
+					"key": "libnsl2_1.3.0-2_arm64",
+					"name": "libnsl2",
+					"version": "1.3.0-2"
+				},
+				{
+					"key": "libncursesw6_6.4-4_arm64",
+					"name": "libncursesw6",
+					"version": "6.4-4"
+				},
+				{
+					"key": "libffi8_3.4.4-1_arm64",
+					"name": "libffi8",
+					"version": "3.4.4-1"
+				},
+				{
+					"key": "libdb5.3_5.3.28-p-dfsg2-1_arm64",
+					"name": "libdb5.3",
+					"version": "5.3.28+dfsg2-1"
+				},
+				{
+					"key": "libcrypt1_1-4.4.33-2_arm64",
+					"name": "libcrypt1",
+					"version": "1:4.4.33-2"
+				},
+				{
+					"key": "media-types_10.0.0_arm64",
+					"name": "media-types",
+					"version": "10.0.0"
+				},
+				{
+					"key": "libpython3.11-minimal_3.11.2-6-p-deb12u5_arm64",
+					"name": "libpython3.11-minimal",
+					"version": "3.11.2-6+deb12u5"
+				},
+				{
+					"key": "python3.11_3.11.2-6-p-deb12u5_arm64",
+					"name": "python3.11",
+					"version": "3.11.2-6+deb12u5"
+				},
+				{
+					"key": "python3.11-minimal_3.11.2-6-p-deb12u5_arm64",
+					"name": "python3.11-minimal",
+					"version": "3.11.2-6+deb12u5"
+				},
+				{
+					"key": "libexpat1_2.5.0-1-p-deb12u1_arm64",
+					"name": "libexpat1",
+					"version": "2.5.0-1+deb12u1"
+				},
+				{
+					"key": "python3-minimal_3.11.2-1-p-b1_arm64",
+					"name": "python3-minimal",
+					"version": "3.11.2-1+b1"
+				},
+				{
+					"key": "python3-wheel_0.38.4-2_arm64",
+					"name": "python3-wheel",
+					"version": "0.38.4-2"
+				},
+				{
+					"key": "python3-distutils_3.11.2-3_arm64",
+					"name": "python3-distutils",
+					"version": "3.11.2-3"
+				},
+				{
+					"key": "python3-lib2to3_3.11.2-3_arm64",
+					"name": "python3-lib2to3",
+					"version": "3.11.2-3"
+				},
+				{
+					"key": "python3-setuptools_66.1.1-1-p-deb12u1_arm64",
+					"name": "python3-setuptools",
+					"version": "66.1.1-1+deb12u1"
+				},
+				{
+					"key": "python3-pkg-resources_66.1.1-1-p-deb12u1_arm64",
+					"name": "python3-pkg-resources",
+					"version": "66.1.1-1+deb12u1"
+				},
+				{
+					"key": "ca-certificates_20230311_arm64",
+					"name": "ca-certificates",
+					"version": "20230311"
+				},
+				{
+					"key": "debconf_1.5.82_arm64",
+					"name": "debconf",
+					"version": "1.5.82"
+				},
+				{
+					"key": "openssl_3.0.15-1_deb12u1_arm64",
+					"name": "openssl",
+					"version": "3.0.15-1~deb12u1"
+				}
+			],
+			"key": "python3-pip_23.0.1-p-dfsg-1_arm64",
+			"name": "python3-pip",
+			"sha256": "d8024ededc6c7fe941ca96aabebdcf2d846fd130eae9d66aad1aa32a84454291",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/p/python-pip/python3-pip_23.0.1+dfsg-1_all.deb"
+			],
+			"version": "23.0.1+dfsg-1"
+		},
+		{
+			"arch": "arm64",
+			"dependencies": [],
+			"key": "python3-wheel_0.38.4-2_arm64",
+			"name": "python3-wheel",
+			"sha256": "623a8f7c70ba713b0d8d5a321f157405861f0a0b1a652edad2cda5f70f5773f9",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/w/wheel/python3-wheel_0.38.4-2_all.deb"
+			],
+			"version": "0.38.4-2"
+		},
+		{
+			"arch": "arm64",
+			"dependencies": [],
+			"key": "python3-distutils_3.11.2-3_arm64",
+			"name": "python3-distutils",
+			"sha256": "a620b555f301860a08e30534c7e6f7d79818e5e1977bfec39a612e7003074318",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/p/python3-stdlib-extensions/python3-distutils_3.11.2-3_all.deb"
+			],
+			"version": "3.11.2-3"
+		},
+		{
+			"arch": "arm64",
+			"dependencies": [],
+			"key": "python3-lib2to3_3.11.2-3_arm64",
+			"name": "python3-lib2to3",
+			"sha256": "4e7f5e01e49a0622d10db3d0995666a6ead6a369cd127a996e9a4f9e91696a51",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/p/python3-stdlib-extensions/python3-lib2to3_3.11.2-3_all.deb"
+			],
+			"version": "3.11.2-3"
+		},
+		{
+			"arch": "arm64",
+			"dependencies": [],
+			"key": "python3-setuptools_66.1.1-1-p-deb12u1_arm64",
+			"name": "python3-setuptools",
+			"sha256": "880e4be142c2dc113afdf043cb8a471c331876a62850071605ddb908cb3be982",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/s/setuptools/python3-setuptools_66.1.1-1+deb12u1_all.deb"
+			],
+			"version": "66.1.1-1+deb12u1"
+		},
+		{
+			"arch": "arm64",
+			"dependencies": [],
+			"key": "python3-pkg-resources_66.1.1-1-p-deb12u1_arm64",
+			"name": "python3-pkg-resources",
+			"sha256": "17e3381df24e003d94395a393a3e29e29fb5d320b879fe5ba05a75babe7f4ef8",
+			"urls": [
+				"https://snapshot.debian.org/archive/debian/20250501T203212Z/pool/main/s/setuptools/python3-pkg-resources_66.1.1-1+deb12u1_all.deb"
+			],
+			"version": "66.1.1-1+deb12u1"
+		}
+	],
+	"version": 1
+}
