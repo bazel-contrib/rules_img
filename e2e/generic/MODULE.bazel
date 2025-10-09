@@ -71,6 +71,6 @@ pull(
 # This relies on the default registry (index.docker.io) for compatibility with rules_oci.
 pull(
     name = "debian",
-    digest = "sha256:432f545c6ba13b79e2681f4cc4858788b0ab099fc1cca799cc0fae4687c69070",
+    digest = "sha256:fd8f5a1df07b5195613e4b9a0b6a947d3772a151b81975db27d47f093f60c6e6",
     repository = "debian",
 )
