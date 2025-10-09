@@ -35,7 +35,7 @@ pull = use_repo_rule("@rules_img//img:pull.bzl", "pull")
 
 pull(
     name = "distroless_cc",
-    digest = "sha256:d1b8e4c52be1111aa108e959ef2a822299bb70fd1819dd250871a2601ca1e4b6",
+    digest = "sha256:39db8a6e7ab24face1bd5e935a1785ec335517c141141f3bdcbecff28efded42",
     registry = "gcr.io",
     repository = "distroless/cc-debian12",
     tag = "nonroot",
