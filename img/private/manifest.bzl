@@ -13,9 +13,111 @@ load("//img/private/providers:oci_layout_settings_info.bzl", "OCILayoutSettingsI
 load("//img/private/providers:pull_info.bzl", "PullInfo")
 load("//img/private/providers:stamp_setting_info.bzl", "StampSettingInfo")
 
+# FSManifestInfo support
+load("@fsmanifestinfo//fsmanifest:defs.bzl", "FSManifestInfo")
+load("@fsmanifestinfo//fsmanifest:fsmanifestinfo.bzl", "fsmanifest")
+
 def _to_layer_arg(layer):
     """Convert a layer to a command line argument."""
     return layer.metadata.path
+
+def _expand_fsmanifest_to_layers(ctx, manifest, fsmanifest_idx, layer_order):
+    """Expand a single FSManifestInfo into multiple LayerInfo providers.
+
+    Args:
+        ctx: Rule context
+        manifest: FSManifestInfo provider to expand
+        fsmanifest_idx: Index of this FSManifest in the layers list (for naming)
+        layer_order: List of category names defining expansion order
+
+    Returns:
+        List of LayerInfo providers, one per category with entries
+    """
+    # Categorize entries by category
+    categorized = fsmanifest.categorize_by_layer(manifest)
+
+    # Determine actual expansion order (using dict as a set substitute)
+    categories_present = {cat: True for cat in categorized.keys()}
+    categories_ordered = []
+
+    for cat in layer_order:
+        if cat in categories_present:
+            categories_ordered.append(cat)
+
+    # Add remaining categories in sorted order
+    for cat in sorted(categories_present):
+        if cat not in categories_ordered:
+            categories_ordered.append(cat)
+
+    # Generate layers for each category
+    layer_infos = []
+
+    for category in categories_ordered:
+        # Skip "jdk" category - these files come from the base image
+        # (following rules_docker's approach of excluding JDK files)
+        if category == "jdk":
+            continue
+
+        entries = categorized.get(category, {})
+        if not entries:
+            continue
+
+        # Generate deterministic name for this layer
+        layer_name = "{}.fsm_{}.{}".format(ctx.label.name, fsmanifest_idx, category)
+
+        # Create tar file for this layer
+        layer_blob = ctx.actions.declare_file(layer_name + ".tar.gz")
+        layer_metadata = ctx.actions.declare_file(layer_name + "_metadata.json")
+
+        # Build args for img tool
+        args = ctx.actions.args()
+        args.add("layer")
+
+        # Collect input files
+        input_files = []
+
+        # Add file entries
+        for path in sorted(entries.keys()):
+            entry = entries[path]
+            if entry.kind == "symlink":
+                args.add("--symlink", "{}={}".format(path, entry.symlink_target))
+            elif entry.src:
+                input_files.append(entry.src)
+                args.add("--add", "{}={}".format(path, entry.src.path))
+
+        # Add compression settings
+        compression = "gzip"  # Default compression
+        args.add("--format", compression)
+
+        # Add annotations
+        annotations = {"io.rules_img.category": category}
+        for key, value in annotations.items():
+            args.add("--annotation", "{}={}".format(key, value))
+
+        args.add("--metadata", layer_metadata.path)
+        args.add(layer_blob.path)  # Output file as positional argument
+
+        # Run img tool
+        img_toolchain_info = ctx.toolchains[TOOLCHAIN].imgtoolchaininfo
+        ctx.actions.run(
+            inputs = input_files,
+            outputs = [layer_blob, layer_metadata],
+            executable = img_toolchain_info.tool_exe,
+            arguments = [args],
+            env = {"RULES_IMG": "1"},
+            mnemonic = "FSManifestLayer",
+            progress_message = "Creating layer {} from FSManifestInfo".format(layer_name),
+        )
+
+        # Create LayerInfo
+        layer_info = LayerInfo(
+            blob = layer_blob,
+            metadata = layer_metadata,
+        )
+
+        layer_infos.append(layer_info)
+
+    return layer_infos
 
 def _platform_matches(wanted_platform, manifest):
     """Check if the wanted platform matches the manifest platform."""
@@ -129,13 +231,30 @@ def _image_manifest_impl(ctx):
         args.add("--base-config", base.config.path)
     if ctx.attr.base != None and PullInfo in ctx.attr.base:
         providers.append(ctx.attr.base[PullInfo])
+
+    # Process layers with FSManifestInfo expansion
+    fsmanifest_idx = 0
     for (layer_idx, layer) in enumerate(ctx.attr.layers):
+        # Check for FSManifestInfo first
+        if FSManifestInfo in layer:
+            # Expand FSManifestInfo in place
+            layer_order = ctx.attr.fsmanifest_layer_order if hasattr(ctx.attr, "fsmanifest_layer_order") else ["runtime", "third_party", "app"]
+            expanded_layers = _expand_fsmanifest_to_layers(
+                ctx,
+                layer[FSManifestInfo],
+                fsmanifest_idx,
+                layer_order,
+            )
+            layers.extend(expanded_layers)
+            fsmanifest_idx += 1
+            continue
+
         if LayerInfo in layer:
             # Use pre-built layer metadata
             layers.append(layer[LayerInfo])
             continue
         elif DefaultInfo not in layer:
-            fail("layer {} needs to provide LayerInfo or DefaultInfo: {}".format(layer_idx, layer))
+            fail("layer {} needs to provide LayerInfo, FSManifestInfo, or DefaultInfo: {}".format(layer_idx, layer))
 
         # Calculate layer metadata on the fly
         default_info = layer[DefaultInfo]
@@ -305,8 +424,13 @@ Output groups:
             doc = "Base image to inherit layers from. Should provide ImageManifestInfo or ImageIndexInfo.",
         ),
         "layers": attr.label_list(
-            doc = "Layers to include in the image. Either a LayerInfo provider or a DefaultInfo with tar files.",
+            allow_files = True,
+            doc = """Layers to include in the image. Can be LayerInfo providers, FSManifestInfo providers (which expand in place), or tar files.""",
             cfg = normalize_layer_transition,
+        ),
+        "fsmanifest_layer_order": attr.string_list(
+            default = ["runtime", "third_party", "app"],
+            doc = "Category order used when expanding FSManifestInfo into multiple layers.",
         ),
         "platform": attr.string_dict(
             default = {},
