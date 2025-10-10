@@ -21,7 +21,7 @@ def _to_layer_arg(layer):
     """Convert a layer to a command line argument."""
     return layer.metadata.path
 
-def _expand_fsmanifest_to_layers(ctx, manifest, fsmanifest_idx, layer_order):
+def _expand_fsmanifest_to_layers(ctx, manifest, fsmanifest_idx, layer_order, allowlist, denylist):
     """Expand a single FSManifestInfo into multiple LayerInfo providers.
 
     Args:
@@ -29,12 +29,14 @@ def _expand_fsmanifest_to_layers(ctx, manifest, fsmanifest_idx, layer_order):
         manifest: FSManifestInfo provider to expand
         fsmanifest_idx: Index of this FSManifest in the layers list (for naming)
         layer_order: List of category names defining expansion order
+        allowlist: List of categories to include (or None/empty for all)
+        denylist: List of categories to exclude (or None/empty for none)
 
     Returns:
         List of LayerInfo providers, one per category with entries
     """
     # Categorize entries by category
-    categorized = fsmanifest.categorize_by_layer(manifest)
+    categorized = fsmanifest.categorize(manifest)
 
     # Determine actual expansion order (using dict as a set substitute)
     categories_present = {cat: True for cat in categorized.keys()}
@@ -53,10 +55,16 @@ def _expand_fsmanifest_to_layers(ctx, manifest, fsmanifest_idx, layer_order):
     layer_infos = []
 
     for category in categories_ordered:
-        # Skip "jdk" category - these files come from the base image
-        # (following rules_docker's approach of excluding JDK files)
-        if category == "jdk":
-            continue
+        # Apply allowlist/denylist filtering
+        if allowlist:
+            # If allowlist is set, only include categories in the allowlist
+            if category not in allowlist:
+                continue
+        elif denylist:
+            # If denylist is set, exclude categories in the denylist
+            if category in denylist:
+                continue
+        # If neither is set, include all categories
 
         entries = categorized.get(category, {})
         if not entries:
@@ -80,13 +88,15 @@ def _expand_fsmanifest_to_layers(ctx, manifest, fsmanifest_idx, layer_order):
         for path in sorted(entries.keys()):
             entry = entries[path]
             if entry.kind == "symlink":
-                args.add("--symlink", "{}={}".format(path, entry.symlink_target))
-            elif entry.src:
-                input_files.append(entry.src)
-                args.add("--add", "{}={}".format(path, entry.src.path))
+                args.add("--symlink", "{}={}".format(path, entry.target))
+            elif entry.kind == "file" and entry.target:
+                input_files.append(entry.target)
+                args.add("--add", "{}={}".format(path, entry.target.path))
+            else:
+                fail("Unsupported entry kind or missing target for path '{}'".format(path))
 
         # Add compression settings
-        compression = "gzip"  # Default compression
+        compression = "gzip"  # Default compression. TODO: make configurable
         args.add("--format", compression)
 
         # Add annotations
@@ -213,6 +223,10 @@ def _build_oci_layout(ctx, format, manifest_out, config_out, layers):
     return oci_layout_output
 
 def _image_manifest_impl(ctx):
+    # Validate that both allowlist and denylist aren't set
+    if ctx.attr.fsmanifest_category_allowlist and ctx.attr.fsmanifest_category_denylist:
+        fail("Cannot set both fsmanifest_category_allowlist and fsmanifest_category_denylist")
+
     inputs = []
     providers = []
     args = ctx.actions.args()
@@ -239,11 +253,15 @@ def _image_manifest_impl(ctx):
         if FSManifestInfo in layer:
             # Expand FSManifestInfo in place
             layer_order = ctx.attr.fsmanifest_layer_order if hasattr(ctx.attr, "fsmanifest_layer_order") else ["runtime", "third_party", "app"]
+            allowlist = ctx.attr.fsmanifest_category_allowlist if hasattr(ctx.attr, "fsmanifest_category_allowlist") else []
+            denylist = ctx.attr.fsmanifest_category_denylist if hasattr(ctx.attr, "fsmanifest_category_denylist") else []
             expanded_layers = _expand_fsmanifest_to_layers(
                 ctx,
                 layer[FSManifestInfo],
                 fsmanifest_idx,
                 layer_order,
+                allowlist,
+                denylist,
             )
             layers.extend(expanded_layers)
             fsmanifest_idx += 1
@@ -431,6 +449,16 @@ Output groups:
         "fsmanifest_layer_order": attr.string_list(
             default = ["runtime", "third_party", "app"],
             doc = "Category order used when expanding FSManifestInfo into multiple layers.",
+        ),
+        "fsmanifest_category_allowlist": attr.string_list(
+            doc = """Categories to include when expanding FSManifestInfo layers.
+
+If set, only these categories will be included. Cannot be used with fsmanifest_category_denylist.""",
+        ),
+        "fsmanifest_category_denylist": attr.string_list(
+            doc = """Categories to exclude when expanding FSManifestInfo layers.
+
+If set, these categories will be excluded and all others included. Cannot be used with fsmanifest_category_allowlist.""",
         ),
         "platform": attr.string_dict(
             default = {},
