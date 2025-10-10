@@ -1,6 +1,7 @@
 """Image rule for assembling OCI images based on a set of layers."""
 
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
+load("@fsmanifestinfo.bzl", "FSManifestInfo", "fsmanifest")
 load("//img/private:stamp.bzl", "expand_or_write")
 load("//img/private/common:build.bzl", "TOOLCHAIN", "TOOLCHAINS")
 load("//img/private/common:layer_helper.bzl", "allow_tar_files", "calculate_layer_info", "extension_to_compression")
@@ -12,10 +13,6 @@ load("//img/private/providers:manifest_info.bzl", "ImageManifestInfo")
 load("//img/private/providers:oci_layout_settings_info.bzl", "OCILayoutSettingsInfo")
 load("//img/private/providers:pull_info.bzl", "PullInfo")
 load("//img/private/providers:stamp_setting_info.bzl", "StampSettingInfo")
-
-# FSManifestInfo support
-load("@fsmanifestinfo//fsmanifest:defs.bzl", "FSManifestInfo")
-load("@fsmanifestinfo//fsmanifest:fsmanifestinfo.bzl", "fsmanifest")
 
 def _to_layer_arg(layer):
     """Convert a layer to a command line argument."""

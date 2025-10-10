@@ -6,7 +6,7 @@ module(
 
 bazel_dep(name = "bazel_skylib", version = "1.7.1")
 bazel_dep(name = "platforms", version = "0.0.11")
-bazel_dep(name = "fsmanifestinfo", version = "0.0.1")
+bazel_dep(name = "fsmanifestinfo.bzl", version = "0.0.1")
 bazel_dep(name = "rules_java", version = "8.16.1")
 
 prebuilt_img_tool = use_extension("@rules_img//img/private/prebuilt:prebuilt.bzl", "prebuilt_img_tool")
