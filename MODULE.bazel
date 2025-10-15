@@ -80,6 +80,14 @@ go_sdk = use_extension(
     dev_dependency = True,
 )
 go_sdk.download(version = "1.24.2")
+go_sdk.nogo(
+    includes = [
+        "@rules_img//:__subpackages__",
+        "@rules_img_pull_tool//:__subpackages__",
+        "@rules_img_tool//:__subpackages__",
+    ],
+    nogo = "//util:nogo",
+)
 
 toolchains = use_extension("@hermetic_cc_toolchain//toolchain:ext.bzl", "toolchains", dev_dependency = True)
 use_repo(toolchains, "zig_sdk")
