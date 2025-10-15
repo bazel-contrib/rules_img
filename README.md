@@ -152,8 +152,8 @@ image_manifest(
 
 # Combine into multi-platform index
 image_index(
-    name = "app",
-    manifests = [":app_amd"],
+    name = "multiarch_app",
+    manifests = [":app"],
     platforms = [
         "//:linux_amd64",
         "//:linux_arm64",
