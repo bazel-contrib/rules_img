@@ -116,7 +116,7 @@ Compose images in `BUILD.bazel`:
 load("@rules_img//img:layer.bzl", "image_layer")
 load("@rules_img//img:image.bzl", "image_manifest")
 
-# Create a layer from files
+# Create a layer from files...
 image_layer(
     name = "app_layer",
     srcs = {
@@ -126,11 +126,20 @@ image_layer(
     compress = "zstd",  # Use zstd compression (optional, uses global default otherwise)
 )
 
-# Build a container image
+# ... and a second layer (add as many as you need)
+image_layer(
+    name = "data_layer",
+    srcs = {"/data/logo.png": "@static_assets//:logo.png"},
+)
+
+# Build a container image:
+# This will contain all layers from base (if set) and the layers given in "layers" (in the specified order).
+# Try to put frequently changing layers last for better performance.
 image_manifest(
     name = "app_image",
     base = "@ubuntu", # Optional: build "from scratch" without base.
     layers = [
+        ":data_layer",
         ":app_layer",
     ],
     config_fragment = "config.json",  # Optional image configuration, uses sane defaults.
