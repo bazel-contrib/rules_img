@@ -14,7 +14,11 @@ func readParamFile(paramFile string) (addFiles, error) {
 	if err != nil {
 		return nil, fmt.Errorf("opening parameter file: %w", err)
 	}
-	defer file.Close()
+	defer func() {
+		if closeErr := file.Close(); closeErr != nil {
+			fmt.Fprintf(os.Stderr, "Error closing param file: %v\n", closeErr)
+		}
+	}()
 
 	scanner := bufio.NewScanner(file)
 
@@ -79,7 +83,11 @@ func readSymlinkParamFile(paramFile string) (symlinks, error) {
 	if err != nil {
 		return nil, fmt.Errorf("opening parameter file: %w", err)
 	}
-	defer file.Close()
+	defer func() {
+		if closeErr := file.Close(); closeErr != nil {
+			fmt.Fprintf(os.Stderr, "Error closing param file: %v\n", closeErr)
+		}
+	}()
 
 	scanner := bufio.NewScanner(file)
 

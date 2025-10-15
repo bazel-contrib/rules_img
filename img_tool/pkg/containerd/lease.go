@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"fmt"
 
 	api "github.com/containerd/containerd/api/services/leases/v1"
 )
@@ -20,7 +21,9 @@ type leaseService struct {
 
 func generateLeaseID() string {
 	b := make([]byte, 16)
-	rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		panic(fmt.Sprintf("failed to read random bytes: %v", err))
+	}
 	return "lease-" + hex.EncodeToString(b)
 }
 

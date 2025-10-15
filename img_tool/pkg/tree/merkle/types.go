@@ -2,6 +2,7 @@ package merkle
 
 import (
 	"encoding/binary"
+	"fmt"
 	"hash"
 	"io/fs"
 	"time"
@@ -76,21 +77,27 @@ type TreeHasher struct{}
 type metadataString string
 
 func (m metadataString) Fingerprint(h hash.Hash) {
-	binary.Write(h, binary.BigEndian, uint64(len(m)))
+	if err := binary.Write(h, binary.BigEndian, uint64(len(m))); err != nil {
+		panic(fmt.Sprintf("binary.Write failed: %v", err))
+	}
 	h.Write([]byte(m))
 }
 
 type metadataBytes []byte
 
 func (m metadataBytes) Fingerprint(h hash.Hash) {
-	binary.Write(h, binary.BigEndian, uint64(len(m)))
+	if err := binary.Write(h, binary.BigEndian, uint64(len(m))); err != nil {
+		panic(fmt.Sprintf("binary.Write failed: %v", err))
+	}
 	h.Write(m)
 }
 
 type metadataSlice[T fingerprintable] []T
 
 func (m metadataSlice[T]) Fingerprint(h hash.Hash) {
-	binary.Write(h, binary.BigEndian, uint64(len(m)))
+	if err := binary.Write(h, binary.BigEndian, uint64(len(m))); err != nil {
+		panic(fmt.Sprintf("binary.Write failed: %v", err))
+	}
 	for _, item := range m {
 		item.Fingerprint(h)
 	}
@@ -99,20 +106,20 @@ func (m metadataSlice[T]) Fingerprint(h hash.Hash) {
 type metadataSize int64
 
 func (m metadataSize) Fingerprint(h hash.Hash) {
-	binary.Write(h, binary.BigEndian, uint64(m))
+	_ = binary.Write(h, binary.BigEndian, uint64(m))
 }
 
 type metadataMode fs.FileMode
 
 func (m metadataMode) Fingerprint(h hash.Hash) {
-	binary.Write(h, binary.BigEndian, uint32(m))
+	_ = binary.Write(h, binary.BigEndian, uint32(m))
 }
 
 type metadataTime time.Time
 
 func (m metadataTime) Fingerprint(h hash.Hash) {
 	ts := time.Time(m).Unix()
-	binary.Write(h, binary.BigEndian, uint64(ts))
+	_ = binary.Write(h, binary.BigEndian, uint64(ts))
 }
 
 type fingerprintable interface {

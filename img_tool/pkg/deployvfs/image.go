@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"os"
 
 	registryv1 "github.com/malt3/go-containerregistry/pkg/v1"
 	registrytypes "github.com/malt3/go-containerregistry/pkg/v1/types"
@@ -27,7 +28,11 @@ func newImage(vfs *VFS, hash registryv1.Hash) (*image, error) {
 	if err != nil {
 		return nil, fmt.Errorf("opening image manifest: %w", err)
 	}
-	defer rawManifestFile.Close()
+	defer func() {
+		if closeErr := rawManifestFile.Close(); closeErr != nil {
+			fmt.Fprintf(os.Stderr, "Error closing manifest file: %v\n", closeErr)
+		}
+	}()
 
 	rawManifest, err := io.ReadAll(rawManifestFile)
 	if err != nil {
@@ -45,7 +50,11 @@ func newImage(vfs *VFS, hash registryv1.Hash) (*image, error) {
 	if err != nil {
 		return nil, fmt.Errorf("opening image config: %w", err)
 	}
-	defer rawConfigFile.Close()
+	defer func() {
+		if closeErr := rawConfigFile.Close(); closeErr != nil {
+			fmt.Fprintf(os.Stderr, "Error closing config file: %v\n", closeErr)
+		}
+	}()
 	rawConfig, err := io.ReadAll(rawConfigFile)
 	if err != nil {
 		return nil, fmt.Errorf("reading image config: %w", err)
@@ -115,8 +124,8 @@ func (img *image) LayerByDigest(digest registryv1.Hash) (registryv1.Layer, error
 }
 
 func (img *image) LayerByDiffID(diffID registryv1.Hash) (registryv1.Layer, error) {
-	for i, diffID := range img.configFile.RootFS.DiffIDs {
-		if diffID == diffID {
+	for i, d := range img.configFile.RootFS.DiffIDs {
+		if d == diffID {
 			return img.vfs.Layer(img.manifest.Layers[i].Digest)
 		}
 	}

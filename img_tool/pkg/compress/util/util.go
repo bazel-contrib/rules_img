@@ -52,7 +52,7 @@ func main() {
 		fmt.Printf("Error opening input file: %v\n", err)
 		os.Exit(1)
 	}
-	defer inputFile.Close()
+	defer func() { _ = inputFile.Close() }()
 
 	outputFileFlags := os.O_WRONLY | os.O_CREATE
 	if appendOutput {
@@ -65,7 +65,7 @@ func main() {
 		fmt.Printf("Error opening output file: %v\n", err)
 		os.Exit(1)
 	}
-	defer outputFile.Close()
+	defer func() { _ = outputFile.Close() }()
 
 	var state api.AppenderState
 	if stateIn != "" {
@@ -76,9 +76,11 @@ func main() {
 		}
 	}
 
-	fileInfo, err := outputFile.Stat()
-	if appendOutput && stateIn != "" && state.CompressedSize != fileInfo.Size() {
-		fmt.Printf("Warning: The output file size %d does not match the state file size %d. The state file may be invalid.\n", fileInfo.Size(), state.CompressedSize)
+	if appendOutput && stateIn != "" {
+		fileInfo, err := outputFile.Stat()
+		if err == nil && state.CompressedSize != fileInfo.Size() {
+			fmt.Printf("Warning: The output file size %d does not match the state file size %d. The state file may be invalid.\n", fileInfo.Size(), state.CompressedSize)
+		}
 	}
 
 	var opts []compress.Option
@@ -137,7 +139,11 @@ func writeStateToFile(filePath string, state api.AppenderState) error {
 	if err != nil {
 		return fmt.Errorf("creating state file: %w", err)
 	}
-	defer file.Close()
+	defer func() {
+		if closeErr := file.Close(); closeErr != nil {
+			fmt.Fprintf(os.Stderr, "Error closing state file: %v\n", closeErr)
+		}
+	}()
 
 	rawFile, err := state.MarshalBinary()
 	if err != nil {

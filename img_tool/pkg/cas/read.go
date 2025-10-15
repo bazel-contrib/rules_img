@@ -110,7 +110,7 @@ func (c *CAS) ReadBlob(ctx context.Context, digest Digest) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 	var buf bytes.Buffer
 	if _, err := io.Copy(&buf, stream); err != nil {
 		return nil, fmt.Errorf("failed to read blob: %w", err)

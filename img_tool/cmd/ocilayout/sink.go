@@ -121,7 +121,7 @@ func (t *TarSink) CopyFile(dstPath, srcPath string, useSymlinks bool) error {
 	if err != nil {
 		return fmt.Errorf("opening source file %s: %w", srcPath, err)
 	}
-	defer srcFile.Close()
+	defer func() { _ = srcFile.Close() }()
 
 	srcInfo, err := srcFile.Stat()
 	if err != nil {

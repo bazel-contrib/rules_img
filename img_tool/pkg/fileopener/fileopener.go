@@ -42,10 +42,10 @@ func LearnCompressionAlgorithm(r io.ReaderAt) (api.CompressionAlgorithm, error) 
 	if _, err := r.ReadAt(startMagic[:], 0); err != nil {
 		return "", err
 	}
-	if bytes.Compare(startMagic[:2], gzipMagic[:]) == 0 {
+	if bytes.Equal(startMagic[:2], gzipMagic[:]) {
 		return api.Gzip, nil
 	}
-	if bytes.Compare(startMagic[:4], zstdMagic[:]) == 0 {
+	if bytes.Equal(startMagic[:4], zstdMagic[:]) {
 		return api.Zstd, nil
 	}
 	return api.Uncompressed, nil
@@ -72,7 +72,7 @@ func LearnLayerFormat(r io.ReaderAt) (api.LayerFormat, error) {
 	if _, err := r.ReadAt(tarMagic[:], 257); err != nil {
 		return "", err
 	}
-	if bytes.Compare(tarMagic[:], tarMagicA[:]) == 0 || bytes.Compare(tarMagic[:], tarMagicB[:]) == 0 {
+	if bytes.Equal(tarMagic[:], tarMagicA[:]) || bytes.Equal(tarMagic[:], tarMagicB[:]) {
 		return api.TarLayer, nil
 	}
 	// Alternatively, check for end-of-archive marker of an empty tar file
@@ -81,7 +81,7 @@ func LearnLayerFormat(r io.ReaderAt) (api.LayerFormat, error) {
 	if err != nil {
 		return "", err
 	}
-	if n == 1024 && bytes.Compare(emptyTar[:], make([]byte, 1024)) == 0 {
+	if n == 1024 && bytes.Equal(emptyTar[:], make([]byte, 1024)) {
 		return api.TarLayer, nil
 	}
 	return "", fmt.Errorf("unknown file type")

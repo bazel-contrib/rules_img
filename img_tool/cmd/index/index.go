@@ -22,15 +22,15 @@ var (
 func IndexProcess(ctx context.Context, args []string) {
 	flagSet := flag.NewFlagSet("index", flag.ExitOnError)
 	flagSet.Usage = func() {
-		fmt.Fprintf(flagSet.Output(), "Creates an image index based on a list of manifests.\n\n")
-		fmt.Fprintf(flagSet.Output(), "Usage: img index [--manifest-descriptor descriptor] [output]\n")
+		_, _ = fmt.Fprintf(flagSet.Output(), "Creates an image index based on a list of manifests.\n\n")
+		_, _ = fmt.Fprintf(flagSet.Output(), "Usage: img index [--manifest-descriptor descriptor] [output]\n")
 		flagSet.PrintDefaults()
 		examples := []string{
 			"img index --manifest-descriptor image_linux_amd64.json --manifest-descriptor image_linux_aarch64.json index.json",
 		}
-		fmt.Fprintf(flagSet.Output(), "\nExamples:\n")
+		_, _ = fmt.Fprintf(flagSet.Output(), "\nExamples:\n")
 		for _, example := range examples {
-			fmt.Fprintf(flagSet.Output(), "  $ %s\n", example)
+			_, _ = fmt.Fprintf(flagSet.Output(), "  $ %s\n", example)
 		}
 		os.Exit(1)
 	}
@@ -109,7 +109,11 @@ func readConfigTemplates(filePath string) (*ConfigTemplates, error) {
 	if err != nil {
 		return nil, fmt.Errorf("opening config templates file: %w", err)
 	}
-	defer file.Close()
+	defer func() {
+		if err := file.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to close file: %v\n", err)
+		}
+	}()
 
 	var templates ConfigTemplates
 	if err := json.NewDecoder(file).Decode(&templates); err != nil {

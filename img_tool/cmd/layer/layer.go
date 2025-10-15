@@ -44,17 +44,17 @@ func LayerProcess(ctx context.Context, args []string) {
 
 	flagSet := flag.NewFlagSet("layer", flag.ExitOnError)
 	flagSet.Usage = func() {
-		fmt.Fprintf(flagSet.Output(), "Creates a compressed tar file which can be used as a container image layer while deduplicating the contents.\n\n")
-		fmt.Fprintf(flagSet.Output(), "Usage: img layer [OPTIONS] [output]\n")
+		_, _ = fmt.Fprintf(flagSet.Output(), "Creates a compressed tar file which can be used as a container image layer while deduplicating the contents.\n\n")
+		_, _ = fmt.Fprintf(flagSet.Output(), "Usage: img layer [OPTIONS] [output]\n")
 		flagSet.PrintDefaults()
 		examples := []string{
 			"img layer --add /etc/passwd=./passwd --executable /bin/myapp=./myapp layer.tgz",
 			"img layer --add-from-file param_file.txt layer.tgz",
 			"img layer --add --executable /bin/app=./app --runfiles ./app=runfiles_list.txt layer.tgz",
 		}
-		fmt.Fprintf(flagSet.Output(), "\nExamples:\n")
+		_, _ = fmt.Fprintf(flagSet.Output(), "\nExamples:\n")
 		for _, example := range examples {
-			fmt.Fprintf(flagSet.Output(), "  $ %s\n", example)
+			_, _ = fmt.Fprintf(flagSet.Output(), "  $ %s\n", example)
 		}
 		os.Exit(1)
 	}
@@ -120,7 +120,11 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 		fmt.Fprintf(os.Stderr, "Error opening output file: %v\n", err)
 		os.Exit(1)
 	}
-	defer outputFile.Close()
+	defer func() {
+		if err := outputFile.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to close output file: %v\n", err)
+		}
+	}()
 
 	// Parse layer metadata
 	layerMetadata, err := ParseLayerMetadata(defaultMetadataFlag, fileMetadataFlags)
@@ -182,7 +186,7 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 
 	casImporter := contentmanifest.NewMultiImporter(contentManifestInputFlags, api.SHA256)
 	if len(contentManifestCollection) > 0 {
-		casImporter.AddCollection(contentManifestCollection)
+		_ = casImporter.AddCollection(contentManifestCollection)
 	}
 
 	var casExporter api.CASStateExporter
@@ -208,7 +212,11 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 			fmt.Fprintf(os.Stderr, "Error opening metadata output file: %v\n", err)
 			os.Exit(1)
 		}
-		defer metadataOutputFile.Close()
+		defer func() {
+			if err := metadataOutputFile.Close(); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to close metadata output file: %v\n", err)
+			}
+		}()
 
 		if err := writeMetadata(layerName, compressionAlgorithm, estargzFlag, annotations, compressorState, metadataOutputFile); err != nil {
 			fmt.Fprintf(os.Stderr, "Writing metadata: %v\n", err)
@@ -225,7 +233,11 @@ func handleLayerState(
 	// Create shared digestfs with precaching
 	digestFS := digestfs.New(&tarcas.SHA256Helper{})
 	precacher := digestfs.NewPrecacher(digestFS, 4) // 4 workers as requested
-	defer precacher.Close()
+	defer func() {
+		if err := precacher.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to close precacher: %v\n", err)
+		}
+	}()
 
 	// Start precaching files in the background
 	startPrecaching(precacher, addFiles, addExecutables)

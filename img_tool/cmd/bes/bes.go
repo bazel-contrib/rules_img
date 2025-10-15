@@ -21,8 +21,6 @@ import (
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/serve/bes/syncer"
 )
 
-const usage = `Usage: bes [ARGS...]`
-
 func Run(ctx context.Context, args []string) {
 	var address string
 	var port int
@@ -32,17 +30,17 @@ func Run(ctx context.Context, args []string) {
 
 	flagSet := flag.NewFlagSet("bes", flag.ExitOnError)
 	flagSet.Usage = func() {
-		fmt.Fprintf(flagSet.Output(), "Serve a Build Event Service gRPC server\n\n")
-		fmt.Fprintf(flagSet.Output(), "Usage: bes [OPTIONS]\n")
+		_, _ = fmt.Fprintf(flagSet.Output(), "Serve a Build Event Service gRPC server\n\n")
+		_, _ = fmt.Fprintf(flagSet.Output(), "Usage: bes [OPTIONS]\n")
 		flagSet.PrintDefaults()
 		examples := []string{
 			"bes --cas-endpoint grpcs://remote.buildbuddy.io",
 			"bes --address 0.0.0.0 --port 9090 --cas-endpoint grpcs://remote.buildbuddy.io",
 			"bes --commit-mode per-stream --credential-helper tweag-credential-helper --cas-endpoint grpcs://remote.buildbuddy.io",
 		}
-		fmt.Fprintf(flagSet.Output(), "\nExamples:\n")
+		_, _ = fmt.Fprintf(flagSet.Output(), "\nExamples:\n")
 		for _, example := range examples {
-			fmt.Fprintf(flagSet.Output(), "  $ %s\n", example)
+			_, _ = fmt.Fprintf(flagSet.Output(), "  $ %s\n", example)
 		}
 		os.Exit(1)
 	}
@@ -53,7 +51,7 @@ func Run(ctx context.Context, args []string) {
 	flagSet.StringVar(&credentialHelperPath, "credential-helper", "", "Path to credential helper binary (optional, defaults to no helper)")
 
 	if err := flagSet.Parse(args[1:]); err != nil {
-		fmt.Fprintf(os.Stderr, err.Error())
+		fmt.Fprintf(os.Stderr, "Error: %s\n", err.Error())
 		flagSet.Usage()
 		os.Exit(1)
 	}
@@ -89,7 +87,11 @@ func Run(ctx context.Context, args []string) {
 	if err != nil {
 		log.Fatalf("Failed to create gRPC client connection to CAS: %v", err)
 	}
-	defer grpcClientConn.Close()
+	defer func() {
+		if err := grpcClientConn.Close(); err != nil {
+			log.Printf("Failed to close gRPC client connection: %v", err)
+		}
+	}()
 
 	casClient, err := cas.New(grpcClientConn, cas.WithLearnCapabilities(true))
 	if err != nil {

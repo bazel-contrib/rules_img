@@ -48,18 +48,6 @@ type blobWorkItem struct {
 	labels map[string]string
 }
 
-type manifestLoader struct {
-	manifest     *ManifestRequest
-	manifestData []byte
-}
-
-type indexLoader struct {
-	index     *IndexRequest
-	indexData []byte
-	ociIndex  *ocispec.Index
-	platforms []string
-}
-
 func ConnectToContainerd(ctx context.Context) (*containerd.Client, error) {
 	address, err := containerd.FindContainerdSocket()
 	if err != nil {
@@ -161,7 +149,11 @@ func storeBlob(ctx context.Context, store containerd.Store, desc ocispec.Descrip
 	if err != nil {
 		return fmt.Errorf("creating writer: %w", err)
 	}
-	defer writer.Close()
+	defer func() {
+		if closeErr := writer.Close(); closeErr != nil {
+			fmt.Fprintf(os.Stderr, "Error closing writer: %v\n", closeErr)
+		}
+	}()
 
 	bufferedWriter := bufio.NewWriter(writer)
 
@@ -169,7 +161,11 @@ func storeBlob(ctx context.Context, store containerd.Store, desc ocispec.Descrip
 	if err != nil {
 		return fmt.Errorf("getting reader for upload: %w", err)
 	}
-	defer reader.Close()
+	defer func() {
+		if closeErr := reader.Close(); closeErr != nil {
+			fmt.Fprintf(os.Stderr, "Error closing reader: %v\n", closeErr)
+		}
+	}()
 
 	if _, err := io.Copy(bufferedWriter, reader); err != nil {
 		return fmt.Errorf("copying data to writer: %w", err)
@@ -194,19 +190,6 @@ func storeBlob(ctx context.Context, store containerd.Store, desc ocispec.Descrip
 	}
 
 	return nil
-}
-
-func digest(data []byte) ocigodigest.Digest {
-	return ocigodigest.FromBytes(data)
-}
-
-func contains(slice []string, item string) bool {
-	for _, s := range slice {
-		if s == item {
-			return true
-		}
-	}
-	return false
 }
 
 func NormalizeDockerReference(ref string) string {

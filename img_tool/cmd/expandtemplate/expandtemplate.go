@@ -219,7 +219,7 @@ func readStampFile(path string, data buildSettings) error {
 	if err != nil {
 		return fmt.Errorf("opening stamp file: %w", err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {

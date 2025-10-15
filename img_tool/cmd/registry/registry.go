@@ -25,8 +25,6 @@ import (
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/serve/registry/upstream"
 )
 
-const usage = `Usage: registry [ARGS...]`
-
 func Run(ctx context.Context, args []string) {
 	var registryAddress string
 	var httpPort int
@@ -43,16 +41,16 @@ func Run(ctx context.Context, args []string) {
 
 	flagSet := flag.NewFlagSet("registry", flag.ExitOnError)
 	flagSet.Usage = func() {
-		fmt.Fprintf(flagSet.Output(), "Serve a container registry\n\n")
-		fmt.Fprintf(flagSet.Output(), "Usage: registry [OPTIONS]\n")
+		_, _ = fmt.Fprintf(flagSet.Output(), "Serve a container registry\n\n")
+		_, _ = fmt.Fprintf(flagSet.Output(), "Usage: registry [OPTIONS]\n")
 		flagSet.PrintDefaults()
 		examples := []string{
 			"registry --address 0.0.0.0 --port 8080",
 			"registry --blob-store s3 --blob-store reapi",
 		}
-		fmt.Fprintf(flagSet.Output(), "\nExamples:\n")
+		_, _ = fmt.Fprintf(flagSet.Output(), "\nExamples:\n")
 		for _, example := range examples {
-			fmt.Fprintf(flagSet.Output(), "  $ %s\n", example)
+			_, _ = fmt.Fprintf(flagSet.Output(), "  $ %s\n", example)
 		}
 		os.Exit(1)
 	}
@@ -70,7 +68,7 @@ func Run(ctx context.Context, args []string) {
 	flagSet.StringVar(&credentialHelperPath, "credential-helper", "", "Path to credential helper binary (optional, defaults to no helper)")
 
 	if err := flagSet.Parse(args[1:]); err != nil {
-		fmt.Fprintf(os.Stderr, err.Error())
+		fmt.Fprintf(os.Stderr, "%s\n", err.Error())
 		flagSet.Usage()
 		os.Exit(1)
 	}
@@ -149,7 +147,7 @@ func Run(ctx context.Context, args []string) {
 	}
 	var blobWriter combined.Writer
 	if wantREAPI {
-		var reapiUpstream combined.Handler = combined.NewCombinedBlobStore(blobSizeCache, nil /* writer */, nonREAPIStores...).(combined.Handler)
+		var reapiUpstream = combined.NewCombinedBlobStore(blobSizeCache, nil /* writer */, nonREAPIStores...).(combined.Handler)
 		reapiStore, err := reapi.New(reapiUpstream, grpcClientConn, blobSizeCache)
 		if err != nil {
 			log.Fatalf("Failed to create REAPI blob store: %v", err)

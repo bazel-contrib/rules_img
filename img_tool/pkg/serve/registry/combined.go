@@ -6,7 +6,6 @@ import (
 	"io"
 
 	"github.com/malt3/go-containerregistry/pkg/registry"
-	registryv1 "github.com/malt3/go-containerregistry/pkg/v1"
 	v1 "github.com/malt3/go-containerregistry/pkg/v1"
 )
 
@@ -24,7 +23,7 @@ func NewCombinedBlobStore(sizeCache *BlobSizeCache, writer Writer, blobStores ..
 	}
 }
 
-func (c *combinedBlobStore) Get(ctx context.Context, repo string, hash registryv1.Hash) (io.ReadCloser, error) {
+func (c *combinedBlobStore) Get(ctx context.Context, repo string, hash v1.Hash) (io.ReadCloser, error) {
 	for _, store := range c.blobStores {
 		reader, err := store.Get(ctx, repo, hash)
 		if err == nil {
@@ -43,7 +42,7 @@ func (c *combinedBlobStore) Get(ctx context.Context, repo string, hash registryv
 	return nil, registry.ErrNotFound
 }
 
-func (c *combinedBlobStore) Stat(ctx context.Context, repo string, hash registryv1.Hash) (int64, error) {
+func (c *combinedBlobStore) Stat(ctx context.Context, repo string, hash v1.Hash) (int64, error) {
 	for _, store := range c.blobStores {
 		size, err := store.Stat(ctx, repo, hash)
 		if err == nil {

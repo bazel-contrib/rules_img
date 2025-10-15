@@ -2,7 +2,9 @@ package contentmanifest
 
 import (
 	"bufio"
+	"fmt"
 	"iter"
+	"os"
 
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/api"
 )
@@ -30,7 +32,11 @@ func (i *MultiImporter) AddCollection(collectionPath string) error {
 	if err != nil {
 		return err
 	}
-	defer collection.Close()
+	defer func() {
+		if closeErr := collection.Close(); closeErr != nil {
+			fmt.Fprintf(os.Stderr, "Error closing collection file: %v\n", closeErr)
+		}
+	}()
 
 	scanner := bufio.NewScanner(collection)
 	for scanner.Scan() {

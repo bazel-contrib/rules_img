@@ -23,16 +23,16 @@ func DownloadBlobProcess(ctx context.Context, args []string) {
 
 	flagSet := flag.NewFlagSet("download-blob", flag.ExitOnError)
 	flagSet.Usage = func() {
-		fmt.Fprintf(flagSet.Output(), "Downloads a single blob from a container registry.\n\n")
-		fmt.Fprintf(flagSet.Output(), "Usage: img download-blob [OPTIONS]\n")
+		_, _ = fmt.Fprintf(flagSet.Output(), "Downloads a single blob from a container registry.\n\n")
+		_, _ = fmt.Fprintf(flagSet.Output(), "Usage: img download-blob [OPTIONS]\n")
 		flagSet.PrintDefaults()
 		examples := []string{
 			"img download-blob --digest sha256:abc123... --repository myapp --output blob.tar.gz",
 			"img download-blob --digest sha256:abc123... --repository myapp --registry docker.io --output blob.tar.gz",
 		}
-		fmt.Fprintf(flagSet.Output(), "\nExamples:\n")
+		_, _ = fmt.Fprintf(flagSet.Output(), "\nExamples:\n")
 		for _, example := range examples {
-			fmt.Fprintf(flagSet.Output(), "  $ %s\n", example)
+			_, _ = fmt.Fprintf(flagSet.Output(), "  $ %s\n", example)
 		}
 	}
 
@@ -114,13 +114,21 @@ func downloadFromRegistry(registry, repository, digest, outputPath string) error
 	if err != nil {
 		return fmt.Errorf("opening output file: %w", err)
 	}
-	defer outputFile.Close()
+	defer func() {
+		if err := outputFile.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to close output file: %v\n", err)
+		}
+	}()
 
 	rc, err := layer.Compressed()
 	if err != nil {
 		return fmt.Errorf("getting compressed layer: %w", err)
 	}
-	defer rc.Close()
+	defer func() {
+		if err := rc.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to close compressed reader: %v\n", err)
+		}
+	}()
 
 	_, err = io.Copy(outputFile, rc)
 	if err != nil {

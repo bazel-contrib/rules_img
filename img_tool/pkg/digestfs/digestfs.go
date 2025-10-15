@@ -129,13 +129,13 @@ func (fs *FileSystem) OpenFile(path string) (DigestFile, error) {
 
 	realPath, err := fs.cacheKey(path)
 	if err != nil {
-		file.Close()
+		_ = file.Close()
 		return nil, fmt.Errorf("failed to resolve real path for %s: %w", path, err)
 	}
 
 	stat, err := fs.getStat(realPath, file)
 	if err != nil {
-		file.Close()
+		_ = file.Close()
 		return nil, fmt.Errorf("failed to stat file %s: %w", realPath, err)
 	}
 
@@ -265,7 +265,7 @@ func (f *cachedDigestFile) calculateDigest() ([]byte, error) {
 	if _, err := f.file.Seek(0, io.SeekStart); err != nil {
 		return nil, err
 	}
-	defer f.file.Seek(currentPos, io.SeekStart)
+	defer func() { _, _ = f.file.Seek(currentPos, io.SeekStart) }()
 
 	// Calculate digest
 	h := f.fs.hashProvider.New()

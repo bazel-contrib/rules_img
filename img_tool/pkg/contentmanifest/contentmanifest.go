@@ -34,7 +34,6 @@ func (f *fileManifest) BlobHashes() iter.Seq2[[]byte, error] {
 	if err != nil {
 		return func(yield func([]byte, error) bool) {
 			yield(nil, err)
-			return
 		}
 	}
 
@@ -43,27 +42,23 @@ func (f *fileManifest) BlobHashes() iter.Seq2[[]byte, error] {
 	if _, err := io.ReadFull(r, rawHeader); err != nil {
 		return func(yield func([]byte, error) bool) {
 			yield(nil, err)
-			return
 		}
 	}
 	header, err := parseHeader([maxHeaderSize]byte(rawHeader))
 	if err != nil {
 		return func(yield func([]byte, error) bool) {
 			yield(nil, err)
-			return
 		}
 	}
 	expectMagic := fmt.Sprintf("%s+%s", magicPrefix, f.algorithm)
 	if header.magic != expectMagic {
 		return func(yield func([]byte, error) bool) {
 			yield(nil, fmt.Errorf("invalid content manifest: expected magic %s, but got %s", expectMagic, header.magic))
-			return
 		}
 	}
 	if header.sizeBlobs == 0 {
 		return func(yield func([]byte, error) bool) {
 			yield(nil, nil)
-			return
 		}
 	}
 
@@ -71,13 +66,11 @@ func (f *fileManifest) BlobHashes() iter.Seq2[[]byte, error] {
 	if !ok {
 		return func(yield func([]byte, error) bool) {
 			yield(nil, errors.New("contenmanifest source file doesn't support random access"))
-			return
 		}
 	}
 	if _, err := blobReader.Seek(header.offsetBlobs, io.SeekStart); err != nil {
 		return func(yield func([]byte, error) bool) {
 			yield(nil, err)
-			return
 		}
 	}
 
@@ -90,7 +83,6 @@ func (f *fileManifest) NodeHashes() iter.Seq2[[]byte, error] {
 	if err != nil {
 		return func(yield func([]byte, error) bool) {
 			yield(nil, err)
-			return
 		}
 	}
 
@@ -99,27 +91,23 @@ func (f *fileManifest) NodeHashes() iter.Seq2[[]byte, error] {
 	if _, err := io.ReadFull(r, rawHeader); err != nil {
 		return func(yield func([]byte, error) bool) {
 			yield(nil, err)
-			return
 		}
 	}
 	header, err := parseHeader([maxHeaderSize]byte(rawHeader))
 	if err != nil {
 		return func(yield func([]byte, error) bool) {
 			yield(nil, err)
-			return
 		}
 	}
 	expectMagic := fmt.Sprintf("%s+%s", magicPrefix, f.algorithm)
 	if header.magic != expectMagic {
 		return func(yield func([]byte, error) bool) {
 			yield(nil, fmt.Errorf("invalid content manifest: expected magic %s, but got %s", expectMagic, header.magic))
-			return
 		}
 	}
 	if header.sizeNodes == 0 {
 		return func(yield func([]byte, error) bool) {
 			yield(nil, nil)
-			return
 		}
 	}
 
@@ -127,13 +115,11 @@ func (f *fileManifest) NodeHashes() iter.Seq2[[]byte, error] {
 	if !ok {
 		return func(yield func([]byte, error) bool) {
 			yield(nil, errors.New("contenmanifest source file doesn't support random access"))
-			return
 		}
 	}
 	if _, err := nodeReader.Seek(header.offsetNodes, io.SeekStart); err != nil {
 		return func(yield func([]byte, error) bool) {
 			yield(nil, err)
-			return
 		}
 	}
 	return f.readHashes(newHashReader(nodeReader, header.sizeNodes))
@@ -145,7 +131,6 @@ func (f *fileManifest) TreeHashes() iter.Seq2[[]byte, error] {
 	if err != nil {
 		return func(yield func([]byte, error) bool) {
 			yield(nil, err)
-			return
 		}
 	}
 
@@ -154,27 +139,23 @@ func (f *fileManifest) TreeHashes() iter.Seq2[[]byte, error] {
 	if _, err := io.ReadFull(r, rawHeader); err != nil {
 		return func(yield func([]byte, error) bool) {
 			yield(nil, err)
-			return
 		}
 	}
 	header, err := parseHeader([maxHeaderSize]byte(rawHeader))
 	if err != nil {
 		return func(yield func([]byte, error) bool) {
 			yield(nil, err)
-			return
 		}
 	}
 	expectMagic := fmt.Sprintf("%s+%s", magicPrefix, f.algorithm)
 	if header.magic != expectMagic {
 		return func(yield func([]byte, error) bool) {
 			yield(nil, fmt.Errorf("invalid content manifest: expected magic %s, but got %s", expectMagic, header.magic))
-			return
 		}
 	}
 	if header.sizeTrees == 0 {
 		return func(yield func([]byte, error) bool) {
 			yield(nil, nil)
-			return
 		}
 	}
 
@@ -182,13 +163,11 @@ func (f *fileManifest) TreeHashes() iter.Seq2[[]byte, error] {
 	if !ok {
 		return func(yield func([]byte, error) bool) {
 			yield(nil, errors.New("contenmanifest source file doesn't support random access"))
-			return
 		}
 	}
 	if _, err := treeReader.Seek(header.offsetTrees, io.SeekStart); err != nil {
 		return func(yield func([]byte, error) bool) {
 			yield(nil, err)
-			return
 		}
 	}
 	return f.readHashes(newHashReader(treeReader, header.sizeTrees))
@@ -200,7 +179,11 @@ func (f *fileManifest) Export(state api.CASStateSupplier) error {
 	if err != nil {
 		return err
 	}
-	defer w.Close()
+	defer func() {
+		if closeErr := w.Close(); closeErr != nil {
+			fmt.Fprintf(os.Stderr, "Error closing manifest file: %v\n", closeErr)
+		}
+	}()
 
 	randomAccessWriter, ok := w.(randomAccessWriter)
 	if !ok {
@@ -268,7 +251,7 @@ func (f *fileManifest) exportInto(w randomAccessWriter, state api.CASStateSuppli
 	offset += copy(header[offset:], binary.BigEndian.AppendUint64(nil, uint64(sizeNodes)))
 	offset += copy(header[offset:], []byte{typeTree})
 	offset += copy(header[offset:], binary.BigEndian.AppendUint64(nil, uint64(offsetTrees)))
-	offset += copy(header[offset:], binary.BigEndian.AppendUint64(nil, uint64(sizeTrees)))
+	_ = copy(header[offset:], binary.BigEndian.AppendUint64(nil, uint64(sizeTrees)))
 
 	_, err = w.Write(header)
 	return err
@@ -297,7 +280,11 @@ func (f *fileManifest) exportHashes(w io.Writer, hashes iter.Seq2[[]byte, error]
 
 func (f *fileManifest) readHashes(r io.ReadCloser) iter.Seq2[[]byte, error] {
 	return func(yield func([]byte, error) bool) {
-		defer r.Close()
+		defer func() {
+			if closeErr := r.Close(); closeErr != nil {
+				fmt.Fprintf(os.Stderr, "Error closing reader: %v\n", closeErr)
+			}
+		}()
 		hashSize := f.algorithm.Len()
 		bufferedReader := bufio.NewReader(r)
 		// Let's allocate a fresh byte slice for each hash.

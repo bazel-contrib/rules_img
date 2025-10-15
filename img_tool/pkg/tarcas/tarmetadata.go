@@ -10,12 +10,6 @@ import (
 	"time"
 )
 
-func hash32(h hash.Hash, i uint32) {
-	var encoded [4]byte
-	binary.BigEndian.PutUint32(encoded[:], i)
-	h.Write(encoded[:])
-}
-
 func hash64(h hash.Hash, i uint64) {
 	var encoded [8]byte
 	binary.BigEndian.PutUint64(encoded[:], i)
@@ -59,7 +53,6 @@ func cloneTarHeader(th *tar.Header) tar.Header {
 		ChangeTime: th.ChangeTime,
 		Devmajor:   th.Devmajor,
 		Devminor:   th.Devminor,
-		Xattrs:     maps.Clone(th.Xattrs),
 		PAXRecords: maps.Clone(th.PAXRecords),
 		Format:     th.Format,
 	}
@@ -86,15 +79,6 @@ func normalizeTarHeader(th *tar.Header) {
 		th.Devmajor = 0
 		th.Devminor = 0
 	}
-	if len(th.Xattrs) > 0 {
-		if th.PAXRecords == nil {
-			th.PAXRecords = make(map[string]string)
-		}
-		for k, v := range th.Xattrs {
-			th.PAXRecords["SCHILY.xattr."+k] = v
-		}
-		th.Xattrs = nil
-	}
 }
 
 func hashTarHeader(h hash.Hash, th tar.Header) {
@@ -115,7 +99,6 @@ func hashTarHeader(h hash.Hash, th tar.Header) {
 	hash64(h, uint64(th.ChangeTime.Unix()))
 	hash64(h, uint64(th.Devmajor))
 	hash64(h, uint64(th.Devminor))
-	hashMapStrStr(h, th.Xattrs)
 	hashMapStrStr(h, th.PAXRecords)
 	hash64(h, uint64(th.Format))
 }
@@ -152,7 +135,7 @@ func isBlobTarHeader(hdr *tar.Header) bool {
 	if hdr.Devmajor != 0 || hdr.Devminor != 0 {
 		return false
 	}
-	if hdr.Xattrs != nil || hdr.PAXRecords != nil {
+	if hdr.PAXRecords != nil {
 		return false
 	}
 	return true

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/malt3/go-containerregistry/pkg/name"
@@ -42,7 +43,9 @@ func (h *UpstreamBlobHandler) Get(ctx context.Context, repo string, hash registr
 		return nil, fmt.Errorf("getting layer: %w", err)
 	}
 	if transport.redirectTarget != "" {
-		reader.Close()
+		if closeErr := reader.Close(); closeErr != nil {
+			fmt.Fprintf(os.Stderr, "Error closing reader: %v\n", closeErr)
+		}
 		return nil, registry.RedirectError{
 			Location: transport.redirectTarget,
 			Code:     http.StatusFound,

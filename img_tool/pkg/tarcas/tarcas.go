@@ -9,6 +9,7 @@ import (
 	"io"
 	"io/fs"
 	"iter"
+	"os"
 	"path"
 	"strings"
 
@@ -18,7 +19,6 @@ import (
 )
 
 type CAS[HM hashHelper] struct {
-	buf           bytes.Buffer
 	deferredFiles []*tar.Header
 	tarAppender   api.TarAppender
 	hashOrder     [][]byte
@@ -93,7 +93,9 @@ func (c *CAS[HM]) writeHeaderAndData(hdr *tar.Header, data io.Reader) error {
 		}
 		return c.tarAppender.AppendTar(paddedreader)
 	} else {
-		tw.Flush()
+		if err := tw.Flush(); err != nil {
+			return err
+		}
 		return c.tarAppender.AppendTar(bytes.NewReader(buf.Bytes()))
 	}
 }
@@ -170,7 +172,11 @@ func (c *CAS[HM]) WriteRegularFromPath(hdr *tar.Header, filePath string) error {
 	if err != nil {
 		return err
 	}
-	defer df.Close()
+	defer func() {
+		if closeErr := df.Close(); closeErr != nil {
+			fmt.Fprintf(os.Stderr, "Error closing file: %v\n", closeErr)
+		}
+	}()
 
 	return c.writeHeaderOrDefer(hdr, df)
 }
@@ -184,7 +190,11 @@ func (c *CAS[HM]) WriteRegularFromPathDeduplicated(hdr *tar.Header, filePath str
 	if err != nil {
 		return err
 	}
-	defer df.Close()
+	defer func() {
+		if closeErr := df.Close(); closeErr != nil {
+			fmt.Fprintf(os.Stderr, "Error closing file: %v\n", closeErr)
+		}
+	}()
 
 	// Get digest and size efficiently from digestFS
 	hash, err := df.Digest()
@@ -358,7 +368,11 @@ func (c *CAS[HM]) StoreFileFromPath(filePath string) (string, []byte, int64, err
 	if err != nil {
 		return "", nil, 0, err
 	}
-	defer df.Close()
+	defer func() {
+		if closeErr := df.Close(); closeErr != nil {
+			fmt.Fprintf(os.Stderr, "Error closing file: %v\n", closeErr)
+		}
+	}()
 
 	hash, err := df.Digest()
 	if err != nil {
@@ -379,7 +393,7 @@ func (c *CAS[HM]) StoreNodeFromPath(filePath string, hdr *tar.Header) (linkPath 
 	if err != nil {
 		return "", nil, 0, err
 	}
-	defer df.Close()
+	defer func() { _ = df.Close() }()
 
 	hash, err := df.Digest()
 	if err != nil {
@@ -437,7 +451,11 @@ func (c *CAS[HM]) StoreTreeKnownHash(fsys fs.FS, treeHash []byte) (linkPath stri
 		if err != nil {
 			return fmt.Errorf("opening file %s: %w", p, err)
 		}
-		defer f.Close()
+		defer func() {
+			if closeErr := f.Close(); closeErr != nil {
+				fmt.Fprintf(os.Stderr, "Error closing file: %v\n", closeErr)
+			}
+		}()
 		linkName, _, _, err := c.Store(f)
 		if err != nil {
 			return fmt.Errorf("storing file %s: %w", p, err)
@@ -575,5 +593,3 @@ func (p *paddedReader) Read(b []byte) (int, error) {
 
 	return n, err
 }
-
-var zeroBlock [512]byte

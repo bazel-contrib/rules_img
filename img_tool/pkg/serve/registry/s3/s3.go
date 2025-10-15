@@ -110,7 +110,7 @@ func (h *S3BlobHandler) ensureCached(ctx context.Context, bucket, key string) (c
 	output, err := h.s3Client.HeadObject(ctx, input)
 	if err != nil {
 		var responseError *awshttp.ResponseError
-		if errors.As(err, &responseError) && responseError.ResponseError.HTTPStatusCode() == http.StatusNotFound {
+		if errors.As(err, &responseError) && responseError.HTTPStatusCode() == http.StatusNotFound {
 			return cacheEntry{}, registry.ErrNotFound
 		}
 		return cacheEntry{}, err

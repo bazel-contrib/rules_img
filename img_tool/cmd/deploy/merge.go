@@ -18,15 +18,15 @@ var (
 func DeployMergeProcess(ctx context.Context, args []string) {
 	flagSet := flag.NewFlagSet("deploy-merge", flag.ExitOnError)
 	flagSet.Usage = func() {
-		fmt.Fprintf(flagSet.Output(), "Merges multiple deploy manifests into a single unified deployment.\n\n")
-		fmt.Fprintf(flagSet.Output(), "Usage: img deploy-merge [flags] [input1.json] [input2.json] ... [output.json]\n")
+		_, _ = fmt.Fprintf(flagSet.Output(), "Merges multiple deploy manifests into a single unified deployment.\n\n")
+		_, _ = fmt.Fprintf(flagSet.Output(), "Usage: img deploy-merge [flags] [input1.json] [input2.json] ... [output.json]\n")
 		flagSet.PrintDefaults()
 		examples := []string{
 			"img deploy-merge --push-strategy=lazy --load-strategy=eager push1.json push2.json load1.json merged.json",
 		}
-		fmt.Fprintf(flagSet.Output(), "\nExamples:\n")
+		_, _ = fmt.Fprintf(flagSet.Output(), "\nExamples:\n")
 		for _, example := range examples {
-			fmt.Fprintf(flagSet.Output(), "  $ %s\n", example)
+			_, _ = fmt.Fprintf(flagSet.Output(), "  $ %s\n", example)
 		}
 		os.Exit(1)
 	}

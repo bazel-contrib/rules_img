@@ -24,16 +24,16 @@ func NewSHA256CASWithDigestFS(appender api.TarAppender, digestFS *digestfs.FileS
 }
 
 func CASFactory(hashAlgorithm string, appender api.TarAppender, options ...Option) (api.TarCAS, error) {
-	switch {
-	case hashAlgorithm == "sha256":
+	switch hashAlgorithm {
+	case "sha256":
 		return NewSHA256CAS(appender, options...), nil
 	}
 	return nil, errors.New("unsupported hash algorithm")
 }
 
 func CASFactoryWithDigestFS(hashAlgorithm string, appender api.TarAppender, digestFS *digestfs.FileSystem, options ...Option) (api.TarCAS, error) {
-	switch {
-	case hashAlgorithm == "sha256":
+	switch hashAlgorithm {
+	case "sha256":
 		return NewSHA256CASWithDigestFS(appender, digestFS, options...), nil
 	}
 	return nil, errors.New("unsupported hash algorithm")

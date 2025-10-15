@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"os"
 
 	registryv1 "github.com/malt3/go-containerregistry/pkg/v1"
 	registrytypes "github.com/malt3/go-containerregistry/pkg/v1/types"
@@ -25,7 +26,11 @@ func newIndex(vfs *VFS, hash registryv1.Hash) (*index, error) {
 	if err != nil {
 		return nil, fmt.Errorf("opening index manifest: %w", err)
 	}
-	defer rawManifestFile.Close()
+	defer func() {
+		if closeErr := rawManifestFile.Close(); closeErr != nil {
+			fmt.Fprintf(os.Stderr, "Error closing manifest file: %v\n", closeErr)
+		}
+	}()
 
 	rawManifest, err := io.ReadAll(rawManifestFile)
 	if err != nil {

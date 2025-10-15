@@ -121,7 +121,11 @@ func (t *TarSink) CopyFile(dstPath, srcPath string, useSymlinks bool) error {
 	if err != nil {
 		return fmt.Errorf("opening source file %s: %w", srcPath, err)
 	}
-	defer srcFile.Close()
+	defer func() {
+		if closeErr := srcFile.Close(); closeErr != nil {
+			fmt.Fprintf(os.Stderr, "Error closing source file: %v\n", closeErr)
+		}
+	}()
 
 	srcInfo, err := srcFile.Stat()
 	if err != nil {
@@ -185,13 +189,21 @@ func copyFile(src, dst string, useSymlinks bool) error {
 	if err != nil {
 		return err
 	}
-	defer srcFile.Close()
+	defer func() {
+		if closeErr := srcFile.Close(); closeErr != nil {
+			fmt.Fprintf(os.Stderr, "Error closing source file: %v\n", closeErr)
+		}
+	}()
 
 	dstFile, err := os.Create(dst)
 	if err != nil {
 		return err
 	}
-	defer dstFile.Close()
+	defer func() {
+		if closeErr := dstFile.Close(); closeErr != nil {
+			fmt.Fprintf(os.Stderr, "Error closing destination file: %v\n", closeErr)
+		}
+	}()
 
 	_, err = io.Copy(dstFile, srcFile)
 	return err

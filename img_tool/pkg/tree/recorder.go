@@ -47,7 +47,7 @@ func (r Recorder) ImportTar(tarFile string) error {
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	input, err := fileopener.CompressionReader(file)
 	if err != nil {
@@ -88,7 +88,7 @@ func (r Recorder) RegularFileFromPath(filePath, target string) error {
 	if err != nil {
 		return fmt.Errorf("opening file %s: %w", filePath, err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	fInfo, err := file.Stat()
 	if err != nil {
@@ -221,14 +221,20 @@ func (r Recorder) Executable(binaryPath, target string, accessor runfilesSupplie
 				}
 				info, err := f.Stat()
 				if err != nil {
-					f.Close()
+					if closeErr := f.Close(); closeErr != nil {
+						fmt.Fprintf(os.Stderr, "Error closing file: %v\n", closeErr)
+					}
 					return err
 				}
 				if err := r.RegularFile(f, info, path.Join(target+".runfiles", p)); err != nil {
-					f.Close()
+					if closeErr := f.Close(); closeErr != nil {
+						fmt.Fprintf(os.Stderr, "Error closing file: %v\n", closeErr)
+					}
 					return err
 				}
-				f.Close()
+				if closeErr := f.Close(); closeErr != nil {
+					fmt.Fprintf(os.Stderr, "Error closing file: %v\n", closeErr)
+				}
 			}
 		case api.Directory:
 			fsys, err := node.Tree()

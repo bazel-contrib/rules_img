@@ -12,13 +12,12 @@ import (
 	"github.com/malt3/go-containerregistry/pkg/v1/remote"
 
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/api"
-	"github.com/bazel-contrib/rules_img/img_tool/pkg/proto/blobcache"
 	blobcache_proto "github.com/bazel-contrib/rules_img/img_tool/pkg/proto/blobcache"
 	remoteexecution_proto "github.com/bazel-contrib/rules_img/img_tool/pkg/proto/remote-apis/build/bazel/remote/execution/v2"
 )
 
 type builder struct {
-	blobcacheClient    blobcache.BlobsClient
+	blobcacheClient    blobcache_proto.BlobsClient
 	vfs                vfs
 	overrideRegistry   string
 	overrideRepository string
@@ -30,7 +29,7 @@ func NewBuilder(vfs vfs) *builder {
 	return &builder{vfs: vfs}
 }
 
-func (b *builder) WithBlobcacheClient(client blobcache.BlobsClient) *builder {
+func (b *builder) WithBlobcacheClient(client blobcache_proto.BlobsClient) *builder {
 	b.blobcacheClient = client
 	return b
 }
@@ -67,7 +66,7 @@ func (b *builder) Build() *uploader {
 }
 
 type uploader struct {
-	blobcacheClient    blobcache.BlobsClient
+	blobcacheClient    blobcache_proto.BlobsClient
 	vfs                vfs
 	overrideRegistry   string
 	overrideRepository string

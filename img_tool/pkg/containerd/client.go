@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"time"
 
 	contentapi "github.com/containerd/containerd/api/services/content/v1"
 	imagesapi "github.com/containerd/containerd/api/services/images/v1"
@@ -36,13 +35,9 @@ func New(address string) (*Client, error) {
 		return net.Dial("unix", addr)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	conn, err := grpc.DialContext(ctx, address,
+	conn, err := grpc.NewClient(address,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithContextDialer(dialer),
-		grpc.WithBlock(),
 		grpc.WithUnaryInterceptor(namespaceInterceptor),
 		grpc.WithStreamInterceptor(namespaceStreamInterceptor),
 	)

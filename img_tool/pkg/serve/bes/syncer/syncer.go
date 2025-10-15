@@ -198,8 +198,8 @@ func (s *Syncer) Commit(ctx context.Context, digest string, sizeBytes int64) err
 func (s *Syncer) commitOne(ctx context.Context, pushOp api.IndexedPushDeployOperation) error {
 	// Parse base reference without tag for digest-based push
 	baseReference := fmt.Sprintf("%s/%s",
-		pushOp.PushTarget.Registry,
-		pushOp.PushTarget.Repository)
+		pushOp.Registry,
+		pushOp.Repository)
 
 	ref, err := name.NewRepository(baseReference)
 	if err != nil {
@@ -227,7 +227,7 @@ func (s *Syncer) commitOne(ctx context.Context, pushOp api.IndexedPushDeployOper
 	}
 
 	needsTagging := false
-	for _, tag := range pushOp.PushTarget.Tags {
+	for _, tag := range pushOp.Tags {
 		tagKey := makeTagKey(ref, tag)
 		s.tagMutex.RLock()
 		cachedDigest, exists := s.uploadedTags[tagKey]
@@ -253,7 +253,7 @@ func (s *Syncer) commitOne(ctx context.Context, pushOp api.IndexedPushDeployOper
 		return fmt.Errorf("failed to get descriptor for digest %s: %w", rootBlob.Digest, err)
 	}
 
-	for _, tag := range pushOp.PushTarget.Tags {
+	for _, tag := range pushOp.Tags {
 		tagKey := makeTagKey(ref, tag)
 
 		// Check if tag already points to the correct digest
@@ -925,7 +925,7 @@ func (l *casLayer) MediaType() (types.MediaType, error) {
 }
 
 func (l *casLayer) Compressed() (io.ReadCloser, error) {
-	return nil, errors.New("Layers should never be requested here, we already uploaded them.")
+	return nil, errors.New("layers should never be requested here, we already uploaded them")
 }
 
 func (l *casLayer) Uncompressed() (io.ReadCloser, error) {

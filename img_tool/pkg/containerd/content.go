@@ -253,7 +253,9 @@ func (w *contentWriter) Truncate(size int64) error {
 
 func generateContentWriteRef() string {
 	b := make([]byte, 16)
-	rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		panic(fmt.Sprintf("failed to read random bytes: %v", err))
+	}
 	return "write-" + hex.EncodeToString(b)
 }
 

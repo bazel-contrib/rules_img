@@ -64,7 +64,7 @@ func (c *CAS) streamUploadOne(ctx context.Context, digest Digest, r io.Reader) e
 	for !eof {
 		n, err := r.Read(buf)
 		if err != nil && err != io.EOF {
-			stream.CloseSend()
+			_ = stream.CloseSend()
 			return fmt.Errorf("reading blob data: %w", err)
 		}
 		if err == io.EOF {
@@ -77,7 +77,7 @@ func (c *CAS) streamUploadOne(ctx context.Context, digest Digest, r io.Reader) e
 			FinishWrite:  eof || last,
 			Data:         buf[:n],
 		}); err != nil {
-			stream.CloseSend()
+			_ = stream.CloseSend()
 			if err == io.EOF {
 				eof = true
 			} else {

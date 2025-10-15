@@ -81,7 +81,7 @@ func (p *Precacher) precacheFile(path string) {
 		// Ignore errors - precaching is optional
 		return
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	cachedDigestFile := file.(*cachedDigestFile)
 	if err := cachedDigestFile.precache(); err != nil {

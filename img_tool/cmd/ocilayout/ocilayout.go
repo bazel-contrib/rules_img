@@ -51,16 +51,16 @@ func OCILayoutProcess(ctx context.Context, args []string) {
 
 	flagSet := flag.NewFlagSet("oci-layout", flag.ExitOnError)
 	flagSet.Usage = func() {
-		fmt.Fprintf(flagSet.Output(), "Assembles an OCI layout directory from manifest/index and layers.\n\n")
-		fmt.Fprintf(flagSet.Output(), "Usage: img oci-layout [OPTIONS]\n")
+		_, _ = fmt.Fprintf(flagSet.Output(), "Assembles an OCI layout directory from manifest/index and layers.\n\n")
+		_, _ = fmt.Fprintf(flagSet.Output(), "Usage: img oci-layout [OPTIONS]\n")
 		flagSet.PrintDefaults()
 		examples := []string{
 			"img oci-layout --manifest manifest.json --config config.json --layer layer1_meta.json=layer1.tar.gz --output oci-layout",
 			"img oci-layout --index index.json --manifest-path m1.json --config-path c1.json --layer l1_meta.json=l1.tar.gz --output oci-layout",
 		}
-		fmt.Fprintf(flagSet.Output(), "\nExamples:\n")
+		_, _ = fmt.Fprintf(flagSet.Output(), "\nExamples:\n")
 		for _, example := range examples {
-			fmt.Fprintf(flagSet.Output(), "  $ %s\n", example)
+			_, _ = fmt.Fprintf(flagSet.Output(), "  $ %s\n", example)
 		}
 	}
 
@@ -150,7 +150,11 @@ func assembleOCILayout(manifestPath, configPath, outputPath, format string, laye
 	if err != nil {
 		return err
 	}
-	defer sink.Close()
+	defer func() {
+		if err := sink.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to close sink: %v\n", err)
+		}
+	}()
 
 	if err := setupOCILayoutWithSink(sink); err != nil {
 		return err
@@ -247,13 +251,13 @@ func copyFile(src, dst string, useSymlinks bool) error {
 	if err != nil {
 		return err
 	}
-	defer srcFile.Close()
+	defer func() { _ = srcFile.Close() }()
 
 	dstFile, err := os.Create(dst)
 	if err != nil {
 		return err
 	}
-	defer dstFile.Close()
+	defer func() { _ = dstFile.Close() }()
 
 	_, err = io.Copy(dstFile, srcFile)
 	return err
@@ -269,7 +273,11 @@ func assembleOCILayoutWithIndex(indexPath, outputPath, format string, manifestPa
 	if err != nil {
 		return err
 	}
-	defer sink.Close()
+	defer func() {
+		if err := sink.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to close sink: %v\n", err)
+		}
+	}()
 
 	if err := setupOCILayoutWithSink(sink); err != nil {
 		return err
@@ -338,18 +346,6 @@ func assembleOCILayoutWithIndex(indexPath, outputPath, format string, manifestPa
 	return sink.CopyFile("index.json", indexPath, false)
 }
 
-func setupOCILayout(outputDir string) error {
-	blobsDir := filepath.Join(outputDir, "blobs", "sha256")
-	if err := os.MkdirAll(blobsDir, 0755); err != nil {
-		return fmt.Errorf("creating blobs directory: %w", err)
-	}
-
-	ociLayout := map[string]string{
-		"imageLayoutVersion": OCILayoutVersion,
-	}
-	return writeJSON(filepath.Join(outputDir, "oci-layout"), ociLayout)
-}
-
 func setupOCILayoutWithSink(sink OCILayoutSink) error {
 	if err := sink.CreateDir("blobs"); err != nil {
 		return fmt.Errorf("creating blobs directory: %w", err)
@@ -364,30 +360,12 @@ func setupOCILayoutWithSink(sink OCILayoutSink) error {
 	return writeJSONWithSink(sink, "oci-layout", ociLayout)
 }
 
-func writeJSON(path string, v interface{}) error {
-	data, err := json.MarshalIndent(v, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshaling %s: %w", path, err)
-	}
-	return os.WriteFile(path, data, 0644)
-}
-
 func writeJSONWithSink(sink OCILayoutSink, path string, v interface{}) error {
 	data, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshaling %s: %w", path, err)
 	}
 	return sink.WriteFile(path, data, 0644)
-}
-
-func copyBlobs(blobs blobMap, blobsDir string, useSymlinks bool) error {
-	for digest, srcPath := range blobs {
-		dstPath := filepath.Join(blobsDir, digest)
-		if err := copyFile(srcPath, dstPath, useSymlinks); err != nil {
-			return fmt.Errorf("copying blob %s: %w", digest, err)
-		}
-	}
-	return nil
 }
 
 func copyBlobsWithSink(sink OCILayoutSink, blobs blobMap, useSymlinks bool) error {

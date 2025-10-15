@@ -33,16 +33,16 @@ var (
 func DeployMetadataProcess(ctx context.Context, args []string) {
 	flagSet := flag.NewFlagSet("deploy-metadata", flag.ExitOnError)
 	flagSet.Usage = func() {
-		fmt.Fprintf(flagSet.Output(), "Writes metadata about a push/load operation.\n\n")
-		fmt.Fprintf(flagSet.Output(), "Usage: img deploy-metadata [flags] [output]\n")
+		_, _ = fmt.Fprintf(flagSet.Output(), "Writes metadata about a push/load operation.\n\n")
+		_, _ = fmt.Fprintf(flagSet.Output(), "Usage: img deploy-metadata [flags] [output]\n")
 		flagSet.PrintDefaults()
 		examples := []string{
 			"img deploy-metadata --command push --root-path=manifest.json --configuration-file=push_config.json --strategy=eager dispatch.json",
 			"img deploy-metadata --command load --root-path=manifest.json --configuration-file=push_config.json --strategy=eager --original-registry=gcr.io --original-registry=docker.io --original-repository=my-repo --original-tag=latest --original-digest=sha256:abcdef1234567890 dispatch.json",
 		}
-		fmt.Fprintf(flagSet.Output(), "\nExamples:\n")
+		_, _ = fmt.Fprintf(flagSet.Output(), "\nExamples:\n")
 		for _, example := range examples {
-			fmt.Fprintf(flagSet.Output(), "  $ %s\n", example)
+			_, _ = fmt.Fprintf(flagSet.Output(), "  $ %s\n", example)
 		}
 		os.Exit(1)
 	}
@@ -78,7 +78,7 @@ func DeployMetadataProcess(ctx context.Context, args []string) {
 	flagSet.Func("missing-blobs-for-manifest", `Missing blobs for a manifest. Format: index=blob1,blob2,... (e.g., 0=sha256:abc,sha256:def). Can be specified multiple times.`, func(value string) error {
 		parts := strings.SplitN(value, "=", 2)
 		if len(parts) != 2 {
-			return fmt.Errorf("missing-blobs-for-manifest must be in format index=blob1,blob2,...")
+			return fmt.Errorf("missing-blobs-for-manifest must be in format index=blob1,blob2")
 		}
 		index, err := strconv.Atoi(parts[0])
 		if err != nil {
@@ -158,19 +158,20 @@ func WriteMetadata(ctx context.Context, outputPath string) error {
 	// Try to parse as index first, then as manifest
 	var mediaType string
 
-	if rootKind == "index" {
+	switch rootKind {
+	case "index":
 		idx, err := registryv1.ParseIndexManifest(bytes.NewReader(rootData))
 		if err != nil {
 			return fmt.Errorf("parsing root manifest as index: %w", err)
 		}
 		mediaType = string(idx.MediaType)
-	} else if rootKind == "manifest" {
+	case "manifest":
 		manifest, err := registryv1.ParseManifest(bytes.NewReader(rootData))
 		if err != nil {
 			return fmt.Errorf("parsing root manifest as manifest: %w", err)
 		}
 		mediaType = string(manifest.MediaType)
-	} else {
+	default:
 		return fmt.Errorf("failed to parse root file as either index or manifest")
 	}
 
@@ -253,7 +254,8 @@ func WriteMetadata(ctx context.Context, outputPath string) error {
 	var operationBytes []byte
 	var deploySettings api.DeploySettings
 
-	if command == "push" {
+	switch command {
+	case "push":
 		deploySettings.PushStrategy = strategy
 		operation, err := pushOperation(baseCommand, config)
 		if err != nil {
@@ -263,7 +265,7 @@ func WriteMetadata(ctx context.Context, outputPath string) error {
 		if err != nil {
 			return fmt.Errorf("marshalling push operation: %w", err)
 		}
-	} else if command == "load" {
+	case "load":
 		deploySettings.LoadStrategy = strategy
 		operation, err := loadOperation(baseCommand, config)
 		if err != nil {
@@ -273,8 +275,8 @@ func WriteMetadata(ctx context.Context, outputPath string) error {
 		if err != nil {
 			return fmt.Errorf("marshalling load operation: %w", err)
 		}
-	} else {
-		return fmt.Errorf("invalid command " + command)
+	default:
+		return fmt.Errorf("invalid command: %s", command)
 	}
 
 	deployManifest := api.DeployManifest{

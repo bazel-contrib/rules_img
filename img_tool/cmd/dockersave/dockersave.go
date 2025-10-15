@@ -77,17 +77,17 @@ func DockerSaveProcess(ctx context.Context, args []string) {
 
 	flagSet := flag.NewFlagSet("docker-save", flag.ExitOnError)
 	flagSet.Usage = func() {
-		fmt.Fprintf(flagSet.Output(), "Assembles a Docker save compatible directory or tarball from manifest and layers.\n\n")
-		fmt.Fprintf(flagSet.Output(), "Usage: img docker-save [OPTIONS]\n")
+		_, _ = fmt.Fprintf(flagSet.Output(), "Assembles a Docker save compatible directory or tarball from manifest and layers.\n\n")
+		_, _ = fmt.Fprintf(flagSet.Output(), "Usage: img docker-save [OPTIONS]\n")
 		flagSet.PrintDefaults()
 		examples := []string{
 			"img docker-save --manifest manifest.json --config config.json --layer layer1_meta.json=layer1.tar.gz --repo-tag my/image:latest --output docker-save.tar",
 			"img docker-save --manifest manifest.json --config config.json --layer layer1_meta.json=layer1.tar.gz --repo-tag my/image:latest --repo-tag my/image:v1.0 --format directory --output docker-save",
 			"img docker-save --manifest manifest.json --config config.json --layer layer1_meta.json=layer1.tar.gz --configuration-file config.json --output docker-save.tar",
 		}
-		fmt.Fprintf(flagSet.Output(), "\nExamples:\n")
+		_, _ = fmt.Fprintf(flagSet.Output(), "\nExamples:\n")
 		for _, example := range examples {
-			fmt.Fprintf(flagSet.Output(), "  $ %s\n", example)
+			_, _ = fmt.Fprintf(flagSet.Output(), "  $ %s\n", example)
 		}
 	}
 
@@ -171,7 +171,11 @@ func assembleDockerSave(manifestPath, configPath, outputPath, format string, lay
 	if err != nil {
 		return err
 	}
-	defer sink.Close()
+	defer func() {
+		if closeErr := sink.Close(); closeErr != nil {
+			fmt.Fprintf(os.Stderr, "Error closing sink: %v\n", closeErr)
+		}
+	}()
 
 	// Read and parse the manifest
 	manifestData, err := os.ReadFile(manifestPath)

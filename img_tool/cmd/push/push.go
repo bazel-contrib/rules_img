@@ -106,7 +106,7 @@ func DeployWithExtras(ctx context.Context, rawRequest []byte, additionalTags []s
 		}
 		grpcClientConn, err := protohelper.Client(reapiEndpoint, credentialHelper)
 		if err != nil {
-			return fmt.Errorf("Failed to create gRPC client connection: %w", err)
+			return fmt.Errorf("failed to create gRPC client connection: %w", err)
 		}
 		casReader, err = cas.New(grpcClientConn)
 		if err != nil {
@@ -122,7 +122,7 @@ func DeployWithExtras(ctx context.Context, rawRequest []byte, additionalTags []s
 		}
 		grpcClientConn, err := protohelper.Client(blobcacheEndpoint, credentialHelper)
 		if err != nil {
-			return fmt.Errorf("Failed to create gRPC client connection: %w", err)
+			return fmt.Errorf("failed to create gRPC client connection: %w", err)
 		}
 		blobcacheClient = blobcache.NewBlobsClient(grpcClientConn)
 		haveBlobCacheCient = true
@@ -206,10 +206,6 @@ func (s *stringSliceFlag) String() string {
 func (s *stringSliceFlag) Set(value string) error {
 	*s = append(*s, value)
 	return nil
-}
-
-func pushFromArgs(ctx context.Context, args []string) {
-	panic("not implemented")
 }
 
 func credentialHelperPath() string {

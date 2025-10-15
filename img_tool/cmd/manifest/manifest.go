@@ -43,15 +43,15 @@ var (
 func ManifestProcess(_ context.Context, args []string) {
 	flagSet := flag.NewFlagSet("manifest", flag.ExitOnError)
 	flagSet.Usage = func() {
-		fmt.Fprintf(flagSet.Output(), "Creates an OCI image config and manifest based on layers and other metadata.\n\n")
-		fmt.Fprintf(flagSet.Output(), "Usage: img manifest [--os os] [--architecture arch] [--layer-from-metadata param_file] [--config-fragment config_file] [--base-manifest manifest_file] [--base-config config_file] [--manifest manifest_file] [--config config_file]\n")
+		_, _ = fmt.Fprintf(flagSet.Output(), "Creates an OCI image config and manifest based on layers and other metadata.\n\n")
+		_, _ = fmt.Fprintf(flagSet.Output(), "Usage: img manifest [--os os] [--architecture arch] [--layer-from-metadata param_file] [--config-fragment config_file] [--base-manifest manifest_file] [--base-config config_file] [--manifest manifest_file] [--config config_file]\n")
 		flagSet.PrintDefaults()
 		examples := []string{
 			"img manifest --os linux --architecture amd64 --layer-from-metadata layer-metadata.json --config-fragment extra-config.json --base-manifest base-manifest.json --base-config base-config.json --manifest manifest.json --config config.json",
 		}
-		fmt.Fprintf(flagSet.Output(), "\nExamples:\n")
+		_, _ = fmt.Fprintf(flagSet.Output(), "\nExamples:\n")
 		for _, example := range examples {
-			fmt.Fprintf(flagSet.Output(), "  $ %s\n", example)
+			_, _ = fmt.Fprintf(flagSet.Output(), "  $ %s\n", example)
 		}
 		os.Exit(1)
 	}
@@ -207,7 +207,11 @@ func ManifestProcess(_ context.Context, args []string) {
 			fmt.Fprintf(os.Stderr, "Failed to create digest file %s: %v\n", digestOutput, err)
 			os.Exit(1)
 		}
-		defer digestFile.Close()
+		defer func() {
+			if err := digestFile.Close(); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to close digest file: %v\n", err)
+			}
+		}()
 
 		if _, err := fmt.Fprintf(digestFile, "%s", fmt.Sprintf("sha256:%x", manifestSHA256)); err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to write digest to %s: %v\n", digestOutput, err)
@@ -244,7 +248,11 @@ func readLayerMetadata(filePath string) (api.Descriptor, error) {
 	if err != nil {
 		return api.Descriptor{}, fmt.Errorf("opening layer metadata file: %w", err)
 	}
-	defer file.Close()
+	defer func() {
+		if err := file.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to close layer metadata file: %v\n", err)
+		}
+	}()
 
 	var layer api.Descriptor
 	decoder := json.NewDecoder(file)
@@ -261,7 +269,11 @@ func overlayConfigFromFile(config *specv1.Image, filePath string, isBase bool) e
 	if err != nil {
 		return fmt.Errorf("opening config file: %w", err)
 	}
-	defer file.Close()
+	defer func() {
+		if err := file.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to close config file: %v\n", err)
+		}
+	}()
 
 	var configFragment specv1.Image
 	if err := json.NewDecoder(file).Decode(&configFragment); err != nil {
@@ -359,7 +371,7 @@ func overlayConfigFromFile(config *specv1.Image, filePath string, isBase bool) e
 
 	// inherit some fields if this is not a base config
 	if !isBase {
-		if !(config.Created == nil) && !configFragment.Created.IsZero() {
+		if config.Created != nil && !configFragment.Created.IsZero() {
 			config.Created = configFragment.Created
 		}
 		if configFragment.Author != "" {
@@ -479,7 +491,11 @@ func readConfigTemplates(filePath string) (*ConfigTemplates, error) {
 	if err != nil {
 		return nil, fmt.Errorf("opening config templates file: %w", err)
 	}
-	defer file.Close()
+	defer func() {
+		if err := file.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to close config templates file: %v\n", err)
+		}
+	}()
 
 	var templates ConfigTemplates
 	if err := json.NewDecoder(file).Decode(&templates); err != nil {

@@ -22,16 +22,16 @@ func LayerMetadataProcess(ctx context.Context, args []string) {
 	annotations = make(annotationsFlag)
 	flagSet := flag.NewFlagSet("layer-metadata", flag.ExitOnError)
 	flagSet.Usage = func() {
-		fmt.Fprintf(flagSet.Output(), "Calculates metadata about an existing layer file.\n\n")
-		fmt.Fprintf(flagSet.Output(), "Usage: img layer-metadata [--name=name] [--annotation=key=value] [layer] [output]\n")
+		_, _ = fmt.Fprintf(flagSet.Output(), "Calculates metadata about an existing layer file.\n\n")
+		_, _ = fmt.Fprintf(flagSet.Output(), "Usage: img layer-metadata [--name=name] [--annotation=key=value] [layer] [output]\n")
 		flagSet.PrintDefaults()
 		examples := []string{
 			"img layer-metadata layer.tgz layer.json",
 			"img layer-metadata --annotation=foo=bar --annotation=version=1.0 layer.tgz layer.json",
 		}
-		fmt.Fprintf(flagSet.Output(), "\nExamples:\n")
+		_, _ = fmt.Fprintf(flagSet.Output(), "\nExamples:\n")
 		for _, example := range examples {
-			fmt.Fprintf(flagSet.Output(), "  $ %s\n", example)
+			_, _ = fmt.Fprintf(flagSet.Output(), "  $ %s\n", example)
 		}
 		os.Exit(1)
 	}
@@ -55,7 +55,11 @@ func LayerMetadataProcess(ctx context.Context, args []string) {
 		fmt.Fprintf(os.Stderr, "Error opening layer file: %v\n", err)
 		os.Exit(1)
 	}
-	defer layerFileHandle.Close()
+	defer func() {
+		if err := layerFileHandle.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to close layer file: %v\n", err)
+		}
+	}()
 
 	hasher := sha256.New()
 	compressedSize, err := io.Copy(hasher, layerFileHandle)
@@ -92,7 +96,11 @@ func LayerMetadataProcess(ctx context.Context, args []string) {
 		fmt.Fprintf(os.Stderr, "Error opening output file: %v\n", err)
 		os.Exit(1)
 	}
-	defer outputFileHandle.Close()
+	defer func() {
+		if err := outputFileHandle.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to close output file: %v\n", err)
+		}
+	}()
 
 	json.NewEncoder(outputFileHandle).SetIndent("", "  ")
 	if err := json.NewEncoder(outputFileHandle).Encode(layerMetadata); err != nil {

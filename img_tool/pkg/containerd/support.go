@@ -110,7 +110,7 @@ func FindContainerdSocket() (string, error) {
 		}
 
 		// Success! Close and return
-		conn.Close()
+		_ = conn.Close()
 		return socket, nil
 	}
 

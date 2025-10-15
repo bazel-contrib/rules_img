@@ -6,9 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 
 	registry "github.com/malt3/go-containerregistry/pkg/registry"
-	registryv1 "github.com/malt3/go-containerregistry/pkg/v1"
 	v1 "github.com/malt3/go-containerregistry/pkg/v1"
 	"google.golang.org/grpc"
 
@@ -35,7 +35,7 @@ func New(upstream registry.BlobStatHandler, clientConn *grpc.ClientConn, blobSiz
 	}, nil
 }
 
-func (h *REAPIBlobHandler) Get(ctx context.Context, repo string, hash registryv1.Hash) (io.ReadCloser, error) {
+func (h *REAPIBlobHandler) Get(ctx context.Context, repo string, hash v1.Hash) (io.ReadCloser, error) {
 	// since we need to know the size of the blob for any REAPI operations,
 	// we ask the cache or upstream registry to find out if the blob exists.
 	var upstreamSize int64
@@ -60,7 +60,7 @@ func (h *REAPIBlobHandler) Get(ctx context.Context, repo string, hash registryv1
 	return h.casReader.ReaderForBlob(ctx, digest)
 }
 
-func (h *REAPIBlobHandler) Stat(ctx context.Context, repo string, hash registryv1.Hash) (int64, error) {
+func (h *REAPIBlobHandler) Stat(ctx context.Context, repo string, hash v1.Hash) (int64, error) {
 	// since we need to know the size of the blob for any REAPI operations,
 	// we ask the cache or upstream registry to find out if the blob exists.
 	var upstreamSize int64
@@ -94,7 +94,11 @@ func (h *REAPIBlobHandler) Stat(ctx context.Context, repo string, hash registryv
 func (h *REAPIBlobHandler) Put(ctx context.Context, repo string, hash v1.Hash, rc io.ReadCloser) error {
 	// since we need to know the size of the blob for any REAPI operations,
 	// we ask the cache or upstream registry to find out if the blob exists.
-	defer rc.Close() // Ensure the reader is closed after use.
+	defer func() {
+		if closeErr := rc.Close(); closeErr != nil {
+			fmt.Fprintf(os.Stderr, "Error closing reader: %v\n", closeErr)
+		}
+	}() // Ensure the reader is closed after use.
 	var upstreamSize int64
 	if cachedSize, ok := h.blobSizeCache.Get(hash); ok {
 		upstreamSize = cachedSize
@@ -112,7 +116,7 @@ func (h *REAPIBlobHandler) Put(ctx context.Context, repo string, hash v1.Hash, r
 	return h.casReader.WriteBlob(ctx, digest, rc)
 }
 
-func digestFromDescriptor(hash registryv1.Hash, size int64) (cas.Digest, error) {
+func digestFromDescriptor(hash v1.Hash, size int64) (cas.Digest, error) {
 	rawHash, err := hex.DecodeString(hash.Hex)
 	if err != nil {
 		return cas.Digest{}, fmt.Errorf("failed to decode digest hash: %w", err)

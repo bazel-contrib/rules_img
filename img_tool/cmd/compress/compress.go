@@ -1,7 +1,6 @@
 package compress
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"flag"
@@ -31,16 +30,16 @@ func CompressProcess(ctx context.Context, args []string) {
 	var compressionLevelFlag int
 	flagSet := flag.NewFlagSet("compress", flag.ExitOnError)
 	flagSet.Usage = func() {
-		fmt.Fprintf(flagSet.Output(), "(Re-)compresses a layer to the chosen format.\n\n")
-		fmt.Fprintf(flagSet.Output(), "Usage: img compress [--name name] [--source-format format] [--format format] [--metadata=metadata_output_file] [input] [output]\n")
+		_, _ = fmt.Fprintf(flagSet.Output(), "(Re-)compresses a layer to the chosen format.\n\n")
+		_, _ = fmt.Fprintf(flagSet.Output(), "Usage: img compress [--name name] [--source-format format] [--format format] [--metadata=metadata_output_file] [input] [output]\n")
 		flagSet.PrintDefaults()
 		examples := []string{
 			"img compress --format gzip layer.tar layer.tgz",
 			"img compress --source-format gzip --format none --metadata layer.json layer.tgz layer.tar",
 		}
-		fmt.Fprintf(flagSet.Output(), "\nExamples:\n")
+		_, _ = fmt.Fprintf(flagSet.Output(), "\nExamples:\n")
 		for _, example := range examples {
-			fmt.Fprintf(flagSet.Output(), "  $ %s\n", example)
+			_, _ = fmt.Fprintf(flagSet.Output(), "  $ %s\n", example)
 		}
 		os.Exit(1)
 	}
@@ -71,7 +70,11 @@ func CompressProcess(ctx context.Context, args []string) {
 		fmt.Fprintf(os.Stderr, "Error opening input layer: %v\n", err)
 		os.Exit(1)
 	}
-	defer inputHandle.Close()
+	defer func() {
+		if closeErr := inputHandle.Close(); closeErr != nil {
+			fmt.Fprintf(os.Stderr, "Error closing input file: %v\n", closeErr)
+		}
+	}()
 
 	var reader io.Reader
 	var openErr error
@@ -107,7 +110,11 @@ func CompressProcess(ctx context.Context, args []string) {
 		fmt.Fprintf(os.Stderr, "Error opening output file: %v\n", err)
 		os.Exit(1)
 	}
-	defer outputHandle.Close()
+	defer func() {
+		if closeErr := outputHandle.Close(); closeErr != nil {
+			fmt.Fprintf(os.Stderr, "Error closing output file: %v\n", closeErr)
+		}
+	}()
 
 	compressorState, mediaType, err := recompress(reader, outputHandle, outputFormat, estargzFlag, compressorJobsFlag, compressionLevelFlag)
 	if err != nil {
@@ -121,7 +128,11 @@ func CompressProcess(ctx context.Context, args []string) {
 			fmt.Fprintf(os.Stderr, "Error opening metadata output file: %v\n", err)
 			os.Exit(1)
 		}
-		defer metadataOutputHandle.Close()
+		defer func() {
+			if closeErr := metadataOutputHandle.Close(); closeErr != nil {
+				fmt.Fprintf(os.Stderr, "Error closing metadata output file: %v\n", closeErr)
+			}
+		}()
 		if err := writeMetadata(compressorState, annotations, mediaType, metadataOutputHandle); err != nil {
 			fmt.Fprintf(os.Stderr, "Writing metadata: %v\n", err)
 			os.Exit(1)
@@ -205,35 +216,3 @@ func writeMetadata(compressorState api.AppenderState, annotations map[string]str
 	}
 	return nil
 }
-
-func learnFileType(r io.ReaderAt) (api.LayerFormat, error) {
-	// poke the first few bytes to see if it is a compressed
-	// file or a uncompressed tar file.
-
-	var startMagic [4]byte
-	if _, err := r.ReadAt(startMagic[:], 0); err != nil {
-		return "", err
-	}
-	if bytes.Compare(startMagic[:2], gzipMagic[:]) == 0 {
-		return api.TarGzipLayer, nil
-	}
-	if bytes.Compare(startMagic[:4], zstdMagic[:]) == 0 {
-		return api.TarZstdLayer, nil
-	}
-
-	var tarMagic [8]byte
-	if _, err := r.ReadAt(tarMagic[:], 257); err != nil {
-		return "", err
-	}
-	if bytes.Compare(tarMagic[:], tarMagicA[:]) == 0 || bytes.Compare(tarMagic[:], tarMagicB[:]) == 0 {
-		return api.TarLayer, nil
-	}
-	return "", fmt.Errorf("unknown file type")
-}
-
-var (
-	gzipMagic = [2]byte{0x1f, 0x8b}
-	zstdMagic = [4]byte{0x28, 0xb5, 0x2f, 0xfd}
-	tarMagicA = [8]byte{0x75, 0x73, 0x74, 0x61, 0x72, 0x00, 0x30, 0x30}
-	tarMagicB = [8]byte{0x75, 0x73, 0x74, 0x61, 0x72, 0x20, 0x20, 0x00}
-)

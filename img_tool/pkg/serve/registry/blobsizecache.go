@@ -134,14 +134,16 @@ func (b BlobSizeCacheCallback) cacheFromManifest(repo string, manifest *registry
 	if manifest.Config.Size > 0 {
 		b.sizeCache.Set(manifest.Config.Digest, manifest.Config.Size)
 	}
-
-	return
 }
 
 func (b BlobSizeCacheCallback) get(repo string, hash registryv1.Hash) ([]byte, error) {
 	reader, err := b.handler.Get(context.TODO(), repo, hash)
 	if err == nil {
-		defer reader.Close()
+		defer func() {
+			if closeErr := reader.Close(); closeErr != nil {
+				fmt.Fprintf(os.Stderr, "Error closing reader: %v\n", closeErr)
+			}
+		}()
 		data, err := io.ReadAll(reader)
 		if err != nil {
 			return nil, fmt.Errorf("failed to read blob %s: %w", hash.String(), err)
@@ -162,7 +164,11 @@ func (b BlobSizeCacheCallback) get(repo string, hash registryv1.Hash) ([]byte, e
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch blob %s from redirect location %s: %w", hash.String(), rerr.Location, err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			fmt.Fprintf(os.Stderr, "Error closing response body: %v\n", closeErr)
+		}
+	}()
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("failed to fetch blob %s from redirect location %s: %s", hash.String(), rerr.Location, resp.Status)
 	}

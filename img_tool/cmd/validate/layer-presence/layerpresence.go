@@ -23,15 +23,15 @@ var (
 func LayerPresenceProcess(_ context.Context, args []string) {
 	flagSet := flag.NewFlagSet("layer-presence", flag.ExitOnError)
 	flagSet.Usage = func() {
-		fmt.Fprintf(flagSet.Output(), "Checks the presence of required layers in an image.\nLayers are required if they have been used to deduplicate content in present layers.\n\n")
-		fmt.Fprintf(flagSet.Output(), "Usage: img validate layer-presence [--layer-metadata=layer_index=file] @[required_layers_params_file]\n")
+		_, _ = fmt.Fprintf(flagSet.Output(), "Checks the presence of required layers in an image.\nLayers are required if they have been used to deduplicate content in present layers.\n\n")
+		_, _ = fmt.Fprintf(flagSet.Output(), "Usage: img validate layer-presence [--layer-metadata=layer_index=file] @[required_layers_params_file]\n")
 		flagSet.PrintDefaults()
 		examples := []string{
 			"img layer-presence --layer-metadata=0=base_layer_metadata.json --layer-metadata=1=top_layer_metadata.json @required_layers.params",
 		}
-		fmt.Fprintf(flagSet.Output(), "\nExamples:\n")
+		_, _ = fmt.Fprintf(flagSet.Output(), "\nExamples:\n")
 		for _, example := range examples {
-			fmt.Fprintf(flagSet.Output(), "  $ %s\n", example)
+			_, _ = fmt.Fprintf(flagSet.Output(), "  $ %s\n", example)
 		}
 		os.Exit(1)
 	}
@@ -44,7 +44,7 @@ func LayerPresenceProcess(_ context.Context, args []string) {
 	}
 	defer func() {
 		for _, closer := range outputs {
-			closer.Close()
+			_ = closer.Close()
 		}
 	}()
 	var writers []io.Writer
@@ -72,7 +72,7 @@ func LayerPresenceProcess(_ context.Context, args []string) {
 		}
 	}
 	if !failed {
-		fmt.Fprintln(output, "ok")
+		_, _ = fmt.Fprintln(output, "ok")
 		os.Exit(0)
 	}
 	output = io.MultiWriter(output, os.Stderr)
@@ -81,12 +81,12 @@ func LayerPresenceProcess(_ context.Context, args []string) {
 		if ok {
 			continue
 		}
-		fmt.Fprintf(output, "layer[%d] %s:\n", layerPresence.index, layerPresence.metadata.Name)
+		_, _ = fmt.Fprintf(output, "layer[%d] %s:\n", layerPresence.index, layerPresence.metadata.Name)
 		for _, missing := range layerPresence.missingLayers {
-			fmt.Fprintf(output, "  depends on layer %s, which is missing from the image\n", missing.Name)
+			_, _ = fmt.Fprintf(output, "  depends on layer %s, which is missing from the image\n", missing.Name)
 		}
 		for _, misordered := range layerPresence.misorderedLayers {
-			fmt.Fprintf(output, "  depends on layer %s, which is present but needs to be placed earlier in the list of layers\n", misordered.Name)
+			_, _ = fmt.Fprintf(output, "  depends on layer %s, which is present but needs to be placed earlier in the list of layers\n", misordered.Name)
 		}
 	}
 	os.Exit(1)
@@ -144,7 +144,11 @@ func parseParamFile(requiredLayersParamPath string) (map[int][]api.Descriptor, e
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
+	defer func() {
+		if closeErr := file.Close(); closeErr != nil {
+			fmt.Fprintf(os.Stderr, "Error closing param file: %v\n", closeErr)
+		}
+	}()
 
 	requiredLayersForLayer := make(map[int][]api.Descriptor)
 	scanner := bufio.NewScanner(file)

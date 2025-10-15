@@ -55,7 +55,11 @@ func (l *loader) LoadAll(ctx context.Context, ops []api.IndexedLoadDeployOperati
 	// try to connect to containerd once
 	client, err := l.connect(ctx, "containerd")
 	if err == nil {
-		defer client.Close()
+		defer func() {
+			if closeErr := client.Close(); closeErr != nil {
+				fmt.Fprintf(os.Stderr, "Error closing client: %v\n", closeErr)
+			}
+		}()
 	}
 
 	for _, op := range ops {
@@ -87,13 +91,19 @@ func (l *loader) LoadAll(ctx context.Context, ops []api.IndexedLoadDeployOperati
 			if err != nil {
 				return nil, fmt.Errorf("creating lease: %w", err)
 			}
-			defer leaseService.Delete(ctx, lease)
+			defer func() {
+				if delErr := leaseService.Delete(ctx, lease); delErr != nil {
+					fmt.Fprintf(os.Stderr, "Error deleting lease: %v\n", delErr)
+				}
+			}()
 
 			ctx = containerd.WithLease(ctx, lease)
 
 			// Load all blobs in parallel...
 			contentStore := client.ContentStore()
-			uploadBlobsParallel(ctx, contentStore, blobs, defaultWorkers)
+			if err := uploadBlobsParallel(ctx, contentStore, blobs, defaultWorkers); err != nil {
+				return nil, fmt.Errorf("uploading blobs: %w", err)
+			}
 
 			// ...then all images
 			for _, op := range ops {
@@ -163,13 +173,17 @@ func (l *loader) loadViaDocker(ctx context.Context, op api.IndexedLoadDeployOper
 	errCh := make(chan error, 1)
 	go func() {
 		err := docker.Load(pr)
-		pr.Close()
+		if closeErr := pr.Close(); closeErr != nil {
+			fmt.Fprintf(os.Stderr, "Error closing pipe reader: %v\n", closeErr)
+		}
 		errCh <- err
 	}()
 
 	// Stream the tar to the pipe writer
 	err := l.streamDockerTar(ctx, op, pw)
-	pw.Close() // Always close, even on error
+	if closeErr := pw.Close(); closeErr != nil {
+		fmt.Fprintf(os.Stderr, "Error closing pipe writer: %v\n", closeErr)
+	}
 
 	// Wait for docker load to complete
 	loadErr := <-errCh
@@ -294,7 +308,11 @@ func (l *loader) streamLayers(ctx context.Context, manifestInfo api.ManifestDepl
 		if err != nil {
 			return err
 		}
-		defer rc.Close()
+		defer func() {
+			if closeErr := rc.Close(); closeErr != nil {
+				fmt.Fprintf(os.Stderr, "Error closing layer reader: %v\n", closeErr)
+			}
+		}()
 
 		if err := tw.WriteLayer(digest, layerDesc.Size, rc); err != nil {
 			return err
@@ -400,12 +418,14 @@ func (ts *taskSet) collectBlobs(op api.IndexedLoadDeployOperation) ([]blobWorkIt
 		return nil, err
 	}
 
-	if op.RootKind == "index" {
+	switch op.RootKind {
+	case "index":
 		return ts.collectBlobsForIndex(digest)
-	} else if op.RootKind == "manifest" {
+	case "manifest":
 		return ts.collectBlobsForManifest(digest)
+	default:
+		return nil, fmt.Errorf("unsupported root kind: %s", op.RootKind)
 	}
-	return nil, fmt.Errorf("unsupported root kind: %s", op.RootKind)
 }
 
 func (ts *taskSet) collectBlobsForIndex(indexDigest registryv1.Hash) ([]blobWorkItem, error) {

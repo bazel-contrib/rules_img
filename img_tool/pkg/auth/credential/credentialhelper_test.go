@@ -8,8 +8,14 @@ import (
 func TestNew_ReplacesWorkspacePlaceholder(t *testing.T) {
 	// Set up environment variable
 	orig := os.Getenv("BUILD_WORKSPACE_DIRECTORY")
-	defer os.Setenv("BUILD_WORKSPACE_DIRECTORY", orig)
-	os.Setenv("BUILD_WORKSPACE_DIRECTORY", "/tmp/workspace")
+	defer func() {
+		if err := os.Setenv("BUILD_WORKSPACE_DIRECTORY", orig); err != nil {
+			t.Logf("Error restoring BUILD_WORKSPACE_DIRECTORY: %v", err)
+		}
+	}()
+	if err := os.Setenv("BUILD_WORKSPACE_DIRECTORY", "/tmp/workspace"); err != nil {
+		t.Fatalf("Error setting BUILD_WORKSPACE_DIRECTORY: %v", err)
+	}
 
 	helper := New("%workspace%/bin/helper")
 	extHelper, ok := helper.(*externalCredentialHelper)
@@ -24,8 +30,14 @@ func TestNew_ReplacesWorkspacePlaceholder(t *testing.T) {
 
 func TestNew_WithoutWorkspacePlaceholder(t *testing.T) {
 	orig := os.Getenv("BUILD_WORKSPACE_DIRECTORY")
-	defer os.Setenv("BUILD_WORKSPACE_DIRECTORY", orig)
-	os.Setenv("BUILD_WORKSPACE_DIRECTORY", "/tmp/workspace")
+	defer func() {
+		if err := os.Setenv("BUILD_WORKSPACE_DIRECTORY", orig); err != nil {
+			t.Logf("Error restoring BUILD_WORKSPACE_DIRECTORY: %v", err)
+		}
+	}()
+	if err := os.Setenv("BUILD_WORKSPACE_DIRECTORY", "/tmp/workspace"); err != nil {
+		t.Fatalf("Error setting BUILD_WORKSPACE_DIRECTORY: %v", err)
+	}
 
 	helper := New("/usr/local/bin/helper")
 	extHelper, ok := helper.(*externalCredentialHelper)

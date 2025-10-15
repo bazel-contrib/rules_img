@@ -6,6 +6,7 @@ import (
 	"hash"
 	"io"
 	"io/fs"
+	"os"
 	"path"
 	"slices"
 	"strings"
@@ -208,7 +209,11 @@ func (t *treeHasher) collectRegularFile(p string, i fs.FileInfo) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() {
+		if closeErr := f.Close(); closeErr != nil {
+			fmt.Fprintf(os.Stderr, "Error closing file: %v\n", closeErr)
+		}
+	}()
 
 	contentHasher := t.newHash()
 	if _, err := io.Copy(contentHasher, f); err != nil {
