@@ -32,6 +32,8 @@ func LayerProcess(ctx context.Context, args []string) {
 	var standaloneRunfilesFlags standaloneRunfiles
 	var symlinkFlags symlinks
 	var symlinksFromFiles symlinksFromFileArgs
+	var directoryFlags directories
+	var directoriesFromFiles directoriesFromFileArgs
 	var contentManifestInputFlags contentManifests
 	var contentManifestCollection string
 	var formatFlag string
@@ -70,6 +72,8 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 	flagSet.Var(&standaloneRunfilesFlags, "runfiles-only", `Add runfiles for an executable path without adding the executable itself. Format: <executable_path_in_image>=<runfiles_param_file>. Used when splitting executables across layers.`)
 	flagSet.Var(&symlinkFlags, "symlink", `Add a symlink to the image layer. The parameter is a string of the form <path_in_image>=<target> where <path_in_image> is the path in the image and <target> is the target of the symlink.`)
 	flagSet.Var(&symlinksFromFiles, "symlinks-from-file", `Add all symlinks listed in the parameter file to the image layer. The parameter file is usually written by Bazel.`)
+	flagSet.Var(&directoryFlags, "directory", `Create an empty directory in the image layer. The parameter is the path in the image.`)
+	flagSet.Var(&directoriesFromFiles, "directories-from-file", `Add all empty directories listed in the parameter file to the image layer. The parameter file contains one directory path per line.`)
 	flagSet.Var(&contentManifestInputFlags, "deduplicate", `Path of a content manifest of a previous layer that can be used for deduplication.`)
 	flagSet.StringVar(&contentManifestCollection, "deduplicate-collection", "", `Path of a content manifest collection file that can be used for deduplication.`)
 	flagSet.StringVar(&formatFlag, "format", "", `The compression format of the output layer. Can be "gzip" or "none". Default is to guess the algorithm based on the filename, but fall back to "gzip".`)
@@ -151,6 +155,16 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 		symlinkFlags = append(symlinkFlags, symlinkOpsFromParamFile...)
 	}
 
+	// read the directoriesFromFile parameter file and create a list of operations
+	for _, paramFile := range directoriesFromFiles {
+		directoryOpsFromParamFile, err := readDirectoryParamFile(paramFile)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error reading directory parameter file: %v\n", err)
+			os.Exit(1)
+		}
+		directoryFlags = append(directoryFlags, directoryOpsFromParamFile...)
+	}
+
 	// first, due to the way Bazel attributes work, we need to find out if a pathInImage is used multiple times
 	// If so, we add the basename of each file to the pathInImage
 	pathsInImageCount := make(map[string]int)
@@ -195,7 +209,7 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 	}
 
 	compressorState, err := handleLayerState(
-		compressionAlgorithm, estargzFlag, addFiles, importTarFlags, executableFlags, standaloneRunfilesFlags, symlinkFlags,
+		compressionAlgorithm, estargzFlag, addFiles, importTarFlags, executableFlags, standaloneRunfilesFlags, symlinkFlags, directoryFlags,
 		casImporter, casExporter, outputFile, layerMetadata,
 		compressorJobsFlag, compressionLevelFlag,
 	)
@@ -220,7 +234,7 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 }
 
 func handleLayerState(
-	compressionAlgorithm api.CompressionAlgorithm, useEstargz bool, addFiles addFiles, importTars importTars, addExecutables executables, addStandaloneRunfiles standaloneRunfiles, addSymlinks symlinks,
+	compressionAlgorithm api.CompressionAlgorithm, useEstargz bool, addFiles addFiles, importTars importTars, addExecutables executables, addStandaloneRunfiles standaloneRunfiles, addSymlinks symlinks, addDirectories directories,
 	casImporter api.CASStateSupplier, casExporter api.CASStateExporter, outputFile io.Writer, layerMetadata *LayerMetadata,
 	compressorJobsFlag string, compressionLevelFlag int,
 ) (compressorState api.AppenderState, err error) {
@@ -277,14 +291,14 @@ func handleLayerState(
 	if layerMetadata != nil {
 		recorder = recorder.WithMetadata(layerMetadata)
 	}
-	if err := writeLayer(recorder, addFiles, importTars, addExecutables, addStandaloneRunfiles, addSymlinks, layerMetadata); err != nil {
+	if err := writeLayer(recorder, addFiles, importTars, addExecutables, addStandaloneRunfiles, addSymlinks, addDirectories, layerMetadata); err != nil {
 		return compressorState, err
 	}
 
 	return compressorState, tw.Export(casExporter)
 }
 
-func writeLayer(recorder tree.Recorder, addFiles addFiles, importTars importTars, addExecutables executables, addStandaloneRunfiles standaloneRunfiles, addSymlinks symlinks, layerMetadata *LayerMetadata) error {
+func writeLayer(recorder tree.Recorder, addFiles addFiles, importTars importTars, addExecutables executables, addStandaloneRunfiles standaloneRunfiles, addSymlinks symlinks, addDirectories directories, layerMetadata *LayerMetadata) error {
 	for _, tarFile := range importTars {
 		if err := recorder.ImportTar(tarFile); err != nil {
 			return fmt.Errorf("importing tar file: %w", err)
@@ -350,6 +364,12 @@ func writeLayer(recorder tree.Recorder, addFiles addFiles, importTars importTars
 	for _, op := range addSymlinks {
 		if err := recorder.Symlink(op.Target, op.LinkName); err != nil {
 			return fmt.Errorf("writing symlink: %w", err)
+		}
+	}
+
+	for _, op := range addDirectories {
+		if err := recorder.Directory(op.Path); err != nil {
+			return fmt.Errorf("writing directory: %w", err)
 		}
 	}
 

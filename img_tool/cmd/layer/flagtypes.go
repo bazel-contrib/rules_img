@@ -243,6 +243,51 @@ func (s *symlinks) Set(value string) error {
 	return nil
 }
 
+type directory struct {
+	Path string
+}
+
+type directories []directory
+
+func (d *directories) String() string {
+	var sb strings.Builder
+	for i, dir := range *d {
+		if i > 0 {
+			sb.WriteString(", ")
+		}
+		sb.WriteString(dir.Path)
+	}
+	return sb.String()
+}
+
+func (d *directories) Set(value string) error {
+	if len(value) == 0 {
+		return fmt.Errorf("directory path cannot be empty")
+	}
+	// Remove leading slash
+	if value[0] == '/' {
+		value = value[1:]
+	}
+	*d = append(*d, directory{
+		Path: value,
+	})
+	return nil
+}
+
+type directoriesFromFileArgs []string
+
+func (d *directoriesFromFileArgs) String() string {
+	return strings.Join(*d, ", ")
+}
+
+func (d *directoriesFromFileArgs) Set(value string) error {
+	if _, err := os.Stat(value); err != nil {
+		return fmt.Errorf("file %s does not exist: %w", value, err)
+	}
+	*d = append(*d, value)
+	return nil
+}
+
 type standaloneRunfile struct {
 	ExecutablePathInImage string
 	RunfilesParameterFile string

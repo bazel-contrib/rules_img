@@ -134,9 +134,15 @@ func applyFileMetadata(hdr *tar.Header, metadata *FileMetadata) error {
 	}
 
 	if metadata.Mtime != nil {
+		// Try parsing as RFC3339 first
 		t, err := time.Parse(time.RFC3339, *metadata.Mtime)
 		if err != nil {
-			return fmt.Errorf("invalid mtime %s: %w", *metadata.Mtime, err)
+			// If that fails, try parsing as Unix epoch seconds (int)
+			epochSeconds, parseErr := strconv.ParseInt(*metadata.Mtime, 10, 64)
+			if parseErr != nil {
+				return fmt.Errorf("invalid mtime %s: expected RFC3339 or Unix epoch seconds, got parse errors: RFC3339: %w, epoch: %v", *metadata.Mtime, err, parseErr)
+			}
+			t = time.Unix(epochSeconds, 0).UTC()
 		}
 		hdr.ModTime = t
 	}

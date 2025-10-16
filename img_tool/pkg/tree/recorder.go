@@ -255,6 +255,28 @@ func (r Recorder) Symlink(target, linkName string) error {
 	return r.tf.WriteHeader(hdr)
 }
 
+func (r Recorder) Directory(dirPath string) error {
+	// Ensure the path ends with a slash (tar directory convention)
+	if !strings.HasSuffix(dirPath, "/") {
+		dirPath = dirPath + "/"
+	}
+
+	hdr := &tar.Header{
+		Typeflag: tar.TypeDir,
+		Name:     dirPath,
+		Mode:     0o755,
+	}
+
+	// Apply metadata if provider is set
+	if r.metadata != nil {
+		if err := r.metadata.ApplyToHeader(hdr, dirPath); err != nil {
+			return fmt.Errorf("applying metadata: %w", err)
+		}
+	}
+
+	return r.tf.WriteHeader(hdr)
+}
+
 func relativeSymlinkTarget(target, linkName string) string {
 	sourceDir := path.Dir(linkName)
 	sourceParts := strings.Split(path.Clean(sourceDir), "/")

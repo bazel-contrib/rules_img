@@ -3,6 +3,7 @@
 load("@bazel_skylib//lib:sets.bzl", "sets")
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("@runfilesgroupinfo.bzl", "SAME_PARTY_RUNFILES", "OTHER_PARTY_RUNFILES", "FOUNDATIONAL_RUNFILES", "DEBUG_RUNFILES", "DOCUMENTATION_RUNFILES", "RunfilesGroupInfo")
+load("@fsmanifestinfo.bzl", "FSManifestInfo")
 load("//img/private/common:build.bzl", "TOOLCHAIN", "TOOLCHAINS")
 load("//img/private/common:layer_helper.bzl", "compression_tuning_args")
 load("//img/private/providers:layer_info.bzl", "LayerInfo")
@@ -39,6 +40,55 @@ def _symlink_tuple_to_arg(pair):
     if source.startswith("/"):
         source = source[1:]
     return "{}\0{}".format(source, dest)
+
+def _convert_metadata_to_json(metadata_struct):
+    """Convert FSManifestInfo metadata struct to JSON string for the Go tool.
+
+    Args:
+        metadata_struct: A struct with metadata fields (mode, uid, gid, owner, group, mtime, xattrs)
+
+    Returns:
+        JSON string in the format expected by the Go tool
+    """
+    if metadata_struct == None:
+        return None
+
+    # Build a dict with the fields we need
+    result = {}
+
+    # mode: int -> octal string (e.g., 0o755 -> "0755")
+    if hasattr(metadata_struct, "mode"):
+        result["mode"] = "0%o" % metadata_struct.mode
+
+    # uid: int -> int
+    if hasattr(metadata_struct, "uid"):
+        result["uid"] = metadata_struct.uid
+
+    # gid: int -> int
+    if hasattr(metadata_struct, "gid"):
+        result["gid"] = metadata_struct.gid
+
+    # owner: string -> uname: string
+    if hasattr(metadata_struct, "owner"):
+        result["uname"] = metadata_struct.owner
+
+    # group: string -> gname: string
+    if hasattr(metadata_struct, "group"):
+        result["gname"] = metadata_struct.group
+
+    # mtime: int (epoch seconds) -> string
+    # The Go tool can handle both RFC3339 and Unix epoch seconds as string
+    if hasattr(metadata_struct, "mtime"):
+        result["mtime"] = str(metadata_struct.mtime)
+
+    # xattrs: dict -> pax_records: dict
+    if hasattr(metadata_struct, "xattrs"):
+        result["pax_records"] = metadata_struct.xattrs
+
+    if len(result) == 0:
+        return None
+
+    return json.encode(result)
 
 def _handle_groups(ctx):
     if ctx.attr.layer_for_group and not ctx.attr.layer_ids:
@@ -139,7 +189,7 @@ def _handle_groups(ctx):
         sorted_layer_ids = sorted_layer_ids,
     )
 
-def _create_layer(ctx, out, metadata_out, srcs_for_layer, compression, estargz_enabled):
+def _create_layer(ctx, out, metadata_out, srcs_for_layer, compression, estargz_enabled, manifest_metadata, merged_symlinks, manifest_directories):
     """Creates a single layer from the given sources.
 
     Args:
@@ -150,6 +200,9 @@ def _create_layer(ctx, out, metadata_out, srcs_for_layer, compression, estargz_e
                         where group_names can be a string or a list of strings.
         compression: Compression format (gzip or zstd).
         estargz_enabled: Whether estargz is enabled.
+        manifest_metadata: Dict of path -> JSON metadata string from FSManifestInfo
+        merged_symlinks: Dict of symlink path -> target path (merged from ctx.attr.symlinks and FSManifestInfo)
+        manifest_directories: List of directory paths from FSManifestInfo
     """
     args = ["layer", "--name", str(ctx.label), "--metadata", metadata_out.path, "--format", compression]
 
@@ -161,7 +214,14 @@ def _create_layer(ctx, out, metadata_out, srcs_for_layer, compression, estargz_e
         args.extend(["--annotation", "{}={}".format(key, value)])
     if ctx.attr.default_metadata:
         args.extend(["--default-metadata", ctx.attr.default_metadata])
-    for path, metadata in ctx.attr.file_metadata.items():
+
+    # Merge ctx.attr.file_metadata with manifest_metadata
+    # ctx.attr.file_metadata takes precedence
+    all_file_metadata = {}
+    all_file_metadata.update(manifest_metadata)
+    all_file_metadata.update(ctx.attr.file_metadata)
+
+    for path, metadata in all_file_metadata.items():
         path = path.removeprefix("/")  # the "/" is not included in the tar file.
         args.extend(["--file-metadata", "{}={}".format(path, metadata)])
 
@@ -173,7 +233,11 @@ def _create_layer(ctx, out, metadata_out, srcs_for_layer, compression, estargz_e
 
     for (path_in_image, files, group_names, include_executable) in srcs_for_layer:
         path_in_image = path_in_image.removeprefix("/")  # the "/" is not included in the tar file.
-        default_info = files[DefaultInfo]
+        # Get DefaultInfo from the target
+        if hasattr(files, "DefaultInfo"):
+            default_info = files.DefaultInfo
+        else:
+            default_info = files[DefaultInfo]
         files_to_run = default_info.files_to_run
         executable = None
         runfiles = None
@@ -183,7 +247,7 @@ def _create_layer(ctx, out, metadata_out, srcs_for_layer, compression, estargz_e
             group_names = [group_names]
 
         # Check if this target has RunfilesGroupInfo
-        runfiles_group_info = files[RunfilesGroupInfo] if RunfilesGroupInfo in files else None
+        runfiles_group_info = files[RunfilesGroupInfo] if (type(files) != type(struct()) and RunfilesGroupInfo in files) else None
 
         inputs.append(default_info.files)
         if files_to_run != None and files_to_run.executable != None and not files_to_run.executable.is_source:
@@ -247,12 +311,19 @@ def _create_layer(ctx, out, metadata_out, srcs_for_layer, compression, estargz_e
             # Use all files (default behavior)
             files_args.add_all(default_info.files, map_each = _files_arg, format_each = "{}\0%s".format(path_in_image), expand_directories = False)
 
-    if len(ctx.attr.symlinks) > 0:
+    if len(merged_symlinks) > 0:
         symlink_args = ctx.actions.args()
         symlink_args.set_param_file_format("multiline")
         symlink_args.use_param_file("--symlinks-from-file=%s", use_always = True)
-        symlink_args.add_all(ctx.attr.symlinks.items(), map_each = _symlink_tuple_to_arg)
+        symlink_args.add_all(merged_symlinks.items(), map_each = _symlink_tuple_to_arg)
         args.append(symlink_args)
+
+    if len(manifest_directories) > 0:
+        directory_args = ctx.actions.args()
+        directory_args.set_param_file_format("multiline")
+        directory_args.use_param_file("--directories-from-file=%s", use_always = True)
+        directory_args.add_all(manifest_directories)
+        args.append(directory_args)
 
     args.append(files_args)
     args.append(out.path)
@@ -324,6 +395,49 @@ def _image_layer_impl(ctx):
             layer_id = group_settings.layer_id_for_group.get(SAME_PARTY_RUNFILES, group_settings.default_layer_id)
             srcs_by_layer[layer_id].append((path_in_image, files, SAME_PARTY_RUNFILES, True))
 
+    # Collect metadata, symlinks, and directories from FSManifestInfo
+    manifest_metadata = {}
+    manifest_symlinks = {}
+    manifest_directories = []
+
+    # Process FSManifestInfo entries if any
+    for manifest_target in ctx.attr.manifests:
+        fs_manifest = manifest_target[FSManifestInfo]
+
+        # Add all entries from the manifest to the default layer
+        default_layer_id = group_settings.default_layer_id
+
+        for path_in_image, entry in fs_manifest.entries.items():
+            if entry.kind == "file":
+                # entry.target should be a File
+                # Create a struct with DefaultInfo so it can be processed like any other target
+                file_info_provider = struct(DefaultInfo = DefaultInfo(files = depset([entry.target])))
+                srcs_by_layer[default_layer_id].append((path_in_image, file_info_provider, SAME_PARTY_RUNFILES, True))
+
+                # Check if there's file-specific metadata for this path
+                if fs_manifest.metadata and path_in_image in fs_manifest.metadata:
+                    metadata_json = _convert_metadata_to_json(fs_manifest.metadata[path_in_image])
+                    if metadata_json:
+                        manifest_metadata[path_in_image] = metadata_json
+                elif fs_manifest.defaults:
+                    # Use defaults if no file-specific metadata
+                    metadata_json = _convert_metadata_to_json(fs_manifest.defaults)
+                    if metadata_json:
+                        manifest_metadata[path_in_image] = metadata_json
+            elif entry.kind == "symlink":
+                # entry.target is the target path the symlink points to
+                # path_in_image is where the symlink should be created
+                manifest_symlinks[path_in_image] = entry.target
+            elif entry.kind == "empty_dir":
+                # Add empty directory to the list (remove leading slash)
+                dir_path = path_in_image.removeprefix("/")
+                manifest_directories.append(dir_path)
+
+    # Merge symlinks: ctx.attr.symlinks takes precedence over manifest symlinks
+    merged_symlinks = {}
+    merged_symlinks.update(manifest_symlinks)
+    merged_symlinks.update(ctx.attr.symlinks)
+
     # Create layers for each layer_id
     layer_infos = []
     all_outputs = []
@@ -339,6 +453,9 @@ def _image_layer_impl(ctx):
             out = ctx.actions.declare_file("{}_{}_{}{}".format(ctx.attr.name, i, layer_id, out_ext))
             metadata_out = ctx.actions.declare_file("{}_{}_{}{}".format(ctx.attr.name, i, layer_id, "_metadata.json"))
 
+        # Symlinks should only be added to the default layer
+        layer_symlinks = merged_symlinks if layer_id == group_settings.default_layer_id else {}
+
         _create_layer(
             ctx,
             out,
@@ -346,6 +463,9 @@ def _image_layer_impl(ctx):
             srcs_by_layer[layer_id],
             compression,
             estargz_enabled,
+            manifest_metadata,
+            layer_symlinks,
+            manifest_directories,
         )
 
         layer_infos.append(LayerInfo(
@@ -440,6 +560,11 @@ values are labels to files or executables. Executables automatically include the
         "symlinks": attr.string_dict(
             doc = """Symlinks to create in the layer. Keys are symlink paths in the image,
 values are the targets they point to.""",
+        ),
+        "manifests": attr.label_list(
+            doc = """List of targets providing FSManifestInfo. Files from these manifests will be added to the default layer/group.""",
+            providers = [FSManifestInfo],
+            default = [],
         ),
         "compress": attr.string(
             default = "auto",

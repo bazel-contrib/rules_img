@@ -74,6 +74,34 @@ func splitParamFileLine(line string) (string, string, string, error) {
 	return pathInImage, typeOfFile, file, nil
 }
 
+func readDirectoryParamFile(paramFile string) (directories, error) {
+	file, err := os.Open(paramFile)
+	if err != nil {
+		return nil, fmt.Errorf("opening parameter file: %w", err)
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+
+	var dirs directories
+	for scanner.Scan() {
+		line := scanner.Text()
+		if line == "" {
+			continue
+		}
+		// Directory param files just contain paths, one per line
+		dirs = append(dirs, directory{
+			Path: line,
+		})
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("reading parameter file: %w", err)
+	}
+
+	return dirs, nil
+}
+
 func readSymlinkParamFile(paramFile string) (symlinks, error) {
 	file, err := os.Open(paramFile)
 	if err != nil {
