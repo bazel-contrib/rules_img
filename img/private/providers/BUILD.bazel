@@ -31,6 +31,12 @@ bzl_library(
 )
 
 bzl_library(
+    name = "layer_group_info",
+    srcs = ["layer_group_info.bzl"],
+    visibility = ["//img:__subpackages__"],
+)
+
+bzl_library(
     name = "load_settings_info",
     srcs = ["load_settings_info.bzl"],
     visibility = ["//img:__subpackages__"],

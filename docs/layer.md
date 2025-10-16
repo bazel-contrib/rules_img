@@ -9,7 +9,9 @@ Public API for container image layer rules.
 <pre>
 load("@rules_img//img:layer.bzl", "image_layer")
 
-image_layer(<a href="#image_layer-name">name</a>, <a href="#image_layer-srcs">srcs</a>, <a href="#image_layer-annotations">annotations</a>, <a href="#image_layer-compress">compress</a>, <a href="#image_layer-default_metadata">default_metadata</a>, <a href="#image_layer-estargz">estargz</a>, <a href="#image_layer-file_metadata">file_metadata</a>, <a href="#image_layer-symlinks">symlinks</a>)
+image_layer(<a href="#image_layer-name">name</a>, <a href="#image_layer-srcs">srcs</a>, <a href="#image_layer-annotations">annotations</a>, <a href="#image_layer-compress">compress</a>, <a href="#image_layer-default_grouping">default_grouping</a>, <a href="#image_layer-default_layer_id">default_layer_id</a>, <a href="#image_layer-default_metadata">default_metadata</a>,
+            <a href="#image_layer-estargz">estargz</a>, <a href="#image_layer-exclude_groups">exclude_groups</a>, <a href="#image_layer-file_metadata">file_metadata</a>, <a href="#image_layer-include_groups">include_groups</a>, <a href="#image_layer-layer_for_group">layer_for_group</a>, <a href="#image_layer-layer_ids">layer_ids</a>,
+            <a href="#image_layer-symlinks">symlinks</a>)
 </pre>
 
 Creates a container image layer from files, executables, and directories.
@@ -20,6 +22,9 @@ This rule packages files into a layer that can be used in container images. It s
 - Creating symlinks
 - Including executables with their runfiles
 - Compression (gzip, zstd) and eStargz optimization
+
+While this rule creates a single layer by default, some configurations of the attributes will result in multiple sub-layers being created for splitting files into separate groups.
+This rule returns either a LayerInfo provider (for a single layer) or a LayerGroupInfo provider (for multiple layers).
 
 Example:
 
@@ -73,9 +78,15 @@ image_layer(
 | <a id="image_layer-srcs"></a>srcs |  Files to include in the layer. Keys are paths in the image (e.g., "/app/bin/server"), values are labels to files or executables. Executables automatically include their runfiles.   | Dictionary: String -> Label | optional |  `{}`  |
 | <a id="image_layer-annotations"></a>annotations |  Annotations to add to the layer metadata as key-value pairs.   | <a href="https://bazel.build/rules/lib/dict">Dictionary: String -> String</a> | optional |  `{}`  |
 | <a id="image_layer-compress"></a>compress |  Compression algorithm to use. If set to 'auto', uses the global default compression setting.   | String | optional |  `"auto"`  |
+| <a id="image_layer-default_grouping"></a>default_grouping |  Determines how files are grouped into layers when multiple groups are present. If layer_ids is specified, this attribute is ignored.<br><br>- layer_per_group: Creates one layer per unique group found in srcs (or a single layer if no groups are found). This is the default. - merge_all: Merges all files into a single layer (ignoring groups).   | String | optional |  `"layer_per_group"`  |
+| <a id="image_layer-default_layer_id"></a>default_layer_id |  Default layer ID to assign to files that do not specify a group. If empty, files without a group are assigned to the last layer id.   | String | optional |  `""`  |
 | <a id="image_layer-default_metadata"></a>default_metadata |  JSON-encoded default metadata to apply to all files in the layer. Can include fields like mode, uid, gid, uname, gname, mtime, and pax_records.   | String | optional |  `""`  |
 | <a id="image_layer-estargz"></a>estargz |  Whether to use estargz format. If set to 'auto', uses the global default estargz setting. When enabled, the layer will be optimized for lazy pulling and will be compatible with the estargz format.   | String | optional |  `"auto"`  |
+| <a id="image_layer-exclude_groups"></a>exclude_groups |  Denylist of group names to exclude. If empty, no groups are excluded. Mutually exclusive with include_groups.   | List of strings | optional |  `[]`  |
 | <a id="image_layer-file_metadata"></a>file_metadata |  Per-file metadata overrides as a dict mapping file paths to JSON-encoded metadata. The path should match the path in the image (the key in srcs attribute). Metadata specified here overrides any defaults from default_metadata.   | <a href="https://bazel.build/rules/lib/dict">Dictionary: String -> String</a> | optional |  `{}`  |
+| <a id="image_layer-include_groups"></a>include_groups |  Allowlist of group names to include. If empty, all groups are included. Mutually exclusive with exclude_groups.   | List of strings | optional |  `[]`  |
+| <a id="image_layer-layer_for_group"></a>layer_for_group |  Mapping of group names to layer IDs. Files in a group will be assigned to the specified layer. If a group is not listed here, files in that group will be assigned to the default layer (refer to default_layer_id for more information). If not specified, the following default behavior is used based on default_grouping and layer_ids:<br><br>- layer_ids set: Groups with names matching layer_ids are assigned to those layers; others go to the default layer. - layer_per_group is set, layer_ids is unset: Each group is assigned to its own layer and layer_for_group is ignored. - merge_all is set, layer_ids is unset: All groups are merged into a single layer.   | <a href="https://bazel.build/rules/lib/dict">Dictionary: String -> String</a> | optional |  `{}`  |
+| <a id="image_layer-layer_ids"></a>layer_ids |  Ordered list of layer IDs to create for the purpose of *grouping*. If unspecified, the following defaults are used based on default_grouping:<br><br>- layer_per_group: One layer per unique group in srcs - merge_all: A single layer containing all files<br><br>If specified, the layers will be created in the order given.   | List of strings | optional |  `[]`  |
 | <a id="image_layer-symlinks"></a>symlinks |  Symlinks to create in the layer. Keys are symlink paths in the image, values are the targets they point to.   | <a href="https://bazel.build/rules/lib/dict">Dictionary: String -> String</a> | optional |  `{}`  |
 
 

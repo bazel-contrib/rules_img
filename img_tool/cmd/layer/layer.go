@@ -29,6 +29,7 @@ func LayerProcess(ctx context.Context, args []string) {
 	var importTarFlags importTars
 	var runfilesFlags runfilesForExecutables
 	var executableFlags executables
+	var standaloneRunfilesFlags standaloneRunfiles
 	var symlinkFlags symlinks
 	var symlinksFromFiles symlinksFromFileArgs
 	var contentManifestInputFlags contentManifests
@@ -66,6 +67,7 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 	flagSet.Var(&importTarFlags, "import-tar", `Import all files from the given tar file into the image layer while deduplicating the contents.`)
 	flagSet.Var(&executableFlags, "executable", `Add the executable file at the specified path in the image. This should be combined with the --runfiles flag to include the runfiles of the executable.`)
 	flagSet.Var(&runfilesFlags, "runfiles", `Add the runfiles of an executable file. The runfiles are read from the specified parameter file with the same encoding used by --add-from-file. The parameter file is usually written by Bazel.`)
+	flagSet.Var(&standaloneRunfilesFlags, "runfiles-only", `Add runfiles for an executable path without adding the executable itself. Format: <executable_path_in_image>=<runfiles_param_file>. Used when splitting executables across layers.`)
 	flagSet.Var(&symlinkFlags, "symlink", `Add a symlink to the image layer. The parameter is a string of the form <path_in_image>=<target> where <path_in_image> is the path in the image and <target> is the target of the symlink.`)
 	flagSet.Var(&symlinksFromFiles, "symlinks-from-file", `Add all symlinks listed in the parameter file to the image layer. The parameter file is usually written by Bazel.`)
 	flagSet.Var(&contentManifestInputFlags, "deduplicate", `Path of a content manifest of a previous layer that can be used for deduplication.`)
@@ -193,7 +195,7 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 	}
 
 	compressorState, err := handleLayerState(
-		compressionAlgorithm, estargzFlag, addFiles, importTarFlags, executableFlags, symlinkFlags,
+		compressionAlgorithm, estargzFlag, addFiles, importTarFlags, executableFlags, standaloneRunfilesFlags, symlinkFlags,
 		casImporter, casExporter, outputFile, layerMetadata,
 		compressorJobsFlag, compressionLevelFlag,
 	)
@@ -218,7 +220,7 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 }
 
 func handleLayerState(
-	compressionAlgorithm api.CompressionAlgorithm, useEstargz bool, addFiles addFiles, importTars importTars, addExecutables executables, addSymlinks symlinks,
+	compressionAlgorithm api.CompressionAlgorithm, useEstargz bool, addFiles addFiles, importTars importTars, addExecutables executables, addStandaloneRunfiles standaloneRunfiles, addSymlinks symlinks,
 	casImporter api.CASStateSupplier, casExporter api.CASStateExporter, outputFile io.Writer, layerMetadata *LayerMetadata,
 	compressorJobsFlag string, compressionLevelFlag int,
 ) (compressorState api.AppenderState, err error) {
@@ -275,14 +277,14 @@ func handleLayerState(
 	if layerMetadata != nil {
 		recorder = recorder.WithMetadata(layerMetadata)
 	}
-	if err := writeLayer(recorder, addFiles, importTars, addExecutables, addSymlinks, layerMetadata); err != nil {
+	if err := writeLayer(recorder, addFiles, importTars, addExecutables, addStandaloneRunfiles, addSymlinks, layerMetadata); err != nil {
 		return compressorState, err
 	}
 
 	return compressorState, tw.Export(casExporter)
 }
 
-func writeLayer(recorder tree.Recorder, addFiles addFiles, importTars importTars, addExecutables executables, addSymlinks symlinks, layerMetadata *LayerMetadata) error {
+func writeLayer(recorder tree.Recorder, addFiles addFiles, importTars importTars, addExecutables executables, addStandaloneRunfiles standaloneRunfiles, addSymlinks symlinks, layerMetadata *LayerMetadata) error {
 	for _, tarFile := range importTars {
 		if err := recorder.ImportTar(tarFile); err != nil {
 			return fmt.Errorf("importing tar file: %w", err)
@@ -315,6 +317,33 @@ func writeLayer(recorder tree.Recorder, addFiles addFiles, importTars importTars
 		}
 		if err := recorder.Executable(op.Executable, op.PathInImage, accessor); err != nil {
 			return fmt.Errorf("writing executable: %w", err)
+		}
+	}
+
+	for _, op := range addStandaloneRunfiles {
+		runfilesList, err := readParamFile(op.RunfilesParameterFile)
+		if err != nil {
+			return fmt.Errorf("reading runfiles parameter file: %w", err)
+		}
+		// Add runfiles without the executable
+		// Create the runfiles directory structure at <executable_path>.runfiles/
+		runfilesDir := op.ExecutablePathInImage + ".runfiles"
+		for _, f := range runfilesList {
+			// The runfiles list contains paths relative to the runfiles directory
+			// We need to prepend the runfiles directory path
+			pathInLayer := runfilesDir + "/" + f.PathInImage
+			switch f.FileType {
+			case api.RegularFile:
+				if err := recorder.RegularFileFromPath(f.File, pathInLayer); err != nil {
+					return fmt.Errorf("writing runfile: %w", err)
+				}
+			case api.Directory:
+				if err := recorder.TreeFromPath(f.File, pathInLayer); err != nil {
+					return fmt.Errorf("writing runfile directory: %w", err)
+				}
+			default:
+				return fmt.Errorf("unknown type %s for runfile %s", f.FileType.String(), f.File)
+			}
 		}
 	}
 

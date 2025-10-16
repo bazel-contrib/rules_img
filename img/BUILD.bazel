@@ -23,6 +23,7 @@ bzl_library(
     visibility = ["//visibility:public"],
     deps = [
         "//img/private/providers:index_info",
+        "//img/private/providers:layer_group_info",
         "//img/private/providers:layer_info",
         "//img/private/providers:manifest_info",
         "//img/private/providers:pull_info",

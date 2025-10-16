@@ -243,6 +243,48 @@ func (s *symlinks) Set(value string) error {
 	return nil
 }
 
+type standaloneRunfile struct {
+	ExecutablePathInImage string
+	RunfilesParameterFile string
+}
+
+type standaloneRunfiles []standaloneRunfile
+
+func (s *standaloneRunfiles) String() string {
+	var sb strings.Builder
+	for i, r := range *s {
+		if i > 0 {
+			sb.WriteString(", ")
+		}
+		sb.WriteString(r.ExecutablePathInImage)
+		sb.WriteString("=")
+		sb.WriteString(r.RunfilesParameterFile)
+	}
+	return sb.String()
+}
+
+func (s *standaloneRunfiles) Set(value string) error {
+	parts := strings.SplitN(value, "=", 2)
+	if len(parts) != 2 {
+		return fmt.Errorf("invalid format for --runfiles-only: %s", value)
+	}
+	if len(parts[0]) == 0 {
+		return fmt.Errorf("executable path cannot be empty: %s", value)
+	}
+	if parts[0][0] == '/' {
+		// remove leading slash in target
+		parts[0] = parts[0][1:]
+	}
+	if _, err := os.Stat(parts[1]); err != nil {
+		return fmt.Errorf("parameter file %s does not exist: %w", parts[1], err)
+	}
+	*s = append(*s, standaloneRunfile{
+		ExecutablePathInImage: parts[0],
+		RunfilesParameterFile: parts[1],
+	})
+	return nil
+}
+
 type contentManifests []string
 
 func (m *contentManifests) String() string {

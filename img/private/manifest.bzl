@@ -8,6 +8,7 @@ load("//img/private/common:transitions.bzl", "normalize_layer_transition")
 load("//img/private/config:defs.bzl", "TargetPlatformInfo")
 load("//img/private/providers:index_info.bzl", "ImageIndexInfo")
 load("//img/private/providers:layer_info.bzl", "LayerInfo")
+load("//img/private/providers:layer_group_info.bzl", "LayerGroupInfo")
 load("//img/private/providers:manifest_info.bzl", "ImageManifestInfo")
 load("//img/private/providers:oci_layout_settings_info.bzl", "OCILayoutSettingsInfo")
 load("//img/private/providers:pull_info.bzl", "PullInfo")
@@ -134,8 +135,13 @@ def _image_manifest_impl(ctx):
             # Use pre-built layer metadata
             layers.append(layer[LayerInfo])
             continue
+        elif LayerGroupInfo in layer:
+            # Use pre-built layer group
+            group_info = layer[LayerGroupInfo]
+            layers.extend(group_info.layers)
+            continue
         elif DefaultInfo not in layer:
-            fail("layer {} needs to provide LayerInfo or DefaultInfo: {}".format(layer_idx, layer))
+            fail("layer {} needs to provide LayerInfo, LayerGroupInfo, or DefaultInfo: {}".format(layer_idx, layer))
 
         # Calculate layer metadata on the fly
         default_info = layer[DefaultInfo]
@@ -305,7 +311,7 @@ Output groups:
             doc = "Base image to inherit layers from. Should provide ImageManifestInfo or ImageIndexInfo.",
         ),
         "layers": attr.label_list(
-            doc = "Layers to include in the image. Either a LayerInfo provider or a DefaultInfo with tar files.",
+            doc = "Layers to include in the image. Either a LayerInfo provider, a LayerGroupInfo provider, or a DefaultInfo with tar files.",
             cfg = normalize_layer_transition,
         ),
         "platform": attr.string_dict(
