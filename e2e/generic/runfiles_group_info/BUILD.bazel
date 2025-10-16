@@ -1,0 +1,220 @@
+"""Example demonstrating RunfilesGroupInfo with image_layer for grouped layer creation."""
+
+load("@bazel_skylib//rules:build_test.bzl", "build_test")
+load("@rules_img//img:image.bzl", "image_manifest")
+load("@rules_img//img:layer.bzl", "image_layer")
+load("@rules_img//img:push.bzl", "image_push")
+load(":defs.bzl", "fake_split_binary")
+
+# File groups for testing
+filegroup(
+    name = "stdlib_files",
+    srcs = ["stdlib_file.txt"],
+)
+
+filegroup(
+    name = "third_party_files",
+    srcs = ["third_party_lib.txt"],
+)
+
+filegroup(
+    name = "app_files",
+    srcs = ["app_code.txt"],
+)
+
+filegroup(
+    name = "debug_files",
+    srcs = ["debug_tool.txt"],
+)
+
+# Create a fake split binary with RunfilesGroupInfo
+# This simulates an executable whose runfiles are organized into groups
+fake_split_binary(
+    name = "split_app",
+    script_content = """#!/bin/bash
+echo "Running split application"
+echo "This binary has grouped runfiles for optimal layering"
+""",
+    deps = [
+        ":stdlib_files",
+        ":third_party_files",
+        ":app_files",
+        ":debug_files",
+    ],
+    split_config = {
+        "FOUNDATIONAL_RUNFILES": ["stdlib"],
+        "OTHER_PARTY_RUNFILES": ["third_party"],
+        "DEBUG_RUNFILES": ["debug"],
+    },
+    default_group = "SAME_PARTY_RUNFILES",
+)
+
+# Test 1: Create a layer with default grouping (layer_per_group)
+# This should create multiple layers automatically based on the groups
+image_layer(
+    name = "grouped_layer_auto",
+    srcs = {
+        "/app/bin/main": ":split_app",
+    },
+    # default_grouping = "layer_per_group",  # This is the default
+)
+
+# Test 2: Create a layer with explicit layer_ids
+# This gives us control over which layer IDs are created
+image_layer(
+    name = "grouped_layer_explicit",
+    srcs = {
+        "/app/bin/main": ":split_app",
+    },
+    layer_ids = [
+        "FOUNDATIONAL_RUNFILES",
+        "OTHER_PARTY_RUNFILES",
+        "SAME_PARTY_RUNFILES",
+    ],
+)
+
+# Test 3: Create a layer with custom layer mapping
+# This allows mapping multiple groups to the same layer
+image_layer(
+    name = "grouped_layer_custom",
+    srcs = {
+        "/app/bin/main": ":split_app",
+    },
+    layer_ids = [
+        "base",
+        "deps",
+        "app",
+    ],
+    layer_for_group = {
+        "FOUNDATIONAL_RUNFILES": "base",
+        "OTHER_PARTY_RUNFILES": "deps",
+        "SAME_PARTY_RUNFILES": "app",
+        "DEBUG_RUNFILES": "app",  # Group debug with app
+    },
+)
+
+# Test 4: Create a layer that excludes certain groups
+image_layer(
+    name = "grouped_layer_filtered",
+    srcs = {
+        "/app/bin/main": ":split_app",
+    },
+    exclude_groups = ["DEBUG_RUNFILES"],
+)
+
+# Test 5: Create a layer that only includes certain groups
+image_layer(
+    name = "grouped_layer_included",
+    srcs = {
+        "/app/bin/main": ":split_app",
+    },
+    include_groups = ["FOUNDATIONAL_RUNFILES", "OTHER_PARTY_RUNFILES"],
+)
+
+# Test 6: Merge all groups into a single layer
+image_layer(
+    name = "grouped_layer_merged",
+    srcs = {
+        "/app/bin/main": ":split_app",
+    },
+    default_grouping = "merge_all",
+)
+
+# Create manifests using the grouped layers
+
+# Manifest with auto-grouped layers
+image_manifest(
+    name = "image_auto_grouped",
+    entrypoint = ["/app/bin/main"],
+    layers = [":grouped_layer_auto"],
+)
+
+# Manifest with explicit layer IDs
+image_manifest(
+    name = "image_explicit_grouped",
+    entrypoint = ["/app/bin/main"],
+    layers = [":grouped_layer_explicit"],
+)
+
+# Manifest with custom layer mapping
+image_manifest(
+    name = "image_custom_grouped",
+    entrypoint = ["/app/bin/main"],
+    layers = [":grouped_layer_custom"],
+)
+
+# Manifest with filtered groups
+image_manifest(
+    name = "image_filtered",
+    entrypoint = ["/app/bin/main"],
+    layers = [":grouped_layer_filtered"],
+)
+
+# Manifest with included groups
+image_manifest(
+    name = "image_included",
+    entrypoint = ["/app/bin/main"],
+    layers = [":grouped_layer_included"],
+)
+
+# Manifest with merged layers
+image_manifest(
+    name = "image_merged",
+    entrypoint = ["/app/bin/main"],
+    layers = [":grouped_layer_merged"],
+)
+
+# Test 6: Mix grouped and non-grouped targets in the same layer
+# This should default ungrouped files to SAME_PARTY_RUNFILES
+filegroup(
+    name = "config_file",
+    srcs = ["stdlib_file.txt"],  # Reusing for simplicity
+)
+
+image_layer(
+    name = "mixed_layer",
+    srcs = {
+        "/app/bin/main": ":split_app",
+        "/app/config.txt": ":config_file",  # This has no RunfilesGroupInfo
+    },
+)
+
+image_manifest(
+    name = "image_mixed",
+    entrypoint = ["/app/bin/main"],
+    layers = [":mixed_layer"],
+)
+
+build_test(
+    name = "layer_tests",
+    targets = [
+        ":grouped_layer_auto",
+        ":grouped_layer_explicit",
+        ":grouped_layer_custom",
+        ":grouped_layer_filtered",
+        ":grouped_layer_included",
+        ":grouped_layer_merged",
+        ":mixed_layer",
+    ],
+)
+
+build_test(
+    name = "manifest_tests",
+    targets = [
+        ":image_auto_grouped",
+        ":image_explicit_grouped",
+        ":image_custom_grouped",
+        ":image_filtered",
+        ":image_included",
+        ":image_merged",
+        ":image_mixed",
+    ],
+)
+
+build_test(
+    name = "all_tests",
+    targets = [
+        ":layer_tests",
+        ":manifest_tests",
+    ],
+)

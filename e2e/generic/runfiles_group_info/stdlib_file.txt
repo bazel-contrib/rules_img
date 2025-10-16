@@ -1,0 +1,2 @@
+This is a standard library file.
+It contains foundational code that rarely changes.

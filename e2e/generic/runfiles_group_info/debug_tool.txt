@@ -1,0 +1,2 @@
+This is a debug tool.
+It's only needed for debugging and development.

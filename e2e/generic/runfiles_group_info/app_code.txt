@@ -1,0 +1,2 @@
+This is application code.
+It contains the main business logic that changes frequently.

@@ -1,0 +1,2 @@
+This is a third-party library file.
+It contains dependencies from external parties.
