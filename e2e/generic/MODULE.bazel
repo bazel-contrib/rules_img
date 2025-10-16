@@ -27,6 +27,11 @@ local_path_override(
     module_name = "runfilesgroupinfo.bzl",
     path = "../../../runfilesgroupinfo.bzl",
 )
+bazel_dep(name = "fsmanifestinfo.bzl", version = "0.0.1")
+local_path_override(
+    module_name = "fsmanifestinfo.bzl",
+    path = "../../../fsmanifestinfo.bzl",
+)
 
 bazel_dep(name = "aspect_bazel_lib", version = "2.21.2")
 bazel_dep(name = "bazel_skylib", version = "1.7.1")

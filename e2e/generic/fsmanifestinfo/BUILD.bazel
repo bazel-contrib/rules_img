@@ -1,0 +1,229 @@
+"""Example demonstrating FSManifestInfo with image_layer."""
+
+load("@bazel_skylib//rules:build_test.bzl", "build_test")
+load("@rules_img//img:image.bzl", "image_manifest")
+load("@rules_img//img:layer.bzl", "image_layer")
+load(":defs.bzl", "fake_manifest")
+
+# Sample files for testing
+filegroup(
+    name = "config_file",
+    srcs = ["config.yaml"],
+)
+
+filegroup(
+    name = "data_file",
+    srcs = ["data.txt"],
+)
+
+filegroup(
+    name = "script_file",
+    srcs = ["app.sh"],
+)
+
+# Test 1: Create a simple manifest with a few files
+fake_manifest(
+    name = "simple_manifest",
+    files = {
+        "/etc/app/config.yaml": ":config_file",
+        "/usr/share/app/data.txt": ":data_file",
+    },
+)
+
+# Test 2: Create a manifest with more complex paths
+fake_manifest(
+    name = "complex_manifest",
+    files = {
+        "/opt/myapp/bin/app.sh": ":script_file",
+        "/opt/myapp/etc/config.yaml": ":config_file",
+        "/opt/myapp/share/data.txt": ":data_file",
+    },
+)
+
+# Test with metadata: file-specific metadata
+fake_manifest(
+    name = "manifest_with_metadata",
+    files = {
+        "/etc/app/config.yaml": ":config_file",
+        "/usr/share/app/data.txt": ":data_file",
+        "/var/lib/app/script.sh": ":script_file",
+    },
+    file_metadata_mode = {
+        "/etc/app/config.yaml": "0644",
+        "/usr/share/app/data.txt": "0444",
+        "/var/lib/app/script.sh": "0755",
+    },
+    file_metadata_owner = {
+        "/etc/app/config.yaml": "appuser",
+    },
+    file_metadata_gid = {
+        "/etc/app/config.yaml": "1000",
+    },
+    file_metadata_mtime = {
+        "/var/lib/app/script.sh": "1609459200",  # 2021-01-01 00:00:00 UTC
+    },
+    file_metadata_xattrs = {
+        "/usr/share/app/data.txt": "{\"user.comment\": \"Important data\", \"user.checksum\": \"abc123\"}",
+    },
+)
+
+# Test with default metadata
+fake_manifest(
+    name = "manifest_with_defaults",
+    files = {
+        "/opt/app/file1.txt": ":config_file",
+        "/opt/app/file2.txt": ":data_file",
+    },
+    default_mode = "0755",
+    default_uid = "1000",
+    default_gid = "1000",
+    default_owner = "appuser",
+    default_group = "appgroup",
+)
+
+# Test with symlinks
+fake_manifest(
+    name = "manifest_with_symlinks",
+    files = {
+        "/usr/local/bin/app.sh": ":script_file",
+        "/etc/app/config.yaml": ":config_file",
+    },
+    symlinks = {
+        "/usr/bin/app": "/usr/local/bin/app.sh",
+        "/etc/app/default.yaml": "/etc/app/config.yaml",
+    },
+)
+
+# Test with empty directories
+fake_manifest(
+    name = "manifest_with_empty_dirs",
+    files = {
+        "/app/config.yaml": ":config_file",
+    },
+    empty_dirs = [
+        "/var/log/app",
+        "/var/cache/app",
+        "/tmp/app",
+    ],
+)
+
+# Test 3: Use manifest in image_layer
+image_layer(
+    name = "layer_with_manifest",
+    manifests = [":simple_manifest"],
+)
+
+# Test 4: Mix manifest with regular srcs
+image_layer(
+    name = "layer_mixed",
+    srcs = {
+        "/app/bin/app.sh": ":script_file",
+    },
+    manifests = [":simple_manifest"],
+)
+
+# Test 5: Multiple manifests in one layer
+image_layer(
+    name = "layer_multi_manifest",
+    manifests = [
+        ":simple_manifest",
+        ":complex_manifest",
+    ],
+)
+
+# Test 6: Manifest with executable and regular files
+image_layer(
+    name = "layer_manifest_with_exec",
+    srcs = {
+        "/app/bin/app": ":script_file",
+    },
+    manifests = [":simple_manifest"],
+)
+
+# Test 7: Layer with manifest containing file-specific metadata
+image_layer(
+    name = "layer_with_file_metadata",
+    manifests = [":manifest_with_metadata"],
+)
+
+# Test 8: Layer with manifest containing default metadata
+image_layer(
+    name = "layer_with_default_metadata",
+    manifests = [":manifest_with_defaults"],
+)
+
+# Test 9: Layer with manifest containing symlinks
+image_layer(
+    name = "layer_with_symlinks",
+    manifests = [":manifest_with_symlinks"],
+)
+
+# Test 10: Mix manifest symlinks with ctx.attr.symlinks (ctx.attr takes precedence)
+image_layer(
+    name = "layer_with_mixed_symlinks",
+    manifests = [":manifest_with_symlinks"],
+    symlinks = {
+        "/usr/bin/app": "/override/path",  # This should override the manifest symlink
+        "/extra/link": "/extra/target",
+    },
+)
+
+# Test 11: Layer with manifest containing empty directories
+image_layer(
+    name = "layer_with_empty_dirs",
+    manifests = [":manifest_with_empty_dirs"],
+)
+
+# Create image manifests using the layers
+
+# Image with manifest only
+image_manifest(
+    name = "image_with_manifest",
+    layers = [":layer_with_manifest"],
+)
+
+# Image with mixed sources
+image_manifest(
+    name = "image_mixed",
+    entrypoint = ["/app/bin/app.sh"],
+    layers = [":layer_mixed"],
+)
+
+# Image with multiple manifests
+image_manifest(
+    name = "image_multi_manifest",
+    layers = [":layer_multi_manifest"],
+)
+
+# Build tests to verify everything builds correctly
+build_test(
+    name = "layer_tests",
+    targets = [
+        ":layer_with_manifest",
+        ":layer_mixed",
+        ":layer_multi_manifest",
+        ":layer_manifest_with_exec",
+        ":layer_with_file_metadata",
+        ":layer_with_default_metadata",
+        ":layer_with_symlinks",
+        ":layer_with_mixed_symlinks",
+        ":layer_with_empty_dirs",
+    ],
+)
+
+build_test(
+    name = "manifest_tests",
+    targets = [
+        ":image_with_manifest",
+        ":image_mixed",
+        ":image_multi_manifest",
+    ],
+)
+
+build_test(
+    name = "all_tests",
+    targets = [
+        ":layer_tests",
+        ":manifest_tests",
+    ],
+)
