@@ -3,7 +3,7 @@ module github.com/bazel-contrib/rules_img/img_tool
 go 1.24.2
 
 require (
-	cloud.google.com/go/longrunning v0.6.7
+	cloud.google.com/go/longrunning v0.7.0
 	github.com/aws/aws-sdk-go-v2 v1.39.2
 	github.com/aws/aws-sdk-go-v2/config v1.31.12
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.88.4
@@ -25,7 +25,7 @@ require (
 )
 
 require (
-	cloud.google.com/go/compute/metadata v0.7.0 // indirect
+	cloud.google.com/go/compute/metadata v0.8.0 // indirect
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.1 // indirect
 	github.com/aws/aws-sdk-go-v2/credentials v1.18.16 // indirect
 	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.18.9 // indirect
@@ -52,8 +52,8 @@ require (
 	github.com/stretchr/testify v1.10.0 // indirect
 	github.com/vbatts/tar-split v0.12.1 // indirect
 	golang.org/x/mod v0.26.0 // indirect
-	golang.org/x/net v0.42.0 // indirect
+	golang.org/x/net v0.43.0 // indirect
 	golang.org/x/oauth2 v0.30.0 // indirect
-	golang.org/x/sys v0.34.0 // indirect
-	golang.org/x/text v0.27.0 // indirect
+	golang.org/x/sys v0.35.0 // indirect
+	golang.org/x/text v0.28.0 // indirect
 )
