@@ -9,7 +9,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.88.4
 	github.com/bazelbuild/rules_go v0.57.0
 	github.com/containerd/containerd/api v1.9.0
-	github.com/containerd/stargz-snapshotter/estargz v0.17.0
+	github.com/containerd/stargz-snapshotter/estargz v0.18.0
 	github.com/google/uuid v1.6.0
 	github.com/klauspost/compress v1.18.0
 	github.com/klauspost/pgzip v1.2.6
@@ -50,7 +50,7 @@ require (
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/sirupsen/logrus v1.9.3 // indirect
 	github.com/stretchr/testify v1.10.0 // indirect
-	github.com/vbatts/tar-split v0.12.1 // indirect
+	github.com/vbatts/tar-split v0.12.2 // indirect
 	golang.org/x/mod v0.26.0 // indirect
 	golang.org/x/net v0.42.0 // indirect
 	golang.org/x/oauth2 v0.30.0 // indirect
