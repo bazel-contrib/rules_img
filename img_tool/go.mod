@@ -11,7 +11,7 @@ require (
 	github.com/containerd/containerd/api v1.9.0
 	github.com/containerd/stargz-snapshotter/estargz v0.18.0
 	github.com/google/uuid v1.6.0
-	github.com/klauspost/compress v1.18.0
+	github.com/klauspost/compress v1.18.1
 	github.com/klauspost/pgzip v1.2.6
 	github.com/malt3/go-containerregistry v0.0.0-20250724131542-7e98b20e9b45
 	github.com/opencontainers/go-digest v1.0.0
