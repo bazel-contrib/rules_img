@@ -338,23 +338,11 @@ func assembleOCILayoutWithIndex(indexPath, outputPath, format string, manifestPa
 	return sink.CopyFile("index.json", indexPath, false)
 }
 
-func setupOCILayout(outputDir string) error {
-	blobsDir := filepath.Join(outputDir, "blobs", "sha256")
-	if err := os.MkdirAll(blobsDir, 0755); err != nil {
-		return fmt.Errorf("creating blobs directory: %w", err)
-	}
-
-	ociLayout := map[string]string{
-		"imageLayoutVersion": OCILayoutVersion,
-	}
-	return writeJSON(filepath.Join(outputDir, "oci-layout"), ociLayout)
-}
-
 func setupOCILayoutWithSink(sink OCILayoutSink) error {
 	if err := sink.CreateDir("blobs"); err != nil {
 		return fmt.Errorf("creating blobs directory: %w", err)
 	}
-	if err := sink.CreateDir("blobs/sha256"); err != nil {
+	if err := sink.CreateDir(filepath.Join("blobs", "sha256")); err != nil {
 		return fmt.Errorf("creating blobs/sha256 directory: %w", err)
 	}
 
@@ -369,7 +357,7 @@ func writeJSON(path string, v interface{}) error {
 	if err != nil {
 		return fmt.Errorf("marshaling %s: %w", path, err)
 	}
-	return os.WriteFile(path, data, 0644)
+	return os.WriteFile(path, data, 0o644)
 }
 
 func writeJSONWithSink(sink OCILayoutSink, path string, v interface{}) error {
@@ -377,17 +365,7 @@ func writeJSONWithSink(sink OCILayoutSink, path string, v interface{}) error {
 	if err != nil {
 		return fmt.Errorf("marshaling %s: %w", path, err)
 	}
-	return sink.WriteFile(path, data, 0644)
-}
-
-func copyBlobs(blobs blobMap, blobsDir string, useSymlinks bool) error {
-	for digest, srcPath := range blobs {
-		dstPath := filepath.Join(blobsDir, digest)
-		if err := copyFile(srcPath, dstPath, useSymlinks); err != nil {
-			return fmt.Errorf("copying blob %s: %w", digest, err)
-		}
-	}
-	return nil
+	return sink.WriteFile(path, data, 0o644)
 }
 
 func copyBlobsWithSink(sink OCILayoutSink, blobs blobMap, useSymlinks bool) error {
