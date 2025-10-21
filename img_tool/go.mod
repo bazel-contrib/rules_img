@@ -18,7 +18,7 @@ require (
 	github.com/opencontainers/image-spec v1.1.1
 	golang.org/x/sync v0.17.0
 	google.golang.org/genproto/googleapis/api v0.0.0-20251020155222-88f65dc88635
-	google.golang.org/genproto/googleapis/bytestream v0.0.0-20251014184007-4626949a642f
+	google.golang.org/genproto/googleapis/bytestream v0.0.0-20251020155222-88f65dc88635
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20251020155222-88f65dc88635
 	google.golang.org/grpc v1.76.0
 	google.golang.org/protobuf v1.36.10
