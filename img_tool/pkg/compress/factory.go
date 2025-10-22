@@ -182,7 +182,7 @@ func AppenderFactory(hashAlgorithm, compressionAlgorithm string, w io.Writer, op
 		return NewSHA256GzipAppender(w, optionsList...)
 	case hashAlgorithm == "sha256" && compressionAlgorithm == "zstd":
 		return NewSHA256ZstdAppender(w, optionsList...)
-	case hashAlgorithm == "sha256" && compressionAlgorithm == "uncompressed":
+	case hashAlgorithm == "sha256" && (compressionAlgorithm == "uncompressed" || compressionAlgorithm == "none"):
 		return New[nopCompressor, SHA256Maker, UncompressedMaker](w, optionsList...)
 	}
 	return nil, errors.New("unsupported hash or compression algorithm")
@@ -208,7 +208,7 @@ func ResumeFactory(hashAlgorithm, compressionAlgorithm string, state api.Appende
 		return ResumeSHA256GzipAppender(state, w, optionsList...)
 	case hashAlgorithm == "sha256" && compressionAlgorithm == "zstd":
 		return ResumeSHA256ZstdAppender(state, w, optionsList...)
-	case hashAlgorithm == "sha256" && compressionAlgorithm == "uncompressed":
+	case hashAlgorithm == "sha256" && (compressionAlgorithm == "uncompressed" || compressionAlgorithm == "none"):
 		return Resume[nopCompressor, SHA256Maker, UncompressedMaker](state, w, optionsList...)
 	}
 	return nil, errors.New("unsupported hash or compression algorithm")
@@ -251,6 +251,12 @@ func TarAppenderFactory(hashAlgorithm, compressionAlgorithm string, seekable boo
 			return nil, err
 		}
 		return appender.TarAppender(), nil
+	case hashAlgorithm == "sha256" && (compressionAlgorithm == "uncompressed" || compressionAlgorithm == "none") && !seekable:
+		appender, err := New[nopCompressor, SHA256Maker, UncompressedMaker](w, optionsList...)
+		if err != nil {
+			return nil, err
+		}
+		return appender.TarAppender(), nil
 	}
 	return nil, errors.New("unsupported hash or compression algorithm")
 }
@@ -287,6 +293,12 @@ func ResumeTarFactory(hashAlgorithm, compressionAlgorithm string, seekable bool,
 		return ResumeSHA256EstargzZstdTarAppender(state, w, optionsList...)
 	case hashAlgorithm == "sha256" && compressionAlgorithm == "zstd" && !seekable:
 		appender, err := ResumeSHA256ZstdAppender(state, w, optionsList...)
+		if err != nil {
+			return nil, err
+		}
+		return appender.TarAppender(), nil
+	case hashAlgorithm == "sha256" && (compressionAlgorithm == "uncompressed" || compressionAlgorithm == "none") && !seekable:
+		appender, err := Resume[nopCompressor, SHA256Maker, UncompressedMaker](state, w, optionsList...)
 		if err != nil {
 			return nil, err
 		}
