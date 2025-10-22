@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -27,6 +28,7 @@ type TestCase struct {
 	Setup       SetupSpec
 	Command     CommandSpec
 	Assertions  []AssertionSpec
+	Debug       DebugSpec
 }
 
 type SetupSpec struct {
@@ -39,6 +41,7 @@ type CommandSpec struct {
 	Args       []string
 	ExpectExit int
 	Stdin      string
+	Verbose    bool
 }
 
 type AssertionSpec struct {
@@ -50,6 +53,10 @@ type AssertionSpec struct {
 	Owner    string // For ownership assertions (uid:gid format)
 	Mode     string // For file mode assertions (octal format)
 	PaxKey   string // For pax extended attribute key
+}
+
+type DebugSpec struct {
+	TarFiles []string // List of tar files to print contents for debugging
 }
 
 type TestFramework struct {
@@ -151,6 +158,11 @@ func (tf *TestFramework) LoadTestCase(filename string) (*TestCase, error) {
 			case "description":
 				testCase.Description = value
 			}
+		case "debug":
+			key, value := parseKeyValue(line)
+			if key == "tar_debug" {
+				testCase.Debug.TarFiles = append(testCase.Debug.TarFiles, value)
+			}
 		case "command":
 			key, value := parseKeyValue(line)
 			switch key {
@@ -162,6 +174,13 @@ func (tf *TestFramework) LoadTestCase(filename string) (*TestCase, error) {
 				fmt.Sscanf(value, "%d", &testCase.Command.ExpectExit)
 			case "stdin":
 				testCase.Command.Stdin = value
+			case "verbose":
+				switch strings.ToLower(value) {
+				case "true", "1", "yes":
+					testCase.Command.Verbose = true
+				default:
+					testCase.Command.Verbose = false
+				}
 			}
 		case "file":
 			key, value := parseKeyValue(line)
@@ -389,6 +408,12 @@ func (tf *TestFramework) RunCommand(ctx context.Context, cmd CommandSpec) (*Comm
 		Err:    err,
 	}
 
+	if cmd.Verbose {
+		tf.t.Logf("Command: %s %s", tf.imgBinaryPath, strings.Join(args, " "))
+		tf.t.Logf("Stdout:\n%s", result.Stdout)
+		tf.t.Logf("Stderr:\n%s", result.Stderr)
+	}
+
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			result.ExitCode = exitErr.ExitCode()
@@ -464,6 +489,7 @@ func (tf *TestFramework) CheckAssertions(assertions []AssertionSpec, result *Com
 
 // TarEntryInfo holds information about a tar entry
 type TarEntryInfo struct {
+	Index   int
 	Header  *tar.Header
 	Content []byte
 }
@@ -497,6 +523,7 @@ func (tf *TestFramework) readTarEntries(tarPath string) (map[string]*TarEntryInf
 	tarReader := tar.NewReader(reader)
 	entries := make(map[string]*TarEntryInfo)
 
+	index := 0
 	for {
 		header, err := tarReader.Next()
 		if err == io.EOF {
@@ -515,9 +542,11 @@ func (tf *TestFramework) readTarEntries(tarPath string) (map[string]*TarEntryInf
 		}
 
 		entries[header.Name] = &TarEntryInfo{
+			Index:   index,
 			Header:  header,
 			Content: content,
 		}
+		index++
 	}
 
 	return entries, nil
@@ -682,6 +711,7 @@ func (tf *TestFramework) checkAssertion(assertion AssertionSpec, result *Command
 			return fmt.Errorf("failed to read tar file %s: %w", assertion.Path, err)
 		}
 		if _, exists := entries[assertion.TarEntry]; !exists {
+			tf.PrintTarContents(assertion.Path)
 			return fmt.Errorf("tar entry %s does not exist in %s", assertion.TarEntry, assertion.Path)
 		}
 	case "tar_entry_not_exists":
@@ -690,6 +720,7 @@ func (tf *TestFramework) checkAssertion(assertion AssertionSpec, result *Command
 			return fmt.Errorf("failed to read tar file %s: %w", assertion.Path, err)
 		}
 		if _, exists := entries[assertion.TarEntry]; exists {
+			tf.PrintTarContents(assertion.Path)
 			return fmt.Errorf("tar entry %s exists in %s but should not", assertion.TarEntry, assertion.Path)
 		}
 	case "tar_entry_type":
@@ -699,24 +730,29 @@ func (tf *TestFramework) checkAssertion(assertion AssertionSpec, result *Command
 		}
 		entry, exists := entries[assertion.TarEntry]
 		if !exists {
+			tf.PrintTarContents(assertion.Path)
 			return fmt.Errorf("tar entry %s does not exist in %s", assertion.TarEntry, assertion.Path)
 		}
 
 		switch assertion.Content {
 		case "regular":
 			if entry.Header.Typeflag != tar.TypeReg {
+				tf.PrintTarContents(assertion.Path)
 				return fmt.Errorf("tar entry %s is not a regular file (typeflag: %d)", assertion.TarEntry, entry.Header.Typeflag)
 			}
 		case "dir":
 			if entry.Header.Typeflag != tar.TypeDir {
+				tf.PrintTarContents(assertion.Path)
 				return fmt.Errorf("tar entry %s is not a directory (typeflag: %d)", assertion.TarEntry, entry.Header.Typeflag)
 			}
 		case "symlink":
 			if entry.Header.Typeflag != tar.TypeSymlink {
+				tf.PrintTarContents(assertion.Path)
 				return fmt.Errorf("tar entry %s is not a symlink (typeflag: %d)", assertion.TarEntry, entry.Header.Typeflag)
 			}
 		case "link":
 			if entry.Header.Typeflag != tar.TypeLink {
+				tf.PrintTarContents(assertion.Path)
 				return fmt.Errorf("tar entry %s is not a hardlink (typeflag: %d)", assertion.TarEntry, entry.Header.Typeflag)
 			}
 		default:
@@ -729,9 +765,11 @@ func (tf *TestFramework) checkAssertion(assertion AssertionSpec, result *Command
 		}
 		entry, exists := entries[assertion.TarEntry]
 		if !exists {
+			tf.PrintTarContents(assertion.Path)
 			return fmt.Errorf("tar entry %s does not exist in %s", assertion.TarEntry, assertion.Path)
 		}
 		if entry.Header.Size != assertion.Size {
+			tf.PrintTarContents(assertion.Path)
 			return fmt.Errorf("tar entry %s size mismatch: expected %d, got %d", assertion.TarEntry, assertion.Size, entry.Header.Size)
 		}
 	case "tar_entry_sha256":
@@ -741,15 +779,18 @@ func (tf *TestFramework) checkAssertion(assertion AssertionSpec, result *Command
 		}
 		entry, exists := entries[assertion.TarEntry]
 		if !exists {
+			tf.PrintTarContents(assertion.Path)
 			return fmt.Errorf("tar entry %s does not exist in %s", assertion.TarEntry, assertion.Path)
 		}
 		if entry.Header.Typeflag != tar.TypeReg {
+			tf.PrintTarContents(assertion.Path)
 			return fmt.Errorf("tar entry %s is not a regular file, cannot check SHA256", assertion.TarEntry)
 		}
 		hash := sha256.Sum256(entry.Content)
 		actualHash := hex.EncodeToString(hash[:])
 		expectedHash := strings.ToLower(assertion.Content)
 		if actualHash != expectedHash {
+			tf.PrintTarContents(assertion.Path)
 			return fmt.Errorf("tar entry %s SHA256 mismatch: expected %s, got %s", assertion.TarEntry, expectedHash, actualHash)
 		}
 	case "tar_entry_owner":
@@ -759,6 +800,7 @@ func (tf *TestFramework) checkAssertion(assertion AssertionSpec, result *Command
 		}
 		entry, exists := entries[assertion.TarEntry]
 		if !exists {
+			tf.PrintTarContents(assertion.Path)
 			return fmt.Errorf("tar entry %s does not exist in %s", assertion.TarEntry, assertion.Path)
 		}
 
@@ -777,9 +819,11 @@ func (tf *TestFramework) checkAssertion(assertion AssertionSpec, result *Command
 		}
 
 		if entry.Header.Uid != expectedUID {
+			tf.PrintTarContents(assertion.Path)
 			return fmt.Errorf("tar entry %s UID mismatch: expected %d, got %d", assertion.TarEntry, expectedUID, entry.Header.Uid)
 		}
 		if entry.Header.Gid != expectedGID {
+			tf.PrintTarContents(assertion.Path)
 			return fmt.Errorf("tar entry %s GID mismatch: expected %d, got %d", assertion.TarEntry, expectedGID, entry.Header.Gid)
 		}
 	case "tar_entry_mode":
@@ -789,6 +833,7 @@ func (tf *TestFramework) checkAssertion(assertion AssertionSpec, result *Command
 		}
 		entry, exists := entries[assertion.TarEntry]
 		if !exists {
+			tf.PrintTarContents(assertion.Path)
 			return fmt.Errorf("tar entry %s does not exist in %s", assertion.TarEntry, assertion.Path)
 		}
 
@@ -802,6 +847,7 @@ func (tf *TestFramework) checkAssertion(assertion AssertionSpec, result *Command
 		expectedMode = expectedMode & 0o7777
 
 		if actualMode != expectedMode {
+			tf.PrintTarContents(assertion.Path)
 			return fmt.Errorf("tar entry %s mode mismatch: expected %o, got %o", assertion.TarEntry, expectedMode, actualMode)
 		}
 	case "tar_entry_pax":
@@ -811,25 +857,94 @@ func (tf *TestFramework) checkAssertion(assertion AssertionSpec, result *Command
 		}
 		entry, exists := entries[assertion.TarEntry]
 		if !exists {
+			tf.PrintTarContents(assertion.Path)
 			return fmt.Errorf("tar entry %s does not exist in %s", assertion.TarEntry, assertion.Path)
 		}
 
 		if entry.Header.PAXRecords == nil {
+			tf.PrintTarContents(assertion.Path)
 			return fmt.Errorf("tar entry %s has no PAX extended attributes", assertion.TarEntry)
 		}
 
 		actualValue, exists := entry.Header.PAXRecords[assertion.PaxKey]
 		if !exists {
+			tf.PrintTarContents(assertion.Path)
 			return fmt.Errorf("tar entry %s does not have PAX attribute %s", assertion.TarEntry, assertion.PaxKey)
 		}
 
 		if actualValue != assertion.Content {
+			tf.PrintTarContents(assertion.Path)
 			return fmt.Errorf("tar entry %s PAX attribute %s mismatch: expected %q, got %q",
 				assertion.TarEntry, assertion.PaxKey, assertion.Content, actualValue)
 		}
 	default:
 		return fmt.Errorf("unknown assertion type: %s", assertion.Type)
 	}
+	return nil
+}
+
+// PrintTarContents prints the contents of a tar file to stdout for debugging
+func (tf *TestFramework) PrintTarContents(tarPath string) error {
+	entries, err := tf.readTarEntries(tarPath)
+	if err != nil {
+		return fmt.Errorf("failed to read tar file %s: %w", tarPath, err)
+	}
+
+	fmt.Printf("\n=== Contents of %s ===\n", tarPath)
+	fmt.Printf("%-10s %-10s %-10s %-20s %s\n", "Mode", "UID/GID", "Size", "Type", "Name")
+	fmt.Println(strings.Repeat("-", 80))
+
+	// Sort entries by index
+	type indexedEntry struct {
+		name  string
+		entry *TarEntryInfo
+	}
+	sorted := make([]indexedEntry, 0, len(entries))
+	for name, entry := range entries {
+		sorted = append(sorted, indexedEntry{name, entry})
+	}
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i].entry.Index < sorted[j].entry.Index
+	})
+
+	for _, item := range sorted {
+		name := item.name
+		entry := item.entry
+		header := entry.Header
+
+		// Format mode
+		mode := fmt.Sprintf("%04o", header.Mode&0o7777)
+
+		// Format ownership
+		ownership := fmt.Sprintf("%d:%d", header.Uid, header.Gid)
+
+		// Format type
+		var typeStr string
+		switch header.Typeflag {
+		case tar.TypeReg:
+			typeStr = "regular"
+		case tar.TypeDir:
+			typeStr = "dir"
+		case tar.TypeSymlink:
+			typeStr = fmt.Sprintf("symlink -> %s", header.Linkname)
+		case tar.TypeLink:
+			typeStr = fmt.Sprintf("link -> %s", header.Linkname)
+		default:
+			typeStr = fmt.Sprintf("type-%d", header.Typeflag)
+		}
+
+		fmt.Printf("%-10s %-10s %-10d %-20s %s\n",
+			mode, ownership, header.Size, typeStr, name)
+
+		// Print PAX records if present
+		if header.PAXRecords != nil && len(header.PAXRecords) > 0 {
+			for key, value := range header.PAXRecords {
+				fmt.Printf("  PAX: %s = %s\n", key, value)
+			}
+		}
+	}
+
+	fmt.Printf("Total entries: %d\n\n", len(entries))
 	return nil
 }
 
@@ -843,6 +958,13 @@ func (tf *TestFramework) RunTestCase(ctx context.Context, testCase *TestCase) er
 		if err != nil {
 			t.Fatalf("Command execution failed: %v\nStdout: %s\nStderr: %s",
 				err, result.Stdout, result.Stderr)
+		}
+
+		// Print tar contents for debugging if requested
+		for _, tarFile := range testCase.Debug.TarFiles {
+			if err := tf.PrintTarContents(tarFile); err != nil {
+				t.Logf("Warning: could not print tar contents for %s: %v", tarFile, err)
+			}
 		}
 
 		if err := tf.CheckAssertions(testCase.Assertions, result); err != nil {
