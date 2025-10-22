@@ -2,5 +2,22 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
     "config:recommended"
+  ],
+  "packageRules": [
+    {
+      "groupName": "container images",
+      "matchDatasources": ["docker"],
+      "matchFileNames": ["**/MODULE.bazel"]
+    },
+    {
+      "groupName": "forked go-containerregistry",
+      "matchManagers": ["gomod"],
+      "matchPackageNames": ["github.com/malt3/go-containerregistry"]
+    },
+    {
+      "groupName": "Go dependencies",
+      "matchManagers": ["gomod"],
+      "excludePackageNames": ["github.com/malt3/go-containerregistry"]
+    }
   ]
 }
