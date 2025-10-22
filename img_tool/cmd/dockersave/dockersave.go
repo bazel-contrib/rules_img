@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	v1 "github.com/malt3/go-containerregistry/pkg/v1"
@@ -208,7 +209,7 @@ func assembleDockerSave(manifestPath, configPath, outputPath, format string, lay
 	if err := sink.CreateDir("blobs"); err != nil {
 		return fmt.Errorf("creating blobs directory: %w", err)
 	}
-	if err := sink.CreateDir("blobs/sha256"); err != nil {
+	if err := sink.CreateDir(filepath.Join("blobs", "sha256")); err != nil {
 		return fmt.Errorf("creating blobs/sha256 directory: %w", err)
 	}
 
@@ -258,7 +259,15 @@ func assembleDockerSave(manifestPath, configPath, outputPath, format string, lay
 }
 
 func copyBlobs(sink DockerSaveSink, blobs blobMap, useSymlinks bool) error {
-	for digest, srcPath := range blobs {
+	// Sort blob digests to ensure deterministic order
+	digests := make([]string, 0, len(blobs))
+	for digest := range blobs {
+		digests = append(digests, digest)
+	}
+	sort.Strings(digests)
+
+	for _, digest := range digests {
+		srcPath := blobs[digest]
 		dstPath := filepath.Join("blobs", "sha256", digest)
 		if err := sink.CopyFile(dstPath, srcPath, useSymlinks); err != nil {
 			return fmt.Errorf("copying blob %s: %w", digest, err)
