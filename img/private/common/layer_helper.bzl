@@ -71,7 +71,7 @@ def compression_tuning_args(ctx, compression, estargz):
     if compression == "gzip" and not estargz:
         # For gzip, we can tune the number of compression threads (pgzip)
         tuned_args.extend(["--compressor-jobs", jobs])
-    if level != "-1":
+    if level != "-1" and compression != "none":
         if level not in valid_levels[compression]:
             fail("Invalid compression level {} for {}".format(level, compression))
         tuned_args.extend(["--compression-level", level])
