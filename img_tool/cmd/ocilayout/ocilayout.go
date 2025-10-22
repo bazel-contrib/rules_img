@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	v1 "github.com/malt3/go-containerregistry/pkg/v1"
@@ -207,10 +208,6 @@ func assembleOCILayout(manifestPath, configPath, outputPath, format string, laye
 	manifestDigest := hashBytes(manifestData)
 	blobs[manifestDigest.Hex] = manifestPath
 
-	if err := copyBlobsWithSink(sink, blobs, useSymlinks); err != nil {
-		return err
-	}
-
 	index := v1.IndexManifest{
 		SchemaVersion: 2,
 		MediaType:     "application/vnd.oci.image.index.v1+json",
@@ -223,7 +220,15 @@ func assembleOCILayout(manifestPath, configPath, outputPath, format string, laye
 		},
 	}
 
-	return writeJSONWithSink(sink, "index.json", index)
+	if err := writeJSONWithSink(sink, "index.json", index); err != nil {
+		return fmt.Errorf("writing index.json: %w", err)
+	}
+
+	if err := copyBlobsWithSink(sink, blobs, useSymlinks); err != nil {
+		return fmt.Errorf("copying blobs: %w", err)
+	}
+
+	return nil
 }
 
 func copyFile(src, dst string, useSymlinks bool) error {
@@ -273,6 +278,11 @@ func assembleOCILayoutWithIndex(indexPath, outputPath, format string, manifestPa
 
 	if err := setupOCILayoutWithSink(sink); err != nil {
 		return err
+	}
+
+	// Copy the index file unmodified
+	if err := sink.CopyFile("index.json", indexPath, false); err != nil {
+		return fmt.Errorf("copying index file: %w", err)
 	}
 
 	// Build a map of available layers by their digest
@@ -334,8 +344,7 @@ func assembleOCILayoutWithIndex(indexPath, outputPath, format string, manifestPa
 		return err
 	}
 
-	// Copy the index file unmodified
-	return sink.CopyFile("index.json", indexPath, false)
+	return nil
 }
 
 func setupOCILayoutWithSink(sink OCILayoutSink) error {
@@ -352,14 +361,6 @@ func setupOCILayoutWithSink(sink OCILayoutSink) error {
 	return writeJSONWithSink(sink, "oci-layout", ociLayout)
 }
 
-func writeJSON(path string, v interface{}) error {
-	data, err := json.MarshalIndent(v, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshaling %s: %w", path, err)
-	}
-	return os.WriteFile(path, data, 0o644)
-}
-
 func writeJSONWithSink(sink OCILayoutSink, path string, v interface{}) error {
 	data, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
@@ -369,7 +370,13 @@ func writeJSONWithSink(sink OCILayoutSink, path string, v interface{}) error {
 }
 
 func copyBlobsWithSink(sink OCILayoutSink, blobs blobMap, useSymlinks bool) error {
-	for digest, srcPath := range blobs {
+	blobKeys := make([]string, 0, len(blobs))
+	for k := range blobs {
+		blobKeys = append(blobKeys, k)
+	}
+	slices.Sort(blobKeys)
+	for _, digest := range blobKeys {
+		srcPath := blobs[digest]
 		dstPath := filepath.Join("blobs", "sha256", digest)
 		if err := sink.CopyFile(dstPath, srcPath, useSymlinks); err != nil {
 			return fmt.Errorf("copying blob %s: %w", digest, err)

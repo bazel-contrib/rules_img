@@ -130,7 +130,7 @@ func (t *TarSink) CopyFile(dstPath, srcPath string, useSymlinks bool) error {
 
 	header := &tar.Header{
 		Name: filepath.ToSlash(dstPath), // Ensure forward slashes in tar (otherwise Windows paths may cause issues)
-		Mode: int64(srcInfo.Mode()),
+		Mode: 0o644,
 		Size: srcInfo.Size(),
 	}
 
