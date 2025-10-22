@@ -9,6 +9,7 @@ def _layer_from_tar_impl(ctx):
     optimize = ctx.attr.optimize
     source_compression = extension_to_compression[ctx.file.src.extension]
     compression = ctx.attr.compress
+    explicit_target_compression = compression != "auto"
     if compression == "auto":
         compression = ctx.attr._default_compression[BuildSettingInfo].value
 
@@ -17,7 +18,7 @@ def _layer_from_tar_impl(ctx):
         estargz = ctx.attr._default_estargz[BuildSettingInfo].value
     estargz_enabled = estargz == "enabled"
 
-    target_compression = compression if source_compression != "none" else source_compression
+    target_compression = compression if (explicit_target_compression or estargz_enabled or optimize) else source_compression
 
     needs_recompression = source_compression != target_compression
     needs_rewrite = needs_recompression or optimize
@@ -132,8 +133,8 @@ layer_from_tar(
         ),
         "compress": attr.string(
             default = "auto",
-            values = ["auto", "gzip", "zstd"],
-            doc = """Compression algorithm to use. If set to 'auto', uses the global default compression setting.""",
+            values = ["auto", "gzip", "zstd", "none"],
+            doc = """Compression algorithm to use. If set to 'auto', it keeps the existing compression, unless the layer is being optimized.""",
         ),
         "optimize": attr.bool(
             doc = """If set, rewrites the tar file to deduplicate it's contents.
