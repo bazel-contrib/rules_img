@@ -1,12 +1,12 @@
 """Load rule for importing images into a container daemon."""
 
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
+load("@platforms//host:constraints.bzl", "HOST_CONSTRAINTS")
 load("//img/private:root_symlinks.bzl", "calculate_root_symlinks")
 load("//img/private:stamp.bzl", "expand_or_write")
 load("//img/private/common:build.bzl", "TOOLCHAIN", "TOOLCHAINS")
-load("//img/private/common:transitions.bzl", "host_platform_transition", "reset_platform_transition")
+load("//img/private/common:transitions.bzl", "reset_platform_transition")
 load("//img/private/providers:deploy_info.bzl", "DeployInfo")
-load("//img/private/providers:image_toolchain_info.bzl", "ImageToolchainInfo")
 load("//img/private/providers:index_info.bzl", "ImageIndexInfo")
 load("//img/private/providers:load_settings_info.bzl", "LoadSettingsInfo")
 load("//img/private/providers:manifest_info.bzl", "ImageManifestInfo")
@@ -138,7 +138,7 @@ def _build_docker_tarball(ctx, configuration_json, manifest_info):
 def _image_load_impl(ctx):
     """Implementation of the load rule."""
     loader = ctx.actions.declare_file(ctx.label.name + ".exe")
-    img_toolchain_info = ctx.attr._tool[0][ImageToolchainInfo]
+    img_toolchain_info = ctx.exec_groups["host"].toolchains[TOOLCHAIN].imgtoolchaininfo
     ctx.actions.symlink(
         output = loader,
         target_file = img_toolchain_info.tool_exe,
@@ -336,12 +336,14 @@ Available strategies:
             default = Label("//img/private/settings:oci_layout"),
             providers = [OCILayoutSettingsInfo],
         ),
-        "_tool": attr.label(
-            cfg = host_platform_transition,
-            default = Label("//img:resolved_toolchain"),
-        ),
     },
     executable = True,
     cfg = reset_platform_transition,
+    exec_groups = {
+        "host": exec_group(
+            exec_compatible_with = HOST_CONSTRAINTS,
+            toolchains = TOOLCHAINS,
+        ),
+    },
     toolchains = TOOLCHAINS,
 )

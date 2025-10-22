@@ -1,10 +1,10 @@
 """Multi deploy rule for deploying multiple operations as a unified command."""
 
+load("@platforms//host:constraints.bzl", "HOST_CONSTRAINTS")
 load("//img/private:root_symlinks.bzl", "calculate_root_symlinks")
 load("//img/private/common:build.bzl", "TOOLCHAIN", "TOOLCHAINS")
-load("//img/private/common:transitions.bzl", "host_platform_transition", "reset_platform_transition")
+load("//img/private/common:transitions.bzl", "reset_platform_transition")
 load("//img/private/providers:deploy_info.bzl", "DeployInfo")
-load("//img/private/providers:image_toolchain_info.bzl", "ImageToolchainInfo")
 load("//img/private/providers:load_settings_info.bzl", "LoadSettingsInfo")
 load("//img/private/providers:push_settings_info.bzl", "PushSettingsInfo")
 load("//img/private/providers:stamp_setting_info.bzl", "StampSettingInfo")
@@ -87,7 +87,7 @@ def _multi_deploy_impl(ctx):
 
     # Create the executable
     deployer = ctx.actions.declare_file(ctx.label.name + ".exe")
-    img_toolchain_info = ctx.attr._tool[0][ImageToolchainInfo]
+    img_toolchain_info = ctx.exec_groups["host"].toolchains[TOOLCHAIN].imgtoolchaininfo
     ctx.actions.symlink(
         output = deployer,
         target_file = img_toolchain_info.tool_exe,
@@ -253,12 +253,14 @@ Available strategies:
             default = Label("//img/private/settings:stamp"),
             providers = [StampSettingInfo],
         ),
-        "_tool": attr.label(
-            cfg = host_platform_transition,
-            default = Label("//img:resolved_toolchain"),
-        ),
     },
     executable = True,
     cfg = reset_platform_transition,
+    exec_groups = {
+        "host": exec_group(
+            exec_compatible_with = HOST_CONSTRAINTS,
+            toolchains = TOOLCHAINS,
+        ),
+    },
     toolchains = TOOLCHAINS,
 )
