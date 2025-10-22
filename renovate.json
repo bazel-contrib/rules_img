@@ -2,5 +2,15 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
     "config:recommended"
+  ],
+  "packageRules": [
+    {
+      "groupName": "container images",
+      "matchManagers": ["rules_img_pull"]
+    },
+    {
+      "groupName": "Go dependencies",
+      "matchManagers": ["gomod"]
+    }
   ]
 }
