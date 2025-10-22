@@ -1,0 +1,71 @@
+load("@bazel_skylib//rules:build_test.bzl", "build_test")
+load("@rules_img//img:image.bzl", "image_manifest")
+load("@rules_img//img:layer.bzl", "layer_from_tar")
+load("@tar.bzl", "tar")
+
+tar(
+    name = "uncompressed",
+    srcs = ["my_file.txt"],
+)
+
+tar(
+    name = "compressed",
+    srcs = ["my_file.txt"],
+    compress = "zstd",
+)
+
+layer_from_tar(
+    name = "uncompressed_layer",
+    src = ":uncompressed",
+)
+
+layer_from_tar(
+    name = "compressed_layer",
+    src = ":uncompressed",
+    compress = "zstd",
+)
+
+layer_from_tar(
+    name = "recompressed_layer",
+    src = ":compressed",
+    compress = "gzip",
+)
+
+layer_from_tar(
+    name = "decompressed_layer",
+    src = ":compressed",
+    compress = "none",
+)
+
+layer_from_tar(
+    name = "optimized_layer",
+    src = ":compressed",
+    optimize = True,
+)
+
+image_manifest(
+    name = "image",
+    layers = [
+        ":uncompressed",  # tar files can be passed directly
+        ":compressed",  # tar files can be passed directly
+        ":uncompressed_layer",
+        ":compressed_layer",
+        ":recompressed_layer",
+        ":decompressed_layer",
+        ":optimized_layer",
+    ],
+)
+
+build_test(
+    name = "test",
+    targets = [
+        ":uncompressed",
+        ":compressed",
+        ":uncompressed_layer",
+        ":compressed_layer",
+        ":recompressed_layer",
+        ":decompressed_layer",
+        ":optimized_layer",
+        ":image",
+    ],
+)
