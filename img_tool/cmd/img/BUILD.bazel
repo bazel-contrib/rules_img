@@ -30,6 +30,27 @@ go_binary(
     visibility = ["//visibility:public"],
 )
 
+platform_tuples = [
+    ("linux", "amd64"),
+    ("linux", "arm64"),
+    ("darwin", "amd64"),
+    ("darwin", "arm64"),
+    ("windows", "amd64"),
+    ("windows", "arm64"),
+]
+
+[
+    go_binary(
+        name = "img_{}_{}".format(os, arch),
+        embed = [":img_lib"],
+        goarch = arch,
+        goos = os,
+        pure = "on",
+        visibility = ["//toolchain:__subpackages__"],
+    )
+    for os, arch in platform_tuples
+]
+
 build_test(
     name = "test",
     targets = [":img"],
