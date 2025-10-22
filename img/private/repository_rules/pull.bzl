@@ -70,7 +70,15 @@ def _pull_impl(rctx):
     root_blob_info = _get_manifest(rctx, reference = reference, **manifest_kwargs)
     data = {root_blob_info.digest: root_blob_info.data}
     root_blob = json.decode(root_blob_info.data)
-    media_type = root_blob.get("mediaType", "unknown")
+    media_type = "unknown"
+    if "mediaType" in root_blob:
+        media_type = root_blob.get("mediaType")
+    elif "config" in root_blob:
+        # Guessing the mediaType based on presence of config
+        media_type = MEDIA_TYPE_MANIFEST
+    elif "manifests" in root_blob:
+        # Guessing the mediaType based on presence of manifests
+        media_type = MEDIA_TYPE_INDEX
 
     manifests = []
     if media_type in [MEDIA_TYPE_INDEX, DOCKER_MANIFEST_LIST_V2]:
