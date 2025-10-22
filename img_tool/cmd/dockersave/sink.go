@@ -35,7 +35,7 @@ func NewDirectorySink(basePath string) *DirectorySink {
 
 func (d *DirectorySink) CreateDir(path string) error {
 	fullPath := filepath.Join(d.basePath, path)
-	return os.MkdirAll(fullPath, 0755)
+	return os.MkdirAll(fullPath, 0o755)
 }
 
 func (d *DirectorySink) WriteFile(path string, data []byte, mode os.FileMode) error {
@@ -85,10 +85,10 @@ func NewTarSink(tarPath string) (*TarSink, error) {
 func (t *TarSink) CreateDir(path string) error {
 	// Add trailing slash for directory entries
 	if path != "" && path != "." {
-		dirPath := path + "/"
+		dirPath := filepath.ToSlash(path) + "/"
 		header := &tar.Header{
 			Name:     dirPath,
-			Mode:     0755,
+			Mode:     0o755,
 			Typeflag: tar.TypeDir,
 		}
 		return t.writer.WriteHeader(header)
@@ -98,7 +98,7 @@ func (t *TarSink) CreateDir(path string) error {
 
 func (t *TarSink) WriteFile(path string, data []byte, mode os.FileMode) error {
 	header := &tar.Header{
-		Name: path,
+		Name: filepath.ToSlash(path), // Ensure forward slashes in tar (otherwise Windows paths may cause issues)
 		Mode: int64(mode),
 		Size: int64(len(data)),
 	}
@@ -129,8 +129,8 @@ func (t *TarSink) CopyFile(dstPath, srcPath string, useSymlinks bool) error {
 	}
 
 	header := &tar.Header{
-		Name: dstPath,
-		Mode: int64(srcInfo.Mode()),
+		Name: filepath.ToSlash(dstPath), // Ensure forward slashes in tar (otherwise Windows paths may cause issues)
+		Mode: 0o644,
 		Size: srcInfo.Size(),
 	}
 
