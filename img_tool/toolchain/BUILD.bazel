@@ -5,18 +5,29 @@ You need to register them explicitly if you want to build from source.
 """
 
 load("@rules_img//img:image_toolchain.bzl", "TOOLCHAIN_TYPE", "image_toolchain")
+load(":def.bzl", "goarch_to_constraint", "goos_to_constraint", "platform_tuples")
 
 package(
     default_visibility = ["//visibility:public"],
 )
 
-image_toolchain(
-    name = "image_toolchain",
-    tool_exe = "//cmd/img",
-)
+[
+    image_toolchain(
+        name = "image_toolchain_{}_{}".format(os, arch),
+        tool_exe = "//cmd/img:img_{}_{}".format(os, arch),
+    )
+    for os, arch in platform_tuples
+]
 
-toolchain(
-    name = "toolchain",
-    toolchain = ":image_toolchain",
-    toolchain_type = TOOLCHAIN_TYPE,
-)
+[
+    toolchain(
+        name = "toolchain_{}_{}".format(os, arch),
+        exec_compatible_with = [
+            goos_to_constraint(os),
+            goarch_to_constraint(arch),
+        ],
+        toolchain = ":image_toolchain_{}_{}".format(os, arch),
+        toolchain_type = TOOLCHAIN_TYPE,
+    )
+    for os, arch in platform_tuples
+]
