@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime"
 	"slices"
 	"time"
 
@@ -344,9 +345,16 @@ func (l *loader) connect(ctx context.Context, daemon string) (*containerd.Client
 		fmt.Fprintln(os.Stderr, "If you can load into the containerd backend, you can load the exact OCI image with the expected digest.")
 		fmt.Fprintln(os.Stderr, "See: https://github.com/bazel-contrib/rules_img/issues/76")
 		fmt.Fprintln(os.Stderr, "")
-		fmt.Fprintln(os.Stderr, "To improve performance, configure Docker to use containerd:")
-		fmt.Fprintln(os.Stderr, "  https://docs.docker.com/storage/containerd/")
-		fmt.Fprintln(os.Stderr, "")
+		if runtime.GOOS == "darwin" {
+			fmt.Fprintln(os.Stderr, "\033[33mmacOS note:\033[0m On macOS, containerd runs in a Linux VM, so the containerd socket")
+			fmt.Fprintln(os.Stderr, "is never accessible from the host. Docker is working on exposing the content store")
+			fmt.Fprintln(os.Stderr, "via the docker socket, which will soon make incremental loading available via the docker socket.")
+			fmt.Fprintln(os.Stderr, "")
+		} else {
+			fmt.Fprintln(os.Stderr, "To improve performance, configure Docker to use containerd:")
+			fmt.Fprintln(os.Stderr, "  https://docs.docker.com/storage/containerd/")
+			fmt.Fprintln(os.Stderr, "")
+		}
 		l.haveContainerd = false
 		l.triedContainerd = true
 		return nil, fmt.Errorf("connecting to containerd: %w", err)
