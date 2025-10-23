@@ -90,6 +90,18 @@ image_load(
     visibility = ["//visibility:public"],
 )
 
+# Load with multiple tags
+image_load(
+    name = "load_multi_tags",
+    image = ":image",
+    tag_list = [
+        "ghcr.io/malt3/rules_img:multi-latest",
+        "ghcr.io/malt3/rules_img:multi-v1.0.0",
+        "ghcr.io/malt3/rules_img:multi-stable",
+    ],
+    visibility = ["//visibility:public"],
+)
+
 build_test(
     name = "test",
     targets = [
@@ -99,5 +111,6 @@ build_test(
         ":load_image",
         ":load_image_templated",
         ":load_normalized",
+        ":load_multi_tags",
     ],
 )
