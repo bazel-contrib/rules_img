@@ -97,18 +97,20 @@ func (l *loader) LoadAll(ctx context.Context, ops []api.IndexedLoadDeployOperati
 
 			// ...then all images
 			for _, op := range ops {
-				if err := l.loadContainerd(ctx, op); err != nil {
+				loadedTags, err := l.loadContainerd(ctx, op)
+				if err != nil {
 					return nil, fmt.Errorf("loading image via containerd: %w", err)
 				}
-				pushedTags = append(pushedTags, NormalizeDockerReference(op.Tag))
+				pushedTags = append(pushedTags, loadedTags...)
 			}
 		case "docker":
 			// Load all images via docker load
 			for _, op := range ops {
-				if err := l.loadViaDocker(ctx, op); err != nil {
+				loadedTags, err := l.loadViaDocker(ctx, op)
+				if err != nil {
 					return nil, fmt.Errorf("loading image via docker: %w", err)
 				}
-				pushedTags = append(pushedTags, NormalizeDockerReference(op.Tag))
+				pushedTags = append(pushedTags, loadedTags...)
 			}
 		default:
 			return nil, fmt.Errorf("unsupported daemon: %s", daemon)
@@ -119,17 +121,17 @@ func (l *loader) LoadAll(ctx context.Context, ops []api.IndexedLoadDeployOperati
 
 // loadContainerd loads an image into containerd
 // Assumes blobs are already uploaded
-func (l *loader) loadContainerd(ctx context.Context, op api.IndexedLoadDeployOperation) error {
+func (l *loader) loadContainerd(ctx context.Context, op api.IndexedLoadDeployOperation) ([]string, error) {
 	client, err := l.connect(ctx, op.Daemon)
 	if err != nil {
-		return fmt.Errorf("connecting to containerd: %w", err)
+		return nil, fmt.Errorf("connecting to containerd: %w", err)
 	}
 
 	ctx = containerd.WithNamespace(ctx, "moby")
 
 	ociDigest, err := ocidigest.Parse(op.Root.Digest)
 	if err != nil {
-		return fmt.Errorf("parsing root digest %s: %w", op.Root.Digest, err)
+		return nil, fmt.Errorf("parsing root digest %s: %w", op.Root.Digest, err)
 	}
 
 	imageService := client.ImageService()
@@ -138,24 +140,34 @@ func (l *loader) loadContainerd(ctx context.Context, op api.IndexedLoadDeployOpe
 		Digest:    ociDigest,
 		Size:      op.Root.Size,
 	}
-	normalizedTag := NormalizeDockerReference(op.Tag)
-	img := containerd.Image{
-		Name:   normalizedTag,
-		Target: target,
-	}
-	_, err = imageService.Create(ctx, img)
-	if err != nil && containerd.IsAlreadyExists(err) {
-		_, err = imageService.Update(ctx, img)
-	}
-	if err != nil {
-		return fmt.Errorf("creating/updating image: %w", err)
+
+	// Print digest once
+	fmt.Printf("%s\n", target.Digest)
+
+	var loadedTags []string
+	for _, tag := range op.Tags {
+		normalizedTag := NormalizeDockerReference(tag)
+		img := containerd.Image{
+			Name:   normalizedTag,
+			Target: target,
+		}
+		_, err = imageService.Create(ctx, img)
+		if err != nil && containerd.IsAlreadyExists(err) {
+			_, err = imageService.Update(ctx, img)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("creating/updating image: %w", err)
+		}
+
+		// Print tag without digest
+		fmt.Printf("%s\n", normalizedTag)
+		loadedTags = append(loadedTags, normalizedTag)
 	}
 
-	fmt.Printf("%s@%s\n", normalizedTag, target.Digest)
-	return nil
+	return loadedTags, nil
 }
 
-func (l *loader) loadViaDocker(ctx context.Context, op api.IndexedLoadDeployOperation) error {
+func (l *loader) loadViaDocker(ctx context.Context, op api.IndexedLoadDeployOperation) ([]string, error) {
 	// Create a pipe to stream the tar to docker load
 	pr, pw := io.Pipe()
 
@@ -168,7 +180,7 @@ func (l *loader) loadViaDocker(ctx context.Context, op api.IndexedLoadDeployOper
 	}()
 
 	// Stream the tar to the pipe writer
-	err := l.streamDockerTar(ctx, op, pw)
+	loadedTags, err := l.streamDockerTar(ctx, op, pw)
 	pw.Close() // Always close, even on error
 
 	// Wait for docker load to complete
@@ -176,26 +188,29 @@ func (l *loader) loadViaDocker(ctx context.Context, op api.IndexedLoadDeployOper
 
 	// Return the first error
 	if err != nil {
-		return fmt.Errorf("streaming tar to docker load: stream error: %w, load error: %w", err, loadErr)
+		return nil, fmt.Errorf("streaming tar to docker load: stream error: %w, load error: %w", err, loadErr)
 	}
-	return loadErr
+	if loadErr != nil {
+		return nil, loadErr
+	}
+	return loadedTags, nil
 }
 
-func (l *loader) streamDockerTar(ctx context.Context, op api.IndexedLoadDeployOperation, w io.Writer) error {
+func (l *loader) streamDockerTar(ctx context.Context, op api.IndexedLoadDeployOperation, w io.Writer) ([]string, error) {
 	tw := docker.NewTarWriter(w)
 
 	if op.RootKind == "index" {
 		// For multi-platform images, we need to select a manifest
 		manifestIndex, err := l.selectManifestForPlatform(op)
 		if err != nil {
-			return err
+			return nil, err
 		}
-		return l.streamManifestToTar(ctx, op.Manifests[manifestIndex], op.Tag, tw)
+		return l.streamManifestToTar(ctx, op.Manifests[manifestIndex], op.Tags, tw)
 	} else if op.RootKind == "manifest" && len(op.Manifests) == 1 {
-		return l.streamManifestToTar(ctx, op.Manifests[0], op.Tag, tw)
+		return l.streamManifestToTar(ctx, op.Manifests[0], op.Tags, tw)
 	}
 
-	return fmt.Errorf("no manifest or index provided")
+	return nil, fmt.Errorf("no manifest or index provided")
 }
 
 // selectManifestForPlatform selects the appropriate manifest from an index based on platform criteria
@@ -238,46 +253,50 @@ func (l *loader) selectManifestForPlatform(op api.IndexedLoadDeployOperation) (i
 	return 0, fmt.Errorf("no manifest found for platform(s): %v", platforms)
 }
 
-func (l *loader) streamManifestToTar(ctx context.Context, manifestInfo api.ManifestDeployInfo, tag string, tw *docker.TarWriter) error {
+func (l *loader) streamManifestToTar(ctx context.Context, manifestInfo api.ManifestDeployInfo, tags []string, tw *docker.TarWriter) ([]string, error) {
 	// Load config
 	digest, err := registryv1.NewHash(manifestInfo.Descriptor.Digest)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	img, err := l.vfs.Image(digest)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	rawConfigFile, err := img.RawConfigFile()
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// Write config
 	if err := tw.WriteConfig(rawConfigFile); err != nil {
-		return fmt.Errorf("writing config: %w", err)
+		return nil, fmt.Errorf("writing config: %w", err)
 	}
 
-	// Set tags
-	if tag != "" {
-		tw.SetTags([]string{NormalizeDockerReference(tag)})
+	// Normalize and set tags
+	var normalizedTags []string
+	for _, tag := range tags {
+		normalizedTags = append(normalizedTags, NormalizeDockerReference(tag))
+	}
+	if len(normalizedTags) > 0 {
+		tw.SetTags(normalizedTags)
 	}
 
 	// Stream layers
 	if err := l.streamLayers(ctx, manifestInfo, tw); err != nil {
-		return fmt.Errorf("streaming layers: %w", err)
+		return nil, fmt.Errorf("streaming layers: %w", err)
 	}
 
 	// Finalize the tar
 	if err := tw.Finalize(); err != nil {
-		return fmt.Errorf("finalizing tar: %w", err)
+		return nil, fmt.Errorf("finalizing tar: %w", err)
 	}
 
-	// Print the tag
-	if tag != "" {
-		fmt.Println(NormalizeDockerReference(tag))
+	// Print the tags
+	for _, tag := range normalizedTags {
+		fmt.Println(tag)
 	}
-	return nil
+	return normalizedTags, nil
 }
 
 func (l *loader) streamLayers(ctx context.Context, manifestInfo api.ManifestDeployInfo, tw *docker.TarWriter) error {

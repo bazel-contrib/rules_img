@@ -101,8 +101,8 @@ type IndexedPushDeployOperation struct {
 
 type LoadDeployOperation struct {
 	BaseCommandOperation
-	Tag    string `json:"tag,omitempty"`
-	Daemon string `json:"daemon,omitempty"`
+	Tags   []string `json:"tags,omitempty"`
+	Daemon string   `json:"daemon,omitempty"`
 }
 
 type IndexedLoadDeployOperation struct {

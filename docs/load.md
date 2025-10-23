@@ -26,11 +26,18 @@ image_manifest(
     layers = [":app_layer"],
 )
 
-# Create a load target
+# Create a load target with a single tag
 image_load(
     name = "load",
     image = ":my_image",
     tag = "my-app:latest",
+)
+
+# Load with multiple tags
+image_load(
+    name = "load_multi",
+    image = ":my_image",
+    tag_list = ["my-app:latest", "my-app:v1.0.0"],
 )
 ```
 
@@ -61,7 +68,7 @@ bazel run //path/to:load_target -- --platform linux/amd64
 <pre>
 load("@rules_img//img:load.bzl", "image_load")
 
-image_load(<a href="#image_load-name">name</a>, <a href="#image_load-build_settings">build_settings</a>, <a href="#image_load-daemon">daemon</a>, <a href="#image_load-image">image</a>, <a href="#image_load-stamp">stamp</a>, <a href="#image_load-strategy">strategy</a>, <a href="#image_load-tag">tag</a>)
+image_load(<a href="#image_load-name">name</a>, <a href="#image_load-build_settings">build_settings</a>, <a href="#image_load-daemon">daemon</a>, <a href="#image_load-image">image</a>, <a href="#image_load-stamp">stamp</a>, <a href="#image_load-strategy">strategy</a>, <a href="#image_load-tag">tag</a>, <a href="#image_load-tag_list">tag_list</a>)
 </pre>
 
 Loads container images into a local daemon (Docker or containerd).
@@ -86,11 +93,18 @@ Example:
 ```python
 load("@rules_img//img:load.bzl", "image_load")
 
-# Load a single-platform image
+# Load a single-platform image with a single tag
 image_load(
     name = "load_app",
     image = ":my_app",  # References an image_manifest
     tag = "my-app:latest",
+)
+
+# Load with multiple tags
+image_load(
+    name = "load_multi",
+    image = ":my_app",
+    tag_list = ["my-app:latest", "my-app:v1.0.0", "my-app:stable"],
 )
 
 # Load a multi-platform image
@@ -142,6 +156,7 @@ Performance notes:
 | <a id="image_load-image"></a>image |  Image to load. Should provide ImageManifestInfo or ImageIndexInfo.   | <a href="https://bazel.build/concepts/labels">Label</a> | required |  |
 | <a id="image_load-stamp"></a>stamp |  Whether to use stamping for [template expansion](/docs/templating.md). If 'enabled', uses volatile-status.txt and version.txt if present. 'auto' uses the global default setting.   | String | optional |  `"auto"`  |
 | <a id="image_load-strategy"></a>strategy |  Strategy for handling image layers during load.<br><br>Available strategies: - **`auto`** (default): Uses the global default load strategy - **`eager`**: Downloads all layers during the build phase. Ensures all layers are   available locally before running the load command. - **`lazy`**: Downloads layers only when needed during the load operation. More   efficient for large images where some layers might already exist in the daemon.   | String | optional |  `"auto"`  |
-| <a id="image_load-tag"></a>tag |  Tag to apply when loading the image. Subject to [template expansion](/docs/templating.md).   | String | optional |  `""`  |
+| <a id="image_load-tag"></a>tag |  Tag to apply when loading the image.<br><br>Optional - if omitted, the image is loaded without a tag.<br><br>Subject to [template expansion](/docs/templating.md).   | String | optional |  `""`  |
+| <a id="image_load-tag_list"></a>tag_list |  List of tags to apply when loading the image.<br><br>Useful for applying multiple tags in a single load:<br><br><pre><code class="language-python">tag_list = ["latest", "v1.0.0", "stable"]</code></pre><br><br>Cannot be used together with `tag`. Each tag is subject to [template expansion](/docs/templating.md).   | List of strings | optional |  `[]`  |
 
 

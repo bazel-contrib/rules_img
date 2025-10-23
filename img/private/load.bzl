@@ -30,6 +30,19 @@ def _daemon(ctx):
         daemon = load_settings.daemon
     return daemon
 
+def _get_tags(ctx):
+    """Get the list of tags from the context, validating mutual exclusivity."""
+    if ctx.attr.tag and ctx.attr.tag_list:
+        fail("Cannot specify both 'tag' and 'tag_list' attributes")
+
+    tags = []
+    if ctx.attr.tag:
+        tags = [ctx.attr.tag]
+    elif ctx.attr.tag_list:
+        tags = ctx.attr.tag_list
+
+    return tags
+
 def _target_info(ctx):
     pull_info = ctx.attr.image[PullInfo] if PullInfo in ctx.attr.image else None
     if pull_info == None:
@@ -158,7 +171,7 @@ def _image_load_impl(ctx):
     root_symlinks = calculate_root_symlinks(index_info, manifest_info, include_layers = include_layers)
 
     templates = dict(
-        tag = ctx.attr.tag,
+        tags = _get_tags(ctx),
         daemon = _daemon(ctx),
     )
 
@@ -231,11 +244,18 @@ Example:
 ```python
 load("@rules_img//img:load.bzl", "image_load")
 
-# Load a single-platform image
+# Load a single-platform image with a single tag
 image_load(
     name = "load_app",
     image = ":my_app",  # References an image_manifest
     tag = "my-app:latest",
+)
+
+# Load with multiple tags
+image_load(
+    name = "load_multi",
+    image = ":my_app",
+    tag_list = ["my-app:latest", "my-app:v1.0.0", "my-app:stable"],
 )
 
 # Load a multi-platform image
@@ -300,7 +320,24 @@ The best performance is achieved with:
             values = ["auto", "docker", "containerd"],
         ),
         "tag": attr.string(
-            doc = "Tag to apply when loading the image. Subject to [template expansion](/docs/templating.md).",
+            doc = """Tag to apply when loading the image.
+
+Optional - if omitted, the image is loaded without a tag.
+
+Subject to [template expansion](/docs/templating.md).
+""",
+        ),
+        "tag_list": attr.string_list(
+            doc = """List of tags to apply when loading the image.
+
+Useful for applying multiple tags in a single load:
+
+```python
+tag_list = ["latest", "v1.0.0", "stable"]
+```
+
+Cannot be used together with `tag`. Each tag is subject to [template expansion](/docs/templating.md).
+""",
         ),
         "strategy": attr.string(
             doc = """Strategy for handling image layers during load.

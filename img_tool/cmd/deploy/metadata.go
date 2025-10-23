@@ -327,10 +327,21 @@ func pushOperation(baseCommand api.BaseCommandOperation, config map[string]any) 
 }
 
 func loadOperation(baseCommand api.BaseCommandOperation, config map[string]any) (api.LoadDeployOperation, error) {
-	tag, ok := config["tag"].(string)
-	if !ok || tag == "" {
-		return api.LoadDeployOperation{}, fmt.Errorf("configuration file must contain a non-empty 'tag' field")
+	tagsInterface, ok := config["tags"].([]interface{})
+	if !ok {
+		tagsInterface = []interface{}{}
 	}
+
+	// Convert interface{} slice to string slice
+	tags := make([]string, len(tagsInterface))
+	for i, tag := range tagsInterface {
+		if tagStr, ok := tag.(string); ok {
+			tags[i] = tagStr
+		} else {
+			return api.LoadDeployOperation{}, fmt.Errorf("tag at index %d is not a string", i)
+		}
+	}
+
 	daemon, ok := config["daemon"].(string)
 	if !ok || daemon == "" {
 		return api.LoadDeployOperation{}, fmt.Errorf("configuration file must contain a non-empty 'daemon' field")
@@ -338,7 +349,7 @@ func loadOperation(baseCommand api.BaseCommandOperation, config map[string]any) 
 
 	return api.LoadDeployOperation{
 		BaseCommandOperation: baseCommand,
-		Tag:                  tag,
+		Tags:                 tags,
 		Daemon:               daemon,
 	}, nil
 }
