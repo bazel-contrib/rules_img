@@ -138,7 +138,6 @@ func DeployWithExtras(ctx context.Context, rawRequest []byte, additionalTags []s
 	}
 
 	var pushedTags []string
-	var loadedTags []string
 	g, ctx := errgroup.WithContext(ctx)
 
 	if len(pushOperations) > 0 {
@@ -173,7 +172,8 @@ func DeployWithExtras(ctx context.Context, rawRequest []byte, additionalTags []s
 			if len(platformList) > 0 {
 				builder = builder.WithPlatforms(platformList)
 			}
-			loadedTags, err = builder.Build().LoadAll(ctx, loadOperations)
+			// LoadAll prints the loaded tags itself, so we discard the return value
+			_, err := builder.Build().LoadAll(ctx, loadOperations)
 			return err
 		})
 	}
@@ -186,9 +186,7 @@ func DeployWithExtras(ctx context.Context, rawRequest []byte, additionalTags []s
 	for _, tag := range pushedTags {
 		fmt.Println(tag)
 	}
-	for _, tag := range loadedTags {
-		fmt.Println(tag)
-	}
+	// Note: loadedTags are already printed by the loader itself
 
 	return nil
 }

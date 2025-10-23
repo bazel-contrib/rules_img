@@ -41,28 +41,38 @@ type DockerManifest struct {
 	Layers   []string `json:"Layers"`
 }
 
-// readTagFromConfigFile reads the tag field from a configuration file
-func readTagFromConfigFile(configPath string) (string, error) {
+// readTagsFromConfigFile reads the tags field from a configuration file
+func readTagsFromConfigFile(configPath string) ([]string, error) {
 	if configPath == "" {
-		return "", nil
+		return nil, nil
 	}
 
 	data, err := os.ReadFile(configPath)
 	if err != nil {
-		return "", fmt.Errorf("reading configuration file: %w", err)
+		return nil, fmt.Errorf("reading configuration file: %w", err)
 	}
 
 	var config map[string]interface{}
 	if err := json.Unmarshal(data, &config); err != nil {
-		return "", fmt.Errorf("parsing configuration file: %w", err)
+		return nil, fmt.Errorf("parsing configuration file: %w", err)
 	}
 
-	tag, ok := config["tag"].(string)
+	tagsInterface, ok := config["tags"].([]interface{})
 	if !ok {
-		return "", nil // tag field not present or not a string
+		return nil, nil // tags field not present or not a list
 	}
 
-	return tag, nil
+	// Convert interface{} slice to string slice
+	tags := make([]string, len(tagsInterface))
+	for i, tag := range tagsInterface {
+		if tagStr, ok := tag.(string); ok {
+			tags[i] = tagStr
+		} else {
+			return nil, fmt.Errorf("tag at index %d is not a string", i)
+		}
+	}
+
+	return tags, nil
 }
 
 func DockerSaveProcess(ctx context.Context, args []string) {
@@ -131,15 +141,15 @@ func DockerSaveProcess(ctx context.Context, args []string) {
 		os.Exit(1)
 	}
 
-	// Read tag from configuration file if provided and no --repo-tag was specified
+	// Read tags from configuration file if provided and no --repo-tag was specified
 	if len(repoTags) == 0 && configurationFilePath != "" {
-		configTag, err := readTagFromConfigFile(configurationFilePath)
+		configTags, err := readTagsFromConfigFile(configurationFilePath)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error reading configuration file: %v\n", err)
 			os.Exit(1)
 		}
-		if configTag != "" {
-			repoTags = []string{configTag}
+		if len(configTags) > 0 {
+			repoTags = configTags
 		}
 	}
 

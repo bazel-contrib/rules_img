@@ -24,11 +24,18 @@ image_manifest(
     layers = [":app_layer"],
 )
 
-# Create a load target
+# Create a load target with a single tag
 image_load(
     name = "load",
     image = ":my_image",
     tag = "my-app:latest",
+)
+
+# Load with multiple tags
+image_load(
+    name = "load_multi",
+    image = ":my_image",
+    tag_list = ["my-app:latest", "my-app:v1.0.0"],
 )
 ```
 
