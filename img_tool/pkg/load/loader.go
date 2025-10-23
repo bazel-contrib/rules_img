@@ -35,7 +35,7 @@ func (b *builder) Build() *loader {
 	return &loader{
 		vfs:       b.vfs,
 		platforms: b.platforms,
-		taskSet:   newTaskSet(b.vfs),
+		taskSet:   newTaskSet(b.vfs, b.platforms),
 	}
 }
 
@@ -207,6 +207,14 @@ func (l *loader) streamDockerTar(ctx context.Context, op api.IndexedLoadDeployOp
 		}
 		return l.streamManifestToTar(ctx, op.Manifests[manifestIndex], op.Tags, tw)
 	} else if op.RootKind == "manifest" && len(op.Manifests) == 1 {
+		// Validate that the single manifest matches requested platform if explicit
+		digest, err := registryv1.NewHash(op.Manifests[0].Descriptor.Digest)
+		if err != nil {
+			return nil, err
+		}
+		if err := l.validateManifestPlatform(digest); err != nil {
+			return nil, fmt.Errorf("single manifest validation failed: %w", err)
+		}
 		return l.streamManifestToTar(ctx, op.Manifests[0], op.Tags, tw)
 	}
 
@@ -215,8 +223,6 @@ func (l *loader) streamDockerTar(ctx context.Context, op api.IndexedLoadDeployOp
 
 // selectManifestForPlatform selects the appropriate manifest from an index based on platform criteria
 func (l *loader) selectManifestForPlatform(op api.IndexedLoadDeployOperation) (int, error) {
-	platforms := l.platforms
-
 	// Load and parse the index
 	digest, err := registryv1.NewHash(op.Root.Digest)
 	if err != nil {
@@ -232,14 +238,21 @@ func (l *loader) selectManifestForPlatform(op api.IndexedLoadDeployOperation) (i
 		return 0, err
 	}
 
-	// If no platforms specified and only one manifest, use that
-	if len(platforms) == 0 && len(mnfst.Manifests) == 1 {
-		return 0, nil
-	}
+	// Determine which platforms to match
+	platforms := l.platforms
+	hasExplicit := l.hasExplicitPlatforms()
 
-	// If no platform specified, use current platform
-	// (but assume linux, the only true docker os 🐧)
-	if len(platforms) == 0 {
+	// If "all" is specified, we can't load multi-platform for docker
+	// Fall back to current platform
+	if contains(platforms, "all") {
+		platforms = []string{getCurrentPlatform()}
+	} else if !hasExplicit {
+		// No explicit platform requested, use defaults
+		// If only one manifest, use it
+		if len(mnfst.Manifests) == 1 {
+			return 0, nil
+		}
+		// Otherwise use current platform
 		platforms = []string{getCurrentPlatform()}
 	}
 
@@ -359,13 +372,15 @@ func (l *loader) connect(ctx context.Context, daemon string) (*containerd.Client
 
 type taskSet struct {
 	vfs                 vfs
+	platforms           []string
 	blobsForDaemon      map[string]map[string]blobWorkItem
 	operationsForDaemon map[string][]api.IndexedLoadDeployOperation
 }
 
-func newTaskSet(vfs vfs) *taskSet {
+func newTaskSet(vfs vfs, platforms []string) *taskSet {
 	ts := &taskSet{
 		vfs:                 vfs,
+		platforms:           platforms,
 		blobsForDaemon:      map[string]map[string]blobWorkItem{},
 		operationsForDaemon: make(map[string][]api.IndexedLoadDeployOperation),
 	}
@@ -425,6 +440,10 @@ func (ts *taskSet) collectBlobs(op api.IndexedLoadDeployOperation) ([]blobWorkIt
 	if op.RootKind == "index" {
 		return ts.collectBlobsForIndex(digest)
 	} else if op.RootKind == "manifest" {
+		// Validate that the single manifest matches requested platform if explicit
+		if err := ts.validateManifestPlatform(digest); err != nil {
+			return nil, fmt.Errorf("single manifest validation failed: %w", err)
+		}
 		return ts.collectBlobsForManifest(digest)
 	}
 	return nil, fmt.Errorf("unsupported root kind: %s", op.RootKind)
@@ -440,15 +459,44 @@ func (ts *taskSet) collectBlobsForIndex(indexDigest registryv1.Hash) ([]blobWork
 		return nil, fmt.Errorf("getting index manifest for root %s: %w", indexDigest, err)
 	}
 
+	// Determine which platforms to load
+	platforms := ts.platforms
+	loadAllPlatforms := ts.shouldLoadAllPlatforms()
+
+	// If not loading all platforms and no platforms specified, select default
+	if !loadAllPlatforms && len(platforms) == 0 {
+		// If only one manifest, use it
+		if len(indexManifest.Manifests) == 1 {
+			platforms = nil // Will match the single manifest
+		} else {
+			// Use current platform
+			platforms = []string{getCurrentPlatform()}
+		}
+	}
+
 	var allBlobs []blobWorkItem
 	indexLabels := make(map[string]string)
-	for i, manifestDesc := range indexManifest.Manifests {
+	labelIndex := 0
+	matchedAny := false
+	for _, manifestDesc := range indexManifest.Manifests {
+		// Skip manifests that don't match the platform filter (unless loading all)
+		if !loadAllPlatforms && !platformMatches(manifestDesc.Platform, platforms) {
+			continue
+		}
+
+		matchedAny = true
 		blobs, err := ts.collectBlobsForManifest(manifestDesc.Digest)
 		if err != nil {
 			return nil, err
 		}
 		allBlobs = append(allBlobs, blobs...)
-		indexLabels[fmt.Sprintf("containerd.io/gc.ref.content.m.%d", i)] = manifestDesc.Digest.String()
+		indexLabels[fmt.Sprintf("containerd.io/gc.ref.content.m.%d", labelIndex)] = manifestDesc.Digest.String()
+		labelIndex++
+	}
+
+	// If explicit platforms were requested but none matched, fail
+	if ts.hasExplicitPlatforms() && !matchedAny {
+		return nil, fmt.Errorf("no manifest found matching requested platform(s): %v", ts.platforms)
 	}
 
 	// Add the index itself as a blob to upload
@@ -463,6 +511,97 @@ func (ts *taskSet) collectBlobsForIndex(indexDigest registryv1.Hash) ([]blobWork
 	})
 
 	return allBlobs, nil
+}
+
+// shouldLoadAllPlatforms returns true if the "all" sentinel value is present in platforms
+func (ts *taskSet) shouldLoadAllPlatforms() bool {
+	return contains(ts.platforms, "all")
+}
+
+// hasExplicitPlatforms returns true if the user explicitly specified platform(s) (excluding "all")
+func (ts *taskSet) hasExplicitPlatforms() bool {
+	if len(ts.platforms) == 0 {
+		return false
+	}
+	// If only "all" is specified, it's not explicit platform selection
+	if len(ts.platforms) == 1 && ts.platforms[0] == "all" {
+		return false
+	}
+	return true
+}
+
+// validateManifestPlatform checks if a manifest's platform matches the requested platforms
+// Returns an error if explicit platforms were requested but don't match
+func (ts *taskSet) validateManifestPlatform(digest registryv1.Hash) error {
+	if !ts.hasExplicitPlatforms() {
+		return nil // No explicit platforms requested, any platform is OK
+	}
+
+	img, err := ts.vfs.Image(digest)
+	if err != nil {
+		return fmt.Errorf("getting image for validation: %w", err)
+	}
+
+	configFile, err := img.ConfigFile()
+	if err != nil {
+		return fmt.Errorf("getting config file for validation: %w", err)
+	}
+
+	manifestPlatform := registryv1.Platform{
+		OS:           configFile.OS,
+		Architecture: configFile.Architecture,
+		Variant:      configFile.Variant,
+	}
+
+	if !platformMatches(&manifestPlatform, ts.platforms) {
+		return fmt.Errorf("image platform %s/%s does not match requested platform(s): %v",
+			manifestPlatform.OS, manifestPlatform.Architecture, ts.platforms)
+	}
+
+	return nil
+}
+
+// validateManifestPlatform checks if a manifest's platform matches the requested platforms
+// Returns an error if explicit platforms were requested but don't match
+func (l *loader) validateManifestPlatform(digest registryv1.Hash) error {
+	if !l.hasExplicitPlatforms() {
+		return nil // No explicit platforms requested, any platform is OK
+	}
+
+	img, err := l.vfs.Image(digest)
+	if err != nil {
+		return fmt.Errorf("getting image for validation: %w", err)
+	}
+
+	configFile, err := img.ConfigFile()
+	if err != nil {
+		return fmt.Errorf("getting config file for validation: %w", err)
+	}
+
+	manifestPlatform := registryv1.Platform{
+		OS:           configFile.OS,
+		Architecture: configFile.Architecture,
+		Variant:      configFile.Variant,
+	}
+
+	if !platformMatches(&manifestPlatform, l.platforms) {
+		return fmt.Errorf("image platform %s/%s does not match requested platform(s): %v",
+			manifestPlatform.OS, manifestPlatform.Architecture, l.platforms)
+	}
+
+	return nil
+}
+
+// hasExplicitPlatforms returns true if the user explicitly specified platform(s) (excluding "all")
+func (l *loader) hasExplicitPlatforms() bool {
+	if len(l.platforms) == 0 {
+		return false
+	}
+	// If only "all" is specified, it's not explicit platform selection
+	if len(l.platforms) == 1 && l.platforms[0] == "all" {
+		return false
+	}
+	return true
 }
 
 func (ts *taskSet) collectBlobsForManifest(imageDigest registryv1.Hash) ([]blobWorkItem, error) {
