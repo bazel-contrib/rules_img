@@ -5,7 +5,7 @@ module(
 )
 
 # needs to be placed at the top to ensure the proto toolchain is registered first
-bazel_dep(name = "toolchains_protoc", version = "0.5.0", dev_dependency = True)
+bazel_dep(name = "toolchains_protoc", version = "0.6.0", dev_dependency = True)
 
 bazel_dep(name = "rules_img", version = "0.2.7")
 bazel_dep(name = "bazel_lib", version = "3.0.0-beta.1")
