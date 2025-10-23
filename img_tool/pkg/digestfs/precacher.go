@@ -54,7 +54,9 @@ func (p *Precacher) PrecacheFiles(files []string) {
 func (p *Precacher) Close() error {
 	close(p.done)
 	p.wg.Wait()
-	close(p.tasks)
+	// Don't close p.tasks - there may still be goroutines from PrecacheFiles
+	// trying to send on it. The workers exit via p.done, so closing p.tasks
+	// is unnecessary and can cause "send on closed channel" panics.
 	return nil
 }
 
