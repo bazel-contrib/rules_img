@@ -41,7 +41,7 @@ func DeployDispatch(ctx context.Context, rawRequest []byte) {
 	fs.Var(&additionalTags, "t", "Additional tag to apply (can be used multiple times)")
 	fs.StringVar(&overrideRegistry, "registry", "", "Override registry to push to")
 	fs.StringVar(&overrideRepository, "repository", "", "Override repository to push to")
-	fs.StringVar(&platforms, "platform", "", "Comma-separated list of platforms to load (e.g., linux/amd64,linux/arm64). If not set, all platforms are loaded. Doesn't affect push, only load.")
+	fs.StringVar(&platforms, "platform", "", "Comma-separated list of platforms to load (e.g., linux/amd64). If not set, loads the platform closest to the host (or the single available platform). Use 'all' to load the full multi-platform index. Doesn't affect push, only load.")
 
 	// Parse os.Args, skipping the program name
 	if len(os.Args) > 1 {
