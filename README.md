@@ -189,6 +189,61 @@ Run with:
 bazel run //:push
 ```
 
+### Registry Authentication
+
+`rules_img` uses [go-containerregistry](https://github.com/google/go-containerregistry) to interact with container registries, which provides automatic credential discovery from standard locations. This means authentication works the same way as with Docker CLI, Podman, and other container tools.
+
+#### Credential Discovery
+
+When pushing or pulling images, `rules_img` automatically searches for credentials in the following locations (in order):
+
+1. **`~/.docker/config.json`** - Standard Docker credential file
+2. **`$DOCKER_CONFIG/config.json`** - If the `DOCKER_CONFIG` environment variable is set
+3. **`${XDG_RUNTIME_DIR}/containers/auth.json`** - Podman credential file (typically `/run/user/1000/containers/auth.json`)
+
+Additionally, for Google Container Registry (gcr.io, pkg.dev, etc.), `rules_img` registers the [Google keychain](https://pkg.go.dev/github.com/google/go-containerregistry/pkg/v1/google#Keychain) alongside the default keychain. This provides automatic authentication using Application Default Credentials (ADC), making it seamless to push/pull from GCR when running on Google Cloud or with `gcloud` configured locally.
+
+For more details on how credential discovery works, see the [go-containerregistry keychain documentation](https://github.com/google/go-containerregistry/tree/main/pkg/authn#tldr-for-consumers-of-this-package).
+
+#### Setting up Credentials
+
+The easiest way to configure credentials is using `docker login`:
+
+```bash
+# Login to Docker Hub
+docker login
+
+# Login to a private registry
+docker login ghcr.io
+docker login registry.example.com
+
+# Login with username and password
+docker login -u myusername registry.example.com
+```
+
+These commands will store credentials in `~/.docker/config.json`, which `rules_img` will automatically use.
+
+#### Alternative: Podman
+
+If you're using Podman, credentials are stored in a different location:
+
+```bash
+podman login registry.example.com
+```
+
+This stores credentials in `${XDG_RUNTIME_DIR}/containers/auth.json`, which `rules_img` also automatically discovers.
+
+#### Troubleshooting
+
+If you're experiencing authentication issues:
+
+1. **Verify credentials exist**: Check that `~/.docker/config.json` or `${XDG_RUNTIME_DIR}/containers/auth.json` contains the registry
+2. **Check permissions**: Ensure the credential file is readable by the user running Bazel
+3. **Environment variables**: If using `$DOCKER_CONFIG`, ensure it points to a directory containing `config.json`
+4. **Test with Docker/Podman**: If `docker pull` or `podman pull` works, `rules_img` should work too
+
+For advanced authentication scenarios (credential helpers, custom authentication), refer to the [go-containerregistry authentication documentation](https://github.com/google/go-containerregistry/blob/main/cmd/crane/doc/crane.md#authenticating).
+
 ### Language-specific examples
 
 * [C++](/e2e/cc/)
