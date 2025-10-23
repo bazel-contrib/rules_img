@@ -292,7 +292,10 @@ func (l *loader) streamManifestToTar(ctx context.Context, manifestInfo api.Manif
 		return nil, fmt.Errorf("finalizing tar: %w", err)
 	}
 
-	// Print the tags
+	// Print digest once
+	fmt.Printf("%s\n", manifestInfo.Descriptor.Digest)
+
+	// Print each tag without digest
 	for _, tag := range normalizedTags {
 		fmt.Println(tag)
 	}
