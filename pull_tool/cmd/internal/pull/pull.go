@@ -5,12 +5,15 @@ import (
 	"crypto/sha256"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 
 	reg "github.com/bazel-contrib/rules_img/pull_tool/pkg/auth/registry"
+	"github.com/bazel-contrib/rules_img/pull_tool/pkg/blobstore"
+	"github.com/bazel-contrib/rules_img/pull_tool/pkg/transport/cachedblob"
 	"github.com/google/go-containerregistry/pkg/name"
 	registryv1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
@@ -67,10 +70,14 @@ func PullProcess(ctx context.Context, args []string) {
 		os.Exit(1)
 	}
 
-	if err := os.MkdirAll(filepath.Join(outputDir, "blobs", "sha256"), 0o755); err != nil {
-		fmt.Fprintf(os.Stderr, "Error creating output directory: %v\n", err)
+	// Initialize blob store
+	store := blobstore.New(filepath.Join(outputDir, "blobs"))
+	if err := store.Init(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error initializing blob store: %v\n", err)
 		os.Exit(1)
 	}
+	// Create a custom HTTP client with cached blob transport
+	transport := cachedblob.NewTransport(outputDir, http.DefaultTransport)
 
 	// Default to docker.io if no registries specified
 	if len(registries) == 0 {
@@ -85,7 +92,7 @@ func PullProcess(ctx context.Context, args []string) {
 	// Try each registry until success
 	var lastErr error
 	for _, registry := range registries {
-		err := pullFromRegistry(ctx, registry, repository, reference, digest, outputDir, layerHandling, concurrency)
+		err := pullFromRegistry(ctx, registry, repository, reference, digest, store, transport, layerHandling, concurrency)
 		if err == nil {
 			return
 		}
@@ -98,8 +105,8 @@ func PullProcess(ctx context.Context, args []string) {
 }
 
 type downloadJob struct {
-	layer     registryv1.Layer
-	outputDir string
+	layer registryv1.Layer
+	store *blobstore.Store
 }
 
 type workerPool struct {
@@ -133,7 +140,7 @@ func (wp *workerPool) worker() {
 			wp.results <- wp.ctx.Err()
 			return
 		default:
-			err := downloadLayer(job.layer, job.outputDir)
+			err := downloadLayer(job.layer, job.store)
 			wp.results <- err
 		}
 	}
@@ -152,13 +159,8 @@ func (wp *workerPool) wait() {
 	close(wp.results)
 }
 
-func pullFromRegistry(ctx context.Context, registry, repository, tag, digest, outputDir, layerHandling string, concurrency int) error {
-	sha256sum := strings.TrimPrefix(digest, "sha256:")
-	manifestFilename := filepath.Join(outputDir, "manifest.json")
-	if len(sha256sum) > 0 {
-		manifestFilename = filepath.Join(outputDir, "blobs", "sha256", sha256sum)
-	}
-	desc, err := downloadManifest(registry, repository, tag, digest, manifestFilename)
+func pullFromRegistry(ctx context.Context, registry, repository, tag, digest string, store *blobstore.Store, transport http.RoundTripper, layerHandling string, concurrency int) error {
+	desc, err := downloadManifest(registry, repository, tag, digest, store, transport)
 	if err != nil {
 		return fmt.Errorf("downloading manifest: %w", err)
 	}
@@ -168,7 +170,7 @@ func pullFromRegistry(ctx context.Context, registry, repository, tag, digest, ou
 		if err != nil {
 			return fmt.Errorf("getting image from descriptor: %w", err)
 		}
-		layers, err = downloadImage(image, outputDir)
+		layers, err = downloadImage(image, store)
 		if err != nil {
 			return fmt.Errorf("downloading image: %w", err)
 		}
@@ -177,7 +179,7 @@ func pullFromRegistry(ctx context.Context, registry, repository, tag, digest, ou
 		if err != nil {
 			return fmt.Errorf("getting index from descriptor: %w", err)
 		}
-		layers, err = downloadIndex(ctx, index, outputDir, concurrency)
+		layers, err = downloadIndex(ctx, index, store, concurrency)
 		if err != nil {
 			return fmt.Errorf("downloading index: %w", err)
 		}
@@ -208,7 +210,7 @@ func pullFromRegistry(ctx context.Context, registry, repository, tag, digest, ou
 	}()
 
 	for _, layer := range layers {
-		pool.submit(downloadJob{layer: layer, outputDir: outputDir})
+		pool.submit(downloadJob{layer: layer, store: store})
 	}
 
 	pool.close()
@@ -222,10 +224,10 @@ func pullFromRegistry(ctx context.Context, registry, repository, tag, digest, ou
 }
 
 type manifestJob struct {
-	index     registryv1.ImageIndex
-	desc      registryv1.Descriptor
-	outputDir string
-	i         int
+	index registryv1.ImageIndex
+	desc  registryv1.Descriptor
+	store *blobstore.Store
+	i     int
 }
 
 type manifestResult struct {
@@ -233,7 +235,7 @@ type manifestResult struct {
 	err    error
 }
 
-func downloadIndex(ctx context.Context, index registryv1.ImageIndex, outputDir string, concurrency int) ([]registryv1.Layer, error) {
+func downloadIndex(ctx context.Context, index registryv1.ImageIndex, store *blobstore.Store, concurrency int) ([]registryv1.Layer, error) {
 	manifests, err := index.IndexManifest()
 	if err != nil {
 		return nil, fmt.Errorf("getting index manifest: %w", err)
@@ -258,7 +260,7 @@ func downloadIndex(ctx context.Context, index registryv1.ImageIndex, outputDir s
 					results <- manifestResult{err: ctx.Err()}
 					return
 				default:
-					layers, err := processManifest(job.index, job.desc, job.outputDir, job.i)
+					layers, err := processManifest(job.index, job.desc, job.store, job.i)
 					results <- manifestResult{layers: layers, err: err}
 				}
 			}
@@ -266,7 +268,7 @@ func downloadIndex(ctx context.Context, index registryv1.ImageIndex, outputDir s
 	}
 
 	for i, desc := range manifests.Manifests {
-		jobs <- manifestJob{index: index, desc: desc, outputDir: outputDir, i: i}
+		jobs <- manifestJob{index: index, desc: desc, store: store, i: i}
 	}
 	close(jobs)
 
@@ -286,70 +288,74 @@ func downloadIndex(ctx context.Context, index registryv1.ImageIndex, outputDir s
 	return allLayers, nil
 }
 
-func processManifest(index registryv1.ImageIndex, desc registryv1.Descriptor, outputDir string, i int) ([]registryv1.Layer, error) {
+func processManifest(index registryv1.ImageIndex, desc registryv1.Descriptor, store *blobstore.Store, i int) ([]registryv1.Layer, error) {
 	image, err := index.Image(desc.Digest)
 	if err != nil {
 		return nil, fmt.Errorf("getting image %d from index: %w", i, err)
 	}
+
 	manifestBytes, err := image.RawManifest()
 	if err != nil {
 		return nil, fmt.Errorf("getting image %d from index: %w", i, err)
 	}
-	manifestPath := blobPath(outputDir, desc.Digest.Hex)
-	if err := os.WriteFile(manifestPath, manifestBytes, 0o755); err != nil {
+
+	// Store manifest blob using the digest
+	digestStr := desc.Digest.String()
+	if err := store.WriteSmallWithDigest(digestStr, manifestBytes); err != nil {
 		return nil, fmt.Errorf("writing image manifest %d: %w", i, err)
 	}
-	imageLayers, err := downloadImage(image, outputDir)
+
+	imageLayers, err := downloadImage(image, store)
 	if err != nil {
 		return nil, fmt.Errorf("downloading image %d: %w", i, err)
 	}
 	return imageLayers, nil
 }
 
-func downloadImage(image registryv1.Image, outputDir string) ([]registryv1.Layer, error) {
+func downloadImage(image registryv1.Image, store *blobstore.Store) ([]registryv1.Layer, error) {
 	// download the config
-	rawConfig, err := image.RawConfigFile()
-	if err != nil {
-		return nil, fmt.Errorf("getting config file: %w", err)
-	}
 	configHash, err := image.ConfigName()
 	if err != nil {
 		return nil, fmt.Errorf("getting config digest: %w", err)
 	}
-	configPath := blobPath(outputDir, configHash.Hex)
-	if err := os.WriteFile(configPath, rawConfig, 0o644); err != nil {
+
+	rawConfig, err := image.RawConfigFile()
+	if err != nil {
+		return nil, fmt.Errorf("getting config file: %w", err)
+	}
+
+	// Store config blob using the digest
+	digestStr := configHash.String()
+	if err := store.WriteSmallWithDigest(digestStr, rawConfig); err != nil {
 		return nil, fmt.Errorf("writing config file: %w", err)
 	}
 
 	return image.Layers()
 }
 
-func downloadLayer(layer registryv1.Layer, outputDir string) error {
+func downloadLayer(layer registryv1.Layer, store *blobstore.Store) error {
 	digest, err := layer.Digest()
 	if err != nil {
 		return fmt.Errorf("getting layer digest: %w", err)
 	}
-	layerPath := blobPath(outputDir, digest.Hex)
+
+	// Get the compressed layer reader
 	rc, err := layer.Compressed()
 	if err != nil {
 		return fmt.Errorf("getting compressed layer: %w", err)
 	}
 	defer rc.Close()
 
-	f, err := os.Create(layerPath)
-	if err != nil {
-		return fmt.Errorf("creating layer file: %w", err)
-	}
-	defer f.Close()
-
-	if _, err := f.ReadFrom(rc); err != nil {
-		return fmt.Errorf("writing layer file: %w", err)
+	// Store the layer using WriteLarge since layers can be big
+	digestStr := digest.String()
+	if err := store.WriteLarge(digestStr, rc); err != nil {
+		return fmt.Errorf("writing layer %s: %w", digestStr, err)
 	}
 
 	return nil
 }
 
-func downloadManifest(registry, repository, tag, digest, outputPath string) (*remote.Descriptor, error) {
+func downloadManifest(registry, repository, tag, digest string, store *blobstore.Store, transport http.RoundTripper) (*remote.Descriptor, error) {
 	var ref name.Reference
 	if len(digest) > 0 {
 		var err error
@@ -365,7 +371,8 @@ func downloadManifest(registry, repository, tag, digest, outputPath string) (*re
 		}
 	}
 
-	desc, err := remote.Get(ref, reg.WithAuthFromMultiKeychain())
+	// Use the custom client for remote operations
+	desc, err := remote.Get(ref, reg.WithAuthFromMultiKeychain(), remote.WithTransport(transport))
 	if err != nil {
 		return nil, fmt.Errorf("getting manifest: %w", err)
 	}
@@ -380,8 +387,9 @@ func downloadManifest(registry, repository, tag, digest, outputPath string) (*re
 		return nil, fmt.Errorf("manifest digest mismatch: expected %s, got sha256:%x", digest, sha256.Sum256(desc.Manifest))
 	}
 
-	if err := os.WriteFile(outputPath, desc.Manifest, 0o644); err != nil {
-		return nil, fmt.Errorf("writing manifest to file: %w", err)
+	// Store the manifest in the blob store
+	if err := store.WriteSmallWithDigest(digest, desc.Manifest); err != nil {
+		return nil, fmt.Errorf("writing manifest to blob store: %w", err)
 	}
 
 	return desc, nil
@@ -396,9 +404,4 @@ func (s *stringSliceFlag) String() string {
 func (s *stringSliceFlag) Set(value string) error {
 	*s = append(*s, value)
 	return nil
-}
-
-func blobPath(outputDir, digest string) string {
-	sha256sum := strings.TrimPrefix(digest, "sha256:")
-	return filepath.Join(outputDir, "blobs", "sha256", sha256sum)
 }
