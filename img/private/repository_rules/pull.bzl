@@ -60,6 +60,7 @@ def _pull_impl(rctx):
             rctx,
             tool_path = tool_path,
             reference = reference,
+            blob_files = rctx.attr.blob_files,
         )
 
     manifest_kwargs = dict(
@@ -349,6 +350,14 @@ This attribute controls when and how layer data is fetched from the registry.
 
 * **`bazel`**: Uses Bazel's native HTTP capabilities for downloading manifests and blobs.
 """,
+        ),
+        "blob_files": attr.string_keyed_label_dict(
+            doc = """Pre-downloaded blob files to use.
+
+A dictionary mapping blob digests (e.g., "sha256:abc123...") to file labels.
+These blobs will be verified and used instead of downloading from the registry when available.
+This is useful for air-gapped environments or to avoid redundant downloads of common base layers.""",
+            allow_files = True,
         ),
     },
 )
