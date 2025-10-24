@@ -181,13 +181,14 @@ def get_layers(rctx, digests):
         for digest in digests
     ]
 
-def download_with_tool(rctx, *, tool_path, reference):
+def download_with_tool(rctx, *, tool_path, reference, blob_files = {}):
     """Download an image using the img tool.
 
     Args:
         rctx: Repository context.
         tool_path: The path to the img tool to use for downloading.
         reference: The image reference to download.
+        blob_files: Dictionary mapping blob digests to file labels.
 
     Returns:
         A struct containing manifest and layers of the downloaded image.
@@ -195,6 +196,26 @@ def download_with_tool(rctx, *, tool_path, reference):
     registries = [r for r in rctx.attr.registries]
     if rctx.attr.registry:
         registries.append(rctx.attr.registry)
+
+    # Create blobs directory
+    if len(blob_files) > 0:
+        rctx.execute([tool_path, "mkdir", "blobs/sha256"])
+
+    # Create symlinks for blob files in the blobs directory
+    # The pull tool will validate these when it starts
+    for digest, label in blob_files.items():
+        file_path = rctx.path(label)
+
+        # Watch the file for changes
+        rctx.watch(file_path)
+
+        # Create the blob directory structure if needed
+        sha256 = digest.removeprefix("sha256:")
+
+        # Create symlink to the blob file
+        blob_path = "blobs/sha256/{}".format(sha256)
+        rctx.symlink(file_path, blob_path)
+
     args = [
         tool_path,
         "pull",

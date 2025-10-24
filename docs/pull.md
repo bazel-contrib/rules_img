@@ -9,7 +9,8 @@ Public API for pulling base container images.
 <pre>
 load("@rules_img//img:pull.bzl", "pull")
 
-pull(<a href="#pull-name">name</a>, <a href="#pull-digest">digest</a>, <a href="#pull-downloader">downloader</a>, <a href="#pull-layer_handling">layer_handling</a>, <a href="#pull-registries">registries</a>, <a href="#pull-registry">registry</a>, <a href="#pull-repo_mapping">repo_mapping</a>, <a href="#pull-repository">repository</a>, <a href="#pull-tag">tag</a>)
+pull(<a href="#pull-name">name</a>, <a href="#pull-blob_files">blob_files</a>, <a href="#pull-digest">digest</a>, <a href="#pull-downloader">downloader</a>, <a href="#pull-layer_handling">layer_handling</a>, <a href="#pull-registries">registries</a>, <a href="#pull-registry">registry</a>, <a href="#pull-repo_mapping">repo_mapping</a>,
+     <a href="#pull-repository">repository</a>, <a href="#pull-tag">tag</a>)
 </pre>
 
 Pulls a container image from a registry using shallow pulling.
@@ -41,6 +42,7 @@ will resolve the tag to a digest at fetch time and print a warning.
 | Name  | Description | Type | Mandatory | Default |
 | :------------- | :------------- | :------------- | :------------- | :------------- |
 | <a id="pull-name"></a>name |  A unique name for this repository.   | <a href="https://bazel.build/concepts/labels#target-names">Name</a> | required |  |
+| <a id="pull-blob_files"></a>blob_files |  Pre-downloaded blob files to use.<br><br>A dictionary mapping blob digests (e.g., "sha256:abc123...") to file labels. These blobs will be verified and used instead of downloading from the registry when available. This is useful for air-gapped environments or to avoid redundant downloads of common base layers.   | Dictionary: String -> Label | optional |  `{}`  |
 | <a id="pull-digest"></a>digest |  The image digest for reproducible pulls (e.g., "sha256:abc123...").<br><br>When specified, the image is pulled by digest instead of tag, ensuring reproducible builds. The digest must be a full SHA256 digest starting with "sha256:".   | String | optional |  `""`  |
 | <a id="pull-downloader"></a>downloader |  The tool to use for downloading manifests and blobs.<br><br>**Available options:**<br><br>* **`img_tool`** (default): Uses the `img` tool for all downloads.<br><br>* **`bazel`**: Uses Bazel's native HTTP capabilities for downloading manifests and blobs.   | String | optional |  `"img_tool"`  |
 | <a id="pull-layer_handling"></a>layer_handling |  Strategy for handling image layers.<br><br>This attribute controls when and how layer data is fetched from the registry.<br><br>**Available strategies:**<br><br>* **`shallow`** (default): Layer data is fetched only if needed during push operations,   but is not available during the build. This is the most efficient option for images   that are only used as base images for pushing.<br><br>* **`eager`**: Layer data is fetched in the repository rule and is always available.   This ensures layers are accessible in build actions but is inefficient as all layers   are downloaded regardless of whether they're needed. Use this for base images that   need to be read or inspected during the build.<br><br>* **`lazy`**: Layer data is downloaded in a build action when requested. This provides   access to layers during builds while avoiding unnecessary downloads, but requires   network access during the build phase. **EXPERIMENTAL:** Use at your own risk.   | String | optional |  `"shallow"`  |
