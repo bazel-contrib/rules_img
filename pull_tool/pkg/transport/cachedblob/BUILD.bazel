@@ -1,0 +1,23 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "cachedblob",
+    srcs = ["transport.go"],
+    importpath = "github.com/bazel-contrib/rules_img/pull_tool/pkg/transport/cachedblob",
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "cachedblob_test",
+    srcs = [
+        "transport_regex_test.go",
+        "transport_test.go",
+    ],
+    embed = [":cachedblob"],
+)
+
+filegroup(
+    name = "go_srcs",
+    srcs = glob(["*.go"]),
+    visibility = ["//visibility:public"],
+)

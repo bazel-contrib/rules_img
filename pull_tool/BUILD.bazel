@@ -10,6 +10,7 @@ filegroup(
         "//cmd/pull_tool:go_srcs",
         "//pkg/auth/registry:go_srcs",
         "//pkg/blobstore:go_srcs",
+        "//pkg/transport/cachedblob:go_srcs",
     ],
     visibility = ["//visibility:public"],
 )
