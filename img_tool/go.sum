@@ -122,6 +122,8 @@ github.com/bazelbuild/rules_go v0.54.0 h1:D9aCU7j5rdRxg2rXOZX5zHZ395XC0KbgC4rnya
 github.com/bazelbuild/rules_go v0.54.0/go.mod h1:T90Gpyq4HDFlsrvtQa2CBdHNJ2P4rAu/uUTmQbanzf0=
 github.com/bazelbuild/rules_go v0.57.0 h1:qBFxjy29iJg22xWlu5A3mNwrXtCHiEnHcIt91SsiFGU=
 github.com/bazelbuild/rules_go v0.57.0/go.mod h1:Pn30cb4M513fe2rQ6GiJ3q8QyrRsgC7zhuDvi50Lw4Y=
+github.com/bazelbuild/rules_go v0.58.2 h1:VOZCroDLXBdTAnd43VWoVQO52g37mn/xwBHkvQpGQps=
+github.com/bazelbuild/rules_go v0.58.2/go.mod h1:Pn30cb4M513fe2rQ6GiJ3q8QyrRsgC7zhuDvi50Lw4Y=
 github.com/containerd/containerd/api v1.9.0 h1:HZ/licowTRazus+wt9fM6r/9BQO7S0vD5lMcWspGIg0=
 github.com/containerd/containerd/api v1.9.0/go.mod h1:GhghKFmTR3hNtyznBoQ0EMWr9ju5AqHjcZPsSpTKutI=
 github.com/containerd/log v0.1.0 h1:TCJt7ioM2cr/tfR8GPbGf9/VRAX8D2B4PjzCpfX540I=
