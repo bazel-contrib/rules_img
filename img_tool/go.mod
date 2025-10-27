@@ -7,7 +7,7 @@ require (
 	github.com/aws/aws-sdk-go-v2 v1.39.4
 	github.com/aws/aws-sdk-go-v2/config v1.31.15
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.88.7
-	github.com/bazelbuild/rules_go v0.57.0
+	github.com/bazelbuild/rules_go v0.58.2
 	github.com/containerd/containerd/api v1.9.0
 	github.com/containerd/stargz-snapshotter/estargz v0.18.0
 	github.com/google/uuid v1.6.0
