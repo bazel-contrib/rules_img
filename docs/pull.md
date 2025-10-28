@@ -9,8 +9,8 @@ Public API for pulling base container images.
 <pre>
 load("@rules_img//img:pull.bzl", "pull")
 
-pull(<a href="#pull-name">name</a>, <a href="#pull-blob_files">blob_files</a>, <a href="#pull-digest">digest</a>, <a href="#pull-downloader">downloader</a>, <a href="#pull-layer_handling">layer_handling</a>, <a href="#pull-registries">registries</a>, <a href="#pull-registry">registry</a>, <a href="#pull-repo_mapping">repo_mapping</a>,
-     <a href="#pull-repository">repository</a>, <a href="#pull-tag">tag</a>)
+pull(<a href="#pull-name">name</a>, <a href="#pull-airgapped">airgapped</a>, <a href="#pull-blob_files">blob_files</a>, <a href="#pull-digest">digest</a>, <a href="#pull-downloader">downloader</a>, <a href="#pull-layer_handling">layer_handling</a>, <a href="#pull-registries">registries</a>, <a href="#pull-registry">registry</a>,
+     <a href="#pull-repo_mapping">repo_mapping</a>, <a href="#pull-repository">repository</a>, <a href="#pull-tag">tag</a>)
 </pre>
 
 Pulls a container image from a registry using shallow pulling.
@@ -42,6 +42,7 @@ will resolve the tag to a digest at fetch time and print a warning.
 | Name  | Description | Type | Mandatory | Default |
 | :------------- | :------------- | :------------- | :------------- | :------------- |
 | <a id="pull-name"></a>name |  A unique name for this repository.   | <a href="https://bazel.build/concepts/labels#target-names">Name</a> | required |  |
+| <a id="pull-airgapped"></a>airgapped |  Enable airgapped mode.<br><br>When enabled, the pull tool will only use locally cached blobs and will not attempt any network requests. This is useful for completely offline/air-gapped environments where all required blobs must be provided via blob_files.<br><br>If a required blob is not available locally, the pull will fail rather than attempting to download it.   | Boolean | optional |  `False`  |
 | <a id="pull-blob_files"></a>blob_files |  Pre-downloaded blob files to use.<br><br>A dictionary mapping blob digests (e.g., "sha256:abc123...") to file labels. These blobs will be verified and used instead of downloading from the registry when available. This is useful for air-gapped environments or to avoid redundant downloads of common base layers.   | Dictionary: String -> Label | optional |  `{}`  |
 | <a id="pull-digest"></a>digest |  The image digest for reproducible pulls (e.g., "sha256:abc123...").<br><br>When specified, the image is pulled by digest instead of tag, ensuring reproducible builds. The digest must be a full SHA256 digest starting with "sha256:".   | String | optional |  `""`  |
 | <a id="pull-downloader"></a>downloader |  The tool to use for downloading manifests and blobs.<br><br>**Available options:**<br><br>* **`img_tool`** (default): Uses the `img` tool for all downloads.<br><br>* **`bazel`**: Uses Bazel's native HTTP capabilities for downloading manifests and blobs.   | String | optional |  `"img_tool"`  |

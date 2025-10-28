@@ -181,7 +181,7 @@ def get_layers(rctx, digests):
         for digest in digests
     ]
 
-def download_with_tool(rctx, *, tool_path, reference, blob_files = {}):
+def download_with_tool(rctx, *, tool_path, reference, blob_files = {}, airgapped = False):
     """Download an image using the img tool.
 
     Args:
@@ -189,6 +189,7 @@ def download_with_tool(rctx, *, tool_path, reference, blob_files = {}):
         tool_path: The path to the img tool to use for downloading.
         reference: The image reference to download.
         blob_files: Dictionary mapping blob digests to file labels.
+        airgapped: Enable airgapped mode (no network access).
 
     Returns:
         A struct containing manifest and layers of the downloaded image.
@@ -223,6 +224,8 @@ def download_with_tool(rctx, *, tool_path, reference, blob_files = {}):
         "--repository=" + rctx.attr.repository,
         "--layer-handling=" + rctx.attr.layer_handling,
     ] + ["--registry=" + r for r in registries]
+    if airgapped:
+        args.append("--airgapped")
     result = rctx.execute(args, quiet = False)
     if result.return_code != 0:
         fail("img tool failed with exit code {} and message {}".format(result.return_code, result.stderr))

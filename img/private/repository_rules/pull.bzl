@@ -61,6 +61,7 @@ def _pull_impl(rctx):
             tool_path = tool_path,
             reference = reference,
             blob_files = rctx.attr.blob_files,
+            airgapped = rctx.attr.airgapped,
         )
 
     manifest_kwargs = dict(
@@ -358,6 +359,16 @@ A dictionary mapping blob digests (e.g., "sha256:abc123...") to file labels.
 These blobs will be verified and used instead of downloading from the registry when available.
 This is useful for air-gapped environments or to avoid redundant downloads of common base layers.""",
             allow_files = True,
+        ),
+        "airgapped": attr.bool(
+            default = False,
+            doc = """Enable airgapped mode.
+
+When enabled, the pull tool will only use locally cached blobs and will not attempt any network
+requests. This is useful for completely offline/air-gapped environments where all required blobs
+must be provided via blob_files.
+
+If a required blob is not available locally, the pull will fail rather than attempting to download it.""",
         ),
     },
 )

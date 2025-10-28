@@ -26,6 +26,7 @@ func PullProcess(ctx context.Context, args []string) {
 	var registries stringSliceFlag
 	var layerHandling string
 	var concurrency int
+	var airgapped bool
 
 	flagSet := flag.NewFlagSet("pull", flag.ExitOnError)
 	flagSet.Usage = func() {
@@ -48,6 +49,7 @@ func PullProcess(ctx context.Context, args []string) {
 	flagSet.Var(&registries, "registry", "Registry to use (can be specified multiple times, defaults to docker.io)")
 	flagSet.StringVar(&layerHandling, "layer-handling", "shallow", "Method used for handling layer data. \"eager\" causes layer data to be materialized.")
 	flagSet.IntVar(&concurrency, "j", 10, "Number of concurrent download workers")
+	flagSet.BoolVar(&airgapped, "airgapped", false, "Enable airgapped mode (only use local cached blobs, no network access)")
 
 	if err := flagSet.Parse(args); err != nil {
 		flagSet.Usage()
@@ -77,7 +79,7 @@ func PullProcess(ctx context.Context, args []string) {
 		os.Exit(1)
 	}
 	// Create a custom HTTP client with cached blob transport
-	transport := cachedblob.NewTransport(outputDir, http.DefaultTransport)
+	transport := cachedblob.NewTransport(outputDir, http.DefaultTransport, cachedblob.WithAirgapped(airgapped))
 
 	// Default to docker.io if no registries specified
 	if len(registries) == 0 {
