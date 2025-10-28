@@ -71,3 +71,23 @@ normalize_layer_transition = transition(
     inputs = [],
     outputs = [_original_platforms_setting],
 )
+
+def _single_platform_transition_impl(settings, attr):
+    """Transition to a single target platform if specified."""
+    if not hasattr(attr, "platform") or not attr.platform:
+        # No platform specified, no transition needed
+        return {}
+
+    return {
+        _platforms_setting: str(attr.platform),
+        _original_platforms_setting: _encode_platforms_if_different(settings, attr.platform),
+    }
+
+single_platform_transition = transition(
+    implementation = _single_platform_transition_impl,
+    inputs = [_platforms_setting],
+    outputs = [
+        _platforms_setting,
+        _original_platforms_setting,
+    ],
+)

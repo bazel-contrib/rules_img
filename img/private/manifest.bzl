@@ -4,7 +4,7 @@ load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("//img/private:stamp.bzl", "expand_or_write")
 load("//img/private/common:build.bzl", "TOOLCHAIN", "TOOLCHAINS")
 load("//img/private/common:layer_helper.bzl", "allow_tar_files", "calculate_layer_info", "extension_to_compression")
-load("//img/private/common:transitions.bzl", "normalize_layer_transition")
+load("//img/private/common:transitions.bzl", "normalize_layer_transition", "single_platform_transition")
 load("//img/private/config:defs.bzl", "TargetPlatformInfo")
 load("//img/private/providers:index_info.bzl", "ImageIndexInfo")
 load("//img/private/providers:layer_info.bzl", "LayerInfo")
@@ -51,7 +51,7 @@ def select_base(ctx):
     constraints_wanted = dict(
         os = os_wanted,
         architecture = arch_wanted,
-        platform = ctx.attr.platform,
+        platform = ctx.attr.platform_requirements,
     )
 
     for manifest in ctx.attr.base[ImageIndexInfo].manifests:
@@ -259,7 +259,7 @@ def _image_manifest_impl(ctx):
             structured_config = structured_config,
             architecture = arch,
             os = os,
-            platform = ctx.attr.platform,
+            platform = ctx.attr.platform_requirements,
             layers = layers,
             missing_blobs = base.missing_blobs if base != None else [],
         ),
@@ -311,9 +311,28 @@ Output groups:
             doc = "Layers to include in the image. Either a LayerInfo provider or a DefaultInfo with tar files.",
             cfg = normalize_layer_transition,
         ),
-        "platform": attr.string_dict(
+        "platform_requirements": attr.string_dict(
             default = {},
             doc = "Dict containing additional runtime requirements of the image.",
+        ),
+        "platform": attr.label(
+            doc = """Optional target platform to build this manifest for.
+
+When specified, the image will be built for the provided platform regardless
+of the current build configuration. This enables building single-platform images
+for specific architectures.
+
+Example:
+```python
+image_manifest(
+    name = "app_arm64",
+    platform = "//platforms:linux_arm64",
+    base = "@ubuntu",
+    layers = [":app_layer"],
+)
+```
+""",
+            providers = [platform_common.PlatformInfo],
         ),
         "user": attr.string(
             doc = """The username or UID which is a platform-specific structure that allows specific control over which user the process run as.
@@ -411,4 +430,5 @@ See [template expansion](/docs/templating.md) for available stamp variables.
     },
     provides = [ImageManifestInfo],
     toolchains = TOOLCHAINS,
+    cfg = single_platform_transition,
 )

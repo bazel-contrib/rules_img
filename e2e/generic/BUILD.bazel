@@ -345,6 +345,47 @@ build_test(
     ],
 )
 
+# Test: Platform transition feature using target platform
+image_manifest(
+    name = "manifest_with_target_platform_arm64",
+    entrypoint = ["/bin/script"],
+    labels = {
+        "architecture": "arm64",
+        "test": "platform_transition",
+    },
+    layers = [":mixed_layer"],
+    platform = "//platform:linux_arm64",
+)
+
+image_manifest(
+    name = "manifest_with_target_platform_amd64",
+    entrypoint = ["/bin/script"],
+    labels = {
+        "architecture": "amd64",
+        "test": "platform_transition",
+    },
+    layers = [":mixed_layer"],
+    platform = "//platform:linux_amd64",
+)
+
+# Create index from platform-transitioned manifests
+image_index(
+    name = "platform_transitioned_index",
+    manifests = [
+        ":manifest_with_target_platform_arm64",
+        ":manifest_with_target_platform_amd64",
+    ],
+)
+
+build_test(
+    name = "platform_transition_tests",
+    targets = [
+        ":manifest_with_target_platform_arm64",
+        ":manifest_with_target_platform_amd64",
+        ":platform_transitioned_index",
+    ],
+)
+
 build_test(
     name = "all_tests",
     targets = [
@@ -352,5 +393,6 @@ build_test(
         ":manifest_tests",
         ":index_tests",
         ":push_tests",
+        ":platform_transition_tests",
     ],
 )
