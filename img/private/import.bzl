@@ -5,6 +5,7 @@ load("//img/private/providers:index_info.bzl", "ImageIndexInfo")
 load("//img/private/providers:layer_info.bzl", "LayerInfo")
 load("//img/private/providers:manifest_info.bzl", "ImageManifestInfo")
 load("//img/private/providers:pull_info.bzl", "PullInfo")
+load(":manifest_media_type.bzl", "get_media_type")
 
 def _digest_to_file(ctx, digest):
     """Get a starlark File object for a digest."""
@@ -74,7 +75,7 @@ def _write_manifest_descriptor(ctx, digest, manifest, platform, descriptor = Non
         # we don't have a prebuilt descriptor from an image index.
         # let's build our own.
         descriptor = dict(
-            mediaType = manifest["mediaType"],
+            mediaType = get_media_type(manifest),
             size = len(ctx.attr.data[digest]),
             digest = digest,
             platform = platform,
@@ -86,8 +87,9 @@ def _build_manifest_info(ctx, digest, descriptor = None, index_position = None, 
     if not digest in ctx.attr.data:
         fail("missing blob for digest: " + digest)
     manifest = json.decode(ctx.attr.data[digest])
-    if not manifest.get("mediaType") in [MEDIA_TYPE_MANIFEST, DOCKER_MANIFEST_V2]:
-        fail("invalid mediaType in manifest: {}".format(manifest.get("mediaType")))
+    media_type = get_media_type(manifest)
+    if not media_type in [MEDIA_TYPE_MANIFEST, DOCKER_MANIFEST_V2]:
+        fail("invalid mediaType in manifest: {}".format(media_type))
     config_digest = manifest.get("config", {}).get("digest", "missing config digest")
     if not config_digest in ctx.attr.data:
         fail("missing blob for config digest: " + config_digest)
@@ -119,8 +121,9 @@ def _build_manifest_info(ctx, digest, descriptor = None, index_position = None, 
 
 def _image_import_impl(ctx):
     root_blob = json.decode(ctx.attr.data[ctx.attr.digest])
-    if not root_blob.get("mediaType") in [MEDIA_TYPE_MANIFEST, DOCKER_MANIFEST_V2, MEDIA_TYPE_INDEX, DOCKER_MANIFEST_LIST_V2]:
-        fail("invalid mediaType in root blob: {}".format(root_blob.get("mediaType")))
+    media_type = get_media_type(root_blob)
+    if not media_type in [MEDIA_TYPE_MANIFEST, DOCKER_MANIFEST_V2, MEDIA_TYPE_INDEX, DOCKER_MANIFEST_LIST_V2]:
+        fail("invalid mediaType in root blob: {}".format(media_type))
 
     providers = [
         DefaultInfo(files = depset([_digest_to_file(ctx, ctx.attr.digest)])),
@@ -131,10 +134,10 @@ def _image_import_impl(ctx):
             digest = ctx.attr.digest,
         ),
     ]
-    if root_blob.get("mediaType") in [MEDIA_TYPE_MANIFEST, DOCKER_MANIFEST_V2]:
+    if media_type in [MEDIA_TYPE_MANIFEST, DOCKER_MANIFEST_V2]:
         # this is a single-platform manifest
         providers.append(_build_manifest_info(ctx, ctx.attr.digest))
-    elif root_blob.get("mediaType") in [MEDIA_TYPE_INDEX, DOCKER_MANIFEST_LIST_V2]:
+    elif media_type in [MEDIA_TYPE_INDEX, DOCKER_MANIFEST_LIST_V2]:
         # this is a multi-platform index
         manifests = [
             _build_manifest_info(ctx, manifest["digest"], descriptor = manifest, index_position = position, platform = manifest.get("platform"))

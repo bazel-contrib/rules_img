@@ -84,3 +84,11 @@ pull(
     ],
     repository = "library/nginx",
 )
+
+# image that contains a manifest without explicit mediaType field
+pull(
+    name = "envoy",
+    digest = "sha256:cb7d9f8463287679708c5eaee2d77252c6096039d3f2822b65017ca0b84fda2a",
+    repository = "envoyproxy/envoy",
+    tag = "v1.34.10",
+)
