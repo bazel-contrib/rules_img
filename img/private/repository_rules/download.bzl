@@ -1,5 +1,33 @@
 """Repository rules for downloading container image components."""
 
+def setup_blob_files(rctx, blob_files):
+    """Set up pre-downloaded blob files by creating symlinks.
+
+    Args:
+        rctx: Repository context.
+        blob_files: Dictionary mapping blob digests to file labels.
+    """
+    if len(blob_files) == 0:
+        return
+
+    # Create blobs directory structure by creating a marker file
+    # This ensures the directory exists on all platforms
+    rctx.file("blobs/sha256/.marker", content = "", executable = False)
+
+    # Create symlinks for blob files
+    for digest, label in blob_files.items():
+        file_path = rctx.path(label)
+
+        # Watch the file for changes
+        rctx.watch(file_path)
+
+        # Create symlink to the blob file
+        sha256 = digest.removeprefix("sha256:")
+        blob_path = "blobs/sha256/{}".format(sha256)
+        rctx.symlink(file_path, blob_path)
+
+    rctx.delete("blobs/sha256/.marker")
+
 def download_blob(rctx, *, digest, wait_and_read = True, **kwargs):
     """Download a blob from a container registry using Bazel's downloader.
 
@@ -15,6 +43,20 @@ def download_blob(rctx, *, digest, wait_and_read = True, **kwargs):
     """
     sha256 = digest.removeprefix("sha256:")
     output = "blobs/sha256/" + sha256
+
+    # Check if blob already exists (from blob_files)
+    if rctx.path(output).exists:
+        return struct(
+            digest = digest,
+            path = output,
+            data = rctx.read(output) if wait_and_read else None,
+            waiter = None,
+        )
+
+    # In airgapped mode, fail if blob is not available locally
+    if rctx.attr.airgapped:
+        fail("Blob {} not available locally in airgapped mode".format(digest))
+
     registries = [r for r in rctx.attr.registries]
     if rctx.attr.registry:
         registries.append(rctx.attr.registry)
@@ -64,8 +106,25 @@ def download_manifest(rctx, *, reference, **kwargs):
         sha256 = reference.removeprefix("sha256:")
         kwargs["sha256"] = sha256
         kwargs["output"] = "blobs/sha256/" + sha256
+
+        # Check if manifest already exists (from blob_files)
+        if rctx.path(kwargs["output"]).exists:
+            return struct(
+                digest = reference,
+                path = kwargs["output"],
+                data = rctx.read(kwargs["output"]),
+            )
+
+        # In airgapped mode, fail if manifest is not available locally
+        if rctx.attr.airgapped:
+            fail("Manifest {} not available locally in airgapped mode".format(reference))
     else:
         kwargs["output"] = "manifest.json"
+
+        # Without a digest, we can't use cached blobs and airgapped mode doesn't make sense
+        if rctx.attr.airgapped:
+            fail("Airgapped mode requires a valid digest (sha256:...), but got tag reference: {}".format(reference))
+
     manifest_result = rctx.download(
         url = [
             "{protocol}://{registry}/v2/{repository}/manifests/{reference}".format(
@@ -105,7 +164,9 @@ def download_layers(rctx, digests):
         layer_info = download_blob(rctx, digest = digest, wait_and_read = False)
         downloaded_layers.append(layer_info)
     for layer in downloaded_layers:
-        layer.waiter.wait()
+        # Only wait if there's a waiter (blob was downloaded, not cached)
+        if layer.waiter != None:
+            layer.waiter.wait()
     return [downloaded_layer for downloaded_layer in downloaded_layers]
 
 def get_blob(rctx, *, digest, read = True, **kwargs):
@@ -181,14 +242,13 @@ def get_layers(rctx, digests):
         for digest in digests
     ]
 
-def download_with_tool(rctx, *, tool_path, reference, blob_files = {}, airgapped = False):
+def download_with_tool(rctx, *, tool_path, reference, airgapped = False):
     """Download an image using the img tool.
 
     Args:
         rctx: Repository context.
         tool_path: The path to the img tool to use for downloading.
         reference: The image reference to download.
-        blob_files: Dictionary mapping blob digests to file labels.
         airgapped: Enable airgapped mode (no network access).
 
     Returns:
@@ -197,25 +257,6 @@ def download_with_tool(rctx, *, tool_path, reference, blob_files = {}, airgapped
     registries = [r for r in rctx.attr.registries]
     if rctx.attr.registry:
         registries.append(rctx.attr.registry)
-
-    # Create blobs directory
-    if len(blob_files) > 0:
-        rctx.execute([tool_path, "mkdir", "blobs/sha256"])
-
-    # Create symlinks for blob files in the blobs directory
-    # The pull tool will validate these when it starts
-    for digest, label in blob_files.items():
-        file_path = rctx.path(label)
-
-        # Watch the file for changes
-        rctx.watch(file_path)
-
-        # Create the blob directory structure if needed
-        sha256 = digest.removeprefix("sha256:")
-
-        # Create symlink to the blob file
-        blob_path = "blobs/sha256/{}".format(sha256)
-        rctx.symlink(file_path, blob_path)
 
     args = [
         tool_path,

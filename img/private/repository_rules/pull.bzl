@@ -9,6 +9,7 @@ load(
     _get_blob = "get_blob",
     _get_layers = "get_layers",
     _get_manifest = "get_manifest",
+    _setup_blob_files = "setup_blob_files",
 )
 
 def _map_os_arch_to_constraints(os_arch_pairs):
@@ -51,6 +52,10 @@ def _pull_impl(rctx):
     if len(reference) == 0:
         fail("either digest or tag must be specified")
 
+    # Set up blob files if provided
+    if len(rctx.attr.blob_files) > 0:
+        _setup_blob_files(rctx, rctx.attr.blob_files)
+
     if rctx.attr.downloader == "img_tool":
         # pre-download all files using the img tool
         # here if requested
@@ -60,7 +65,6 @@ def _pull_impl(rctx):
             rctx,
             tool_path = tool_path,
             reference = reference,
-            blob_files = rctx.attr.blob_files,
             airgapped = rctx.attr.airgapped,
         )
 

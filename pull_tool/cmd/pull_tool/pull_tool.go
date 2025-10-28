@@ -13,8 +13,7 @@ const usage = `Usage: pull_tool [COMMAND] [ARGS...]
 
 Commands:
   pull             pulls an image from a registry
-  download-blob    downloads a single blob from a registry
-  mkdir [DIR]      creates a directory structure (including parents) `
+  download-blob    downloads a single blob from a registry`
 
 func Run(ctx context.Context, args []string) {
 	if len(args) < 2 {
@@ -28,16 +27,6 @@ func Run(ctx context.Context, args []string) {
 		pull.PullProcess(ctx, args[2:])
 	case "download-blob":
 		downloadblob.DownloadBlobProcess(ctx, args[2:])
-	case "mkdir":
-		if len(args) != 3 {
-			fmt.Fprintln(os.Stderr, "Usage: pull_tool mkdir [DIR]")
-			os.Exit(1)
-		}
-		dir := args[2]
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to create directory %s: %v\n", dir, err)
-			os.Exit(1)
-		}
 	default:
 		fmt.Fprintln(os.Stderr, usage)
 		os.Exit(1)
