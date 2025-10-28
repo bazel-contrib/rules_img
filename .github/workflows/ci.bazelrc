@@ -3,4 +3,5 @@ common --curses=no
 common --color=yes
 common --terminal_columns=120
 common --show_timestamps
+common --lockfile_mode=error
 build --verbose_failures
