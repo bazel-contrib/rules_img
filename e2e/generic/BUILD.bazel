@@ -276,6 +276,31 @@ image_push(
     visibility = ["//visibility:public"],
 )
 
+# Edge case: Manifest with created timestamp
+write_file(
+    name = "created_timestamp",
+    out = "created.txt",
+    content = ["2024-01-15T10:30:00Z"],
+)
+
+image_manifest(
+    name = "manifest_with_created",
+    created = ":created_timestamp",
+    entrypoint = ["/bin/script"],
+    labels = {
+        "description": "Test image with created timestamp",
+    },
+    layers = [":mixed_layer"],
+)
+
+image_push(
+    name = "push_with_created",
+    image = ":manifest_with_created",
+    registry = "ghcr.io",
+    repository = "malt3/rules_img/e2e-generic-with-created",
+    visibility = ["//visibility:public"],
+)
+
 # Build tests to ensure all targets can be built
 build_test(
     name = "layer_tests",
@@ -297,6 +322,7 @@ build_test(
         ":multi_layer_manifest",
         ":annotated_manifest",
         ":complex_manifest",
+        ":manifest_with_created",
     ],
 )
 
@@ -315,6 +341,7 @@ build_test(
         ":push_annotated",
         ":push_index",
         ":push_complex",
+        ":push_with_created",
     ],
 )
 
