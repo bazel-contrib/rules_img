@@ -35,6 +35,12 @@ single_version_override(
     patches = ["//custom_distroless_base_image:rules_distroless.patch"],
 )
 
+bazel_dep(name = "rules_go", version = "0.55.0")
+single_version_override(
+    module_name = "rules_go",
+    version = "0.55.0",
+)
+
 # Configure apt for Debian packages
 apt = use_extension("@rules_distroless//apt:extensions.bzl", "apt")
 
@@ -52,13 +58,13 @@ pull = use_repo_rule("@rules_img//img:pull.bzl", "pull")
 pull(
     name = "alpine",
     digest = "sha256:4b7ce07002c69e8f3d704a9c5d6fd3053be500b7f1c69fc0d80990c2ad8dd412",
+    layer_handling = "eager",
     registries = [
         "mirror.gcr.io",
         "index.docker.io",
     ],
     repository = "library/alpine",
     tag = "3.22",
-    layer_handling = "eager",
 )
 
 alpine_blobs = [
@@ -128,29 +134,29 @@ blob_files = {
 pull(
     name = "alpine_airgapped_img_tool",
     airgapped = True,
+    blob_files = blob_files,
     digest = "sha256:4b7ce07002c69e8f3d704a9c5d6fd3053be500b7f1c69fc0d80990c2ad8dd412",
+    downloader = "img_tool",
     registries = [
         "mirror.gcr.io",
         "index.docker.io",
     ],
     repository = "library/alpine",
-    downloader = "img_tool",
     tag = "3.22",
-    blob_files = blob_files,
 )
 
 pull(
     name = "alpine_airgapped_bazel_downloader",
     airgapped = True,
+    blob_files = blob_files,
     digest = "sha256:4b7ce07002c69e8f3d704a9c5d6fd3053be500b7f1c69fc0d80990c2ad8dd412",
+    downloader = "bazel",
     registries = [
         "mirror.gcr.io",
         "index.docker.io",
     ],
     repository = "library/alpine",
-    downloader = "bazel",
     tag = "3.22",
-    blob_files = blob_files,
 )
 
 pull(
@@ -186,3 +192,14 @@ pull(
     digest = "sha256:72547dd722cd005a8c2aa2079af9ca0ee93aad8e589689135feaed60b0a8c08d",
     repository = "debian",
 )
+
+images = use_extension("@rules_img//img:extensions.bzl", "images")
+images.pull(
+    digest = "sha256:029d4461bd98f124e531380505ceea2072418fdf28752aa73b7b273ba3048903",
+    registries = [
+        "mirror.gcr.io",
+        "index.docker.io",
+    ],
+    repository = "library/nginx",
+)
+use_repo(images, "rules_img_images.bzl")
