@@ -1,5 +1,5 @@
 dist
-MODULE.bazel.lock
+e2e/*/MODULE.bazel.lock
 bazel-*
 .bazelrc.user
 .vscode
