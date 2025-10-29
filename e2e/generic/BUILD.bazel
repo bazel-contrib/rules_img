@@ -301,6 +301,27 @@ image_push(
     visibility = ["//visibility:public"],
 )
 
+# File containing multiple tags (one per line)
+write_file(
+    name = "push_tags_file",
+    out = "push_tags.txt",
+    content = [
+        "v1.0.0",
+        "v1.0",
+        "stable",
+    ],
+)
+
+# Test push with tag_file
+image_push(
+    name = "push_tag_file",
+    image = ":single_layer_manifest",
+    registry = "ghcr.io",
+    repository = "malt3/rules_img/e2e-generic-tag-file",
+    tag_file = ":push_tags_file",
+    visibility = ["//visibility:public"],
+)
+
 # Build tests to ensure all targets can be built
 build_test(
     name = "layer_tests",
@@ -342,6 +363,7 @@ build_test(
         ":push_index",
         ":push_complex",
         ":push_with_created",
+        ":push_tag_file",
     ],
 )
 

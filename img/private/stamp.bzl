@@ -57,7 +57,7 @@ def should_stamp(*, ctx, template_strings):
         want_stamp = want_stamp,
     )
 
-def expand_or_write(*, ctx, templates, output_name, only_if_stamping = False):
+def expand_or_write(*, ctx, templates, output_name, only_if_stamping = False, newline_delimited_lists_files = None):
     """Either expand templates or write JSON directly based on build_settings.
 
     Args:
@@ -65,6 +65,7 @@ def expand_or_write(*, ctx, templates, output_name, only_if_stamping = False):
         templates: The templates dictionary (dict of template name to value (str) or values (list of str))
         output_name: The name for the output file
         only_if_stamping: If True, only create the file if stamping is needed (templates contain {{}})
+        newline_delimited_lists_files: Optional dict mapping template keys to File objects containing newline-delimited lists
 
     Returns:
         The File object for the final JSON, or None if only_if_stamping=True and no stamping needed
@@ -78,12 +79,22 @@ def expand_or_write(*, ctx, templates, output_name, only_if_stamping = False):
 
     final_json = ctx.actions.declare_file(output_name)
 
-    if build_settings or stamp_settings.want_stamp:
+    # Determine if we need template expansion
+    needs_expansion = build_settings or stamp_settings.want_stamp or newline_delimited_lists_files
+
+    if needs_expansion:
         # Add build settings to the request for template expansion
         request = dict(
             templates = templates,
             build_settings = build_settings,
         )
+
+        # Add newline-delimited files if provided
+        if newline_delimited_lists_files:
+            request["newline_delimited_lists_files"] = {
+                key: file.path
+                for key, file in newline_delimited_lists_files.items()
+            }
 
         # Write the template JSON
         template_name = output_name.replace(".json", ".template_request.json")
@@ -98,6 +109,10 @@ def expand_or_write(*, ctx, templates, output_name, only_if_stamping = False):
         # Build arguments for expand-template
         args = []
         inputs = [template_json]
+
+        # Add newline-delimited list files as inputs
+        if newline_delimited_lists_files:
+            inputs.extend(newline_delimited_lists_files.values())
 
         # Add stamp files if stamping is enabled
         if stamp_settings.stamp:

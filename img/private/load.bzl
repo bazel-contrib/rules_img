@@ -41,6 +41,8 @@ def _get_tags(ctx):
     elif ctx.attr.tag_list:
         tags = ctx.attr.tag_list
 
+    # tag_file is handled separately via newline_delimited_lists_files and will be merged
+
     return tags
 
 def _target_info(ctx):
@@ -175,11 +177,18 @@ def _image_load_impl(ctx):
         daemon = _daemon(ctx),
     )
 
+    # Prepare newline_delimited_lists_files if tag_file is provided
+    newline_delimited_lists_files = None
+    if ctx.attr.tag_file:
+        tag_file = ctx.attr.tag_file.files.to_list()[0]
+        newline_delimited_lists_files = {"tags": tag_file}
+
     # Either expand templates or write directly
     configuration_json = expand_or_write(
         ctx = ctx,
         templates = templates,
         output_name = ctx.label.name + ".configuration.json",
+        newline_delimited_lists_files = newline_delimited_lists_files,
     )
 
     dispatch_json = _compute_load_metadata(
@@ -336,8 +345,27 @@ Useful for applying multiple tags in a single load:
 tag_list = ["latest", "v1.0.0", "stable"]
 ```
 
-Cannot be used together with `tag`. Each tag is subject to [template expansion](/docs/templating.md).
+Cannot be used together with `tag`. Can be combined with `tag_file` to merge tags from both sources.
+Each tag is subject to [template expansion](/docs/templating.md).
 """,
+        ),
+        "tag_file": attr.label(
+            doc = """File containing newline-delimited tags to apply when loading the image.
+
+The file should contain one tag per line. Empty lines are ignored. Tags from this file
+are merged with tags specified via `tag` or `tag_list` attributes.
+
+Example file content:
+```
+latest
+v1.0.0
+stable
+```
+
+Can be combined with `tag` or `tag_list` to merge tags from multiple sources.
+Each tag is subject to [template expansion](/docs/templating.md).
+""",
+            allow_single_file = True,
         ),
         "strategy": attr.string(
             doc = """Strategy for handling image layers during load.

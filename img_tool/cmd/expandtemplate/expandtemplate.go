@@ -15,8 +15,9 @@ import (
 
 // request represents the input JSON for template expansion
 type request struct {
-	BuildSettings map[string]buildSetting    `json:"build_settings"`
-	Templates     map[string]json.RawMessage `json:"templates"`
+	BuildSettings              map[string]buildSetting    `json:"build_settings"`
+	Templates                  map[string]json.RawMessage `json:"templates"`
+	NewlineDelimitedListsFiles map[string]string          `json:"newline_delimited_lists_files,omitempty"`
 }
 
 // buildSetting represents the "value" of the Bazel skylibs' BuildSettingInfo provider.
@@ -112,6 +113,11 @@ func expandTemplates(inputPath, outputPath string, stampFiles []string) error {
 	var request request
 	if err := json.Unmarshal(inputData, &request); err != nil {
 		return fmt.Errorf("parsing input JSON: %w", err)
+	}
+
+	// Read newline-delimited list files and merge them into templates
+	if err := mergeNewlineDelimitedFiles(&request); err != nil {
+		return fmt.Errorf("merging newline-delimited files: %w", err)
 	}
 
 	// Add build settings to template data
@@ -241,6 +247,81 @@ func readStampFile(path string, data buildSettings) error {
 
 	if err := scanner.Err(); err != nil {
 		return fmt.Errorf("reading stamp file: %w", err)
+	}
+
+	return nil
+}
+
+// readNewlineDelimitedFile reads a file with newline-delimited strings
+func readNewlineDelimitedFile(path string) ([]string, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("opening file: %w", err)
+	}
+	defer file.Close()
+
+	var lines []string
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		// Skip empty lines
+		if line != "" {
+			lines = append(lines, line)
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("reading file: %w", err)
+	}
+
+	return lines, nil
+}
+
+// mergeNewlineDelimitedFiles reads newline-delimited list files and merges them into templates
+func mergeNewlineDelimitedFiles(req *request) error {
+	for key, filePath := range req.NewlineDelimitedListsFiles {
+		// Read the file
+		lines, err := readNewlineDelimitedFile(filePath)
+		if err != nil {
+			return fmt.Errorf("reading file %s for key %q: %w", filePath, key, err)
+		}
+
+		// Get existing template value for this key
+		existingRaw, exists := req.Templates[key]
+
+		var finalList []string
+
+		if exists {
+			// Try to unmarshal as a list first
+			var existingList []string
+			if err := json.Unmarshal(existingRaw, &existingList); err == nil {
+				// Merge with existing list
+				finalList = append(finalList, existingList...)
+				finalList = append(finalList, lines...)
+			} else {
+				// Try as a single string
+				var existingStr string
+				if err := json.Unmarshal(existingRaw, &existingStr); err == nil {
+					// Convert to list and merge
+					if existingStr != "" {
+						finalList = append(finalList, existingStr)
+					}
+					finalList = append(finalList, lines...)
+				} else {
+					return fmt.Errorf("template value for key %q is neither a string nor list of strings", key)
+				}
+			}
+		} else {
+			// No existing value, just use the lines from file
+			finalList = lines
+		}
+
+		// Marshal back to JSON and update the template
+		marshaled, err := json.Marshal(finalList)
+		if err != nil {
+			return fmt.Errorf("marshaling merged list for key %q: %w", key, err)
+		}
+		req.Templates[key] = json.RawMessage(marshaled)
 	}
 
 	return nil
