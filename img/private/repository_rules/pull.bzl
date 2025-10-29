@@ -2,6 +2,7 @@
 
 load("@bazel_skylib//lib:sets.bzl", "sets")
 load("@pull_hub_repo//:defs.bzl", "tool_for_repository_os")
+load("//img/private:manifest_media_type.bzl", "get_media_type")
 load("//img/private/platforms:platforms.bzl", "has_constraint_setting")
 load(
     ":download.bzl",
@@ -70,15 +71,7 @@ def _pull_impl(rctx):
     root_blob_info = _get_manifest(rctx, reference = reference, **manifest_kwargs)
     data = {root_blob_info.digest: root_blob_info.data}
     root_blob = json.decode(root_blob_info.data)
-    media_type = "unknown"
-    if "mediaType" in root_blob:
-        media_type = root_blob.get("mediaType")
-    elif "config" in root_blob:
-        # Guessing the mediaType based on presence of config
-        media_type = MEDIA_TYPE_MANIFEST
-    elif "manifests" in root_blob:
-        # Guessing the mediaType based on presence of manifests
-        media_type = MEDIA_TYPE_INDEX
+    media_type = get_media_type(root_blob)
 
     manifests = []
     if media_type in [MEDIA_TYPE_INDEX, DOCKER_MANIFEST_LIST_V2]:

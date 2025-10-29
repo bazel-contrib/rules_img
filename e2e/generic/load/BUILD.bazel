@@ -84,6 +84,13 @@ image_load(
     visibility = ["//visibility:public"],
 )
 
+image_load(
+    name = "load_envoy",
+    image = "@envoy",
+    tag = "ghcr.io/malt3/rules_img:envoy-sideloaded",
+    visibility = ["//visibility:public"],
+)
+
 # Load with multiple tags
 image_load(
     name = "load_multi_tags",
