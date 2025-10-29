@@ -77,7 +77,7 @@ pull(
 # but it is supported
 pull(
     name = "nginx",
-    digest = "sha256:029d4461bd98f124e531380505ceea2072418fdf28752aa73b7b273ba3048903",
+    digest = "sha256:b619c34a163ac12f68c1982568a122c4953dbf3126b8dbf0cc2f6fdbfd85de27",
     registries = [
         "mirror.gcr.io",
         "index.docker.io",
