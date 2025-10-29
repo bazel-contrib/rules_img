@@ -173,6 +173,9 @@ def _image_manifest_impl(ctx):
     if ctx.attr.config_fragment != None:
         inputs.append(ctx.file.config_fragment)
         args.add("--config-fragment", ctx.file.config_fragment.path)
+    if ctx.attr.created != None:
+        inputs.append(ctx.file.created)
+        args.add("--created", ctx.file.created.path)
 
     # Handle template expansion for labels, env, and annotations
     templates = {
@@ -353,6 +356,13 @@ Subject to [template expansion](/docs/templating.md).
         ),
         "config_fragment": attr.label(
             doc = "Optional JSON file containing a partial image config, which will be used as a base for the final image config.",
+            allow_single_file = True,
+        ),
+        "created": attr.label(
+            doc = """Optional file containing a datetime string (RFC 3339 format) for when the image was created.
+
+This is commonly used with Bazel's stamping mechanism to embed the build timestamp.
+""",
             allow_single_file = True,
         ),
         "build_settings": attr.string_keyed_label_dict(

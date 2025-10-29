@@ -10,6 +10,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/opencontainers/go-digest"
 	specs "github.com/opencontainers/image-spec/specs-go"
@@ -38,6 +39,7 @@ var (
 	labels                stringMap
 	annotations           stringMap
 	stopSignal            string
+	created               string
 )
 
 func ManifestProcess(_ context.Context, args []string) {
@@ -74,6 +76,7 @@ func ManifestProcess(_ context.Context, args []string) {
 	flagSet.Var(&labels, "label", `Metadata labels for the container (can be specified multiple times as key=value).`)
 	flagSet.Var(&annotations, "annotation", `Metadata annotations for the manifest (can be specified multiple times as key=value).`)
 	flagSet.StringVar(&stopSignal, "stop-signal", "", `Signal to stop the container.`)
+	flagSet.StringVar(&created, "created", "", `A file containing a datetime string (RFC 3339 format) for when the image was created.`)
 
 	if err := flagSet.Parse(args); err != nil {
 		flagSet.Usage()
@@ -106,7 +109,18 @@ func ManifestProcess(_ context.Context, args []string) {
 		}
 	}
 
-	config, err := prepareConfig(layers, templatesData)
+	// Read created timestamp if provided
+	var createdTime *time.Time
+	if created != "" {
+		ct, err := readCreatedTimestamp(created)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to read created timestamp: %v\n", err)
+			os.Exit(1)
+		}
+		createdTime = ct
+	}
+
+	config, err := prepareConfig(layers, templatesData, createdTime)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to prepare config: %v\n", err)
 		os.Exit(1)
@@ -216,7 +230,7 @@ func ManifestProcess(_ context.Context, args []string) {
 	}
 }
 
-func prepareConfig(layers []api.Descriptor, templatesData *ConfigTemplates) (specv1.Image, error) {
+func prepareConfig(layers []api.Descriptor, templatesData *ConfigTemplates, createdTime *time.Time) (specv1.Image, error) {
 	// first, read the base config
 	// then, layer the config fragment on top of it
 	// finally, add our own stuff
@@ -236,6 +250,12 @@ func prepareConfig(layers []api.Descriptor, templatesData *ConfigTemplates) (spe
 	if err := overlayNewConfigValues(&config, layers, templatesData); err != nil {
 		return config, fmt.Errorf("overlaying new config values: %w", err)
 	}
+
+	// Set created timestamp if provided
+	if createdTime != nil {
+		config.Created = createdTime
+	}
+
 	return config, nil
 }
 
@@ -487,4 +507,26 @@ func readConfigTemplates(filePath string) (*ConfigTemplates, error) {
 	}
 
 	return &templates, nil
+}
+
+// readCreatedTimestamp reads a file containing a timestamp string and parses it as RFC 3339
+func readCreatedTimestamp(filePath string) (*time.Time, error) {
+	content, err := os.ReadFile(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("reading created timestamp file: %w", err)
+	}
+
+	// Trim whitespace from the content
+	timestampStr := strings.TrimSpace(string(content))
+	if timestampStr == "" {
+		return nil, fmt.Errorf("created timestamp file is empty")
+	}
+
+	// Parse as RFC 3339
+	t, err := time.Parse(time.RFC3339, timestampStr)
+	if err != nil {
+		return nil, fmt.Errorf("parsing timestamp as RFC 3339: %w", err)
+	}
+
+	return &t, nil
 }
