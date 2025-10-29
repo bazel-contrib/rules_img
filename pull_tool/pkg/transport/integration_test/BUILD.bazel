@@ -1,0 +1,14 @@
+load("@rules_go//go:def.bzl", "go_test")
+
+# name was shortened to avoid hitting Windows path length limits
+go_test(
+    # keep
+    name = "test",
+    srcs = ["cachedblob_integration_test.go"],
+    tags = ["requires-network"],
+    deps = [
+        "//pkg/transport/cachedblob",
+        "@com_github_google_go_containerregistry//pkg/name",
+        "@com_github_google_go_containerregistry//pkg/v1/remote",
+    ],
+)

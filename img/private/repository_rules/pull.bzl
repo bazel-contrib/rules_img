@@ -9,6 +9,7 @@ load(
     _get_blob = "get_blob",
     _get_layers = "get_layers",
     _get_manifest = "get_manifest",
+    _setup_blob_files = "setup_blob_files",
 )
 
 def _map_os_arch_to_constraints(os_arch_pairs):
@@ -51,6 +52,10 @@ def _pull_impl(rctx):
     if len(reference) == 0:
         fail("either digest or tag must be specified")
 
+    # Set up blob files if provided
+    if len(rctx.attr.blob_files) > 0:
+        _setup_blob_files(rctx, rctx.attr.blob_files)
+
     if rctx.attr.downloader == "img_tool":
         # pre-download all files using the img tool
         # here if requested
@@ -60,6 +65,7 @@ def _pull_impl(rctx):
             rctx,
             tool_path = tool_path,
             reference = reference,
+            airgapped = rctx.attr.airgapped,
         )
 
     manifest_kwargs = dict(
@@ -349,6 +355,24 @@ This attribute controls when and how layer data is fetched from the registry.
 
 * **`bazel`**: Uses Bazel's native HTTP capabilities for downloading manifests and blobs.
 """,
+        ),
+        "blob_files": attr.string_keyed_label_dict(
+            doc = """Pre-downloaded blob files to use.
+
+A dictionary mapping blob digests (e.g., "sha256:abc123...") to file labels.
+These blobs will be verified and used instead of downloading from the registry when available.
+This is useful for air-gapped environments or to avoid redundant downloads of common base layers.""",
+            allow_files = True,
+        ),
+        "airgapped": attr.bool(
+            default = False,
+            doc = """Enable airgapped mode.
+
+When enabled, the pull tool will only use locally cached blobs and will not attempt any network
+requests. This is useful for completely offline/air-gapped environments where all required blobs
+must be provided via blob_files.
+
+If a required blob is not available locally, the pull will fail rather than attempting to download it.""",
         ),
     },
 )
