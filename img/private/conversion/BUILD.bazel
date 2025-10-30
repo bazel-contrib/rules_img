@@ -1,0 +1,32 @@
+load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
+
+bzl_library(
+    name = "manifest_from_oci_layout",
+    srcs = ["manifest_from_oci_layout.bzl"],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//img/private/common:build",
+        "//img/private/common:media_types",
+        "//img/private/providers:layer_info",
+        "//img/private/providers:manifest_info",
+    ],
+)
+
+bzl_library(
+    name = "index_from_oci_layout",
+    srcs = ["index_from_oci_layout.bzl"],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//img/private/common:build",
+        "//img/private/common:media_types",
+        "//img/private/providers:index_info",
+        "//img/private/providers:layer_info",
+        "//img/private/providers:manifest_info",
+    ],
+)
+
+filegroup(
+    name = "all_files",
+    srcs = glob(["**"]),
+    visibility = ["//img/private/release:__subpackages__"],
+)
