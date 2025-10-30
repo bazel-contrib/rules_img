@@ -1,0 +1,17 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "indexfromocilayout",
+    srcs = [
+        "flagtypes.go",
+        "indexfromocilayout.go",
+    ],
+    importpath = "github.com/bazel-contrib/rules_img/img_tool/cmd/indexfromocilayout",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/api",
+        "@com_github_opencontainers_go_digest//:go-digest",
+        "@com_github_opencontainers_image_spec//specs-go",
+        "@com_github_opencontainers_image_spec//specs-go/v1:specs-go",
+    ],
+)
