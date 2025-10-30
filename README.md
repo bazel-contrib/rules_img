@@ -277,6 +277,8 @@ This results in a more complex implementation, but also allows for interesting o
   - **Image Rules**
     - [`image_manifest`](docs/image.md#image_manifest) - Build single-platform images
     - [`image_index`](docs/image.md#image_index) - Build multi-platform image indexes
+    - [`image_manifest_from_oci_layout`](docs/convert.md#image_manifest_from_oci_layout) - Convert oci_image to image_manifest
+    - [`image_index_from_oci_layout`](docs/convert.md#image_index_from_oci_layout) - Convert oci_image_index to image_index
   - **Push, Pull and Load Rules**
     - [`pull`](docs/pull.md#pull) - Pull base images
     - [`image_push`](docs/push.md#image_push) - Push images to registries

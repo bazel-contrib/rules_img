@@ -10,8 +10,9 @@ This guide provides step-by-step instructions for migrating from [rules_oci](htt
 4. [Building Images](#building-images)
 5. [Multi-Platform Images](#multi-platform-images)
 6. [Output Groups](#output-groups)
-7. [Container Structure Tests](#container-structure-tests)
-8. [Deployment](#deployment)
+7. [Interoperability with rules_oci](#interoperability-with-rules_oci)
+8. [Container Structure Tests](#container-structure-tests)
+9. [Deployment](#deployment)
 
 ---
 
@@ -523,6 +524,124 @@ filegroup(
 ```
 
 **Note**: The Docker tarball is only available for single-platform images in rules_img.
+
+---
+
+## Interoperability with rules_oci
+
+rules_img and rules_oci can interoperate using OCI layout directories, enabling gradual migration or using both rulesets in the same project.
+
+### Using rules_img Images in rules_oci
+
+rules_img images can be consumed by rules_oci via the `oci_layout` output group:
+
+```starlark
+# rules_img image
+load("@rules_img//img:image.bzl", "image_manifest")
+
+image_manifest(
+    name = "base_app",
+    layers = [":app_layer"],
+    entrypoint = ["/app/bin/server"],
+)
+
+# Export as OCI layout
+filegroup(
+    name = "base_app_layout",
+    srcs = [":base_app"],
+    output_group = "oci_layout",
+)
+```
+
+The OCI layout can be used directly in rules_oci targets:
+
+```starlark
+load("@rules_oci//oci:defs.bzl", "oci_image", "oci_push", "oci_load")
+
+# Use as base image
+oci_image(
+    name = "extended_image",
+    base = ":base_app_layout",
+    tars = [":additional_layer"],
+)
+
+# Push directly
+oci_push(
+    name = "push",
+    image = ":base_app_layout",
+    repository = "ghcr.io/myorg/myapp",
+)
+
+# Load directly
+oci_load(
+    name = "load",
+    image = ":base_app_layout",
+    repo_tags = ["myapp:latest"],
+)
+```
+
+### Using rules_oci Images in rules_img
+
+rules_oci images can be converted to rules_img using the conversion rules. See [docs/convert.md](convert.md) for full documentation.
+
+```starlark
+load("@rules_oci//oci:defs.bzl", "oci_image")
+load("@rules_img//img:convert.bzl", "image_manifest_from_oci_layout")
+load("@rules_img//img:media_types.bzl", "GZIP_LAYER")
+
+# rules_oci image
+oci_image(
+    name = "legacy_image",
+    base = "@distroless_cc",
+    tars = [":legacy_layer"],
+)
+
+# Convert to rules_img
+image_manifest_from_oci_layout(
+    name = "converted_image",
+    src = ":legacy_image",
+    architecture = "amd64",
+    os = "linux",
+    layers = [GZIP_LAYER],
+)
+```
+
+The converted image can then be used with rules_img rules:
+
+```starlark
+load("@rules_img//img:image.bzl", "image_manifest")
+load("@rules_img//img:push.bzl", "image_push")
+
+# Build on the converted image
+image_manifest(
+    name = "enhanced_image",
+    base = ":converted_image",
+    layers = [":new_layer"],
+)
+
+# Push using rules_img
+image_push(
+    name = "push",
+    image = ":enhanced_image",
+    registry = "ghcr.io",
+    repository = "myorg/myapp",
+    tag = "latest",
+)
+```
+
+For multi-platform images, use `image_index_from_oci_layout`:
+
+```starlark
+load("@rules_img//img:convert.bzl", "image_index_from_oci_layout")
+load("@rules_img//img:media_types.bzl", "GZIP_LAYER")
+
+image_index_from_oci_layout(
+    name = "converted_multiarch",
+    src = ":legacy_multiarch_image",
+    layers = [GZIP_LAYER],
+    manifests = ["linux/amd64", "linux/arm64"],
+)
+```
 
 ---
 
