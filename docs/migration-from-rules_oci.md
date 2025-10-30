@@ -293,7 +293,7 @@ image_manifest(
 | `os` | Uses Bazel target platform | ⚠️ Not manually configurable. See below |
 | `architecture` | Uses Bazel target platform | ⚠️ Not manually configurable. See below |
 
-Unlike rules_oci, users **cannot** set the images `os` and `architecture` directly.
+Unlike rules_oci, users **cannot** set the image's `os` and `architecture` directly.
 Instead, rules_img uses the target platform of bazel (`--platforms=...`).
 Most users should use the `image_index` rule to configure the target platform of the image.
 In rare cases where you need to build a single-architecture image (`image_manifest`) for a specific platform, you can set the `platform` attribute.
@@ -391,8 +391,8 @@ image_index(
 
 ### rules_img (Explicit Manifests)
 
-In rare cases, you can set leave `platforms` empty and manually specify the manifests to include.
-Most users should no need this.
+In rare cases, you can leave `platforms` empty and manually specify the manifests to include.
+Most users should not need this.
 
 ```starlark
 image_manifest(
@@ -462,7 +462,7 @@ filegroup(
     output_group = "oci_layout",
 )
 
-# Anoterh
+# Another option: build as tarball
 filegroup(
     name = "image_layout_tar",
     srcs = [":app_image"],
@@ -476,10 +476,10 @@ Build with:
 # To build the oci layout
 bazel build //path/to:image_layout
 # alternatively, you can also access output groups directly:
-build build //path/to:app_image --output_groups=oci_layout
+bazel build //path/to:app_image --output_groups=oci_layout
 # The same works for the oci layout tar
 bazel build //path/to:image_layout_tar
-build build //path/to:app_image --output_groups=oci_tarball
+bazel build //path/to:app_image --output_groups=oci_tarball
 ```
 
 ### Docker Save Format Tarball
