@@ -107,3 +107,20 @@ bzl_library(
     visibility = ["//visibility:public"],
     deps = ["//img/private:multi_deploy"],
 )
+
+bzl_library(
+    name = "media_types",
+    srcs = ["media_types.bzl"],
+    visibility = ["//visibility:public"],
+    deps = ["//img/private/common:media_types"],
+)
+
+bzl_library(
+    name = "convert",
+    srcs = ["convert.bzl"],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//img/private/conversion:index_from_oci_layout",
+        "//img/private/conversion:manifest_from_oci_layout",
+    ],
+)
