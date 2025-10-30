@@ -77,7 +77,7 @@ pull(
 # but it is supported
 pull(
     name = "nginx",
-    digest = "sha256:b619c34a163ac12f68c1982568a122c4953dbf3126b8dbf0cc2f6fdbfd85de27",
+    digest = "sha256:f547e3d0d5d02f7009737b284abc87d808e4252b42dceea361811e9fc606287f",
     registries = [
         "mirror.gcr.io",
         "index.docker.io",
@@ -88,7 +88,7 @@ pull(
 # image that contains a manifest without explicit mediaType field
 pull(
     name = "envoy",
-    digest = "sha256:cb7d9f8463287679708c5eaee2d77252c6096039d3f2822b65017ca0b84fda2a",
+    digest = "sha256:4972515dd9a069b44beb43cebba7851596e72a8c61cd7a7c33d8f48efc5280ba",
     repository = "envoyproxy/envoy",
-    tag = "v1.34.10",
+    tag = "v1.36.2",
 )
