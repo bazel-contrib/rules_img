@@ -1,0 +1,67 @@
+load("@bazel_skylib//rules:build_test.bzl", "build_test")
+load("@rules_img//img:convert.bzl", "image_index_from_oci_layout", "image_manifest_from_oci_layout")
+load("@rules_img//img:media_types.bzl", "GZIP_LAYER")
+load("@rules_img//img:push.bzl", "image_push")
+
+# Extract the OCI layout from a single-platform manifest
+filegroup(
+    name = "oci_layout",
+    srcs = ["//:manifest_with_target_platform_amd64"],
+    output_group = "oci_layout",
+)
+
+# Convert the OCI layout back to an image_manifest
+# This demonstrates round-trip conversion: image_manifest -> OCI layout -> image_manifest
+image_manifest_from_oci_layout(
+    name = "converted_manifest",
+    src = ":oci_layout",
+    architecture = "amd64",
+    layers = [GZIP_LAYER],
+    os = "linux",
+)
+
+# Verify we can push the converted manifest
+image_push(
+    name = "push_converted",
+    image = ":converted_manifest",
+    registry = "ghcr.io",
+    repository = "malt3/rules_img/e2e-generic-converted",
+)
+
+# Extract the OCI layout from a multi-platform index
+filegroup(
+    name = "index_oci_layout",
+    srcs = ["//:platform_transitioned_index"],
+    output_group = "oci_layout",
+)
+
+# Convert the OCI layout back to an image_index
+# This demonstrates round-trip conversion: image_index -> OCI layout -> image_index
+image_index_from_oci_layout(
+    name = "converted_index",
+    src = ":index_oci_layout",
+    layers = [GZIP_LAYER],
+    manifests = [
+        "linux/arm64",
+        "linux/amd64",
+    ],
+)
+
+# Verify we can push the converted index
+image_push(
+    name = "push_converted_index",
+    image = ":converted_index",
+    registry = "ghcr.io",
+    repository = "malt3/rules_img/e2e-generic-converted-index",
+)
+
+# Build test to ensure both conversions work
+build_test(
+    name = "test_conversion",
+    targets = [
+        ":converted_manifest",
+        ":push_converted",
+        ":converted_index",
+        ":push_converted_index",
+    ],
+)

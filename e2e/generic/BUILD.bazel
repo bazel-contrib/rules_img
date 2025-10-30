@@ -388,6 +388,7 @@ image_manifest(
     },
     layers = [":mixed_layer"],
     platform = "//platform:linux_amd64",
+    visibility = ["//visibility:public"],
 )
 
 # Create index from platform-transitioned manifests
@@ -397,6 +398,7 @@ image_index(
         ":manifest_with_target_platform_arm64",
         ":manifest_with_target_platform_amd64",
     ],
+    visibility = ["//visibility:public"],
 )
 
 build_test(
