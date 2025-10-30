@@ -31,3 +31,9 @@ bzl_library(
     srcs = ["transitions.bzl"],
     visibility = ["//img:__subpackages__"],
 )
+
+bzl_library(
+    name = "media_types",
+    srcs = ["media_types.bzl"],
+    visibility = ["//img:__subpackages__"],
+)
