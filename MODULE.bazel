@@ -48,7 +48,7 @@ bazel_dep(name = "buildifier_prebuilt", version = "8.2.0.2", dev_dependency = Tr
 bazel_dep(name = "gazelle", version = "0.45.0", dev_dependency = True)
 bazel_dep(name = "hermetic_cc_toolchain", version = "4.0.1", dev_dependency = True)
 bazel_dep(name = "rules_bazel_integration_test", version = "0.34.0", dev_dependency = True)
-bazel_dep(name = "rules_go", version = "0.58.2", dev_dependency = True)
+bazel_dep(name = "rules_go", version = "0.58.3", dev_dependency = True)
 bazel_dep(name = "rules_img_pull_tool", version = "0.2.8", dev_dependency = True)
 bazel_dep(name = "rules_img_tool", version = "0.2.8", dev_dependency = True)
 bazel_dep(name = "rules_pkg", version = "1.1.0", dev_dependency = True)
