@@ -5,6 +5,7 @@ TargetPlatformInfo = provider(
     fields = {
         "os": "The OS (as GOOS)",
         "cpu": "The cpu / arch (as GOARCH)",
+        "variant": "The platform variant (optional, e.g., 'v4' for amd64/v4, 'v8' for arm64/v8)",
     },
 )
 
@@ -16,9 +17,17 @@ ModuleVersionInfo = provider(
 )
 
 def _os_cpu_impl(ctx):
+    variant = ctx.attr.variant or ""
+
+    # ARM64 defaults to v8 variant.
+    # See: https://github.com/containerd/platforms/blob/2e51fd9435bd985e1753954b24f4b0453f4e4767/platforms.go#L290
+    if ctx.attr.cpu == "arm64" and variant == "":
+        variant = "v8"
+
     return [TargetPlatformInfo(
         os = ctx.attr.os,
         cpu = ctx.attr.cpu,
+        variant = variant,
     )]
 
 os_cpu = rule(
@@ -26,6 +35,7 @@ os_cpu = rule(
     attrs = {
         "os": attr.string(),
         "cpu": attr.string(),
+        "variant": attr.string(),
     },
 )
 

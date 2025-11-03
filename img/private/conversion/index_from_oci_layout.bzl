@@ -27,13 +27,22 @@ def _image_index_from_oci_layout(ctx):
     if len(manifest_platforms_raw) == 0:
         fail("At least one manifest must be specified.")
 
-    # Parse manifest platform specifications from "os/architecture" format
+    # Parse manifest platform specifications from "os/architecture" or "os/architecture/variant" format
     manifest_platforms = {}
     for idx, platform_str in enumerate(manifest_platforms_raw):
         parts = platform_str.split("/")
-        if len(parts) != 2:
-            fail("Manifest platform must be in format 'os/architecture', got: {}".format(platform_str))
-        manifest_platforms[str(idx)] = parts
+        if len(parts) < 2 or len(parts) > 3:
+            fail("Manifest platform must be in format 'os/architecture' or 'os/architecture/variant', got: {}".format(platform_str))
+        os = parts[0]
+        arch = parts[1]
+        variant = parts[2] if len(parts) == 3 else ""
+
+        # ARM64 defaults to v8 variant
+        # See: https://github.com/containerd/platforms/blob/2e51fd9435bd985e1753954b24f4b0453f4e4767/platforms.go#L290
+        if arch == "arm64" and variant == "":
+            variant = "v8"
+
+        manifest_platforms[str(idx)] = [os, arch, variant]
 
     output_index = ctx.actions.declare_file("{}_index.json".format(ctx.attr.name))
     output_digest = ctx.actions.declare_file("{}_digest".format(ctx.attr.name))
@@ -53,6 +62,7 @@ def _image_index_from_oci_layout(ctx):
         platform_spec = manifest_platforms[idx_str]
         os = platform_spec[0]
         arch = platform_spec[1]
+        variant = platform_spec[2]
 
         manifest_file = ctx.actions.declare_file("{}_{}_manifest.json".format(ctx.attr.name, idx))
         config_file = ctx.actions.declare_file("{}_{}_config.json".format(ctx.attr.name, idx))
@@ -85,6 +95,7 @@ def _image_index_from_oci_layout(ctx):
             "metadata_jsons": metadata_jsons,
             "os": os,
             "arch": arch,
+            "variant": variant,
         }
 
         layer_infos = [
@@ -118,6 +129,8 @@ def _image_index_from_oci_layout(ctx):
             "--os={}={}".format(idx_str, info["os"]),
             "--architecture={}={}".format(idx_str, info["arch"]),
         ]
+        if info["variant"] != "":
+            args.append("--variant={}={}".format(idx_str, info["variant"]))
 
         for i in range(len(layer_media_types)):
             args += [
@@ -148,7 +161,7 @@ def _image_index_from_oci_layout(ctx):
             structured_config = {"architecture": info["arch"], "os": info["os"]},
             architecture = info["arch"],
             os = info["os"],
-            platform = {},
+            variant = info["variant"],
             layers = all_layer_infos[idx_str],
             missing_blobs = [],
         ))
@@ -178,8 +191,8 @@ image_index_from_oci_layout = rule(
             mandatory = True,
         ),
         "manifests": attr.string_list(
-            doc = """An ordered list of platform specifications in 'os/architecture' format.
-            Example: ["linux/arm64", "linux/amd64"]""",
+            doc = """An ordered list of platform specifications in 'os/architecture' or 'os/architecture/variant' format.
+            Example: ["linux/arm64", "linux/amd64/v3"]""",
             mandatory = True,
         ),
     },

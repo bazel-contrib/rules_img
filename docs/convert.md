@@ -27,7 +27,7 @@ image_index_from_oci_layout(<a href="#image_index_from_oci_layout-name">name</a>
 | <a id="image_index_from_oci_layout-name"></a>name |  A unique name for this target.   | <a href="https://bazel.build/concepts/labels#target-names">Name</a> | required |  |
 | <a id="image_index_from_oci_layout-src"></a>src |  The directory containing the OCI layout to convert from.   | <a href="https://bazel.build/concepts/labels">Label</a> | required |  |
 | <a id="image_index_from_oci_layout-layers"></a>layers |  A list of layer media types. This applies to all manifests. Use the well-defined media types in @rules_img//img:media_types.bzl.   | List of strings | required |  |
-| <a id="image_index_from_oci_layout-manifests"></a>manifests |  An ordered list of platform specifications in 'os/architecture' format. Example: ["linux/arm64", "linux/amd64"]   | List of strings | required |  |
+| <a id="image_index_from_oci_layout-manifests"></a>manifests |  An ordered list of platform specifications in 'os/architecture' or 'os/architecture/variant' format. Example: ["linux/arm64", "linux/amd64/v3"]   | List of strings | required |  |
 
 
 <a id="image_manifest_from_oci_layout"></a>
@@ -37,7 +37,7 @@ image_index_from_oci_layout(<a href="#image_index_from_oci_layout-name">name</a>
 <pre>
 load("@rules_img//img:convert.bzl", "image_manifest_from_oci_layout")
 
-image_manifest_from_oci_layout(<a href="#image_manifest_from_oci_layout-name">name</a>, <a href="#image_manifest_from_oci_layout-src">src</a>, <a href="#image_manifest_from_oci_layout-architecture">architecture</a>, <a href="#image_manifest_from_oci_layout-layers">layers</a>, <a href="#image_manifest_from_oci_layout-os">os</a>)
+image_manifest_from_oci_layout(<a href="#image_manifest_from_oci_layout-name">name</a>, <a href="#image_manifest_from_oci_layout-src">src</a>, <a href="#image_manifest_from_oci_layout-architecture">architecture</a>, <a href="#image_manifest_from_oci_layout-layers">layers</a>, <a href="#image_manifest_from_oci_layout-os">os</a>, <a href="#image_manifest_from_oci_layout-variant">variant</a>)
 </pre>
 
 
@@ -52,5 +52,6 @@ image_manifest_from_oci_layout(<a href="#image_manifest_from_oci_layout-name">na
 | <a id="image_manifest_from_oci_layout-architecture"></a>architecture |  The target architecture for the image manifest.   | String | required |  |
 | <a id="image_manifest_from_oci_layout-layers"></a>layers |  A list of layer media types. Use the well-defined media types in @rules_img//img:media_types.bzl.   | List of strings | required |  |
 | <a id="image_manifest_from_oci_layout-os"></a>os |  The target operating system for the image manifest.   | String | required |  |
+| <a id="image_manifest_from_oci_layout-variant"></a>variant |  The platform variant (e.g., 'v3' for amd64/v3, 'v8' for arm64/v8).   | String | optional |  `""`  |
 
 
