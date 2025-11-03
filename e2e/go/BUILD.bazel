@@ -6,6 +6,9 @@ go_library(
     srcs = ["main.go"],
     importpath = "github.com/bazel-contrib/rules_img/e2e/go/image",
     visibility = ["//visibility:private"],
+    deps = [
+        "//architecturevariant",
+    ],
 )
 
 go_binary(
