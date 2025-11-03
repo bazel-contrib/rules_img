@@ -22,6 +22,7 @@ import (
 var (
 	operatingSystem       string
 	architecture          string
+	variant               string
 	layerFromMetadataArgs fileList
 	configFragment        string
 	configTemplates       string
@@ -59,6 +60,7 @@ func ManifestProcess(_ context.Context, args []string) {
 	}
 	flagSet.StringVar(&operatingSystem, "os", "linux", `The operating system of the image. Defaults to linux.`)
 	flagSet.StringVar(&architecture, "architecture", "amd64", `The architecture of the image. Defaults to amd64.`)
+	flagSet.StringVar(&variant, "variant", "", `The platform variant (e.g., v3 for amd64/v3, v8 for arm64/v8).`)
 	flagSet.Var(&layerFromMetadataArgs, "layer-from-metadata", `Ordered list of layer metadata files that will make up the image, as produced by "img layer --metadata".`)
 	flagSet.StringVar(&configFragment, "config-fragment", "", `A JSON file containing a config fragment to be merged into the final config. This is useful for adding custom labels or other metadata to the image.`)
 	flagSet.StringVar(&configTemplates, "config-templates", "", `A JSON file containing template-expanded env, labels, and annotations values.`)
@@ -86,6 +88,12 @@ func ManifestProcess(_ context.Context, args []string) {
 		fmt.Fprintf(os.Stderr, "Unexpected positional arguments: %s\n", strings.Join(flagSet.Args(), " "))
 		flagSet.Usage()
 		os.Exit(1)
+	}
+
+	// ARM64 defaults to v8 variant
+	// See: https://github.com/containerd/platforms/blob/2e51fd9435bd985e1753954b24f4b0453f4e4767/platforms.go#L290
+	if architecture == "arm64" && variant == "" {
+		variant = "v8"
 	}
 
 	layers := make([]api.Descriptor, len(layerFromMetadataArgs))
@@ -189,6 +197,7 @@ func ManifestProcess(_ context.Context, args []string) {
 		Platform: &specv1.Platform{
 			Architecture: architecture,
 			OS:           operatingSystem,
+			Variant:      variant,
 		},
 	}
 	descriptorRaw, err := json.Marshal(descriptor)
@@ -402,6 +411,12 @@ func overlayNewConfigValues(config *specv1.Image, layers []api.Descriptor, templ
 	}
 	if config.Architecture == "" {
 		config.Architecture = architecture
+	}
+	if config.Variant != "" && variant != "" && config.Variant != variant {
+		return fmt.Errorf("variant mismatch: %s != %s", config.Variant, variant)
+	}
+	if config.Variant == "" {
+		config.Variant = variant
 	}
 
 	// Set the rootfs struct

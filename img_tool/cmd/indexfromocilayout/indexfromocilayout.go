@@ -26,6 +26,7 @@ var (
 	descriptorPaths   *indexedStringFlag
 	osList            *indexedStringFlag
 	architectureList  *indexedStringFlag
+	variantList       *indexedStringFlag
 	layerMediaTypes   *doubleIndexedStringFlag
 	layerBlobs        *doubleIndexedStringFlag
 	layerMetadataJSON *doubleIndexedStringFlag
@@ -37,6 +38,7 @@ func IndexFromOCILayoutProcess(_ context.Context, args []string) {
 	descriptorPaths = newIndexedStringFlag()
 	osList = newIndexedStringFlag()
 	architectureList = newIndexedStringFlag()
+	variantList = newIndexedStringFlag()
 	layerMediaTypes = newDoubleIndexedStringFlag()
 	layerBlobs = newDoubleIndexedStringFlag()
 	layerMetadataJSON = newDoubleIndexedStringFlag()
@@ -56,6 +58,7 @@ func IndexFromOCILayoutProcess(_ context.Context, args []string) {
 	flagSet.Var(descriptorPaths, "descriptor", "Output path for descriptor in format index=path")
 	flagSet.Var(osList, "os", "Target OS in format index=os")
 	flagSet.Var(architectureList, "architecture", "Target architecture in format index=arch")
+	flagSet.Var(variantList, "variant", "Target variant in format index=variant (optional, e.g., 'v3' for amd64/v3, 'v8' for arm64/v8)")
 	flagSet.Var(layerMediaTypes, "layer_media_type", "Layer media type in format manifest_idx,layer_idx=mediatype")
 	flagSet.Var(layerBlobs, "layer_blob", "Output path for layer blob in format manifest_idx,layer_idx=path")
 	flagSet.Var(layerMetadataJSON, "layer_metadata_json", "Output path for layer metadata JSON in format manifest_idx,layer_idx=path")
@@ -143,19 +146,38 @@ func processOCILayoutIndex() error {
 			return fmt.Errorf("missing platform specification for manifest index %d", i)
 		}
 
+		// Get the specified variant (may be empty)
+		specifiedVariant, _ := variantList.Get(i)
+
+		// ARM64 defaults to v8 variant
+		// See: https://github.com/containerd/platforms/blob/2e51fd9435bd985e1753954b24f4b0453f4e4767/platforms.go#L290
+		if specifiedArch == "arm64" && specifiedVariant == "" {
+			specifiedVariant = "v8"
+		}
+
 		// Check if the source manifest has platform information
 		if sourceManifest.Platform == nil {
 			return fmt.Errorf("manifest at index %d in OCI layout has no platform information", i)
 		}
 
+		// Normalize source variant for comparison
+		sourceVariant := ""
+		if sourceManifest.Platform.Variant != "" {
+			sourceVariant = sourceManifest.Platform.Variant
+		}
+
 		// Validate that the platform matches
 		if sourceManifest.Platform.OS != specifiedOS {
-			return fmt.Errorf("manifest index %d: platform OS mismatch - OCI layout has %s/%s, but %s/%s was specified",
-				i, sourceManifest.Platform.OS, sourceManifest.Platform.Architecture, specifiedOS, specifiedArch)
+			return fmt.Errorf("manifest index %d: platform OS mismatch - OCI layout has %s/%s/%s, but %s/%s/%s was specified",
+				i, sourceManifest.Platform.OS, sourceManifest.Platform.Architecture, sourceVariant, specifiedOS, specifiedArch, specifiedVariant)
 		}
 		if sourceManifest.Platform.Architecture != specifiedArch {
-			return fmt.Errorf("manifest index %d: platform architecture mismatch - OCI layout has %s/%s, but %s/%s was specified",
-				i, sourceManifest.Platform.OS, sourceManifest.Platform.Architecture, specifiedOS, specifiedArch)
+			return fmt.Errorf("manifest index %d: platform architecture mismatch - OCI layout has %s/%s/%s, but %s/%s/%s was specified",
+				i, sourceManifest.Platform.OS, sourceManifest.Platform.Architecture, sourceVariant, specifiedOS, specifiedArch, specifiedVariant)
+		}
+		if sourceVariant != specifiedVariant {
+			return fmt.Errorf("manifest index %d: platform variant mismatch - OCI layout has %s/%s/%s, but %s/%s/%s was specified",
+				i, sourceManifest.Platform.OS, sourceManifest.Platform.Architecture, sourceVariant, specifiedOS, specifiedArch, specifiedVariant)
 		}
 	}
 
@@ -171,15 +193,22 @@ func processOCILayoutIndex() error {
 	for i, manifestIdx := range manifestIndices {
 		os, _ := osList.Get(manifestIdx)
 		arch, _ := architectureList.Get(manifestIdx)
+		variant, _ := variantList.Get(manifestIdx)
 		manifestPath, _ := manifestPaths.Get(manifestIdx)
 		configPath, _ := configPaths.Get(manifestIdx)
 		descriptorPath, _ := descriptorPaths.Get(manifestIdx)
+
+		// ARM64 defaults to v8 variant
+		// See: https://github.com/containerd/platforms/blob/2e51fd9435bd985e1753954b24f4b0453f4e4767/platforms.go#L290
+		if arch == "arm64" && variant == "" {
+			variant = "v8"
+		}
 
 		// Convert the manifest at this index
 		// We use the manifest descriptor directly from the source index since we've already validated
 		// that the platforms match in order
 		sourceManifestDesc := &sourceIndex.Manifests[manifestIdx]
-		desc, err := convertManifest(sourceManifestDesc, manifestIdx, arch, os, manifestPath, configPath, descriptorPath)
+		desc, err := convertManifest(sourceManifestDesc, manifestIdx, arch, os, variant, manifestPath, configPath, descriptorPath)
 		if err != nil {
 			return fmt.Errorf("converting manifest %d: %w", manifestIdx, err)
 		}
@@ -216,7 +245,7 @@ func processOCILayoutIndex() error {
 	return nil
 }
 
-func convertManifest(manifestDesc *specv1.Descriptor, manifestIdx int, arch, operatingSystem, manifestOutput, configOutput, descriptorOutput string) (specv1.Descriptor, error) {
+func convertManifest(manifestDesc *specv1.Descriptor, manifestIdx int, arch, operatingSystem, variant, manifestOutput, configOutput, descriptorOutput string) (specv1.Descriptor, error) {
 	// Validate that the manifest descriptor platform matches if it has platform information
 	// (This is a sanity check since we already validated in the caller)
 	if manifestDesc.Platform != nil {
@@ -225,6 +254,14 @@ func convertManifest(manifestDesc *specv1.Descriptor, manifestIdx int, arch, ope
 		}
 		if manifestDesc.Platform.Architecture != arch {
 			return specv1.Descriptor{}, fmt.Errorf("manifest descriptor architecture mismatch: has %s, but %s was requested", manifestDesc.Platform.Architecture, arch)
+		}
+		// Normalize variant for comparison (empty string vs unset)
+		manifestVariant := ""
+		if manifestDesc.Platform.Variant != "" {
+			manifestVariant = manifestDesc.Platform.Variant
+		}
+		if manifestVariant != variant {
+			return specv1.Descriptor{}, fmt.Errorf("manifest descriptor variant mismatch: has %s, but %s was requested", manifestVariant, variant)
 		}
 	}
 
@@ -331,6 +368,7 @@ func convertManifest(manifestDesc *specv1.Descriptor, manifestIdx int, arch, ope
 		Platform: &specv1.Platform{
 			Architecture: arch,
 			OS:           operatingSystem,
+			Variant:      variant,
 		},
 	}
 	descriptorJSON, err := json.Marshal(descriptor)
