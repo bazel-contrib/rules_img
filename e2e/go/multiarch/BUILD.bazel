@@ -22,8 +22,12 @@ image_index(
     name = "multiarch_image",
     manifests = [":go_image"],
     platforms = [
-        "@rules_go//go/toolchain:linux_arm64",
-        "@rules_go//go/toolchain:linux_amd64",
+        "//platform:linux_amd64",
+        "//platform:linux_amd64_v3",
+        "//platform:linux_amd64_v4",
+        "//platform:linux_arm64",
+        "//platform:linux_arm_v7",
+        "//platform:linux_arm_v6",
     ],
 )
 

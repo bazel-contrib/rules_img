@@ -1,0 +1,54 @@
+package(
+    default_visibility = ["//visibility:public"],
+)
+
+platform(
+    name = "linux_amd64",
+    parents = ["@rules_go//go/toolchain:linux_amd64"],
+)
+
+platform(
+    name = "linux_amd64_v3",
+    constraint_values = [
+        "@rules_go//go/constraints/amd64:v3",
+        "@rules_img//img/constraints/amd64:v3",
+    ],
+    parents = ["@rules_go//go/toolchain:linux_amd64"],
+)
+
+platform(
+    name = "linux_amd64_v4",
+    constraint_values = [
+        "@rules_go//go/constraints/amd64:v4",
+        "@rules_img//img/constraints/amd64:v4",
+    ],
+    parents = ["@rules_go//go/toolchain:linux_amd64"],
+)
+
+platform(
+    name = "linux_arm64",
+    parents = ["@rules_go//go/toolchain:linux_arm64"],
+)
+
+platform(
+    name = "linux_arm",
+    parents = ["@rules_go//go/toolchain:linux_arm"],
+)
+
+platform(
+    name = "linux_arm_v6",
+    constraint_values = [
+        "@rules_go//go/constraints/arm:6",
+        "@rules_img//img/constraints/arm:v6",
+    ],
+    parents = ["@rules_go//go/toolchain:linux_arm"],
+)
+
+platform(
+    name = "linux_arm_v7",
+    constraint_values = [
+        "@rules_go//go/constraints/arm:7",
+        "@rules_img//img/constraints/arm:v7",
+    ],
+    parents = ["@rules_go//go/toolchain:linux_arm"],
+)
