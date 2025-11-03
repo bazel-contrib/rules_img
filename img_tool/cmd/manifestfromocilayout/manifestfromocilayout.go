@@ -22,6 +22,7 @@ var (
 	digestOutput      string
 	architecture      string
 	operatingSystem   string
+	variant           string
 	layerMediaTypes   *indexedStringFlag
 	layerBlobs        *indexedStringFlag
 	layerMetadataJSON *indexedStringFlag
@@ -53,6 +54,7 @@ func ManifestFromOCILayoutProcess(_ context.Context, args []string) {
 	flagSet.StringVar(&digestOutput, "digest", "", "Output path for the manifest digest (required)")
 	flagSet.StringVar(&architecture, "architecture", "", "Target architecture (required)")
 	flagSet.StringVar(&operatingSystem, "os", "", "Target OS (required)")
+	flagSet.StringVar(&variant, "variant", "", "Target variant (optional, e.g., v3 for amd64/v3, v8 for arm64/v8)")
 	flagSet.Var(layerMediaTypes, "layer_media_type", "Layer media type in format index=mediatype (can be specified multiple times)")
 	flagSet.Var(layerBlobs, "layer_blob", "Output path for layer blob in format index=path (can be specified multiple times)")
 	flagSet.Var(layerMetadataJSON, "layer_metadata_json", "Output path for layer metadata JSON in format index=path (can be specified multiple times)")
@@ -98,6 +100,13 @@ func ManifestFromOCILayoutProcess(_ context.Context, args []string) {
 		flagSet.Usage()
 		os.Exit(1)
 	}
+
+	// ARM64 defaults to v8 variant
+	// See: https://github.com/containerd/platforms/blob/2e51fd9435bd985e1753954b24f4b0453f4e4767/platforms.go#L290
+	if architecture == "arm64" && variant == "" {
+		variant = "v8"
+	}
+
 	if len(layerMediaTypes.values) == 0 {
 		fmt.Fprintf(os.Stderr, "Error: at least one --layer_media_type is required\n")
 		flagSet.Usage()
@@ -140,7 +149,7 @@ func processOCILayout() error {
 	}
 
 	// Find the manifest for the target platform
-	manifestDesc, err := findManifestForPlatform(&index, architecture, operatingSystem)
+	manifestDesc, err := findManifestForPlatform(&index, architecture, operatingSystem, variant)
 	if err != nil {
 		return fmt.Errorf("finding manifest for platform: %w", err)
 	}
@@ -153,6 +162,14 @@ func processOCILayout() error {
 		}
 		if manifestDesc.Platform.Architecture != architecture {
 			return fmt.Errorf("manifest descriptor architecture mismatch: has %s, but %s was requested", manifestDesc.Platform.Architecture, architecture)
+		}
+		// Normalize variant for comparison (empty string vs unset)
+		manifestVariant := ""
+		if manifestDesc.Platform.Variant != "" {
+			manifestVariant = manifestDesc.Platform.Variant
+		}
+		if manifestVariant != variant {
+			return fmt.Errorf("manifest descriptor variant mismatch: has %s, but %s was requested", manifestVariant, variant)
 		}
 	}
 
@@ -247,6 +264,7 @@ func processOCILayout() error {
 		Platform: &specv1.Platform{
 			Architecture: architecture,
 			OS:           operatingSystem,
+			Variant:      variant,
 		},
 	}
 	descriptorJSON, err := json.Marshal(descriptor)
@@ -266,12 +284,19 @@ func processOCILayout() error {
 	return nil
 }
 
-func findManifestForPlatform(index *specv1.Index, arch, os string) (*specv1.Descriptor, error) {
+func findManifestForPlatform(index *specv1.Index, arch, os, variant string) (*specv1.Descriptor, error) {
 	// First try to find a manifest with matching platform information
 	for i := range index.Manifests {
 		desc := &index.Manifests[i]
 		if desc.Platform != nil && desc.Platform.Architecture == arch && desc.Platform.OS == os {
-			return desc, nil
+			// Normalize variant for comparison (empty string vs unset)
+			descVariant := ""
+			if desc.Platform.Variant != "" {
+				descVariant = desc.Platform.Variant
+			}
+			if descVariant == variant {
+				return desc, nil
+			}
 		}
 	}
 
@@ -281,7 +306,11 @@ func findManifestForPlatform(index *specv1.Index, arch, os string) (*specv1.Desc
 		return &index.Manifests[0], nil
 	}
 
-	return nil, fmt.Errorf("no manifest found for platform %s/%s", os, arch)
+	variantMsg := ""
+	if variant != "" {
+		variantMsg = "/" + variant
+	}
+	return nil, fmt.Errorf("no manifest found for platform %s/%s%s", os, arch, variantMsg)
 }
 
 // copyOrHardlink attempts to hardlink the file, falling back to copy if hardlink fails
