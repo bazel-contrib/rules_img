@@ -5,6 +5,23 @@ package(
     default_visibility = ["//visibility:public"],
 )
 
+# Platform variant constraint setting
+# Architecture-specific variant values are defined in subdirectories:
+# - amd64/BUILD.bazel: v1, v2, v3, v4
+# - arm/BUILD.bazel: v5, v6, v7, v8
+# - arm64/BUILD.bazel: v8, v8.x, v9.x (default: v8)
+# - ppc64le/BUILD.bazel: power8, power9, power10
+# - riscv64/BUILD.bazel: rva20u64, etc.
+constraint_setting(
+    name = "variant",
+    default_constraint_value = ":empty_variant",
+)
+
+constraint_value(
+    name = "empty_variant",
+    constraint_setting = ":variant",
+)
+
 [
     selects.config_setting_group(
         name = config.name,

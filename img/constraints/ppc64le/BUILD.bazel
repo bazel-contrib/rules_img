@@ -1,0 +1,27 @@
+"""POWER (ppc64le) platform variant constraint values."""
+
+package(
+    default_visibility = ["//visibility:public"],
+)
+
+# POWER variants
+constraint_value(
+    name = "power8",
+    constraint_setting = "//img/constraints:variant",
+)
+
+constraint_value(
+    name = "power9",
+    constraint_setting = "//img/constraints:variant",
+)
+
+constraint_value(
+    name = "power10",
+    constraint_setting = "//img/constraints:variant",
+)
+
+filegroup(
+    name = "all_files",
+    srcs = glob(["**"]),
+    visibility = ["//img/private/release:__subpackages__"],
+)
