@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/containerd/platforms"
 	registryv1 "github.com/malt3/go-containerregistry/pkg/v1"
 	ocigodigest "github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
@@ -249,40 +250,31 @@ func NormalizeDockerReference(ref string) string {
 	return name
 }
 
-// parsePlatform parses a platform string like "linux/amd64" into an OCI Platform
-func parsePlatform(platform string) (registryv1.Platform, error) {
-	parts := strings.Split(platform, "/")
-	if len(parts) < 2 {
-		return registryv1.Platform{}, fmt.Errorf("invalid platform format: %s", platform)
-	}
-
-	p := registryv1.Platform{
-		OS:           parts[0],
-		Architecture: parts[1],
-	}
-
-	if len(parts) > 2 {
-		p.Variant = parts[2]
-	}
-
-	return p, nil
-}
-
-// platformMatches checks if a manifest platform matches any of the requested platforms
+// platformMatches checks if a manifest platform matches any of the requested platforms.
+// Uses containerd's platform matching logic with variant fallback.
 func platformMatches(manifestPlatform *registryv1.Platform, requestedPlatforms []string) bool {
 	if len(requestedPlatforms) == 0 {
 		return true // No filter, all platforms match
 	}
 
+	// Convert registryv1.Platform to ocispec.Platform for containerd/platforms
+	manifestOCI := ocispec.Platform{
+		OS:           manifestPlatform.OS,
+		Architecture: manifestPlatform.Architecture,
+		Variant:      manifestPlatform.Variant,
+	}
+
 	for _, reqPlatStr := range requestedPlatforms {
-		reqPlat, err := parsePlatform(reqPlatStr)
+		// Parse and normalize the requested platform
+		reqPlat, err := platforms.Parse(reqPlatStr)
 		if err != nil {
 			continue
 		}
 
-		if manifestPlatform.OS == reqPlat.OS &&
-			manifestPlatform.Architecture == reqPlat.Architecture &&
-			(reqPlat.Variant == "" || manifestPlatform.Variant == reqPlat.Variant) {
+		// Use containerd's Only() matcher which implements platformVector logic
+		// This handles variant fallback (e.g., amd64/v3 -> v2 -> v1)
+		matcher := platforms.Only(reqPlat)
+		if matcher.Match(manifestOCI) {
 			return true
 		}
 	}
