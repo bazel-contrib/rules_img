@@ -94,11 +94,23 @@ def _build_manifest_info(ctx, digest, descriptor = None, index_position = None, 
     if not config_digest in ctx.attr.data:
         fail("missing blob for config digest: " + config_digest)
     config = json.decode(ctx.attr.data[config_digest])
+
+    # Extract platform information
     if platform == None:
         platform = dict(
             architecture = config.get("architecture", "unknown"),
             os = config.get("os", "unknown"),
+            variant = config.get("variant", ""),
         )
+
+    # Extract variant from platform dict
+    variant = platform.get("variant", "")
+
+    # ARM64 defaults to v8 variant
+    # See: https://github.com/containerd/platforms/blob/2e51fd9435bd985e1753954b24f4b0453f4e4767/platforms.go#L290
+    if platform.get("architecture") == "arm64" and variant == "":
+        variant = "v8"
+
     missing_blobs = []
     layers = []
     for (layer_index, layer) in enumerate(manifest.get("layers", [])):
@@ -112,9 +124,9 @@ def _build_manifest_info(ctx, digest, descriptor = None, index_position = None, 
         manifest = _digest_to_file(ctx, digest),
         config = _digest_to_file(ctx, config_digest),
         structured_config = config,
-        architecture = config.get("architecture", "unknown"),
-        os = config.get("os", "unknown"),
-        platform = platform,
+        architecture = platform.get("architecture", "unknown"),
+        os = platform.get("os", "unknown"),
+        variant = variant,
         layers = layers,
         missing_blobs = missing_blobs,
     )

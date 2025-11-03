@@ -15,7 +15,13 @@ def _image_manifest_from_oci_layout(ctx):
     src_dir = ctx.file.src
     architecture = ctx.attr.architecture
     os = ctx.attr.os
+    variant = ctx.attr.variant
     layer_media_types = ctx.attr.layers
+
+    # ARM64 defaults to v8 variant
+    # See: https://github.com/containerd/platforms/blob/2e51fd9435bd985e1753954b24f4b0453f4e4767/platforms.go#L290
+    if architecture == "arm64" and variant == "":
+        variant = "v8"
 
     if len(layer_media_types) == 0:
         fail("At least one layer media type must be specified.")
@@ -72,6 +78,8 @@ def _image_manifest_from_oci_layout(ctx):
         "--os",
         os,
     ]
+    if variant != "":
+        args += ["--variant", variant]
     for i in range(len(layer_media_types)):
         args += [
             "--layer_media_type={}={}".format(i, layer_media_types[i]),
@@ -104,7 +112,7 @@ def _image_manifest_from_oci_layout(ctx):
             structured_config = {"architecture": architecture, "os": os},
             architecture = architecture,
             os = os,
-            platform = {},
+            variant = variant,
             layers = layer_infos,
             missing_blobs = [],
         ),
@@ -148,6 +156,10 @@ image_manifest_from_oci_layout = rule(
         "layers": attr.string_list(
             doc = "A list of layer media types. Use the well-defined media types in @rules_img//img:media_types.bzl.",
             mandatory = True,
+        ),
+        "variant": attr.string(
+            doc = "The platform variant (e.g., 'v3' for amd64/v3, 'v8' for arm64/v8).",
+            default = "",
         ),
     },
     provides = [ImageManifestInfo],

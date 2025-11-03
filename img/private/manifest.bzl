@@ -17,21 +17,154 @@ def _to_layer_arg(layer):
     """Convert a layer to a command line argument."""
     return layer.metadata.path
 
-def _platform_matches(wanted_platform, manifest):
-    """Check if the wanted platform matches the manifest platform."""
+def _platform_vector(os, architecture, variant):
+    """Generate an ordered vector of compatible platforms (best to worst).
+
+    Based on containerd's platformVector logic:
+    https://github.com/containerd/platforms/blob/2e51fd9435bd985e1753954b24f4b0453f4e4767/compare.go#L64
+
+    Args:
+        os: Operating system
+        architecture: CPU architecture
+        variant: Platform variant (may be empty)
+
+    Returns:
+        List of platform dicts in preference order (best match first)
+    """
+    base_platform = {
+        "os": os,
+        "architecture": architecture,
+        "variant": variant,
+    }
+    vector = [base_platform]
+
+    # AMD64: Parse variant as integer and create fallback chain
+    if architecture == "amd64" and variant != "":
+        # Try to parse variant like "v3" -> 3
+        if variant.startswith("v"):
+            variant_num_str = variant[1:]  # Remove "v" prefix
+            if variant_num_str.isdigit():
+                amd64_version = int(variant_num_str)
+                if amd64_version > 1:
+                    # Add fallback variants: v3 -> v2, v1
+                    for v in range(amd64_version - 1, 0, -1):
+                        vector.append({
+                            "os": os,
+                            "architecture": architecture,
+                            "variant": "v" + str(v),
+                        })
+
+        # Add base amd64 (no variant) as final fallback
+        vector.append({
+            "os": os,
+            "architecture": architecture,
+            "variant": "",
+        })
+
+        # ARM 32-bit: Parse variant as integer and create fallback chain
+    elif architecture == "arm" and variant != "":
+        if variant.startswith("v"):
+            variant_num_str = variant[1:]
+            if variant_num_str.isdigit():
+                arm_version = int(variant_num_str)
+                if arm_version > 5:
+                    # Add fallback variants: v7 -> v6, v5
+                    for v in range(arm_version - 1, 4, -1):
+                        vector.append({
+                            "os": os,
+                            "architecture": architecture,
+                            "variant": "v" + str(v),
+                        })
+
+        # ARM64: Complex fallback with v8.x and v9.x support
+    elif architecture == "arm64":
+        # ARM64 variant defaults to v8 (already normalized by TargetPlatformInfo)
+        effective_variant = variant if variant != "" else "v8"
+
+        # Simplified arm64 variant support
+        # Full implementation would need arm64variantToVersion map from containerd
+        # For now, support basic v8 and v9 variants
+        if effective_variant == "v8" or effective_variant.startswith("v8."):
+            # v8.x can fall back to lower v8.y versions
+            if effective_variant.startswith("v8."):
+                # Parse v8.5 -> major=8, minor=5
+                parts = effective_variant[1:].split(".")  # "8.5" -> ["8", "5"]
+                if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+                    minor = int(parts[1])
+
+                    # Add fallback from v8.5 -> v8.4 -> ... -> v8.0 -> v8
+                    for m in range(minor - 1, -1, -1):
+                        if m == 0:
+                            vector.append({
+                                "os": os,
+                                "architecture": architecture,
+                                "variant": "v8",
+                            })
+                        else:
+                            vector.append({
+                                "os": os,
+                                "architecture": architecture,
+                                "variant": "v8." + str(m),
+                            })
+        elif effective_variant == "v9" or effective_variant.startswith("v9."):
+            # v9.x can fall back to lower v9.y, then to v8.x
+            if effective_variant.startswith("v9."):
+                parts = effective_variant[1:].split(".")
+                if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+                    minor = int(parts[1])
+
+                    # Add v9 fallbacks
+                    for m in range(minor - 1, -1, -1):
+                        if m == 0:
+                            vector.append({
+                                "os": os,
+                                "architecture": architecture,
+                                "variant": "v9",
+                            })
+                        else:
+                            vector.append({
+                                "os": os,
+                                "architecture": architecture,
+                                "variant": "v9." + str(m),
+                            })
+
+            # v9.x falls back to v8.5+ (per containerd mapping)
+            # Simplified: just fall back to v8
+            vector.append({
+                "os": os,
+                "architecture": architecture,
+                "variant": "v8",
+            })
+
+    return vector
+
+def _platform_matches_exact(wanted_platform, manifest):
+    """Check if the wanted platform exactly matches the manifest platform.
+
+    Args:
+        wanted_platform: Dict with os, architecture, variant keys
+        manifest: Manifest info with os, architecture, variant attributes
+
+    Returns:
+        True if all fields match exactly
+    """
     if wanted_platform["os"] != manifest.os:
         return False
     if wanted_platform["architecture"] != manifest.architecture:
         return False
-    for key in wanted_platform["platform"].keys():
-        if key not in manifest:
-            return False
-        if wanted_platform[key] != manifest[key]:
-            return False
+
+    # Check variant (both may be empty string)
+    wanted_variant = wanted_platform.get("variant", "")
+    manifest_variant = manifest.variant
+    if wanted_variant != manifest_variant:
+        return False
+
     return True
 
 def select_base(ctx):
     """Select the base image to use for this image.
+
+    Uses containerd's platform matching logic with variant fallback.
 
     Args:
         ctx: Rule context containing base image information.
@@ -48,16 +181,26 @@ def select_base(ctx):
 
     os_wanted = ctx.attr._os_cpu[TargetPlatformInfo].os
     arch_wanted = ctx.attr._os_cpu[TargetPlatformInfo].cpu
-    constraints_wanted = dict(
-        os = os_wanted,
-        architecture = arch_wanted,
-        platform = ctx.attr.platform_requirements,
-    )
+    variant_wanted = ctx.attr._os_cpu[TargetPlatformInfo].variant
 
-    for manifest in ctx.attr.base[ImageIndexInfo].manifests:
-        if _platform_matches(constraints_wanted, manifest):
-            return manifest
-    fail("no matching base image found for architecture {} and os {}".format(constraints_wanted["architecture"], constraints_wanted["os"]))
+    # Generate platform vector (ordered from best to worst match)
+    platform_vector = _platform_vector(os_wanted, arch_wanted, variant_wanted)
+
+    # Try each platform in the vector (best match first)
+    for wanted_platform in platform_vector:
+        for manifest in ctx.attr.base[ImageIndexInfo].manifests:
+            if _platform_matches_exact(wanted_platform, manifest):
+                return manifest
+
+    # No match found - generate helpful error message
+    variant_msg = ""
+    if variant_wanted != "":
+        variant_msg = " variant={}".format(variant_wanted)
+    fail("no matching base image found for os={} architecture={}{}".format(
+        os_wanted,
+        arch_wanted,
+        variant_msg,
+    ))
 
 def _build_oci_layout(ctx, format, manifest_out, config_out, layers):
     """Build the OCI layout for the image.
@@ -118,6 +261,7 @@ def _image_manifest_impl(ctx):
     base = select_base(ctx)
     os = ctx.attr._os_cpu[TargetPlatformInfo].os
     arch = ctx.attr._os_cpu[TargetPlatformInfo].cpu
+    variant = ctx.attr._os_cpu[TargetPlatformInfo].variant
     history = []
     layers = []
     if base != None:
@@ -165,8 +309,8 @@ def _image_manifest_impl(ctx):
 
     args.add("--os", os)
     args.add("--architecture", arch)
-
-    # todo: encode platform metadata
+    if variant != "":
+        args.add("--variant", variant)
     for layer in layers:
         inputs.append(layer.metadata)
     args.add_all(layers, format_each = "--layer-from-metadata=%s", map_each = _to_layer_arg, expand_directories = False)
@@ -259,7 +403,7 @@ def _image_manifest_impl(ctx):
             structured_config = structured_config,
             architecture = arch,
             os = os,
-            platform = ctx.attr.platform_requirements,
+            variant = variant,
             layers = layers,
             missing_blobs = base.missing_blobs if base != None else [],
         ),
@@ -310,10 +454,6 @@ Output groups:
         "layers": attr.label_list(
             doc = "Layers to include in the image. Either a LayerInfo provider or a DefaultInfo with tar files.",
             cfg = normalize_layer_transition,
-        ),
-        "platform_requirements": attr.string_dict(
-            default = {},
-            doc = "Dict containing additional runtime requirements of the image.",
         ),
         "platform": attr.label(
             doc = """Optional target platform to build this manifest for.

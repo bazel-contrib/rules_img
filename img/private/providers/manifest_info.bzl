@@ -12,7 +12,7 @@ FIELDS = dict(
     structured_config = "(Partial) image config with values known in the analysis phase.",
     architecture = "The CPU architecture this image runs on.",
     os = "The operating system this image runs on.",
-    platform = "Dict containing additional runtime requirements of the image.",
+    variant = "The platform variant (e.g., 'v3' for amd64/v3, 'v8' for arm64/v8).",
     layers = "Layers of the image as list of LayerInfo.",
     missing_blobs = """List of hex-encoded sha256 hashes.
 Used to convey information lost during shallow image pulling, where the base image layers are referenced, but never materialized.
