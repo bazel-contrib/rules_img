@@ -1,0 +1,112 @@
+"""ARM64 platform variant constraint values."""
+
+package(
+    default_visibility = ["//visibility:public"],
+)
+
+# ARM64 variants (v8 is the baseline)
+constraint_value(
+    name = "v8",
+    constraint_setting = "//img/constraints:variant",
+)
+
+alias(
+    name = "v8.0",
+    actual = ":v8",
+)
+
+constraint_value(
+    name = "v8.1",
+    constraint_setting = "//img/constraints:variant",
+)
+
+constraint_value(
+    name = "v8.2",
+    constraint_setting = "//img/constraints:variant",
+)
+
+constraint_value(
+    name = "v8.3",
+    constraint_setting = "//img/constraints:variant",
+)
+
+constraint_value(
+    name = "v8.4",
+    constraint_setting = "//img/constraints:variant",
+)
+
+constraint_value(
+    name = "v8.5",
+    constraint_setting = "//img/constraints:variant",
+)
+
+constraint_value(
+    name = "v8.6",
+    constraint_setting = "//img/constraints:variant",
+)
+
+constraint_value(
+    name = "v8.7",
+    constraint_setting = "//img/constraints:variant",
+)
+
+constraint_value(
+    name = "v8.8",
+    constraint_setting = "//img/constraints:variant",
+)
+
+constraint_value(
+    name = "v8.9",
+    constraint_setting = "//img/constraints:variant",
+)
+
+constraint_value(
+    name = "v9",
+    constraint_setting = "//img/constraints:variant",
+)
+
+alias(
+    name = "v9.0",
+    actual = ":v9",
+)
+
+constraint_value(
+    name = "v9.1",
+    constraint_setting = "//img/constraints:variant",
+)
+
+constraint_value(
+    name = "v9.2",
+    constraint_setting = "//img/constraints:variant",
+)
+
+constraint_value(
+    name = "v9.3",
+    constraint_setting = "//img/constraints:variant",
+)
+
+constraint_value(
+    name = "v9.4",
+    constraint_setting = "//img/constraints:variant",
+)
+
+constraint_value(
+    name = "v9.5",
+    constraint_setting = "//img/constraints:variant",
+)
+
+constraint_value(
+    name = "v9.6",
+    constraint_setting = "//img/constraints:variant",
+)
+
+constraint_value(
+    name = "v9.7",
+    constraint_setting = "//img/constraints:variant",
+)
+
+filegroup(
+    name = "all_files",
+    srcs = glob(["**"]),
+    visibility = ["//img/private/release:__subpackages__"],
+)
