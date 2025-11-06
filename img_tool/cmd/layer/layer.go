@@ -2,20 +2,19 @@ package layer
 
 import (
 	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"runtime"
-	"slices"
 	"strconv"
 
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/api"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/compress"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/contentmanifest"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/digestfs"
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/metadata"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/tarcas"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/tree"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/tree/runfiles"
@@ -351,35 +350,17 @@ func writeMetadata(name string, compressionAlgorithm api.CompressionAlgorithm, u
 	}
 
 	// Merge user annotations with layer annotations from the appender state
-	mergedAnnotations := make(map[string]string)
-	// First add user annotations in sorted order to ensure determinism
-	keys := make([]string, 0, len(annotations))
-	for k := range annotations {
-		keys = append(keys, k)
-	}
-	slices.Sort(keys)
-	for _, k := range keys {
-		mergedAnnotations[k] = annotations[k]
-	}
-	// Then add layer annotations from AppenderState (e.g., estargz annotations)
-	for k, v := range compressorState.LayerAnnotations {
-		mergedAnnotations[k] = v
-	}
+	mergedAnnotations := metadata.MergeAnnotations(annotations, compressorState.LayerAnnotations)
 
-	metadata := api.Descriptor{
-		Name:        name,
-		DiffID:      fmt.Sprintf("sha256:%x", compressorState.ContentHash),
-		MediaType:   mediaType,
-		Digest:      fmt.Sprintf("sha256:%x", compressorState.OuterHash),
-		Size:        compressorState.CompressedSize,
-		Annotations: mergedAnnotations,
-	}
-
-	json.NewEncoder(outputFile).SetIndent("", "  ")
-	if err := json.NewEncoder(outputFile).Encode(metadata); err != nil {
-		return fmt.Errorf("encoding metadata: %w", err)
-	}
-	return nil
+	return metadata.WriteLayerMetadata(
+		name,
+		fmt.Sprintf("sha256:%x", compressorState.ContentHash),
+		mediaType,
+		fmt.Sprintf("sha256:%x", compressorState.OuterHash),
+		compressorState.CompressedSize,
+		mergedAnnotations,
+		outputFile,
+	)
 }
 
 // startPrecaching begins background digest calculation for files that will be processed

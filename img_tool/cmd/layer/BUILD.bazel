@@ -15,6 +15,7 @@ go_library(
         "//pkg/compress",
         "//pkg/contentmanifest",
         "//pkg/digestfs",
+        "//pkg/metadata",
         "//pkg/tarcas",
         "//pkg/tree",
         "//pkg/tree/runfiles",
