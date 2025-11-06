@@ -172,7 +172,7 @@ Use this platform when building images for your local Docker daemon:
 
 ```starlark
 image_manifest(
-    name = "app",
+    name = "image",
     base = "@ubuntu",
     layers = [
         ":app_layer",
