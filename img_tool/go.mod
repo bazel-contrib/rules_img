@@ -9,7 +9,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.90.0
 	github.com/bazelbuild/rules_go v0.58.3
 	github.com/containerd/containerd/api v1.10.0
-	github.com/containerd/platforms v1.0.0-rc.1
+	github.com/containerd/platforms v1.0.0-rc.2
 	github.com/containerd/stargz-snapshotter/estargz v0.18.1
 	github.com/google/uuid v1.6.0
 	github.com/klauspost/compress v1.18.1
