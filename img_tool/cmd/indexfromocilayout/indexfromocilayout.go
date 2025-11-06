@@ -14,7 +14,7 @@ import (
 	specs "github.com/opencontainers/image-spec/specs-go"
 	specv1 "github.com/opencontainers/image-spec/specs-go/v1"
 
-	"github.com/bazel-contrib/rules_img/img_tool/pkg/api"
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/metadata"
 )
 
 var (
@@ -332,20 +332,24 @@ func convertManifest(manifestDesc *specv1.Descriptor, manifestIdx int, arch, ope
 		}
 
 		// Create the metadata JSON from the existing descriptor
-		metadata := api.Descriptor{
-			DiffID:      config.RootFS.DiffIDs[i].String(),
-			MediaType:   manifest.Layers[i].MediaType,
-			Digest:      manifest.Layers[i].Digest.String(),
-			Size:        manifest.Layers[i].Size,
-			Annotations: manifest.Layers[i].Annotations,
-		}
+		// Use digest as the name for anonymous layers from OCI layout
+		layerName := manifest.Layers[i].Digest.String()
 
-		metadataJSON, err := json.MarshalIndent(metadata, "", "  ")
+		metadataFile, err := os.Create(layerMetadataPath)
 		if err != nil {
-			return specv1.Descriptor{}, fmt.Errorf("marshaling metadata for layer %d: %w", i, err)
+			return specv1.Descriptor{}, fmt.Errorf("creating metadata file for layer %d: %w", i, err)
 		}
+		defer metadataFile.Close()
 
-		if err := os.WriteFile(layerMetadataPath, metadataJSON, 0o644); err != nil {
+		if err := metadata.WriteLayerMetadata(
+			layerName,
+			config.RootFS.DiffIDs[i].String(),
+			manifest.Layers[i].MediaType,
+			manifest.Layers[i].Digest.String(),
+			manifest.Layers[i].Size,
+			manifest.Layers[i].Annotations,
+			metadataFile,
+		); err != nil {
 			return specv1.Descriptor{}, fmt.Errorf("writing metadata for layer %d: %w", i, err)
 		}
 	}
