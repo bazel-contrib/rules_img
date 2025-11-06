@@ -32,7 +32,7 @@ def _map_os_arch_to_constraints(os_arch_pairs):
     select_dict = {}
     for os_arch in sorted(os_arch_pairs):
         select_dict['"@rules_img//img/constraints:{}"'.format(os_arch)] = "[]"
-    select_dict['"//conditions:default"'] = '["@platforms//:incompatible"]'
+    select_dict['"//conditions:default"'] = '["{}"]'.format(str(Label("@platforms//:incompatible")))
 
     # Build the select expression string
     select_items = []
