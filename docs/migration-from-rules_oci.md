@@ -891,7 +891,7 @@ Here's a complete before/after example showing a full application migration:
 # MODULE.bazel
 bazel_dep(name = "rules_oci", version = "2.0.0")
 bazel_dep(name = "rules_pkg", version = "0.10.1")
-bazel_dep(name = "rules_go", version = "0.46.0")
+bazel_dep(name = "rules_go", version = "0.58.3")
 
 oci = use_extension("@rules_oci//oci:extensions.bzl", "oci")
 oci.pull(
@@ -963,7 +963,7 @@ oci_load(
 ```starlark
 # MODULE.bazel
 bazel_dep(name = "rules_img", version = "0.2.8")
-bazel_dep(name = "rules_go", version = "0.46.0")
+bazel_dep(name = "rules_go", version = "0.58.3")
 
 pull = use_repo_rule("@rules_img//img:pull.bzl", "pull")
 
