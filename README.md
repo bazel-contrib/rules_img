@@ -170,6 +170,8 @@ image_index(
 )
 ```
 
+For more details on working with platforms, architecture variants, and building images for macOS Docker daemons, see the [Platforms Guide](docs/platforms.md).
+
 ### Pushing to a Registry
 
 ```starlark
@@ -284,6 +286,7 @@ This results in a more complex implementation, but also allows for interesting o
     - [`image_push`](docs/push.md#image_push) - Push images to registries
     - [`image_load`](docs/load.md#image_load) - Load images into container daemons
     - [`multi_deploy`](docs/multi_deploy.md#multi_deploy) - Deploy multiple operations as unified command
+- [Platforms Guide](docs/platforms.md) - Working with Bazel platforms, architecture variants, and multi-platform builds
 - [Migration Guide from rules_oci](docs/migration-from-rules_oci.md)
 
 ## Key Differences Explained
