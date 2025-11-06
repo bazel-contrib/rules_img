@@ -1,0 +1,51 @@
+load("@pip//:requirements.bzl", "requirement")
+load("@rules_img//img:image.bzl", "image_manifest")
+load("@rules_python//python:defs.bzl", "py_test")
+load("@rules_python//python:pip.bzl", "compile_pip_requirements")
+
+image_manifest(
+    name = "neo4j_for_host_docker",
+    base = "@neo4j",
+    platform = "//platform:host_docker_platform",
+)
+
+filegroup(
+    name = "neo4j_tarball",
+    srcs = [":neo4j_for_host_docker"],
+    output_group = "oci_tarball",
+)
+
+py_test(
+    name = "integration_test",
+    srcs = ["integration_test.py"],
+    data = [":neo4j_tarball"],
+    main = "integration_test.py",
+    tags = [
+        "manual",
+        "requires-docker",
+        "requires-network",
+    ],
+    target_compatible_with = select({
+        # pip deps on Windows are annoying to manage
+        "@platforms//os:windows": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
+    deps = [
+        requirement("requests"),
+        requirement("docker"),
+        requirement("pytest"),
+        requirement("testcontainers"),
+        "@rules_python//python/runfiles",
+    ],
+)
+
+compile_pip_requirements(
+    name = "requirements",
+    src = "requirements.in",
+    requirements_txt = "requirements_lock.txt",
+    target_compatible_with = select({
+        # pip deps on Windows are annoying to manage
+        "@platforms//os:windows": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
+)
