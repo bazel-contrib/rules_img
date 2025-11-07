@@ -17,3 +17,11 @@ platform(
         "@platforms//cpu:aarch64",
     ],
 )
+
+# define a platform for the container runtime on your host.
+# It uses the same CPU architecture as Bazel itself (i.e. arm64 on an Apple Silicon Mac), but always target Linux.
+platform(
+    name = "host_docker_platform",
+    constraint_values = ["@platforms//os:linux"],
+    parents = ["@platforms//host"],
+)

@@ -46,6 +46,22 @@ apt.install(
 )
 use_repo(apt, "bookworm")
 
+# Configure Python and pip
+python = use_extension("@rules_python//python/extensions:python.bzl", "python")
+python.toolchain(
+    python_version = "3.13",
+)
+use_repo(python, "python_3_13")
+
+pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip")
+pip.parse(
+    download_only = True,
+    hub_name = "pip",
+    python_version = "3.13",
+    requirements_lock = "//integrationtest/testcontainers:requirements_lock.txt",
+)
+use_repo(pip, "pip")
+
 # Pull Alpine Linux as base image
 pull = use_repo_rule("@rules_img//img:pull.bzl", "pull")
 
@@ -91,4 +107,13 @@ pull(
     digest = "sha256:4972515dd9a069b44beb43cebba7851596e72a8c61cd7a7c33d8f48efc5280ba",
     repository = "envoyproxy/envoy",
     tag = "v1.36.2",
+)
+
+pull(
+    name = "neo4j",
+    digest = "sha256:d91e78fd1e70ce2c4c98eac120a9cf0b984903fc943e29bce90a421f10059a86",
+    layer_handling = "lazy",
+    registry = "index.docker.io",
+    repository = "library/neo4j",
+    tag = "5.26.16-ubi9",
 )
