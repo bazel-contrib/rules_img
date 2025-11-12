@@ -6,10 +6,10 @@ load("//img/private:manifest_media_type.bzl", "get_media_type")
 load("//img/private/platforms:platforms.bzl", "has_constraint_setting")
 load(
     ":download.bzl",
+    _download_blob = "download_blob",
+    _download_layers = "download_layers",
+    _download_manifest = "download_manifest",
     _download_with_tool = "download_with_tool",
-    _get_blob = "get_blob",
-    _get_layers = "get_layers",
-    _get_manifest = "get_manifest",
 )
 
 def _map_os_arch_to_constraints(os_arch_pairs):
@@ -68,7 +68,7 @@ def _pull_impl(rctx):
     )
     if rctx.attr.registry == "docker.io":
         print("Specified docker.io as registry. Did you mean \"index.docker.io\"?")  # buildifier: disable=print
-    root_blob_info = _get_manifest(rctx, reference = reference, **manifest_kwargs)
+    root_blob_info = _download_manifest(rctx, downloader = rctx.attr.downloader, reference = reference, **manifest_kwargs)
     data = {root_blob_info.digest: root_blob_info.data}
     root_blob = json.decode(root_blob_info.data)
     media_type = get_media_type(root_blob)
@@ -98,7 +98,7 @@ def _pull_impl(rctx):
         if not manifest_index.get("mediaType") in [MEDIA_TYPE_MANIFEST, DOCKER_MANIFEST_V2]:
             continue
         if is_index:
-            manifest_info = _get_manifest(rctx, reference = manifest_index["digest"])
+            manifest_info = _download_manifest(rctx, downloader = rctx.attr.downloader, reference = manifest_index["digest"])
             data[manifest_info.digest] = manifest_info.data
 
             # Extract platform from index manifest entry
@@ -111,7 +111,7 @@ def _pull_impl(rctx):
         else:
             manifest_info = root_blob_info
         manifest = json.decode(manifest_info.data)
-        config_info = _get_blob(rctx, digest = manifest["config"]["digest"])
+        config_info = _download_blob(rctx, downloader = rctx.attr.downloader, digest = manifest["config"]["digest"])
         data[config_info.digest] = config_info.data
 
         # Extract platform from config if not already found
@@ -134,7 +134,7 @@ def _pull_impl(rctx):
     if rctx.attr.layer_handling == "eager":
         files.update({
             layer.digest: "//:{}".format(layer.path)
-            for layer in _get_layers(rctx, sets.to_list(layer_digests))
+            for layer in _download_layers(rctx, downloader = rctx.attr.downloader, digests = sets.to_list(layer_digests))
         })
     elif rctx.attr.layer_handling == "lazy":
         files.update({
