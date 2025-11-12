@@ -1,6 +1,7 @@
 """Repository rule for pulling individual blobs from a container registry."""
 
 load("@pull_hub_repo//:defs.bzl", "tool_for_repository_os")
+load("//img/private/repository_rules:download.bzl", "download_manifest")
 
 def _pull_blob_file_impl(rctx):
     tool = tool_for_repository_os(rctx)
@@ -124,6 +125,43 @@ For Docker Hub, official images use "library/" prefix (e.g., "library/ubuntu")."
         "strip_prefix": attr.string(
             default = "",
             doc = """Prefix to strip from the extracted files.""",
+        ),
+    },
+)
+
+def pull_manifest_blob(rctx):
+    have_valid_digest = True
+    if len(rctx.attr.digest) != 71:
+        have_valid_digest = False
+    elif not rctx.attr.digest.startswith("sha256:"):
+        have_valid_digest = False
+    reference = rctx.attr.digest if have_valid_digest else rctx.attr.tag
+    manifest_info = download_manifest(
+        rctx,
+        downloader = rctx.attr.downloader,
+        reference = reference,
+    )
+    rctx.symlink(
+        "manifest.json",
+        manifest_info.path,
+    )
+    rctx.file(
+        "digest",
+        manifest_info.digest,
+    )
+
+pull_manifest_blob = repository_rule(
+    implementation = _pull_manifest_blob_impl,
+    attrs = {
+        "registry": attr.string(),
+        "registries": attr.string_list(),
+        "repository": attr.string(
+            mandatory = True,
+        ),
+        "digest": attr.string(),
+        "downloader": attr.string(
+            default = "img_tool",
+            values = ["img_tool", "bazel"],
         ),
     },
 )

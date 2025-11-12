@@ -42,11 +42,12 @@ def download_blob(rctx, *, digest, wait_and_read = True, **kwargs):
         waiter = result,
     )
 
-def download_manifest(rctx, *, reference, **kwargs):
+def download_manifest(rctx, *, downloader, reference, **kwargs):
     """Download a manifest from a container registry using Bazel's downloader.
 
     Args:
         rctx: Repository context.
+        downloader: "img_tool" or "bazel".
         reference: The manifest reference to download.
         **kwargs: Additional arguments.
 
@@ -66,28 +67,120 @@ def download_manifest(rctx, *, reference, **kwargs):
         kwargs["output"] = "blobs/sha256/" + sha256
     else:
         kwargs["output"] = "manifest.json"
-    manifest_result = rctx.download(
-        url = [
-            "{protocol}://{registry}/v2/{repository}/manifests/{reference}".format(
-                protocol = "https",
-                registry = registry,
-                repository = rctx.attr.repository,
-                reference = reference,
-            )
-            for registry in registries
-        ],
-        **kwargs
-    )
+        sha256 = None
+    if downloader == "bazel":
+        result = download_manifest_bazel(
+            rctx,
+            reference = reference,
+            sha256 = sha256,
+            have_valid_digest = have_valid_digest,
+            repository = rctx.attr.repository,
+            registries = registries,
+            **kwargs
+        )
+    else:
+        # pull tool
+        result = download_manifest_img_tool(
+            rctx,
+            reference = reference,
+            sha256 = sha256,
+            have_valid_digest = have_valid_digest,
+            repository = rctx.attr.repository,
+            registries = registries,
+            **kwargs
+        )
+
     if not have_valid_digest:
         fail("""Missing valid image digest. Observed the following digest when pulling manifest for {}:
     sha256:{}""".format(
             rctx.attr.repository + ":" + rctx.attr.tag,
             manifest_result.sha256,
         ))
+    return result
+
+def download_manifest_bazel(rctx, *, reference, sha256, have_valid_digest, repository, registries, **kwargs):
+    """Download a manifest from a container registry using Bazel's downloader.
+
+    Args:
+        rctx: Repository context.
+        reference: The manifest reference to download.
+        sha256: digest of the manifest (or None).
+        have_valid_digest: bool indicating the presence of a valid digest.
+        repository: Repositoru of the image (i.e. library/ubuntu)
+        registries: List of registries that mirror the manifest.
+        **kwargs: Additional arguments.
+
+    Returns:
+        A struct containing digest, path, and data of the downloaded manifest.
+    """
+    if have_valid_digest:
+        kwargs["sha256"] = sha256
+        kwargs["output"] = "blobs/sha256/" + sha256
+    else:
+        kwargs["output"] = "manifest.json"
+    manifest_result = rctx.download(
+        url = [
+            "{protocol}://{registry}/v2/{repository}/manifests/{reference}".format(
+                protocol = "https",
+                registry = registry,
+                repository = repository,
+                reference = reference,
+            )
+            for registry in registries
+        ],
+        **kwargs
+    )
+    if have_valid_digest and manifest_result.sha256 != sha256:
+        fail("expected manifest with digest sha256:{} but got sha256:{}".format(sha256, manifest_result.sha256))
     return struct(
         digest = reference,
         path = kwargs["output"],
         data = rctx.read(kwargs["output"]),
+    )
+
+def download_manifest_img_tool(rctx, *, reference, sha256, have_valid_digest, repository, registries, **kwargs):
+    """Download a manifest from a container registry using Bazel's downloader.
+
+    Args:
+        rctx: Repository context.
+        reference: The manifest reference to download.
+        sha256: digest of the manifest (or None).
+        have_valid_digest: bool indicating the presence of a valid digest.
+        repository: Repositoru of the image (i.e. library/ubuntu)
+        registries: List of registries that mirror the manifest.
+        **kwargs: Additional arguments.
+
+    Returns:
+        A struct containing digest, path, and data of the downloaded manifest.
+    """
+    destination = "manifest.json"
+    if have_valid_digest:
+        destination = "blobs/sha256/" + sha256
+    args = [
+        tool_path,
+        "download-manifest",
+        "--digest",
+        "sha256:" + sha256,
+        "--repository",
+        repository,
+        "--output",
+        "blobs/sha256/",
+    ] + [
+        "--registry={}".format(registry)
+        for registry in registries
+    ]
+    if have_valid_digest:
+        args.extend(["--digest", "sha256:" + sha256])
+    else:
+        args.extend(["--tag", reference])
+
+    result = rctx.execute(args)
+    if result.return_code != 0:
+        fail("Failed to download manifest: {}".format(result.stderr))
+    return struct(
+        digest = reference,
+        path = destination,
+        data = rctx.read(destination),
     )
 
 def download_layers(rctx, digests):
@@ -146,7 +239,7 @@ def get_manifest(rctx, *, reference, **kwargs):
     """
     if rctx.attr.downloader == "bazel":
         # Use Bazel's downloader to download the manifest now
-        return download_manifest(rctx, reference = reference, **kwargs)
+        return download_manifest(rctx, downloader = "bazel", reference = reference, **kwargs)
 
     # When using the img tool, the data already exists on disk
     # so just read it from there
