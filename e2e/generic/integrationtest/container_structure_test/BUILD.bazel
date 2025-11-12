@@ -1,0 +1,26 @@
+load("@container_structure_test//:defs.bzl", "container_structure_test")
+
+container_structure_test(
+    name = "docker_driver",
+    configs = ["docker_test.yaml"],
+    driver = "docker",
+    image = "//load:image",
+)
+
+filegroup(
+    name = "docker_save_tar",
+    srcs = ["//load:load_image"],
+    output_group = "tarball",
+    tags = [
+        "manual",
+        "requires-docker",
+        "requires-network",
+    ],
+)
+
+container_structure_test(
+    name = "tar_driver",
+    configs = ["tar_test.yaml"],
+    driver = "tar",
+    image = ":docker_save_tar",
+)

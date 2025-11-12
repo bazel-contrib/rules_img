@@ -19,6 +19,7 @@ image_manifest(
         "/hello.txt",
     ],
     layers = [":layer"],
+    visibility = ["//visibility:public"],
 )
 
 image_index(

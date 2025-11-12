@@ -25,6 +25,7 @@ register_toolchains("@rules_img_tool//toolchain:all")
 bazel_dep(name = "aspect_bazel_lib", version = "2.21.2")
 bazel_dep(name = "tar.bzl", version = "0.6.0")
 bazel_dep(name = "bazel_skylib", version = "1.7.1")
+bazel_dep(name = "container_structure_test", version = "1.21.1")
 bazel_dep(name = "platforms", version = "0.0.11")
 bazel_dep(name = "rules_python", version = "1.6.3")
 bazel_dep(name = "rules_pkg", version = "1.1.0")
@@ -33,6 +34,12 @@ single_version_override(
     module_name = "rules_distroless",
     patch_strip = 1,
     patches = ["//custom_distroless_base_image:rules_distroless.patch"],
+)
+
+single_version_override(
+    module_name = "container_structure_test",
+    patch_strip = 1,
+    patches = ["//integrationtest/container_structure_test:container_structure_test.patch"],
 )
 
 # Configure apt for Debian packages
@@ -68,6 +75,7 @@ pull = use_repo_rule("@rules_img//img:pull.bzl", "pull")
 pull(
     name = "alpine",
     digest = "sha256:4b7ce07002c69e8f3d704a9c5d6fd3053be500b7f1c69fc0d80990c2ad8dd412",
+    layer_handling = "lazy",
     registries = [
         "mirror.gcr.io",
         "index.docker.io",
