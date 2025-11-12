@@ -1,0 +1,8 @@
+schemaVersion: "2.0.0"
+
+commandTests:
+  - name: "say hello world"
+    command: "/bin/cat"
+    args:
+      - /hello.txt
+    expectedOutput: ["Hello from rules_img load test!"]

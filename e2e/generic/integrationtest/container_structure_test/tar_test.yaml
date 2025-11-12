@@ -1,0 +1,6 @@
+schemaVersion: "2.0.0"
+
+metadataTest:
+  envVars: []
+  entrypoint: []
+  cmd: ["/bin/cat", "/hello.txt"]
