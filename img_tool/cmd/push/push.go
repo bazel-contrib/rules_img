@@ -172,6 +172,9 @@ func DeployWithExtras(ctx context.Context, rawRequest []byte, additionalTags []s
 			if len(platformList) > 0 {
 				builder = builder.WithPlatforms(platformList)
 			}
+			if len(additionalTags) > 0 {
+				builder = builder.WithExtraTags(additionalTags)
+			}
 			// LoadAll prints the loaded tags itself, so we discard the return value
 			_, err := builder.Build().LoadAll(ctx, loadOperations)
 			return err
@@ -204,10 +207,6 @@ func (s *stringSliceFlag) String() string {
 func (s *stringSliceFlag) Set(value string) error {
 	*s = append(*s, value)
 	return nil
-}
-
-func pushFromArgs(ctx context.Context, args []string) {
-	panic("not implemented")
 }
 
 func credentialHelperPath() string {

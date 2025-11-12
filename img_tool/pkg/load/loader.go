@@ -21,6 +21,7 @@ import (
 type builder struct {
 	vfs       vfs
 	platforms []string
+	extraTags []string
 }
 
 func NewBuilder(vfs vfs) *builder {
@@ -32,10 +33,16 @@ func (b *builder) WithPlatforms(platforms []string) *builder {
 	return b
 }
 
+func (b *builder) WithExtraTags(tags []string) *builder {
+	b.extraTags = tags
+	return b
+}
+
 func (b *builder) Build() *loader {
 	return &loader{
 		vfs:       b.vfs,
 		platforms: b.platforms,
+		extraTags: b.extraTags,
 		taskSet:   newTaskSet(b.vfs, b.platforms),
 	}
 }
@@ -43,10 +50,17 @@ func (b *builder) Build() *loader {
 type loader struct {
 	vfs             vfs
 	platforms       []string
+	extraTags       []string
 	taskSet         *taskSet
 	clientConn      *containerd.Client
 	triedContainerd bool
 	haveContainerd  bool
+}
+
+// tags returns the combined list of tags from the operation and extra tags
+func (l *loader) tags(op api.IndexedLoadDeployOperation) []string {
+	allTags := append(op.Tags, l.extraTags...)
+	return deduplicateAndSort(allTags)
 }
 
 func (l *loader) LoadAll(ctx context.Context, ops []api.IndexedLoadDeployOperation) ([]string, error) {
@@ -146,7 +160,8 @@ func (l *loader) loadContainerd(ctx context.Context, op api.IndexedLoadDeployOpe
 	fmt.Printf("%s\n", target.Digest)
 
 	var loadedTags []string
-	for _, tag := range op.Tags {
+	allTags := l.tags(op)
+	for _, tag := range allTags {
 		normalizedTag := NormalizeDockerReference(tag)
 		img := containerd.Image{
 			Name:   normalizedTag,
@@ -200,13 +215,14 @@ func (l *loader) loadViaDocker(ctx context.Context, op api.IndexedLoadDeployOper
 func (l *loader) streamDockerTar(ctx context.Context, op api.IndexedLoadDeployOperation, w io.Writer) ([]string, error) {
 	tw := docker.NewTarWriter(w)
 
+	allTags := l.tags(op)
 	if op.RootKind == "index" {
 		// For multi-platform images, we need to select a manifest
 		manifestIndex, err := l.selectManifestForPlatform(op)
 		if err != nil {
 			return nil, err
 		}
-		return l.streamManifestToTar(ctx, op.Manifests[manifestIndex], op.Tags, tw)
+		return l.streamManifestToTar(ctx, op.Manifests[manifestIndex], allTags, tw)
 	} else if op.RootKind == "manifest" && len(op.Manifests) == 1 {
 		// Validate that the single manifest matches requested platform if explicit
 		digest, err := registryv1.NewHash(op.Manifests[0].Descriptor.Digest)
@@ -216,7 +232,7 @@ func (l *loader) streamDockerTar(ctx context.Context, op api.IndexedLoadDeployOp
 		if err := l.validateManifestPlatform(digest); err != nil {
 			return nil, fmt.Errorf("single manifest validation failed: %w", err)
 		}
-		return l.streamManifestToTar(ctx, op.Manifests[0], op.Tags, tw)
+		return l.streamManifestToTar(ctx, op.Manifests[0], allTags, tw)
 	}
 
 	return nil, fmt.Errorf("no manifest or index provided")
@@ -664,4 +680,24 @@ type vfs interface {
 	ManifestBlob(digest registryv1.Hash) (registryv1.Layer, error)
 	DigestsFromRoot(root registryv1.Hash) ([]registryv1.Hash, error)
 	SizeOf(digest registryv1.Hash) (int64, error)
+}
+
+// deduplicateAndSort removes duplicates and sorts a slice of strings
+func deduplicateAndSort(tags []string) []string {
+	if len(tags) == 0 {
+		return tags
+	}
+
+	// Sort first, then compact to remove consecutive duplicates
+	slices.Sort(tags)
+	tags = slices.Compact(tags)
+
+	// Remove empty tags
+	var outTags []string
+	for _, tag := range tags {
+		if tag != "" {
+			outTags = append(outTags, tag)
+		}
+	}
+	return outTags
 }
