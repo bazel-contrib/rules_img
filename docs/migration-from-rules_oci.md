@@ -55,7 +55,7 @@ use_repo(oci, "distroless_cc")
 ### rules_img (After)
 
 ```starlark
-bazel_dep(name = "rules_img", version = "0.2.8")
+bazel_dep(name = "rules_img", version = "<version>")
 # rules_pkg and tar.bzl are no longer needed.
 
 pull = use_repo_rule("@rules_img//img:pull.bzl", "pull")
@@ -962,7 +962,7 @@ oci_load(
 
 ```starlark
 # MODULE.bazel
-bazel_dep(name = "rules_img", version = "0.2.8")
+bazel_dep(name = "rules_img", version = "<version>")
 bazel_dep(name = "rules_go", version = "0.58.3")
 
 pull = use_repo_rule("@rules_img//img:pull.bzl", "pull")
