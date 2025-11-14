@@ -52,7 +52,7 @@ bazel_dep(name = "rules_go", version = "0.58.3", dev_dependency = True)
 bazel_dep(name = "rules_img_pull_tool", version = "0.2.9", dev_dependency = True)
 bazel_dep(name = "rules_img_tool", version = "0.2.9", dev_dependency = True)
 bazel_dep(name = "rules_pkg", version = "1.1.0", dev_dependency = True)
-bazel_dep(name = "rules_python", version = "1.6.3", dev_dependency = True)
+bazel_dep(name = "rules_python", version = "1.7.0", dev_dependency = True)
 
 # Register a source-built toolchain of the img tool
 # for use in this repository (in dev mode).
