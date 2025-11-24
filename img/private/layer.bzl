@@ -16,11 +16,10 @@ def _files_arg(f):
     return "{}{}".format(type, f.path)
 
 def _to_short_path_pair(f):
-    repo = f.owner.repo_name
-    if repo == "":
-        repo = "_main"
     type = _file_type(f)
-    return "{}/{}\0{}{}".format(repo, f.short_path, type, f.path)
+    if f.short_path.startswith("../"):
+        return "{}\0{}{}".format(f.short_path[3:], type, f.path)
+    return "_main/{}\0{}{}".format(f.short_path, type, f.path)
 
 def _root_symlinks_arg(x):
     type = _file_type(x.target_file)
