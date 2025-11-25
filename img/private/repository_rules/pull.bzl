@@ -11,6 +11,7 @@ load(
     _download_manifest = "download_manifest",
     _download_with_tool = "download_with_tool",
 )
+load(":registry.bzl", "get_registries")
 
 def _map_os_arch_to_constraints(os_arch_pairs):
     """Map OS/architecture pairs to Bazel constraint labels.
@@ -142,15 +143,7 @@ def _pull_impl(rctx):
             for digest in sets.to_list(layer_digests)
         })
 
-    registries = []
-    if rctx.attr.registry:
-        registries.append(rctx.attr.registry)
-    if len(rctx.attr.registries) > 0:
-        registries.extend(rctx.attr.registries)
-    if len(registries) == 0:
-        # default to Docker Hub.
-        # This exists mostly for compatibility with rules_oci.
-        registries.append("index.docker.io")
+    registries = get_registries(rctx)
 
     name = getattr(rctx, "original_name", rctx.attr.name)
     if not hasattr(rctx, "original_name"):
