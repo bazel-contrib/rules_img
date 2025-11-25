@@ -12,6 +12,7 @@ bzl_library(
     visibility = ["//img:__subpackages__"],
     deps = [
         ":download",
+        ":registry",
         "//img/private:manifest_media_type",
         "//img/private/platforms",
         "@bazel_skylib//lib:sets",
@@ -23,12 +24,25 @@ bzl_library(
     name = "pull_blob",
     srcs = ["pull_blob.bzl"],
     visibility = ["//img:__subpackages__"],
-    deps = ["@pull_hub_repo//:defs"],
+    deps = [
+        ":download",
+        "@pull_hub_repo//:defs",
+    ],
 )
 
 bzl_library(
     name = "download",
     srcs = ["download.bzl"],
+    visibility = ["//img:__subpackages__"],
+    deps = [
+        ":registry",
+        "@pull_hub_repo//:defs",
+    ],
+)
+
+bzl_library(
+    name = "registry",
+    srcs = ["registry.bzl"],
     visibility = ["//img:__subpackages__"],
 )
 

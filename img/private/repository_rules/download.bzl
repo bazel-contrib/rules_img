@@ -1,6 +1,7 @@
 """Repository rules for downloading container image components."""
 
 load("@pull_hub_repo//:defs.bzl", "tool_for_repository_os")
+load(":registry.bzl", "get_registries")
 
 def _check_existing_blob(rctx, digest, wait_and_read = True):
     """Check if a blob with the given digest already exists.
@@ -42,11 +43,7 @@ def download_blob(rctx, *, downloader, digest, wait_and_read = True, **kwargs):
     """
     sha256 = digest.removeprefix("sha256:")
     output = "blobs/sha256/" + sha256
-    registries = [r for r in rctx.attr.registries]
-    if rctx.attr.registry:
-        registries.append(rctx.attr.registry)
-    if len(registries) == 0:
-        fail("need at least one registry to pull from")
+    registries = get_registries(rctx)
     maybe_existing = _check_existing_blob(rctx, digest, wait_and_read)
     if maybe_existing != None:
         return maybe_existing
@@ -108,11 +105,7 @@ def download_manifest(rctx, *, downloader, reference, **kwargs):
         A struct containing digest, path, and data of the downloaded manifest.
     """
     have_valid_digest = False
-    registries = [r for r in rctx.attr.registries]
-    if rctx.attr.registry:
-        registries.append(rctx.attr.registry)
-    if len(registries) == 0:
-        fail("need at least one registry to pull from")
+    registries = get_registries(rctx)
     if reference.startswith("sha256:"):
         have_valid_digest = True
         sha256 = reference.removeprefix("sha256:")
@@ -271,9 +264,7 @@ def download_with_tool(rctx, *, tool_path, reference):
     Returns:
         A struct containing manifest and layers of the downloaded image.
     """
-    registries = [r for r in rctx.attr.registries]
-    if rctx.attr.registry:
-        registries.append(rctx.attr.registry)
+    registries = get_registries(rctx)
     args = [
         tool_path,
         "pull",
