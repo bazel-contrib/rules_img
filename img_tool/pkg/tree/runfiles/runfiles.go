@@ -11,6 +11,7 @@ type Node interface {
 	Type() api.FileType
 	Open() (fs.File, error)
 	Tree() (fs.FS, error)
+	Readlink() (string, error)
 }
 
 // PathNode extends Node with path information for optimization

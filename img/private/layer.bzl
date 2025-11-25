@@ -9,6 +9,8 @@ def _file_type(f):
     type = "f"  # regular file
     if f.is_directory:
         type = "d"
+    if f.is_symlink:
+        type = "l"
     return type
 
 def _files_arg(f):
@@ -92,7 +94,7 @@ def _image_layer_impl(ctx):
             executable_runfiles_args = ctx.actions.args()
             executable_runfiles_args.set_param_file_format("multiline")
             executable_runfiles_args.use_param_file("--runfiles={}=%s".format(executable.path), use_always = True)
-            executable_runfiles_args.add_all(runfiles.files, map_each = _to_short_path_pair, expand_directories = False)
+            executable_runfiles_args.add_all(runfiles.files, map_each = _to_short_path_pair, expand_directories = False, uniquify = True)
             executable_runfiles_args.add_all(runfiles.symlinks, map_each = _symlinks_arg)
             executable_runfiles_args.add_all(runfiles.root_symlinks, map_each = _root_symlinks_arg)
             args.append(executable_runfiles_args)

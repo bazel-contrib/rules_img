@@ -35,6 +35,13 @@ func (a addFile) Tree() (fs.FS, error) {
 	return treeartifact.TreeArtifactFS(a.File), nil
 }
 
+func (a addFile) Readlink() (string, error) {
+	if a.FileType != api.Symlink {
+		return "", fmt.Errorf("cannot get link target for non-symlink file: %s", a.File)
+	}
+	return os.Readlink(a.File)
+}
+
 func (a addFile) Path() string {
 	return a.File
 }
@@ -71,7 +78,9 @@ func (a *addFiles) Set(value string) error {
 		return fmt.Errorf("file %s does not exist: %w", parts[1], err)
 	}
 	var fileType api.FileType
-	if fInfo.IsDir() {
+	if fInfo.Mode() & fs.ModeSymlink != 0 {
+		fileType = api.Symlink
+	} else if fInfo.IsDir() {
 		fileType = api.Directory
 	} else {
 		fileType = api.RegularFile

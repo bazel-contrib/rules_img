@@ -34,6 +34,8 @@ func readParamFile(paramFile string) (addFiles, error) {
 			typ = api.RegularFile
 		case "d":
 			typ = api.Directory
+		case "l":
+			typ = api.Symlink
 		default:
 			return nil, fmt.Errorf("invalid type for line: %s", line)
 		}
@@ -68,7 +70,7 @@ func splitParamFileLine(line string) (string, string, string, error) {
 	}
 	typeOfFile := rest[:1]
 	file := rest[1:]
-	if typeOfFile != "f" && typeOfFile != "d" {
+	if typeOfFile != "f" && typeOfFile != "d" && typeOfFile != "l" {
 		return "", "", "", fmt.Errorf("invalid type for line: %s", line)
 	}
 	return pathInImage, typeOfFile, file, nil

@@ -238,6 +238,14 @@ func (r Recorder) Executable(binaryPath, target string, accessor runfilesSupplie
 			if err := r.Tree(fsys, path.Join(target+".runfiles", p)); err != nil {
 				return err
 			}
+		case api.Symlink:
+			link, err := node.Readlink()
+			if err != nil {
+				return err
+			}
+			if err := r.Symlink(link, path.Join(target+".runfiles", p)); err != nil {
+				return err
+			}
 		default:
 			return fmt.Errorf("unsupported runfiles node type: %s", node.Type())
 		}
