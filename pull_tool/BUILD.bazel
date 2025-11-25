@@ -6,6 +6,7 @@ filegroup(
         "go.mod",
         "go.sum",
         "//cmd/downloadblob:go_srcs",
+        "//cmd/downloadmanifest:go_srcs",
         "//cmd/internal/pull:go_srcs",
         "//cmd/pull_tool:go_srcs",
         "//pkg/auth/registry:go_srcs",

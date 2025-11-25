@@ -8,6 +8,7 @@ go_library(
     visibility = ["//visibility:private"],
     deps = [
         "//cmd/downloadblob",
+        "//cmd/downloadmanifest",
         "//cmd/internal/pull",
     ],
 )
