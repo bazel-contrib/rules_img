@@ -9,7 +9,7 @@ def _file_type(f):
     type = "f"  # regular file
     if f.is_directory:
         type = "d"
-    if f.is_symlink:
+    if hasattr(f, "is_symlink") and f.is_symlink:
         type = "l"
     return type
 
