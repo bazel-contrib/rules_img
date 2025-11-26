@@ -1,5 +1,7 @@
 """A rule to generate a symlink to directory"""
 
+load("@bazel_skylib//lib:paths.bzl", "paths")
+
 def _gen_dir_link_impl(ctx):
     out_dir = ctx.actions.declare_directory("out_dir")
     ctx.actions.run_shell(
@@ -20,9 +22,12 @@ def _gen_dir_link_impl(ctx):
             inputs = [out_dir],
             outputs = [out_link],
             command = """
-                ln -sr -T "$1" -- "$2"
+                ln -s -- "$1" "$2"
             """,
-            arguments = [out_dir.path, out_link.path],
+            arguments = [
+                paths.relativize(out_dir.path, paths.dirname(out_link.path)),
+                out_link.path,
+            ],
         )
         out_files.append(out_link)
 
