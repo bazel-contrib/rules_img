@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"iter"
 	"path"
+	"slices"
 	"strings"
 
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/api"
@@ -29,6 +30,7 @@ type CAS[HM hashHelper] struct {
 	storedTrees   map[string]struct{}
 	closed        bool
 	digestFS      *digestfs.FileSystem
+	dirs          map[string]struct{}
 	options
 }
 
@@ -51,6 +53,7 @@ func New[HM hashHelper](appender api.TarAppender, opts ...Option) *CAS[HM] {
 		storedNodes:  make(map[string]struct{}),
 		storedTrees:  make(map[string]struct{}),
 		digestFS:     digestfs.New(helper),
+		dirs:         make(map[string]struct{}),
 		options:      options,
 	}
 }
@@ -73,14 +76,36 @@ func NewWithDigestFS[HM hashHelper](appender api.TarAppender, digestFS *digestfs
 		storedNodes:  make(map[string]struct{}),
 		storedTrees:  make(map[string]struct{}),
 		digestFS:     digestFS,
+		dirs:         make(map[string]struct{}),
 		options:      options,
 	}
 }
 
 func (c *CAS[HM]) writeHeaderAndData(hdr *tar.Header, data io.Reader) error {
-	// Create a tar entry with header and data combined
 	var buf bytes.Buffer
 	tw := tar.NewWriter(&buf)
+
+	// Create parent directory entries
+	var parents []string
+	for dir := path.Dir(hdr.Name); dir != "."; dir = path.Dir(dir) {
+		parents = append(parents, dir+"/")
+	}
+	for _, dir := range slices.Backward(parents) {
+		if _, ok := c.dirs[dir]; ok {
+			continue
+		}
+		hdr := &tar.Header{
+			Typeflag: tar.TypeDir,
+			Mode:     0o755,
+			Name:     dir,
+		}
+		if err := tw.WriteHeader(hdr); err != nil {
+			return err
+		}
+		c.dirs[dir] = struct{}{}
+	}
+
+	// Create a tar entry with header and data combined
 	if err := tw.WriteHeader(hdr); err != nil {
 		return err
 	}
