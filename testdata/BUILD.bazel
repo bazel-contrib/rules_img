@@ -5,3 +5,9 @@ filegroup(
     srcs = glob(["ubuntu/**"]),
     visibility = ["//visibility:public"],
 )
+
+filegroup(
+    name = "img_toolchain_testdata",
+    srcs = glob(["img_toolchain/**"]),
+    visibility = ["//visibility:public"],
+)

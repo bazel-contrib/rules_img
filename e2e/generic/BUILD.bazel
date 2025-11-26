@@ -5,6 +5,8 @@ load("@rules_img//img:layer.bzl", "file_metadata", "image_layer")
 load("@rules_img//img:push.bzl", "image_push")
 load("@rules_pkg//pkg:tar.bzl", "pkg_tar")
 
+load(":bzl/gen_link.bzl", "gen_dir_link")
+
 # Test files for various scenarios
 write_file(
     name = "empty_file",
@@ -30,6 +32,16 @@ write_file(
     out = "script.sh",
     content = ["#!/bin/bash\necho 'Hello World'\n"],
     is_executable = True,
+)
+
+gen_dir_link(
+    name = "link",
+)
+
+sh_binary(
+    name = "executable_script_with_runfiles",
+    srcs = ["script.sh"],
+    data = [":link"],
 )
 
 write_file(
@@ -73,6 +85,7 @@ image_layer(
     name = "mixed_layer",
     srcs = {
         "bin/script": ":executable_script",
+        "bin/script_with_data": ":executable_script_with_runfiles",
         "data/large.txt": ":large_file",
         "data/binary.dat": ":binary_file",
         "data/unicode.txt": ":unicode_file",

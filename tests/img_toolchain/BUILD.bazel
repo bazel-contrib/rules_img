@@ -19,6 +19,7 @@ go_test(
     data = [
         ":testcases",
         "//testdata:ubuntu_testdata",
+        "//testdata:img_toolchain_testdata",
         "@rules_img_tool//cmd/img",
     ],
     embed = [":img_toolchain"],
