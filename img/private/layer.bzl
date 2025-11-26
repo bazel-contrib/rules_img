@@ -36,6 +36,38 @@ def _symlink_tuple_to_arg(pair):
         source = source[1:]
     return "{}\0{}".format(source, dest)
 
+def _get_files_to_run_provider(src):
+    """Retrieve FilesToRunProvider from a target.
+
+    Args:
+        src: target to get FilesToRunProvider from
+
+    Returns:
+        FilesToRunProvider or None: FilesToRunProvider if found in target
+            provider, otherwise None
+    """
+    if not DefaultInfo in src:
+        return None
+    default_info = src[DefaultInfo]
+    if not hasattr(default_info, "files_to_run"):
+        return None
+    return default_info.files_to_run
+
+def _get_repo_mapping_manifest(src):
+    """Retrieve repo_mapping_manifest from a target if it exists.
+
+    Args:
+        src: target to get repo_mapping_manifest from
+
+    Returns:
+        File or None: repo_mapping_manifest
+    """
+    files_to_run_provider = _get_files_to_run_provider(src)
+    if files_to_run_provider:
+        # repo_mapping_manifest is Bazel 7+ only
+        return getattr(files_to_run_provider, "repo_mapping_manifest")
+    return None
+
 def _image_layer_impl(ctx):
     compression = ctx.attr.compress
     if compression == "auto":
@@ -99,6 +131,11 @@ def _image_layer_impl(ctx):
             inputs.append(runfiles.files)
             inputs.append(runfiles.symlinks)
             inputs.append(runfiles.root_symlinks)
+            repo_mapping_manifest = _get_repo_mapping_manifest(files)
+            if repo_mapping_manifest != None:
+                inputs.append(depset([repo_mapping_manifest]))
+                files_args.add_all([repo_mapping_manifest], map_each = _files_arg, format_each = "{}.repo_mapping\0%s".format(path_in_image), expand_directories = False)
+                files_args.add_all([repo_mapping_manifest], map_each = _files_arg, format_each = "{}.runfiles/_repo_mapping\0%s".format(path_in_image), expand_directories = False)
             continue
 
         # This isn't an executable.
