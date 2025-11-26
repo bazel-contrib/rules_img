@@ -1,3 +1,5 @@
+"""A rule to generate a symlink to directory"""
+
 def _gen_dir_link_impl(ctx):
     out_dir = ctx.actions.declare_directory("out_dir")
     ctx.actions.run_shell(
