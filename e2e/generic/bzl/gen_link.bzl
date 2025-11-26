@@ -11,18 +11,23 @@ def _gen_dir_link_impl(ctx):
         arguments = [out_dir.path],
     )
 
-    out_link = ctx.actions.declare_symlink("out_link")
-    ctx.actions.run_shell(
-        inputs = [out_dir],
-        outputs = [out_link],
-        command = """
-            ln -sr -T "$1" -- "$2"
-        """,
-        arguments = [out_dir.path, out_link.path],
-    )
+    out_files = [out_dir]
+
+    # in Bazel 7 it is not possible to check for symlinks, so don't create one
+    if hasattr(out_dir, "is_symlink"):
+        out_link = ctx.actions.declare_symlink("out_link")
+        ctx.actions.run_shell(
+            inputs = [out_dir],
+            outputs = [out_link],
+            command = """
+                ln -sr -T "$1" -- "$2"
+            """,
+            arguments = [out_dir.path, out_link.path],
+        )
+        out_files.append(out_link)
 
     return [DefaultInfo(
-        files = depset([out_dir, out_link]),
+        files = depset(out_files),
     )]
 
 gen_dir_link = rule(
