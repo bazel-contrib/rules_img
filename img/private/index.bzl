@@ -79,14 +79,21 @@ def _image_index_impl(ctx):
     if ctx.attr.annotations:
         templates["annotations"] = ctx.attr.annotations
 
-    # Expand templates if needed
+    # Prepare newline_delimited_lists_files if annotations_file is provided
+    newline_delimited_lists_files = None
+    if ctx.attr.annotations_file != None:
+        annotations_file = ctx.file.annotations_file
+        newline_delimited_lists_files = {"annotations": annotations_file}
+
+    # Expand templates if needed (either from templates dict or from file)
     config_json = None
-    if templates:
+    if templates or newline_delimited_lists_files:
         config_json = expand_or_write(
             ctx = ctx,
             templates = templates,
             output_name = ctx.label.name + "_config_templates.json",
             only_if_stamping = True,
+            newline_delimited_lists_files = newline_delimited_lists_files,
         )
 
     index_out = ctx.actions.declare_file(ctx.attr.name + "_index.json")
@@ -176,6 +183,23 @@ Output groups:
             doc = """Arbitrary metadata for the image index.
 
 Subject to [template expansion](/docs/templating.md).""",
+        ),
+        "annotations_file": attr.label(
+            doc = """File containing newline-delimited KEY=VALUE annotations for the image index.
+
+The file should contain one annotation per line in KEY=VALUE format. Empty lines are ignored.
+Annotations from this file are merged with annotations specified via the `annotations` attribute.
+
+Example file content:
+```
+version=1.0.0
+build.date=2024-01-15
+source.url=https://github.com/...
+```
+
+Each annotation is subject to [template expansion](/docs/templating.md).
+""",
+            allow_single_file = True,
         ),
         "build_settings": attr.string_keyed_label_dict(
             providers = [BuildSettingInfo],

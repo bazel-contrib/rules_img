@@ -73,8 +73,8 @@ def expand_or_write(*, ctx, templates, output_name, only_if_stamping = False, ne
     build_settings = get_build_settings(ctx)
     stamp_settings = should_stamp(ctx = ctx, template_strings = [json.encode(v) for v in templates.values()])
 
-    # If only_if_stamping is True and no stamping is needed, return None
-    if only_if_stamping and not stamp_settings.want_stamp:
+    # If only_if_stamping is True and no stamping is needed and no newline-delimited files provided, return None
+    if only_if_stamping and not stamp_settings.want_stamp and not newline_delimited_lists_files:
         return None
 
     final_json = ctx.actions.declare_file(output_name)

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"maps"
 	"os"
 	"slices"
 	"strings"
@@ -195,7 +196,7 @@ func expandTemplates(inputPath, outputPath string, stampFiles []string) error {
 	if err != nil {
 		return fmt.Errorf("marshaling output: %w", err)
 	}
-	if err := os.WriteFile(outputPath, outputData, 0644); err != nil {
+	if err := os.WriteFile(outputPath, outputData, 0o644); err != nil {
 		return fmt.Errorf("writing output file: %w", err)
 	}
 	return nil
@@ -289,39 +290,83 @@ func mergeNewlineDelimitedFiles(req *request) error {
 		// Get existing template value for this key
 		existingRaw, exists := req.Templates[key]
 
-		var finalList []string
-
-		if exists {
-			// Try to unmarshal as a list first
-			var existingList []string
-			if err := json.Unmarshal(existingRaw, &existingList); err == nil {
-				// Merge with existing list
-				finalList = append(finalList, existingList...)
-				finalList = append(finalList, lines...)
-			} else {
-				// Try as a single string
-				var existingStr string
-				if err := json.Unmarshal(existingRaw, &existingStr); err == nil {
-					// Convert to list and merge
-					if existingStr != "" {
-						finalList = append(finalList, existingStr)
-					}
-					finalList = append(finalList, lines...)
-				} else {
-					return fmt.Errorf("template value for key %q is neither a string nor list of strings", key)
+		// Check if lines contain KEY=VALUE pairs
+		isKeyValue := false
+		if len(lines) > 0 {
+			for _, line := range lines {
+				if strings.Contains(line, "=") {
+					isKeyValue = true
+					break
 				}
 			}
-		} else {
-			// No existing value, just use the lines from file
-			finalList = lines
 		}
 
-		// Marshal back to JSON and update the template
-		marshaled, err := json.Marshal(finalList)
-		if err != nil {
-			return fmt.Errorf("marshaling merged list for key %q: %w", key, err)
+		if isKeyValue {
+			// Handle as KEY=VALUE map
+			finalMap := make(map[string]string)
+
+			// If existing value exists, try to unmarshal as map
+			if exists {
+				var existingMap map[string]string
+				if err := json.Unmarshal(existingRaw, &existingMap); err == nil {
+					// Merge with existing map
+					maps.Copy(finalMap, existingMap)
+				} else {
+					return fmt.Errorf("template value for key %q is not a map, but file contains KEY=VALUE pairs", key)
+				}
+			}
+
+			// Parse KEY=VALUE lines and merge
+			for _, line := range lines {
+				parts := strings.SplitN(line, "=", 2)
+				if len(parts) != 2 {
+					return fmt.Errorf("invalid KEY=VALUE format in line: %q", line)
+				}
+				finalMap[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
+			}
+
+			// Marshal back to JSON and update the template
+			marshaled, err := json.Marshal(finalMap)
+			if err != nil {
+				return fmt.Errorf("marshaling merged map for key %q: %w", key, err)
+			}
+			req.Templates[key] = json.RawMessage(marshaled)
+		} else {
+			// Handle as list of strings
+			var finalList []string
+
+			if exists {
+				// Try to unmarshal as a list first
+				var existingList []string
+				if err := json.Unmarshal(existingRaw, &existingList); err == nil {
+					// Merge with existing list
+					finalList = append(finalList, existingList...)
+					finalList = append(finalList, lines...)
+				} else {
+					// Try as a single string
+					var existingStr string
+					if err := json.Unmarshal(existingRaw, &existingStr); err == nil {
+						// Convert to list and merge
+						if existingStr != "" {
+							finalList = append(finalList, existingStr)
+						}
+						finalList = append(finalList, lines...)
+					} else {
+						return fmt.Errorf("template value for key %q is neither a string nor list of strings", key)
+					}
+				}
+			} else {
+				// No existing value, just use the lines from file
+				finalList = lines
+			}
+
+			// Marshal back to JSON and update the template
+			marshaled, err := json.Marshal(finalList)
+			if err != nil {
+				return fmt.Errorf("marshaling merged list for key %q: %w", key, err)
+			}
+			req.Templates[key] = json.RawMessage(marshaled)
 		}
-		req.Templates[key] = json.RawMessage(marshaled)
 	}
 
 	return nil

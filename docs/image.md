@@ -12,7 +12,7 @@ and `image_index` to compose a multi-platform container image index.
 <pre>
 load("@rules_img//img:image.bzl", "image_index")
 
-image_index(<a href="#image_index-name">name</a>, <a href="#image_index-annotations">annotations</a>, <a href="#image_index-build_settings">build_settings</a>, <a href="#image_index-manifests">manifests</a>, <a href="#image_index-platforms">platforms</a>, <a href="#image_index-stamp">stamp</a>)
+image_index(<a href="#image_index-name">name</a>, <a href="#image_index-annotations">annotations</a>, <a href="#image_index-annotations_file">annotations_file</a>, <a href="#image_index-build_settings">build_settings</a>, <a href="#image_index-manifests">manifests</a>, <a href="#image_index-platforms">platforms</a>, <a href="#image_index-stamp">stamp</a>)
 </pre>
 
 Creates a multi-platform OCI image index from platform-specific manifests.
@@ -67,6 +67,7 @@ Output groups:
 | :------------- | :------------- | :------------- | :------------- | :------------- |
 | <a id="image_index-name"></a>name |  A unique name for this target.   | <a href="https://bazel.build/concepts/labels#target-names">Name</a> | required |  |
 | <a id="image_index-annotations"></a>annotations |  Arbitrary metadata for the image index.<br><br>Subject to [template expansion](/docs/templating.md).   | <a href="https://bazel.build/rules/lib/dict">Dictionary: String -> String</a> | optional |  `{}`  |
+| <a id="image_index-annotations_file"></a>annotations_file |  File containing newline-delimited KEY=VALUE annotations for the image index.<br><br>The file should contain one annotation per line in KEY=VALUE format. Empty lines are ignored. Annotations from this file are merged with annotations specified via the `annotations` attribute.<br><br>Example file content: <pre><code>version=1.0.0&#10;build.date=2024-01-15&#10;source.url=https://github.com/...</code></pre><br><br>Each annotation is subject to [template expansion](/docs/templating.md).   | <a href="https://bazel.build/concepts/labels">Label</a> | optional |  `None`  |
 | <a id="image_index-build_settings"></a>build_settings |  Build settings for template expansion.<br><br>Maps template variable names to string_flag targets. These values can be used in the annotations attribute using `{{.VARIABLE_NAME}}` syntax (Go template).<br><br>Example: <pre><code class="language-python">build_settings = {&#10;    "REGISTRY": "//settings:docker_registry",&#10;    "VERSION": "//settings:app_version",&#10;}</code></pre><br><br>See [template expansion](/docs/templating.md) for more details.   | Dictionary: String -> Label | optional |  `{}`  |
 | <a id="image_index-manifests"></a>manifests |  List of manifests for specific platforms.   | <a href="https://bazel.build/concepts/labels">List of labels</a> | optional |  `[]`  |
 | <a id="image_index-platforms"></a>platforms |  (Optional) list of target platforms to build the manifest for. Uses a split transition. If specified, the 'manifests' attribute should contain exactly one manifest.   | <a href="https://bazel.build/concepts/labels">List of labels</a> | optional |  `[]`  |
@@ -80,8 +81,9 @@ Output groups:
 <pre>
 load("@rules_img//img:image.bzl", "image_manifest")
 
-image_manifest(<a href="#image_manifest-name">name</a>, <a href="#image_manifest-annotations">annotations</a>, <a href="#image_manifest-base">base</a>, <a href="#image_manifest-build_settings">build_settings</a>, <a href="#image_manifest-cmd">cmd</a>, <a href="#image_manifest-config_fragment">config_fragment</a>, <a href="#image_manifest-created">created</a>, <a href="#image_manifest-entrypoint">entrypoint</a>,
-               <a href="#image_manifest-env">env</a>, <a href="#image_manifest-labels">labels</a>, <a href="#image_manifest-layers">layers</a>, <a href="#image_manifest-platform">platform</a>, <a href="#image_manifest-stamp">stamp</a>, <a href="#image_manifest-stop_signal">stop_signal</a>, <a href="#image_manifest-user">user</a>, <a href="#image_manifest-working_dir">working_dir</a>)
+image_manifest(<a href="#image_manifest-name">name</a>, <a href="#image_manifest-annotations">annotations</a>, <a href="#image_manifest-annotations_file">annotations_file</a>, <a href="#image_manifest-base">base</a>, <a href="#image_manifest-build_settings">build_settings</a>, <a href="#image_manifest-cmd">cmd</a>, <a href="#image_manifest-config_fragment">config_fragment</a>,
+               <a href="#image_manifest-created">created</a>, <a href="#image_manifest-entrypoint">entrypoint</a>, <a href="#image_manifest-env">env</a>, <a href="#image_manifest-labels">labels</a>, <a href="#image_manifest-layers">layers</a>, <a href="#image_manifest-platform">platform</a>, <a href="#image_manifest-stamp">stamp</a>, <a href="#image_manifest-stop_signal">stop_signal</a>, <a href="#image_manifest-user">user</a>,
+               <a href="#image_manifest-working_dir">working_dir</a>)
 </pre>
 
 Builds a single-platform OCI container image from a set of layers.
@@ -126,6 +128,7 @@ Output groups:
 | :------------- | :------------- | :------------- | :------------- | :------------- |
 | <a id="image_manifest-name"></a>name |  A unique name for this target.   | <a href="https://bazel.build/concepts/labels#target-names">Name</a> | required |  |
 | <a id="image_manifest-annotations"></a>annotations |  This field contains arbitrary metadata for the manifest.<br><br>Subject to [template expansion](/docs/templating.md).   | <a href="https://bazel.build/rules/lib/dict">Dictionary: String -> String</a> | optional |  `{}`  |
+| <a id="image_manifest-annotations_file"></a>annotations_file |  File containing newline-delimited KEY=VALUE annotations for the manifest.<br><br>The file should contain one annotation per line in KEY=VALUE format. Empty lines are ignored. Annotations from this file are merged with annotations specified via the `annotations` attribute.<br><br>Example file content: <pre><code>version=1.0.0&#10;build.date=2024-01-15&#10;source.url=https://github.com/...</code></pre><br><br>Each annotation is subject to [template expansion](/docs/templating.md).   | <a href="https://bazel.build/concepts/labels">Label</a> | optional |  `None`  |
 | <a id="image_manifest-base"></a>base |  Base image to inherit layers from. Should provide ImageManifestInfo or ImageIndexInfo.   | <a href="https://bazel.build/concepts/labels">Label</a> | optional |  `None`  |
 | <a id="image_manifest-build_settings"></a>build_settings |  Build settings for template expansion.<br><br>Maps template variable names to string_flag targets. These values can be used in env, labels, and annotations attributes using `{{.VARIABLE_NAME}}` syntax (Go template).<br><br>Example: <pre><code class="language-python">build_settings = {&#10;    "REGISTRY": "//settings:docker_registry",&#10;    "VERSION": "//settings:app_version",&#10;}</code></pre><br><br>See [template expansion](/docs/templating.md) for more details.   | Dictionary: String -> Label | optional |  `{}`  |
 | <a id="image_manifest-cmd"></a>cmd |  Default arguments to the entrypoint of the container. These values act as defaults and may be replaced by any specified when creating a container. If an Entrypoint value is not specified, then the first entry of the Cmd array SHOULD be interpreted as the executable to run.   | List of strings | optional |  `[]`  |

@@ -328,12 +328,19 @@ def _image_manifest_impl(ctx):
         "annotations": ctx.attr.annotations,
     }
 
+    # Prepare newline_delimited_lists_files if annotations_file is provided
+    newline_delimited_lists_files = None
+    if ctx.attr.annotations_file != None:
+        annotations_file = ctx.file.annotations_file
+        newline_delimited_lists_files = {"annotations": annotations_file}
+
     # Try to expand templates - this will return None if no templates need expansion
     config_json = expand_or_write(
         ctx = ctx,
         templates = templates,
         output_name = ctx.label.name + "_config_templates.json",
         only_if_stamping = True,
+        newline_delimited_lists_files = newline_delimited_lists_files,
     )
 
     if config_json != None:
@@ -509,6 +516,23 @@ Subject to [template expansion](/docs/templating.md).
 Subject to [template expansion](/docs/templating.md).
 """,
             default = {},
+        ),
+        "annotations_file": attr.label(
+            doc = """File containing newline-delimited KEY=VALUE annotations for the manifest.
+
+The file should contain one annotation per line in KEY=VALUE format. Empty lines are ignored.
+Annotations from this file are merged with annotations specified via the `annotations` attribute.
+
+Example file content:
+```
+version=1.0.0
+build.date=2024-01-15
+source.url=https://github.com/...
+```
+
+Each annotation is subject to [template expansion](/docs/templating.md).
+""",
+            allow_single_file = True,
         ),
         "stop_signal": attr.string(
             doc = "This field contains the system call signal that will be sent to the container to exit. The signal can be a signal name in the format SIGNAME, for instance SIGKILL or SIGRTMIN+3.",
