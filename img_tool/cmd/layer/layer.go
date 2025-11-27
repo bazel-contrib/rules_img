@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/api"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/compress"
@@ -23,6 +24,7 @@ import (
 func LayerProcess(ctx context.Context, args []string) {
 	annotations := make(annotationsFlag)
 	var layerName string
+	var annotationsFile string
 	var addFiles addFiles
 	var addFromFile addFromFileArgs
 	var importTarFlags importTars
@@ -75,6 +77,7 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 	flagSet.StringVar(&compressorJobsFlag, "compressor-jobs", "1", `Number of compressor jobs. 1 uses single-threaded stdlib gzip. n>1 uses pgzip. "nproc" uses NumCPU.`)
 	flagSet.IntVar(&compressionLevelFlag, "compression-level", -1, `Compression level. For gzip: 0-9. If unset, use library default.`)
 	flagSet.Var(&annotations, "annotation", `Add an annotation as key=value. Can be specified multiple times.`)
+	flagSet.StringVar(&annotationsFile, "annotations-file", "", `File containing newline-delimited KEY=VALUE annotations. Annotations from the file are merged with those specified via --annotation.`)
 	flagSet.StringVar(&metadataOutputFlag, "metadata", "", `Write the metadata to the specified file. The metadata is a JSON file containing info needed to use the layer as part of an OCI image.`)
 	flagSet.StringVar(&contentManifestOutputFlag, "content-manifest", "", `Write a manifest of the contents of the layer to the specified file. The manifest uses a custom binary format listing all blobs, nodes, and trees in the layer after deduplication.`)
 	flagSet.StringVar(&defaultMetadataFlag, "default-metadata", "", `JSON-encoded default metadata to apply to all files in the layer. Can include fields like mode, uid, gid, uname, gname, mtime, and pax_records.`)
@@ -92,6 +95,22 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 	}
 
 	outputFilePath := flagSet.Arg(0)
+
+	// Read annotations from file if provided
+	if annotationsFile != "" {
+		fileAnnotations, err := readAnnotationsFile(annotationsFile)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error reading annotations file: %v\n", err)
+			os.Exit(1)
+		}
+		// Merge file annotations with command-line annotations
+		// Command-line annotations take precedence
+		for k, v := range fileAnnotations {
+			if _, exists := annotations[k]; !exists {
+				annotations[k] = v
+			}
+		}
+	}
 
 	var compressionAlgorithm api.CompressionAlgorithm
 	switch formatFlag {
@@ -404,4 +423,33 @@ func startPrecaching(precacher *digestfs.Precacher, addFiles addFiles, addExecut
 
 	// Start precaching in the background
 	precacher.PrecacheFiles(filesToPrecache)
+}
+
+// readAnnotationsFile reads a file containing newline-delimited KEY=VALUE annotations
+func readAnnotationsFile(path string) (map[string]string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("reading annotations file: %w", err)
+	}
+
+	annotations := make(map[string]string)
+	lines := strings.Split(string(data), "\n")
+	for i, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, "=", 2)
+		if len(parts) != 2 {
+			return nil, fmt.Errorf("invalid annotation format at line %d: %q (expected KEY=VALUE)", i+1, line)
+		}
+		key := strings.TrimSpace(parts[0])
+		value := strings.TrimSpace(parts[1])
+		if key == "" {
+			return nil, fmt.Errorf("empty annotation key at line %d", i+1)
+		}
+		annotations[key] = value
+	}
+
+	return annotations, nil
 }

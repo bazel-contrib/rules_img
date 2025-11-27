@@ -106,6 +106,8 @@ def _image_layer_impl(ctx):
         args.append("--create-parent-directories")
     for key, value in ctx.attr.annotations.items():
         args.extend(["--annotation", "{}={}".format(key, value)])
+    if ctx.attr.annotations_file != None:
+        args.extend(["--annotations-file", ctx.file.annotations_file.path])
     if ctx.attr.default_metadata:
         args.extend(["--default-metadata", ctx.attr.default_metadata])
     for path, metadata in ctx.attr.file_metadata.items():
@@ -116,6 +118,8 @@ def _image_layer_impl(ctx):
     files_args.use_param_file("--add-from-file=%s", use_always = True)
 
     inputs = []
+    if ctx.attr.annotations_file != None:
+        inputs.append(depset([ctx.file.annotations_file]))
 
     for (path_in_image, files) in ctx.attr.srcs.items():
         path_in_image = path_in_image.removeprefix("/")  # the "/" is not included in the tar file.
@@ -275,6 +279,21 @@ When False, only the executable file itself is included, without runfiles.""",
         "annotations": attr.string_dict(
             default = {},
             doc = """Annotations to add to the layer metadata as key-value pairs.""",
+        ),
+        "annotations_file": attr.label(
+            doc = """File containing newline-delimited KEY=VALUE annotations for the layer.
+
+The file should contain one annotation per line in KEY=VALUE format. Empty lines are ignored.
+Annotations from this file are merged with annotations specified via the `annotations` attribute.
+
+Example file content:
+```
+version=1.0.0
+build.date=2024-01-15
+source.url=https://github.com/...
+```
+""",
+            allow_single_file = True,
         ),
         "default_metadata": attr.string(
             default = "",

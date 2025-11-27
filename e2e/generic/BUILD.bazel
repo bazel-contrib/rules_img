@@ -222,6 +222,36 @@ image_push(
     visibility = ["//visibility:public"],
 )
 
+# File containing annotations (one KEY=VALUE per line)
+write_file(
+    name = "manifest_annotations_file",
+    out = "manifest_annotations.txt",
+    content = [
+        "org.opencontainers.image.source=https://github.com/bazel-contrib/rules_img",
+        "org.opencontainers.image.revision=abc123",
+        "custom.build.number=42",
+        "custom.environment=test",
+    ],
+)
+
+# Edge case: Manifest with annotations from file
+image_manifest(
+    name = "manifest_with_annotations_file",
+    annotations_file = ":manifest_annotations_file",
+    layers = [":mixed_layer"],
+)
+
+# Edge case: Manifest with both inline annotations and annotations_file
+image_manifest(
+    name = "manifest_with_merged_annotations",
+    annotations = {
+        "inline.annotation": "inline value",
+        "org.opencontainers.image.title": "Test Image",
+    },
+    annotations_file = ":manifest_annotations_file",
+    layers = [":mixed_layer"],
+)
+
 # Edge case: Multi-platform image index
 image_index(
     name = "multi_platform_index",
@@ -240,6 +270,39 @@ image_push(
     visibility = ["//visibility:public"],
 )
 
+# File containing index annotations
+write_file(
+    name = "index_annotations_file",
+    out = "index_annotations.txt",
+    content = [
+        "org.opencontainers.image.ref.name=multiarch",
+        "custom.index.version=1.0",
+    ],
+)
+
+# Edge case: Image index with annotations from file
+image_index(
+    name = "index_with_annotations_file",
+    annotations_file = ":index_annotations_file",
+    manifests = [
+        ":single_layer_manifest",
+        ":multi_layer_manifest",
+    ],
+)
+
+# Edge case: Image index with both inline annotations and annotations_file
+image_index(
+    name = "index_with_merged_annotations",
+    annotations = {
+        "inline.index.annotation": "inline value",
+    },
+    annotations_file = ":index_annotations_file",
+    manifests = [
+        ":single_layer_manifest",
+        ":multi_layer_manifest",
+    ],
+)
+
 # Edge case: Layer with many annotations
 image_layer(
     name = "heavily_annotated_layer",
@@ -255,6 +318,35 @@ image_layer(
         "custom.annotation.4": "value4",
         "custom.annotation.5": "value5",
     },
+)
+
+# File containing layer annotations
+write_file(
+    name = "layer_annotations_file",
+    out = "layer_annotations.txt",
+    content = [
+        "org.opencontainers.image.authors=rules_img team",
+        "layer.build.tool=bazel",
+        "layer.optimized=true",
+    ],
+)
+
+# Edge case: Layer with annotations from file
+image_layer(
+    name = "layer_with_annotations_file",
+    srcs = {"data.txt": ":large_file"},
+    annotations_file = ":layer_annotations_file",
+)
+
+# Edge case: Layer with both inline annotations and annotations_file
+image_layer(
+    name = "layer_with_merged_annotations",
+    srcs = {"data.txt": ":unicode_file"},
+    annotations = {
+        "inline.layer.annotation": "inline value",
+        "layer.priority": "high",
+    },
+    annotations_file = ":layer_annotations_file",
 )
 
 # Edge case: Manifest with complex configuration
@@ -357,6 +449,8 @@ build_test(
         ":special_chars_layer",
         ":metadata_layer",
         ":heavily_annotated_layer",
+        ":layer_with_annotations_file",
+        ":layer_with_merged_annotations",
     ],
 )
 
@@ -366,6 +460,8 @@ build_test(
         ":single_layer_manifest",
         ":multi_layer_manifest",
         ":annotated_manifest",
+        ":manifest_with_annotations_file",
+        ":manifest_with_merged_annotations",
         ":complex_manifest",
         ":manifest_with_created",
     ],
@@ -375,6 +471,8 @@ build_test(
     name = "index_tests",
     targets = [
         ":multi_platform_index",
+        ":index_with_annotations_file",
+        ":index_with_merged_annotations",
     ],
 )
 
