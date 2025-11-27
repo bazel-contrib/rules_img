@@ -9,6 +9,7 @@ image_layer(
     srcs = {
         "/bin/app": "//:app",
     },
+    include_runfiles = True,
 )
 
 image_manifest(
