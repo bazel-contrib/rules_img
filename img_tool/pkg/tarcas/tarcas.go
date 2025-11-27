@@ -38,6 +38,7 @@ func New[HM hashHelper](appender api.TarAppender, opts ...Option) *CAS[HM] {
 	options := options{
 		structure:                 CASFirst,
 		writeHeaderCallbackFilter: WriteHeaderCallbackFilterDefault,
+		createParentDirectories:   false,
 	}
 	for _, opt := range opts {
 		opt.apply(&options)
@@ -62,6 +63,7 @@ func NewWithDigestFS[HM hashHelper](appender api.TarAppender, digestFS *digestfs
 	options := options{
 		structure:                 CASFirst,
 		writeHeaderCallbackFilter: WriteHeaderCallbackFilterDefault,
+		createParentDirectories:   false,
 	}
 	for _, opt := range opts {
 		opt.apply(&options)
@@ -85,24 +87,26 @@ func (c *CAS[HM]) writeHeaderAndData(hdr *tar.Header, data io.Reader) error {
 	var buf bytes.Buffer
 	tw := tar.NewWriter(&buf)
 
-	// Create parent directory entries
-	var parents []string
-	for dir := path.Dir(hdr.Name); dir != "."; dir = path.Dir(dir) {
-		parents = append(parents, dir+"/")
-	}
-	for _, dir := range slices.Backward(parents) {
-		if _, ok := c.dirs[dir]; ok {
-			continue
+	// Create parent directory entries if enabled
+	if c.createParentDirectories {
+		var parents []string
+		for dir := path.Dir(hdr.Name); dir != "."; dir = path.Dir(dir) {
+			parents = append(parents, dir+"/")
 		}
-		hdr := &tar.Header{
-			Typeflag: tar.TypeDir,
-			Mode:     0o755,
-			Name:     dir,
+		for _, dir := range slices.Backward(parents) {
+			if _, ok := c.dirs[dir]; ok {
+				continue
+			}
+			hdr := &tar.Header{
+				Typeflag: tar.TypeDir,
+				Mode:     0o755,
+				Name:     dir,
+			}
+			if err := tw.WriteHeader(hdr); err != nil {
+				return err
+			}
+			c.dirs[dir] = struct{}{}
 		}
-		if err := tw.WriteHeader(hdr); err != nil {
-			return err
-		}
-		c.dirs[dir] = struct{}{}
 	}
 
 	// Create a tar entry with header and data combined

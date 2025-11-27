@@ -117,3 +117,13 @@ string_flag(
     ],
     visibility = ["//visibility:public"],
 )
+
+string_flag(
+    name = "create_parent_directories",
+    build_setting_default = "disabled",
+    values = [
+        "enabled",
+        "disabled",
+    ],
+    visibility = ["//visibility:public"],
+)

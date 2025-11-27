@@ -54,6 +54,11 @@ common --@rules_img//img/settings:compression_level=auto
 # with the containerd stargz-snapshotter
 common --@rules_img//img/settings:estargz=enabled
 
+# Create parent directory entries in tar files for all files
+# When enabled, parent directories are automatically created in the tar for all file entries.
+# This is disabled by default to avoid overwriting existing directory permissions in lower layers.
+common --@rules_img//img/settings:create_parent_directories=disabled
+
 # Opt-in to stamping of image_push rules
 common --@rules_img//img/settings:stamp=disabled
 
