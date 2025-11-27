@@ -39,6 +39,7 @@ func LayerProcess(ctx context.Context, args []string) {
 	var defaultMetadataFlag string
 	var compressorJobsFlag string
 	var compressionLevelFlag int
+	var createParentDirectoriesFlag bool
 	fileMetadataFlags := make(fileMetadataFlag)
 
 	flagSet := flag.NewFlagSet("layer", flag.ExitOnError)
@@ -78,6 +79,7 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 	flagSet.StringVar(&contentManifestOutputFlag, "content-manifest", "", `Write a manifest of the contents of the layer to the specified file. The manifest uses a custom binary format listing all blobs, nodes, and trees in the layer after deduplication.`)
 	flagSet.StringVar(&defaultMetadataFlag, "default-metadata", "", `JSON-encoded default metadata to apply to all files in the layer. Can include fields like mode, uid, gid, uname, gname, mtime, and pax_records.`)
 	flagSet.Var(&fileMetadataFlags, "file-metadata", `Per-file metadata override in the format path=json. Can be specified multiple times. Overrides any defaults from --default-metadata.`)
+	flagSet.BoolVar(&createParentDirectoriesFlag, "create-parent-directories", false, `Create parent directory entries in the tar file for all files. Default is false.`)
 
 	if err := flagSet.Parse(args); err != nil {
 		flagSet.Usage()
@@ -194,7 +196,7 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 	compressorState, err := handleLayerState(
 		compressionAlgorithm, estargzFlag, addFiles, importTarFlags, executableFlags, symlinkFlags,
 		casImporter, casExporter, outputFile, layerMetadata,
-		compressorJobsFlag, compressionLevelFlag,
+		compressorJobsFlag, compressionLevelFlag, createParentDirectoriesFlag,
 	)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Writing layer: %v\n", err)
@@ -219,7 +221,7 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 func handleLayerState(
 	compressionAlgorithm api.CompressionAlgorithm, useEstargz bool, addFiles addFiles, importTars importTars, addExecutables executables, addSymlinks symlinks,
 	casImporter api.CASStateSupplier, casExporter api.CASStateExporter, outputFile io.Writer, layerMetadata *LayerMetadata,
-	compressorJobsFlag string, compressionLevelFlag int,
+	compressorJobsFlag string, compressionLevelFlag int, createParentDirectories bool,
 ) (compressorState api.AppenderState, err error) {
 	// Create shared digestfs with precaching
 	digestFS := digestfs.New(&tarcas.SHA256Helper{})
@@ -256,7 +258,7 @@ func handleLayerState(
 		}
 	}()
 
-	tw, err := tarcas.CASFactoryWithDigestFS("sha256", compressor, digestFS)
+	tw, err := tarcas.CASFactoryWithDigestFS("sha256", compressor, digestFS, tarcas.CreateParentDirectories(createParentDirectories))
 	if err != nil {
 		return compressorState, fmt.Errorf("creating Content-addressable storage inside tar file: %w", err)
 	}

@@ -33,10 +33,15 @@ type options struct {
 	structure                 FileStructure
 	writeHeaderCallback       WriteHeaderCallback
 	writeHeaderCallbackFilter WriteHeaderCallbackFilter
+	createParentDirectories   bool
 }
+
+type CreateParentDirectories bool
 
 func (s FileStructure) apply(opts *options) { opts.structure = s }
 
 func (f WriteHeaderCallback) apply(opts *options) { opts.writeHeaderCallback = f }
 
 func (f WriteHeaderCallbackFilter) apply(opts *options) { opts.writeHeaderCallbackFilter = f }
+
+func (c CreateParentDirectories) apply(opts *options) { opts.createParentDirectories = bool(c) }

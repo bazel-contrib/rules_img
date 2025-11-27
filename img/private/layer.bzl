@@ -80,6 +80,11 @@ def _image_layer_impl(ctx):
         estargz = ctx.attr._default_estargz[BuildSettingInfo].value
     estargz_enabled = estargz == "enabled"
 
+    create_parent_directories = ctx.attr.create_parent_directories
+    if create_parent_directories == "auto":
+        create_parent_directories = ctx.attr._default_create_parent_directories[BuildSettingInfo].value
+    create_parent_directories_enabled = create_parent_directories == "enabled"
+
     if compression == "gzip":
         out_ext = ".tgz"
         media_type = "application/vnd.oci.image.layer.v1.tar+gzip"
@@ -97,6 +102,8 @@ def _image_layer_impl(ctx):
     args.extend(compression_tuning_args(ctx, compression, estargz_enabled))
     if estargz_enabled:
         args.append("--estargz")
+    if create_parent_directories_enabled:
+        args.append("--create-parent-directories")
     for key, value in ctx.attr.annotations.items():
         args.extend(["--annotation", "{}={}".format(key, value)])
     if ctx.attr.default_metadata:
@@ -252,6 +259,13 @@ values are the targets they point to.""",
             doc = """Whether to use estargz format. If set to 'auto', uses the global default estargz setting.
 When enabled, the layer will be optimized for lazy pulling and will be compatible with the estargz format.""",
         ),
+        "create_parent_directories": attr.string(
+            default = "auto",
+            values = ["auto", "enabled", "disabled"],
+            doc = """Whether to automatically create parent directory entries in the tar file for all files.
+If set to 'auto', uses the global default create_parent_directories setting.
+When enabled, parent directories will be created automatically for all files in the layer.""",
+        ),
         "annotations": attr.string_dict(
             default = {},
             doc = """Annotations to add to the layer metadata as key-value pairs.""",
@@ -273,6 +287,10 @@ Metadata specified here overrides any defaults from default_metadata.""",
         ),
         "_default_estargz": attr.label(
             default = Label("//img/settings:estargz"),
+            providers = [BuildSettingInfo],
+        ),
+        "_default_create_parent_directories": attr.label(
+            default = Label("//img/settings:create_parent_directories"),
             providers = [BuildSettingInfo],
         ),
         "_compression_jobs": attr.label(
