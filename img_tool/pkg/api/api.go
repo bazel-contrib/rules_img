@@ -112,8 +112,8 @@ const (
 type CAS interface {
 	Import(CASStateSupplier) error
 	Export(CASStateExporter) error
-	Store(r io.Reader) (linkPath string, blobHash []byte, blobSize int64, err error)
-	StoreKnownHashAndSize(r io.Reader, blobHash []byte, size int64) (linkPath string, err error)
+	Store(r io.Reader, intendedPath string) (linkPath string, blobHash []byte, blobSize int64, err error)
+	StoreKnownHashAndSize(r io.Reader, blobHash []byte, size int64, intendedPath string) (linkPath string, err error)
 	StoreNode(r io.Reader, hdr *tar.Header) (linkPath string, blobHash []byte, size int64, err error)
 	StoreNodeKnownHash(r io.Reader, hdr *tar.Header, blobHash []byte) (linkPath string, err error)
 	StoreTree(fsys fs.FS) (linkPath string, err error)

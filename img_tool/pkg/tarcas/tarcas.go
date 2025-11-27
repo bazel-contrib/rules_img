@@ -19,18 +19,20 @@ import (
 )
 
 type CAS[HM hashHelper] struct {
-	buf           bytes.Buffer
-	deferredFiles []*tar.Header
-	tarAppender   api.TarAppender
-	hashOrder     [][]byte
-	nodeOrder     [][]byte
-	treeOrder     [][]byte
-	storedHashes  map[string]struct{}
-	storedNodes   map[string]struct{}
-	storedTrees   map[string]struct{}
-	closed        bool
-	digestFS      *digestfs.FileSystem
-	dirs          map[string]struct{}
+	buf            bytes.Buffer
+	deferredFiles  []*tar.Header
+	tarAppender    api.TarAppender
+	hashOrder      [][]byte
+	nodeOrder      [][]byte
+	treeOrder      [][]byte
+	storedHashes   map[string]struct{}
+	storedNodes    map[string]struct{}
+	storedTrees    map[string]struct{}
+	firstBlobPaths map[string]string // maps hash to first occurrence path
+	firstNodePaths map[string]string // maps nodeHash to first occurrence path
+	closed         bool
+	digestFS       *digestfs.FileSystem
+	dirs           map[string]struct{}
 	options
 }
 
@@ -46,16 +48,18 @@ func New[HM hashHelper](appender api.TarAppender, opts ...Option) *CAS[HM] {
 
 	var helper HM
 	return &CAS[HM]{
-		tarAppender:  appender,
-		hashOrder:    [][]byte{},
-		nodeOrder:    [][]byte{},
-		treeOrder:    [][]byte{},
-		storedHashes: make(map[string]struct{}),
-		storedNodes:  make(map[string]struct{}),
-		storedTrees:  make(map[string]struct{}),
-		digestFS:     digestfs.New(helper),
-		dirs:         make(map[string]struct{}),
-		options:      options,
+		tarAppender:    appender,
+		hashOrder:      [][]byte{},
+		nodeOrder:      [][]byte{},
+		treeOrder:      [][]byte{},
+		storedHashes:   make(map[string]struct{}),
+		storedNodes:    make(map[string]struct{}),
+		storedTrees:    make(map[string]struct{}),
+		firstBlobPaths: make(map[string]string),
+		firstNodePaths: make(map[string]string),
+		digestFS:       digestfs.New(helper),
+		dirs:           make(map[string]struct{}),
+		options:        options,
 	}
 }
 
@@ -70,16 +74,18 @@ func NewWithDigestFS[HM hashHelper](appender api.TarAppender, digestFS *digestfs
 	}
 
 	return &CAS[HM]{
-		tarAppender:  appender,
-		hashOrder:    [][]byte{},
-		nodeOrder:    [][]byte{},
-		treeOrder:    [][]byte{},
-		storedHashes: make(map[string]struct{}),
-		storedNodes:  make(map[string]struct{}),
-		storedTrees:  make(map[string]struct{}),
-		digestFS:     digestFS,
-		dirs:         make(map[string]struct{}),
-		options:      options,
+		tarAppender:    appender,
+		hashOrder:      [][]byte{},
+		nodeOrder:      [][]byte{},
+		treeOrder:      [][]byte{},
+		storedHashes:   make(map[string]struct{}),
+		storedNodes:    make(map[string]struct{}),
+		storedTrees:    make(map[string]struct{}),
+		firstBlobPaths: make(map[string]string),
+		firstNodePaths: make(map[string]string),
+		digestFS:       digestFS,
+		dirs:           make(map[string]struct{}),
+		options:        options,
 	}
 }
 
@@ -235,7 +241,7 @@ func (c *CAS[HM]) WriteRegularFromPathDeduplicated(hdr *tar.Header, filePath str
 	var storeErr error
 
 	if isBlobTarHeader(hdr) {
-		linkPath, storeErr = c.StoreKnownHashAndSize(df, hash, size)
+		linkPath, storeErr = c.StoreKnownHashAndSize(df, hash, size, hdr.Name)
 	} else {
 		linkPath, storeErr = c.StoreNodeKnownHash(df, hdr, hash)
 	}
@@ -266,7 +272,7 @@ func (c *CAS[HM]) WriteRegularDeduplicated(hdr *tar.Header, r io.Reader) error {
 	var storeErr error
 
 	if isBlobTarHeader(hdr) {
-		linkPath, _, sz, storeErr = c.Store(r)
+		linkPath, _, sz, storeErr = c.Store(r, hdr.Name)
 	} else {
 		linkPath, _, sz, storeErr = c.StoreNode(r, hdr)
 	}
@@ -288,7 +294,7 @@ func (c *CAS[HM]) WriteRegularDeduplicated(hdr *tar.Header, r io.Reader) error {
 	return c.writeHeaderOrDefer(&header, nil)
 }
 
-func (c *CAS[HM]) Store(r io.Reader) (string, []byte, int64, error) {
+func (c *CAS[HM]) Store(r io.Reader, intendedPath string) (string, []byte, int64, error) {
 	var helper HM
 	var buf bytes.Buffer
 	h := helper.New()
@@ -297,20 +303,23 @@ func (c *CAS[HM]) Store(r io.Reader) (string, []byte, int64, error) {
 		return "", nil, n, err
 	}
 	hash := h.Sum(nil)
-	contentPath, err := c.StoreKnownHashAndSize(&buf, hash, n)
+	contentPath, err := c.StoreKnownHashAndSize(&buf, hash, n, intendedPath)
 	return contentPath, hash, n, err
 }
 
-func (c *CAS[HM]) StoreKnownHashAndSize(r io.Reader, hash []byte, size int64) (string, error) {
-	contentName := casPath("blob", hash)
+func (c *CAS[HM]) StoreKnownHashAndSize(r io.Reader, hash []byte, size int64, intendedPath string) (string, error) {
+	hashStr := string(hash)
 
-	if _, exists := c.storedHashes[string(hash)]; exists {
-		return contentName, nil
+	// Check if we've already stored this blob
+	if firstPath, exists := c.firstBlobPaths[hashStr]; exists {
+		// Already stored, return the first occurrence path for hardlinking
+		return firstPath, nil
 	}
 
+	// First occurrence - write to the intended path as a regular file
 	header := &tar.Header{
 		Typeflag: tar.TypeReg,
-		Name:     contentName,
+		Name:     intendedPath,
 		Size:     size,
 		Mode:     0o755,
 	}
@@ -319,10 +328,12 @@ func (c *CAS[HM]) StoreKnownHashAndSize(r io.Reader, hash []byte, size int64) (s
 		return "", err
 	}
 
-	c.storedHashes[string(hash)] = struct{}{}
+	// Record this as the first occurrence
+	c.storedHashes[hashStr] = struct{}{}
+	c.firstBlobPaths[hashStr] = intendedPath
 	c.hashOrder = append(c.hashOrder, hash)
 
-	return contentName, nil
+	return intendedPath, nil
 }
 
 func (c *CAS[HM]) StoreNode(r io.Reader, hdr *tar.Header) (linkPath string, blobHash []byte, size int64, err error) {
@@ -364,25 +375,29 @@ func (c *CAS[HM]) StoreNodeKnownHash(r io.Reader, hdr *tar.Header, blobHash []by
 	hashTarHeader(hasher, recordedTarHeader)
 	hasher.Write(blobHash)
 	nodeHash := hasher.Sum(nil)
+	nodeHashStr := string(nodeHash)
 
-	linkPath = casPath("node", nodeHash)
-
-	if _, exists := c.storedNodes[string(nodeHash)]; exists {
-		return linkPath, nil
+	// Check if we've already stored this node
+	if firstPath, exists := c.firstNodePaths[nodeHashStr]; exists {
+		// Already stored, return the first occurrence path for hardlinking
+		return firstPath, nil
 	}
 
-	recordedTarHeader.Name = linkPath
+	// First occurrence - write to the intended path (hdr.Name) as a regular file
+	recordedTarHeader.Name = hdr.Name
 
 	if err := c.writeHeaderAndData(&recordedTarHeader, r); err != nil {
-		return linkPath, err
+		return hdr.Name, err
 	}
 
-	c.storedNodes[string(nodeHash)] = struct{}{}
+	// Record this as the first occurrence
+	c.storedNodes[nodeHashStr] = struct{}{}
+	c.firstNodePaths[nodeHashStr] = hdr.Name
 	c.nodeOrder = append(c.nodeOrder, nodeHash)
-	return linkPath, nil
+	return hdr.Name, nil
 }
 
-func (c *CAS[HM]) StoreFileFromPath(filePath string) (string, []byte, int64, error) {
+func (c *CAS[HM]) StoreFileFromPath(filePath string, intendedPath string) (string, []byte, int64, error) {
 	df, err := c.digestFS.OpenFile(filePath)
 	if err != nil {
 		return "", nil, 0, err
@@ -399,7 +414,7 @@ func (c *CAS[HM]) StoreFileFromPath(filePath string) (string, []byte, int64, err
 		return "", nil, 0, err
 	}
 
-	contentPath, err := c.StoreKnownHashAndSize(df, hash, size)
+	contentPath, err := c.StoreKnownHashAndSize(df, hash, size, intendedPath)
 	return contentPath, hash, size, err
 }
 
@@ -467,14 +482,15 @@ func (c *CAS[HM]) StoreTreeKnownHash(fsys fs.FS, treeHash []byte) (linkPath stri
 			return fmt.Errorf("opening file %s: %w", p, err)
 		}
 		defer f.Close()
-		linkName, _, _, err := c.Store(f)
+		treePath := path.Join(treeBase, p)
+		linkName, _, _, err := c.Store(f, treePath)
 		if err != nil {
 			return fmt.Errorf("storing file %s: %w", p, err)
 		}
 
 		header := &tar.Header{
 			Typeflag: tar.TypeLink,
-			Name:     path.Join(treeBase, p),
+			Name:     treePath,
 			Linkname: linkName,
 			Mode:     0o755,
 		}
