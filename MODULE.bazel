@@ -42,7 +42,7 @@ use_repo(
 
 # toolchains_protoc needs to be placed at the top to ensure the proto toolchain is registered first
 bazel_dep(name = "toolchains_protoc", version = "0.6.0", dev_dependency = True)
-bazel_dep(name = "aspect_bazel_lib", version = "2.21.2", dev_dependency = True)
+bazel_dep(name = "bazel_lib", version = "3.0.0", dev_dependency = True)
 bazel_dep(name = "bazel_skylib_gazelle_plugin", version = "1.8.2", dev_dependency = True)
 bazel_dep(name = "buildifier_prebuilt", version = "8.2.1", dev_dependency = True)
 bazel_dep(name = "gazelle", version = "0.47.0", dev_dependency = True)
@@ -53,6 +53,7 @@ bazel_dep(name = "rules_img_pull_tool", version = "0.2.9", dev_dependency = True
 bazel_dep(name = "rules_img_tool", version = "0.2.9", dev_dependency = True)
 bazel_dep(name = "rules_pkg", version = "1.1.0", dev_dependency = True)
 bazel_dep(name = "rules_python", version = "1.7.0", dev_dependency = True)
+bazel_dep(name = "stardoc", version = "0.8.0", dev_dependency = True)
 
 # Register a source-built toolchain of the img tool
 # for use in this repository (in dev mode).

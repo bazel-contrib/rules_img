@@ -1,4 +1,4 @@
-load("@aspect_bazel_lib//lib:docs.bzl", "stardoc_with_diff_test", "update_docs")
+load("//util:stardoc.bzl", "stardoc_with_diff_test", "update_docs")
 
 # gazelle:exclude_from_release
 
