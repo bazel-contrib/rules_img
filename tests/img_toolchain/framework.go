@@ -34,6 +34,7 @@ type TestCase struct {
 type SetupSpec struct {
 	Files         map[string]string
 	TestdataFiles map[string]string // Maps destination path -> testdata source path
+	Symlinks      map[string]string // Maps destination path -> target
 }
 
 type CommandSpec struct {
@@ -119,6 +120,7 @@ func (tf *TestFramework) LoadTestCase(filename string) (*TestCase, error) {
 		Setup: SetupSpec{
 			Files:         make(map[string]string),
 			TestdataFiles: make(map[string]string),
+			Symlinks:      make(map[string]string),
 		},
 	}
 
@@ -196,6 +198,17 @@ func (tf *TestFramework) LoadTestCase(filename string) (*TestCase, error) {
 					fileContent.WriteString("\n")
 				}
 				fileContent.WriteString(line)
+			}
+		case "symlinks":
+			key, value := parseKeyValue(line)
+			if key == "create" {
+				// Format: create = dest_path=target
+				parts := strings.SplitN(value, "=", 2)
+				if len(parts) == 2 {
+					destPath := strings.TrimSpace(parts[0])
+					target := strings.TrimSpace(parts[1])
+					testCase.Setup.Symlinks[destPath] = target
+				}
 			}
 		case "testdata":
 			key, value := parseKeyValue(line)
@@ -385,6 +398,20 @@ func (tf *TestFramework) SetupFiles(setup SetupSpec) error {
 
 		if err := os.WriteFile(destFullPath, srcData, 0644); err != nil {
 			return fmt.Errorf("failed to write testdata file %s: %w", destFullPath, err)
+		}
+	}
+
+	// Setup symlinks
+	for destPath, target := range setup.Symlinks {
+		destFullPath := filepath.Join(tf.tempDir, destPath)
+		destDir := filepath.Dir(destFullPath)
+
+		if err := os.MkdirAll(destDir, 0755); err != nil {
+			return fmt.Errorf("failed to create directory %s: %w", destDir, err)
+		}
+
+		if err := os.Symlink(target, destFullPath); err != nil {
+			return fmt.Errorf("failed to create symlink %s to %s: %w", destFullPath, target, err)
 		}
 	}
 

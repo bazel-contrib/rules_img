@@ -4,6 +4,8 @@ load("@rules_img//img:image.bzl", "image_index", "image_manifest")
 load("@rules_img//img:layer.bzl", "file_metadata", "image_layer")
 load("@rules_img//img:push.bzl", "image_push")
 load("@rules_pkg//pkg:tar.bzl", "pkg_tar")
+load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
+load(":bzl/gen_link.bzl", "gen_dir_link")
 
 # Test files for various scenarios
 write_file(
@@ -30,6 +32,20 @@ write_file(
     out = "script.sh",
     content = ["#!/bin/bash\necho 'Hello World'\n"],
     is_executable = True,
+)
+
+gen_dir_link(
+    name = "link",
+    target_compatible_with = select({
+        "@platforms//os:windows": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
+)
+
+sh_binary(
+    name = "executable_script_with_runfiles",
+    srcs = ["script.sh"],
+    data = [":link"],
 )
 
 write_file(
@@ -81,6 +97,14 @@ image_layer(
     symlinks = {
         "script_link": "/bin/script",
         "data_link": "/data",
+    },
+)
+
+# Edge case: Layer with symlinks in runfiles
+image_layer(
+    name = "symlinks_layer",
+    srcs = {
+        "bin/script": ":executable_script_with_runfiles",
     },
 )
 

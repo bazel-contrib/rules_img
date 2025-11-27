@@ -59,6 +59,7 @@ func (f FileType) String() string {
 var (
 	RegularFile = FileType{"f"}
 	Directory   = FileType{"d"}
+	Symlink     = FileType{"l"}
 )
 
 type Descriptor struct {

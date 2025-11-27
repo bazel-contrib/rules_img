@@ -18,6 +18,7 @@ go_test(
     srcs = ["img_toolchain_test.go"],
     data = [
         ":testcases",
+        "//testdata:img_toolchain_testdata",
         "//testdata:ubuntu_testdata",
         "@rules_img_tool//cmd/img",
     ],

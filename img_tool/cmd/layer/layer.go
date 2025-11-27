@@ -298,6 +298,14 @@ func writeLayer(recorder tree.Recorder, addFiles addFiles, importTars importTars
 			if err := recorder.TreeFromPath(op.File, op.PathInImage); err != nil {
 				return fmt.Errorf("writing directory: %w", err)
 			}
+		case api.Symlink:
+			link, err := op.Readlink()
+			if err != nil {
+				return fmt.Errorf("reading symlink: %w", err)
+			}
+			if err := recorder.Symlink(link, op.PathInImage); err != nil {
+				return fmt.Errorf("writing symlink: %w", err)
+			}
 		default:
 			return fmt.Errorf("unknown type %s for file %s", op.FileType.String(), op.File)
 		}
