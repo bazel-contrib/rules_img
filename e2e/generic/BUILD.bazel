@@ -36,6 +36,10 @@ write_file(
 
 gen_dir_link(
     name = "link",
+    target_compatible_with = select({
+        "@platforms//os:windows": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
 )
 
 sh_binary(
@@ -85,7 +89,6 @@ image_layer(
     name = "mixed_layer",
     srcs = {
         "bin/script": ":executable_script",
-        "bin/script_with_data": ":executable_script_with_runfiles",
         "data/large.txt": ":large_file",
         "data/binary.dat": ":binary_file",
         "data/unicode.txt": ":unicode_file",
@@ -94,6 +97,14 @@ image_layer(
     symlinks = {
         "script_link": "/bin/script",
         "data_link": "/data",
+    },
+)
+
+# Edge case: Layer with symlinks in runfiles
+image_layer(
+    name = "symlinks_layer",
+    srcs = {
+        "bin/script": ":executable_script_with_runfiles",
     },
 )
 
