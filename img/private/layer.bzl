@@ -124,7 +124,7 @@ def _image_layer_impl(ctx):
         executable = None
         runfiles = None
         inputs.append(default_info.files)
-        if files_to_run != None and files_to_run.executable != None and not files_to_run.executable.is_source:
+        if ctx.attr.include_runfiles and files_to_run != None and files_to_run.executable != None and not files_to_run.executable.is_source:
             # This is an executable.
             # Add the executable with the runfiles tree, but ignore any other files.
             executable = files_to_run.executable
@@ -147,7 +147,7 @@ def _image_layer_impl(ctx):
                 files_args.add_all([repo_mapping_manifest], map_each = _files_arg, format_each = "{}.runfiles/_repo_mapping\0%s".format(path_in_image), expand_directories = False)
             continue
 
-        # This isn't an executable.
+        # This isn't an executable (or include_runfiles is False).
         # Let's add all files instead.
         if default_info.files == None:
             fail("Expected {} ({}) to contain an executable or files, got None".format(path_in_image, files))
@@ -241,7 +241,7 @@ image_layer(
     attrs = {
         "srcs": attr.string_keyed_label_dict(
             doc = """Files to include in the layer. Keys are paths in the image (e.g., "/app/bin/server"),
-values are labels to files or executables. Executables automatically include their runfiles.""",
+values are labels to files or executables. Executables automatically include their runfiles unless include_runfiles is set to False.""",
             allow_files = True,
         ),
         "symlinks": attr.string_dict(
@@ -265,6 +265,12 @@ When enabled, the layer will be optimized for lazy pulling and will be compatibl
             doc = """Whether to automatically create parent directory entries in the tar file for all files.
 If set to 'auto', uses the global default create_parent_directories setting.
 When enabled, parent directories will be created automatically for all files in the layer.""",
+        ),
+        "include_runfiles": attr.bool(
+            default = True,
+            doc = """Whether to include runfiles for executable targets.
+When True (default), executables in srcs will include their runfiles tree.
+When False, only the executable file itself is included, without runfiles.""",
         ),
         "annotations": attr.string_dict(
             default = {},
