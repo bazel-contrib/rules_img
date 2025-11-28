@@ -36,6 +36,8 @@ use_repo(
     "pull_hub_repo",
 )
 
+### REMOVE_BEFORE_RELEASE_START
+
 # ✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂
 # only dev_dependencies below this line - rules_img is lean
 # ✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂
@@ -99,6 +101,9 @@ register_toolchains(
     dev_dependency = True,
 )
 
+protoc = use_extension("@toolchains_protoc//protoc:extensions.bzl", "protoc", dev_dependency = True)
+protoc.toolchain(version = "v33.0")
+
 http_file = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_file")
 
 http_file(
@@ -114,3 +119,11 @@ http_file(
     integrity = "sha256-Vc5IJJOis3bBooauVUOr77JwiZLHC3lA9dbAjMZvNFw=",
     urls = ["https://ash-speed.hetzner.com/10GB.bin"],
 )
+
+single_version_override(
+    module_name = "protobuf",
+    patch_strip = 1,
+    patches = ["//:0001-protobuf-19679-rm-protoc-dep.patch"],
+    version = "33.0",
+)
+### REMOVE_BEFORE_RELEASE_END
