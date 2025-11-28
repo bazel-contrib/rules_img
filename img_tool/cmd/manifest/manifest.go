@@ -199,6 +199,7 @@ func ManifestProcess(_ context.Context, args []string) {
 			OS:           operatingSystem,
 			Variant:      variant,
 		},
+		Annotations: manifest.Annotations,
 	}
 	descriptorRaw, err := json.Marshal(descriptor)
 	if err != nil {
