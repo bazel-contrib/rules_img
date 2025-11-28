@@ -38,4 +38,10 @@ stardoc_with_diff_test(
 )
 
 # Update all generated documentation
-update_docs(name = "update")
+update_docs(
+    name = "update",
+    target_compatible_with = select({
+        "@platforms//os:windows": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
+)
