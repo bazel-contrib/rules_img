@@ -143,6 +143,23 @@ def _image_push_impl(ctx):
     )
 
     root_symlinks["dispatch.json"] = dispatch_json
+
+    # Build environment for RunEnvironmentInfo
+    environment = {
+        "IMG_REAPI_ENDPOINT": ctx.attr._push_settings[PushSettingsInfo].remote_cache,
+        "IMG_CREDENTIAL_HELPER": ctx.attr._push_settings[PushSettingsInfo].credential_helper,
+    }
+    inherited_environment = [
+        "IMG_REAPI_ENDPOINT",
+        "IMG_CREDENTIAL_HELPER",
+        "DOCKER_CONFIG",
+    ]
+
+    # Add REGISTRY_AUTH_FILE if docker_config_path is set
+    docker_config_path = ctx.attr._docker_config_path[BuildSettingInfo].value
+    if docker_config_path:
+        environment["REGISTRY_AUTH_FILE"] = docker_config_path
+
     return [
         DefaultInfo(
             files = depset([dispatch_json]),
@@ -150,14 +167,8 @@ def _image_push_impl(ctx):
             runfiles = ctx.runfiles(root_symlinks = root_symlinks),
         ),
         RunEnvironmentInfo(
-            environment = {
-                "IMG_REAPI_ENDPOINT": ctx.attr._push_settings[PushSettingsInfo].remote_cache,
-                "IMG_CREDENTIAL_HELPER": ctx.attr._push_settings[PushSettingsInfo].credential_helper,
-            },
-            inherited_environment = [
-                "IMG_REAPI_ENDPOINT",
-                "IMG_CREDENTIAL_HELPER",
-            ],
+            environment = environment,
+            inherited_environment = inherited_environment,
         ),
         DeployInfo(
             image = image_provider,
@@ -364,6 +375,10 @@ See [template expansion](/docs/templating.md) for available stamp variables.
         "_stamp_settings": attr.label(
             default = Label("//img/private/settings:stamp"),
             providers = [StampSettingInfo],
+        ),
+        "_docker_config_path": attr.label(
+            default = Label("//img/settings:docker_config_path"),
+            providers = [BuildSettingInfo],
         ),
     },
     executable = True,
