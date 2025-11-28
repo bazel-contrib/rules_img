@@ -265,6 +265,10 @@ func (r Recorder) Symlink(target, linkName string) error {
 
 func relativeSymlinkTarget(target, linkName string) string {
 	sourceDir := path.Dir(linkName)
+	if sourceDir == "." {
+		// special case: symlinks from the root should use target as-is
+		return target
+	}
 	sourceParts := strings.Split(path.Clean(sourceDir), "/")
 	targetParts := strings.Split(path.Clean(target), "/")
 
