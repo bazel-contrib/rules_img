@@ -3,9 +3,7 @@ name: Continuous Integration
 on:
   pull_request:
     types: [opened, synchronize, reopened, labeled]
-  push:
-    branches:
-      - main
+  merge_group:
   schedule:
     # Every day at 10:09 UTC.
     - cron: '9 10 * * *'
