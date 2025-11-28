@@ -1,5 +1,6 @@
 """Multi deploy rule for deploying multiple operations as a unified command."""
 
+load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("@platforms//host:constraints.bzl", "HOST_CONSTRAINTS")
 load("//img/private:root_symlinks.bzl", "calculate_root_symlinks")
 load("//img/private/common:build.bzl", "TOOLCHAIN", "TOOLCHAINS")
@@ -124,7 +125,7 @@ def _multi_deploy_impl(ctx):
 
     # Merge environment settings from push and load
     environment = {}
-    inherited_environment = []
+    inherited_environment = ["DOCKER_CONFIG"]
 
     push_settings = ctx.attr._push_settings[PushSettingsInfo]
     load_settings = ctx.attr._load_settings[LoadSettingsInfo]
@@ -136,6 +137,11 @@ def _multi_deploy_impl(ctx):
     if push_settings.credential_helper or load_settings.credential_helper:
         environment["IMG_CREDENTIAL_HELPER"] = push_settings.credential_helper or load_settings.credential_helper
         inherited_environment.append("IMG_CREDENTIAL_HELPER")
+
+    # Add REGISTRY_AUTH_FILE if docker_config_path is set
+    docker_config_path = ctx.attr._docker_config_path[BuildSettingInfo].value
+    if docker_config_path:
+        environment["REGISTRY_AUTH_FILE"] = docker_config_path
 
     return [
         DefaultInfo(
@@ -252,6 +258,10 @@ Available strategies:
         "_stamp_settings": attr.label(
             default = Label("//img/private/settings:stamp"),
             providers = [StampSettingInfo],
+        ),
+        "_docker_config_path": attr.label(
+            default = Label("//img/settings:docker_config_path"),
+            providers = [BuildSettingInfo],
         ),
     },
     executable = True,

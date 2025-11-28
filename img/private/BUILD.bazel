@@ -144,6 +144,7 @@ bzl_library(
     deps = [
         "//img/private/common:build",
         "//img/private/common:transitions",
+        "@bazel_skylib//rules:common_settings",
     ],
 )
 
@@ -176,6 +177,7 @@ bzl_library(
         "//img/private/providers:load_settings_info",
         "//img/private/providers:push_settings_info",
         "//img/private/providers:stamp_setting_info",
+        "@bazel_skylib//rules:common_settings",
         "@platforms//host:constraints_lib",
     ],
 )

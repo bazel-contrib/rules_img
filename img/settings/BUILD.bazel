@@ -75,6 +75,12 @@ string_flag(
 )
 
 string_flag(
+    name = "docker_config_path",
+    build_setting_default = "",
+    visibility = ["//img/private:__subpackages__"],
+)
+
+string_flag(
     name = "shallow_oci_layout",
     build_setting_default = "forbidden",
     values = [

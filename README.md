@@ -84,6 +84,12 @@ common --@rules_img//img/settings:remote_cache=grpcs://remote.buildbuddy.io
 # This can be the same as Bazel's credential helper.
 # Falls back to $IMG_CREDENTIAL_HELPER env var.
 common --@rules_img//img/settings:credential_helper=tweag-credential-helper
+
+# Path to Docker configuration file for registry authentication.
+# If set, this will be used as REGISTRY_AUTH_FILE for authenticating to registries
+# when downloading image layers during build time (e.g., for lazy base image pulling).
+# Typically set to ~/.docker/config.json or similar.
+common --@rules_img//img/settings:docker_config_path=/home/user/.docker/config.json
 ```
 
 </details>
@@ -240,6 +246,32 @@ podman login registry.example.com
 
 This stores credentials in `${XDG_RUNTIME_DIR}/containers/auth.json`, which `rules_img` also automatically discovers.
 
+#### Bazel Sandbox and Authentication
+
+When Bazel runs actions in a sandbox (which is the default behavior), it may hide certain environment information like the current username and home directory. This can prevent `rules_img` from automatically finding your Docker credential files.
+
+If you encounter authentication failures, you can explicitly configure the path to your Docker configuration file:
+
+```bash
+# In your .bazelrc or on the command line
+common --@rules_img//img/settings:docker_config_path=/home/username/.docker/config.json
+```
+
+Replace `/home/username/` with your actual home directory path. This setting affects:
+
+1. **Build-time blob downloads**: When downloading image layers during builds (e.g., lazy base image pulling or the `download_blobs` rule), the `REGISTRY_AUTH_FILE` environment variable is set to this path.
+2. **Push operations**: When running `image_push` targets with `bazel run`, this ensures authentication works correctly.
+3. **Load operations**: When running `image_load` targets with `bazel run`, credentials are available for any required registry access.
+4. **Multi-deploy operations**: When running `multi_deploy` targets, all combined operations can authenticate properly.
+
+Additionally, the `DOCKER_CONFIG` environment variable is inherited from your shell environment for all push, load, and multi_deploy operations. This means you can also use the standard Docker environment variable as an alternative:
+
+```bash
+# Alternative: use DOCKER_CONFIG environment variable
+export DOCKER_CONFIG=/path/to/docker/config/dir
+bazel run //:push_image
+```
+
 #### Troubleshooting
 
 If you're experiencing authentication issues:
@@ -248,6 +280,7 @@ If you're experiencing authentication issues:
 2. **Check permissions**: Ensure the credential file is readable by the user running Bazel
 3. **Environment variables**: If using `$DOCKER_CONFIG`, ensure it points to a directory containing `config.json`
 4. **Test with Docker/Podman**: If `docker pull` or `podman pull` works, `rules_img` should work too
+5. **Bazel sandbox issues**: If authentication works outside Bazel but fails during builds, try setting `--@rules_img//img/settings:docker_config_path` to your Docker config file path
 
 For advanced authentication scenarios (credential helpers, custom authentication), refer to the [go-containerregistry authentication documentation](https://github.com/google/go-containerregistry/blob/main/cmd/crane/doc/crane.md#authenticating).
 

@@ -6,6 +6,7 @@ layer data needs to be available during builds but you want to avoid downloading
 upfront during repository fetching.
 """
 
+load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("//img/private/common:build.bzl", "TOOLCHAIN", "TOOLCHAINS")
 load("//img/private/common:transitions.bzl", "reset_platform_transition")
 
@@ -16,9 +17,17 @@ def _download_blob(ctx, output):
     digest = output.basename.replace("sha256_", "sha256:")
 
     img_toolchain_info = ctx.toolchains[TOOLCHAIN].imgtoolchaininfo
+
+    # Only set REGISTRY_AUTH_FILE if docker_config_path is non-empty
+    docker_config_path = ctx.attr._docker_config_path[BuildSettingInfo].value
+    env = {}
+    if docker_config_path:
+        env["REGISTRY_AUTH_FILE"] = docker_config_path
+
     ctx.actions.run(
         outputs = [output],
         executable = img_toolchain_info.tool_exe,
+        use_default_shell_env = True,
         arguments = [
             "download-blob",
             "--digest",
@@ -31,6 +40,7 @@ def _download_blob(ctx, output):
             "--registry={}".format(r)
             for r in ctx.attr.registries
         ],
+        env = env,
         mnemonic = "DownloadBlob",
     )
 
@@ -63,6 +73,10 @@ download_blobs = rule(
         ),
         "repository": attr.string(
             doc = "Repository name of the image.",
+        ),
+        "_docker_config_path": attr.label(
+            default = Label("//img/settings:docker_config_path"),
+            providers = [BuildSettingInfo],
         ),
     },
     toolchains = TOOLCHAINS,

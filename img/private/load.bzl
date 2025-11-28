@@ -197,6 +197,22 @@ def _image_load_impl(ctx):
     )
     root_symlinks["dispatch.json"] = dispatch_json
 
+    # Build environment for RunEnvironmentInfo
+    environment = {
+        "IMG_REAPI_ENDPOINT": ctx.attr._load_settings[LoadSettingsInfo].remote_cache,
+        "IMG_CREDENTIAL_HELPER": ctx.attr._load_settings[LoadSettingsInfo].credential_helper,
+    }
+    inherited_environment = [
+        "IMG_REAPI_ENDPOINT",
+        "IMG_CREDENTIAL_HELPER",
+        "DOCKER_CONFIG",
+    ]
+
+    # Add REGISTRY_AUTH_FILE if docker_config_path is set
+    docker_config_path = ctx.attr._docker_config_path[BuildSettingInfo].value
+    if docker_config_path:
+        environment["REGISTRY_AUTH_FILE"] = docker_config_path
+
     providers = [
         DefaultInfo(
             files = depset([dispatch_json]),
@@ -204,14 +220,8 @@ def _image_load_impl(ctx):
             runfiles = ctx.runfiles(root_symlinks = root_symlinks),
         ),
         RunEnvironmentInfo(
-            environment = {
-                "IMG_REAPI_ENDPOINT": ctx.attr._load_settings[LoadSettingsInfo].remote_cache,
-                "IMG_CREDENTIAL_HELPER": ctx.attr._load_settings[LoadSettingsInfo].credential_helper,
-            },
-            inherited_environment = [
-                "IMG_REAPI_ENDPOINT",
-                "IMG_CREDENTIAL_HELPER",
-            ],
+            environment = environment,
+            inherited_environment = inherited_environment,
         ),
         DeployInfo(
             image = image_provider,
@@ -400,6 +410,10 @@ Available strategies:
         "_oci_layout_settings": attr.label(
             default = Label("//img/private/settings:oci_layout"),
             providers = [OCILayoutSettingsInfo],
+        ),
+        "_docker_config_path": attr.label(
+            default = Label("//img/settings:docker_config_path"),
+            providers = [BuildSettingInfo],
         ),
     },
     executable = True,
