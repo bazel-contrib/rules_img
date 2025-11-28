@@ -1,4 +1,5 @@
 load("@bazel_skylib//rules:build_test.bzl", "build_test")
+load("@bazel_skylib//rules:copy_directory.bzl", "copy_directory")
 load("@bazel_skylib//rules:write_file.bzl", "write_file")
 load("@rules_img//img:image.bzl", "image_index", "image_manifest")
 load("@rules_img//img:layer.bzl", "file_metadata", "image_layer")
@@ -32,6 +33,12 @@ write_file(
     out = "script.sh",
     content = ["#!/bin/bash\necho 'Hello World'\n"],
     is_executable = True,
+)
+
+copy_directory(
+    name = "tree_artifact_source",
+    src = "some_directory",
+    out = "tree_artifact",
 )
 
 gen_dir_link(
@@ -105,6 +112,15 @@ image_layer(
     name = "symlinks_layer",
     srcs = {
         "bin/script": ":executable_script_with_runfiles",
+    },
+)
+
+# Edge case: Layer with tree artifact
+image_layer(
+    name = "tree_artifact_layer",
+    srcs = {
+        "a_directory": ":tree_artifact_source",
+        "some_other/nested_path": ":tree_artifact_source",
     },
 )
 
