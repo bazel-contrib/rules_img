@@ -181,13 +181,22 @@ def _release_files(ctx):
     )
     output_group_info["lockfile"] = depset([lockfile])
 
+    # Build the override map for source files
+    override_attributes = {ctx.attr.lockfile_name: DEFAULT_ATTRIBUTES}
+    override_dest_src_map = {ctx.attr.lockfile_name: lockfile}
+
+    # Add MODULE.bazel override if provided
+    if ctx.file.module_bazel:
+        override_attributes["MODULE.bazel"] = DEFAULT_ATTRIBUTES
+        override_dest_src_map["MODULE.bazel"] = ctx.file.module_bazel
+
     return [
         DefaultInfo(files = depset(dest_src_map.values())),
         OutputGroupInfo(**output_group_info),
         PackageFilesInfo(attributes = attributes, dest_src_map = dest_src_map),
         OverrideSourceFilesInfo(
-            attributes = {ctx.attr.lockfile_name: DEFAULT_ATTRIBUTES},
-            dest_src_map = {ctx.attr.lockfile_name: lockfile},
+            attributes = override_attributes,
+            dest_src_map = override_dest_src_map,
         ),
         OfflineBuildDistdirInfo(
             basename_file_map = distdir_contents,
@@ -210,6 +219,10 @@ release_files = rule(
         ),
         "lockfile_name": attr.string(
             mandatory = True,
+        ),
+        "module_bazel": attr.label(
+            allow_single_file = True,
+            doc = "Optional MODULE.bazel file to override in the release",
         ),
         "version": attr.label(
             default = "@rules_img_version",

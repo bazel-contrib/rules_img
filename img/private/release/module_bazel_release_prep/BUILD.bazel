@@ -1,0 +1,14 @@
+load("@rules_go//go:def.bzl", "go_binary")
+load(":defs.bzl", "clean_module_bazel")
+
+go_binary(
+    name = "module_bazel_release_prep",
+    srcs = ["main.go"],
+    visibility = ["//visibility:public"],
+)
+
+clean_module_bazel(
+    name = "cleaned_module",
+    src = "//:MODULE.bazel",
+    visibility = ["//visibility:public"],
+)

@@ -45,6 +45,7 @@ release_files(
     name = "prebuilt_toolchain",
     executable = "@rules_img_tool//cmd/img",
     lockfile_name = "prebuilt_lockfile.json",
+    module_bazel = "//img/private/release/module_bazel_release_prep:cleaned_module",
     tags = ["manual"],
 )
 
