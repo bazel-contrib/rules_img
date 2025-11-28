@@ -213,9 +213,10 @@ func assembleOCILayout(manifestPath, configPath, outputPath, format string, laye
 		MediaType:     "application/vnd.oci.image.index.v1+json",
 		Manifests: []v1.Descriptor{
 			{
-				MediaType: manifest.MediaType,
-				Digest:    manifestDigest,
-				Size:      int64(len(manifestData)),
+				MediaType:   manifest.MediaType,
+				Digest:      manifestDigest,
+				Size:        int64(len(manifestData)),
+				Annotations: manifest.Annotations,
 			},
 		},
 	}
