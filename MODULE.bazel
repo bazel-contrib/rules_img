@@ -82,7 +82,7 @@ go_sdk = use_extension(
     "go_sdk",
     dev_dependency = True,
 )
-go_sdk.download(version = "1.24.2")
+go_sdk.download(version = "1.25.4")
 go_sdk.nogo(
     includes = [
         "@rules_img//:__subpackages__",
@@ -96,8 +96,8 @@ toolchains = use_extension("@hermetic_cc_toolchain//toolchain:ext.bzl", "toolcha
 use_repo(toolchains, "zig_sdk")
 
 register_toolchains(
-    "@zig_sdk//toolchain:linux_amd64_musl",
-    "@zig_sdk//toolchain:linux_arm64_musl",
+    "@zig_sdk//toolchain:linux_amd64_gnu.2.17",
+    "@zig_sdk//toolchain:linux_arm64_gnu.2.17",
     dev_dependency = True,
 )
 

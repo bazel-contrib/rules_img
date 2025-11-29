@@ -1,6 +1,6 @@
 module github.com/bazel-contrib/rules_img/img_tool
 
-go 1.24.2
+go 1.25.4
 
 require (
 	cloud.google.com/go/longrunning v0.7.0
