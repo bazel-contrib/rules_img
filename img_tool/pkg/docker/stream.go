@@ -7,6 +7,7 @@ import (
 	"io"
 	"path"
 
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/progress"
 	registryv1 "github.com/malt3/go-containerregistry/pkg/v1"
 	"github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
@@ -94,7 +95,8 @@ func (t *TarWriter) WriteLayer(layerDigest registryv1.Hash, size int64, reader i
 	}
 
 	// Stream the layer content
-	n, err := io.Copy(t.tw, reader)
+	pw := progress.Writer(size, layerDigest.Hex[:12])
+	n, err := io.Copy(io.MultiWriter(t.tw, pw), reader)
 	if err != nil {
 		return fmt.Errorf("streaming layer content: %w", err)
 	}

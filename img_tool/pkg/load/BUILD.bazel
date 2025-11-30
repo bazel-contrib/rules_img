@@ -12,6 +12,7 @@ go_library(
         "//pkg/api",
         "//pkg/containerd",
         "//pkg/docker",
+        "//pkg/progress",
         "@com_github_containerd_platforms//:platforms",
         "@com_github_malt3_go_containerregistry//pkg/v1:pkg",
         "@com_github_opencontainers_go_digest//:go-digest",
