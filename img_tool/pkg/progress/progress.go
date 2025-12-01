@@ -26,3 +26,24 @@ func Writer(size int64, desc string) io.Writer {
 		}),
 	)
 }
+
+type Indeterminate struct{ p *progressbar.ProgressBar }
+
+func (i *Indeterminate) SetTotal(total int64)       { i.p.ChangeMax64(total) }
+func (i *Indeterminate) SetComplete(complete int64) { i.p.Set64(complete) }
+
+func NewIndeterminate() *Indeterminate {
+	p := progressbar.NewOptions64(
+		-1,
+		progressbar.OptionSetTheme(progressbar.ThemeASCII),
+		progressbar.OptionShowCount(),
+		progressbar.OptionShowBytes(true),
+		progressbar.OptionSetWidth(60),
+		progressbar.OptionSetPredictTime(false),
+		progressbar.OptionSetWriter(os.Stderr),
+		progressbar.OptionOnCompletion(func() {
+			fmt.Fprint(os.Stderr, "\n")
+		}),
+	)
+	return &Indeterminate{p: p}
+}
