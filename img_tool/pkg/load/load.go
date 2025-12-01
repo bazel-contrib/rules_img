@@ -17,6 +17,7 @@ import (
 
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/api"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/containerd"
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/progress"
 )
 
 const defaultWorkers = 4
@@ -172,7 +173,8 @@ func storeBlob(ctx context.Context, store containerd.Store, desc ocispec.Descrip
 	}
 	defer reader.Close()
 
-	if _, err := io.Copy(bufferedWriter, reader); err != nil {
+	pw := progress.Writer(desc.Size, desc.Digest.Hex()[:12])
+	if _, err := io.Copy(io.MultiWriter(bufferedWriter, pw), reader); err != nil {
 		return fmt.Errorf("copying data to writer: %w", err)
 	}
 
