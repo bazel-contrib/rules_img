@@ -12,6 +12,7 @@ import (
 	"github.com/malt3/go-containerregistry/pkg/v1/remote"
 
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/api"
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/progress"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/proto/blobcache"
 	blobcache_proto "github.com/bazel-contrib/rules_img/img_tool/pkg/proto/blobcache"
 	remoteexecution_proto "github.com/bazel-contrib/rules_img/img_tool/pkg/proto/remote-apis/build/bazel/remote/execution/v2"
@@ -107,8 +108,18 @@ func (u *uploader) PushAll(ctx context.Context, ops []api.IndexedPushDeployOpera
 		}
 	}
 
+	prog := progress.NewIndeterminate()
+	progCh := make(chan registryv1.Update, 16) // buffer so we don't block writes
+	go func() {
+		for update := range progCh {
+			prog.SetTotal(update.Total)
+			prog.SetComplete(update.Complete)
+		}
+	}()
+
 	// push all collected tags in parallel
-	return allTags, remote.MultiWrite(todo, u.remoteOptions...)
+	opts := append(u.remoteOptions, remote.WithProgress(progCh))
+	return allTags, remote.MultiWrite(todo, opts...)
 }
 
 // tags returns the list of tags to push for the given operation, applying any overrides and extra tags.

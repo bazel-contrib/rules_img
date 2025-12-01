@@ -7,6 +7,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/api",
+        "//pkg/progress",
         "//pkg/proto/blobcache",
         "//pkg/proto/remote-apis/build/bazel/remote/execution/v2",
         "@com_github_malt3_go_containerregistry//pkg/name",
