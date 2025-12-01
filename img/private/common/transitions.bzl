@@ -20,13 +20,16 @@ def _decode_original_patforms(settings):
     return maybe_original_platforms.split(",")
 
 def _multi_platform_image_transition_impl(settings, attr):
-    return [
-        {
+    if len(attr.platforms) == 0:
+        # No platforms specified, no transition needed
+        return []
+    return {
+        str(i): {
             _platforms_setting: str(platform),
             _original_platforms_setting: _encode_platforms_if_different(settings, platform),
         }
-        for platform in attr.platforms
-    ]
+        for (i, platform) in enumerate(attr.platforms)
+    }
 
 multi_platform_image_transition = transition(
     implementation = _multi_platform_image_transition_impl,

@@ -67,8 +67,18 @@ def _build_oci_layout(ctx, format, index_out, manifests):
 
     return oci_layout_output
 
+def _get_manifests(ctx):
+    if len(ctx.attr.platforms) == 0:
+        return ctx.attr.manifests
+    manifests = []
+    for i in range(len(ctx.attr.platforms)):
+        manifests.extend(ctx.split_attr.manifests[str(i)])
+    return manifests
+
 def _image_index_impl(ctx):
-    pull_infos = [manifest[PullInfo] for manifest in ctx.attr.manifests if PullInfo in manifest]
+    manifests = _get_manifests(ctx)
+    manifest_infos = [manifest[ImageManifestInfo] for manifest in manifests]
+    pull_infos = [manifest[PullInfo] for manifest in manifests if PullInfo in manifest]
     pull_info = pull_infos[0] if len(pull_infos) > 0 else None
     for other in pull_infos:
         if pull_info != other:
@@ -98,24 +108,23 @@ def _image_index_impl(ctx):
 
     index_out = ctx.actions.declare_file(ctx.attr.name + "_index.json")
     digest_out = ctx.actions.declare_file(ctx.label.name + "_digest")
-    manifests = [manifest[ImageManifestInfo] for manifest in ctx.attr.manifests]
     write_index_json(
         ctx,
         output = index_out,
         digest = digest_out,
-        manifests = manifests,
+        manifests = manifest_infos,
         config_json = config_json,
     )
     providers = [
         DefaultInfo(files = depset([index_out])),
         OutputGroupInfo(
             digest = depset([digest_out]),
-            oci_layout = depset([_build_oci_layout(ctx, "directory", index_out, manifests)]),
-            oci_tarball = depset([_build_oci_layout(ctx, "tar", index_out, manifests)]),
+            oci_layout = depset([_build_oci_layout(ctx, "directory", index_out, manifest_infos)]),
+            oci_tarball = depset([_build_oci_layout(ctx, "tar", index_out, manifest_infos)]),
         ),
         ImageIndexInfo(
             index = index_out,
-            manifests = manifests,
+            manifests = manifest_infos,
         ),
     ]
     if pull_info != None:
