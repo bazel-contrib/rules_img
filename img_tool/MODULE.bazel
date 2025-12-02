@@ -1,13 +1,13 @@
 module(
     name = "rules_img_tool",
-    version = "0.2.10",
+    version = "0.2.11",
     compatibility_level = 1,
 )
 
 # needs to be placed at the top to ensure the proto toolchain is registered first
 bazel_dep(name = "toolchains_protoc", version = "0.6.0", dev_dependency = True)
 
-bazel_dep(name = "rules_img", version = "0.2.10")
+bazel_dep(name = "rules_img", version = "0.2.11")
 bazel_dep(name = "bazel_lib", version = "3.0.0")
 bazel_dep(name = "bazel_skylib", version = "1.7.1")
 bazel_dep(name = "gazelle", version = "0.47.0")
