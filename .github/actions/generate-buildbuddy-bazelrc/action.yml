@@ -11,7 +11,7 @@ inputs:
     default: '.github/workflows/.bazelrc.buildbuddy.generated'
   api-key:
     description: 'BuildBuddy API key to inject into the bazelrc file'
-    required: true
+    required: false
 runs:
   using: 'node20'
   main: 'index.js'

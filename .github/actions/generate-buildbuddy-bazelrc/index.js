@@ -18,7 +18,30 @@ function main() {
   try {
     const templatePath = getInput('template-path', true);
     const outputPath = getInput('output-path', true);
-    const apiKey = getInput('api-key', true);
+    const apiKey = getInput('api-key', false);
+
+    // If api-key is not provided or empty, create an empty bazelrc file
+    if (!apiKey) {
+      console.log('No API key provided, generating empty bazelrc file');
+
+      // Ensure the output directory exists
+      const outputDir = path.dirname(outputPath);
+      if (!fs.existsSync(outputDir)) {
+        fs.mkdirSync(outputDir, { recursive: true });
+      }
+
+      console.log(`Writing empty bazelrc to: ${outputPath}`);
+
+      try {
+        fs.writeFileSync(outputPath, '', 'utf8');
+      } catch (error) {
+        setFailed(`Failed to write output file: ${error.message}`);
+        return;
+      }
+
+      console.log('Successfully generated empty bazelrc file');
+      return;
+    }
 
     console.log(`Reading template from: ${templatePath}`);
 
