@@ -1,0 +1,9 @@
+common --bes_results_url=https://rules-img.buildbuddy.io/invocation/
+common --bes_backend=grpcs://rules-img.buildbuddy.io
+common --remote_timeout=10m
+common --remote_cache=grpcs://rules-img.buildbuddy.io
+common --remote_header=x-buildbuddy-api-key=BUILDBUDDY_API_KEY
+
+# Build metadata for better tracking and organization
+common --build_metadata=ROLE=CI
+common --build_metadata=VISIBILITY=PUBLIC

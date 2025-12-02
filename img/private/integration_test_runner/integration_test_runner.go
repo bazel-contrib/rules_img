@@ -191,15 +191,31 @@ func bazelCommand(name string, command []string, startupFlags []string) commandL
 	return commandLine{name: name, args: args}
 }
 
-func bazelCommands(bazel string, startupFlags []string) (setup []commandLine, tests []commandLine, shutdown []commandLine) {
+func bazelCommands(bazel string, startupFlags []string, moduleName string) (setup []commandLine, tests []commandLine, shutdown []commandLine) {
 	var setupCommands []commandLine
 
+	// Build metadata flag to tag the module being tested
+	var metadataFlag string
+	if moduleName != "" {
+		metadataFlag = fmt.Sprintf("--build_metadata=TAG_MODULE_NAME=%s", moduleName)
+	}
+
+	buildCmd := []string{"build", "//..."}
+	if metadataFlag != "" {
+		buildCmd = append(buildCmd, metadataFlag)
+	}
+
 	setupCommands = append(setupCommands, bazelCommand(bazel, []string{"info"}, startupFlags))
-	setupCommands = append(setupCommands, bazelCommand(bazel, []string{"build", "//..."}, startupFlags))
+	setupCommands = append(setupCommands, bazelCommand(bazel, buildCmd, startupFlags))
+
+	testCmd := []string{"test", "//..."}
+	if metadataFlag != "" {
+		testCmd = append(testCmd, metadataFlag)
+	}
 
 	return setupCommands, []commandLine{
 		bazelCommand(bazel, []string{"query", "@rules_img//..."}, startupFlags), // ensure all referenced BUILD files are included in the release tar
-		bazelCommand(bazel, []string{"test", "//..."}, startupFlags),
+		bazelCommand(bazel, testCmd, startupFlags),
 	}, []commandLine{bazelCommand(bazel, []string{"shutdown"}, startupFlags)}
 }
 
@@ -214,7 +230,18 @@ func runBazelCommands(bazel, workspaceDir string) error {
 	startupFlags = append(startupFlags, "--bazelrc="+filepath.Join(".bazelrc"))
 	startupFlags = append(startupFlags, "--bazelrc="+filepath.Join(".bazelrc.generated"))
 
-	setupCommands, testCommands, shutdownCommands := bazelCommands(bazel, startupFlags)
+	// Inject additional bazelrc if specified via environment variable
+	if injectedBazelrc := os.Getenv("BAZEL_INTEGRATION_TEST_INJECT_BAZELRC"); injectedBazelrc != "" {
+		startupFlags = append(startupFlags, "--bazelrc="+injectedBazelrc)
+	}
+
+	// Extract module name from BIT_WORKSPACE_DIR for build metadata tagging
+	moduleName := ""
+	if workspaceDirEnv := os.Getenv("BIT_WORKSPACE_DIR"); workspaceDirEnv != "" {
+		moduleName = filepath.Base(workspaceDirEnv)
+	}
+
+	setupCommands, testCommands, shutdownCommands := bazelCommands(bazel, startupFlags, moduleName)
 
 	defer func() {
 		// shut down Bazel after all tests to conserve memory

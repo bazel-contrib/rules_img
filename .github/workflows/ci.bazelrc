@@ -4,4 +4,5 @@ common --color=yes
 common --terminal_columns=120
 common --show_timestamps
 common --lockfile_mode=error
+common --build_metadata=TAG_MODULE=rules_img
 build --verbose_failures

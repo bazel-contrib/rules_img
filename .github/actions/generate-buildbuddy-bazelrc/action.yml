@@ -1,0 +1,17 @@
+name: 'Generate BuildBuddy bazelrc'
+description: 'Generates a bazelrc file with BuildBuddy configuration by injecting the API key secret'
+inputs:
+  template-path:
+    description: 'Path to the bazelrc template file'
+    required: true
+    default: '.github/workflows/.bazelrc.buildbuddy'
+  output-path:
+    description: 'Path where the generated bazelrc file should be written'
+    required: true
+    default: '.github/workflows/.bazelrc.buildbuddy.generated'
+  api-key:
+    description: 'BuildBuddy API key to inject into the bazelrc file'
+    required: true
+runs:
+  using: 'node20'
+  main: 'index.js'
