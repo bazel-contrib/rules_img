@@ -22,6 +22,7 @@ bzl_library(
     srcs = ["providers.bzl"],
     visibility = ["//visibility:public"],
     deps = [
+        "//img/private/providers:deploy_info",
         "//img/private/providers:index_info",
         "//img/private/providers:layer_info",
         "//img/private/providers:manifest_info",
