@@ -14,7 +14,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/klauspost/compress v1.18.2
 	github.com/klauspost/pgzip v1.2.6
-	github.com/malt3/go-containerregistry v0.0.0-20250724131542-7e98b20e9b45
+	github.com/malt3/go-containerregistry e075f209120b
 	github.com/opencontainers/go-digest v1.0.0
 	github.com/opencontainers/image-spec v1.1.1
 	golang.org/x/sync v0.18.0
