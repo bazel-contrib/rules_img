@@ -1,5 +1,6 @@
 dist
 e2e/*/MODULE.bazel.lock
+*_tool/MODULE.bazel.lock
 bazel-*
 .bazelrc.user
 .github/workflows/.bazelrc.buildbuddy.generated
