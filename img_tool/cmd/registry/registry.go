@@ -11,8 +11,8 @@ import (
 	"time"
 
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
-	"github.com/malt3/go-containerregistry/pkg/registry"
-	registryv1 "github.com/malt3/go-containerregistry/pkg/v1"
+	"github.com/google/go-containerregistry/pkg/registry"
+	registryv1 "github.com/google/go-containerregistry/pkg/v1"
 	"google.golang.org/grpc"
 
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/auth/credential"

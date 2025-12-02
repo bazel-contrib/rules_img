@@ -11,8 +11,8 @@ import (
 	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	registry "github.com/malt3/go-containerregistry/pkg/registry"
-	registryv1 "github.com/malt3/go-containerregistry/pkg/v1"
+	registry "github.com/google/go-containerregistry/pkg/registry"
+	registryv1 "github.com/google/go-containerregistry/pkg/v1"
 )
 
 type S3BlobHandler struct {

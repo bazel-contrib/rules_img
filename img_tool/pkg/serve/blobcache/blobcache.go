@@ -3,7 +3,7 @@ package blobcache
 import (
 	"context"
 
-	registryv1 "github.com/malt3/go-containerregistry/pkg/v1"
+	registryv1 "github.com/google/go-containerregistry/pkg/v1"
 	"google.golang.org/grpc"
 
 	blobcache_proto "github.com/bazel-contrib/rules_img/img_tool/pkg/proto/blobcache"

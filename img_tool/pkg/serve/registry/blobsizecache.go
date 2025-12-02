@@ -10,9 +10,9 @@ import (
 	"os"
 	"sync"
 
-	"github.com/malt3/go-containerregistry/pkg/registry"
-	registryv1 "github.com/malt3/go-containerregistry/pkg/v1"
-	"github.com/malt3/go-containerregistry/pkg/v1/types"
+	"github.com/google/go-containerregistry/pkg/registry"
+	registryv1 "github.com/google/go-containerregistry/pkg/v1"
+	"github.com/google/go-containerregistry/pkg/v1/types"
 )
 
 type BlobSizeCache struct {

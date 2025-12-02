@@ -11,7 +11,7 @@ import (
 	"sync"
 
 	"github.com/containerd/platforms"
-	registryv1 "github.com/malt3/go-containerregistry/pkg/v1"
+	registryv1 "github.com/google/go-containerregistry/pkg/v1"
 	ocigodigest "github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 

@@ -9,8 +9,8 @@ go_library(
     importpath = "github.com/bazel-contrib/rules_img/img_tool/pkg/serve/registry",
     visibility = ["//visibility:public"],
     deps = [
-        "@com_github_malt3_go_containerregistry//pkg/registry",
-        "@com_github_malt3_go_containerregistry//pkg/v1:pkg",
-        "@com_github_malt3_go_containerregistry//pkg/v1/types",
+        "@com_github_google_go_containerregistry//pkg/registry",
+        "@com_github_google_go_containerregistry//pkg/v1:pkg",
+        "@com_github_google_go_containerregistry//pkg/v1/types",
     ],
 )

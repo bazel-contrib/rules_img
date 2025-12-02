@@ -7,10 +7,10 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/malt3/go-containerregistry/pkg/name"
-	registry "github.com/malt3/go-containerregistry/pkg/registry"
-	registryv1 "github.com/malt3/go-containerregistry/pkg/v1"
-	"github.com/malt3/go-containerregistry/pkg/v1/remote"
+	"github.com/google/go-containerregistry/pkg/name"
+	registry "github.com/google/go-containerregistry/pkg/registry"
+	registryv1 "github.com/google/go-containerregistry/pkg/v1"
+	"github.com/google/go-containerregistry/pkg/v1/remote"
 
 	reg "github.com/bazel-contrib/rules_img/img_tool/pkg/auth/registry"
 )

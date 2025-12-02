@@ -6,8 +6,8 @@ go_library(
     importpath = "github.com/bazel-contrib/rules_img/img_tool/pkg/auth/registry",
     visibility = ["//visibility:public"],
     deps = [
-        "@com_github_malt3_go_containerregistry//pkg/authn",
-        "@com_github_malt3_go_containerregistry//pkg/v1/google",
-        "@com_github_malt3_go_containerregistry//pkg/v1/remote",
+        "@com_github_google_go_containerregistry//pkg/authn",
+        "@com_github_google_go_containerregistry//pkg/v1/google",
+        "@com_github_google_go_containerregistry//pkg/v1/remote",
     ],
 )

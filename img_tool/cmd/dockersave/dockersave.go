@@ -10,7 +10,7 @@ import (
 	"sort"
 	"strings"
 
-	v1 "github.com/malt3/go-containerregistry/pkg/v1"
+	v1 "github.com/google/go-containerregistry/pkg/v1"
 )
 
 type blobMap map[string]string // digest -> source path

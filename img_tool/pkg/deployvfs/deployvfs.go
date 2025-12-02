@@ -11,10 +11,10 @@ import (
 	"strings"
 
 	"github.com/bazelbuild/rules_go/go/runfiles"
-	registryname "github.com/malt3/go-containerregistry/pkg/name"
-	registryv1 "github.com/malt3/go-containerregistry/pkg/v1"
-	"github.com/malt3/go-containerregistry/pkg/v1/remote"
-	registrytypes "github.com/malt3/go-containerregistry/pkg/v1/types"
+	registryname "github.com/google/go-containerregistry/pkg/name"
+	registryv1 "github.com/google/go-containerregistry/pkg/v1"
+	"github.com/google/go-containerregistry/pkg/v1/remote"
+	registrytypes "github.com/google/go-containerregistry/pkg/v1/types"
 
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/api"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/cas"

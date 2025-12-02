@@ -1,0 +1,142 @@
+diff --git pkg/registry/blobs.go pkg/registry/blobs.go
+index c7c246cf..ed8f66df 100644
+--- pkg/registry/blobs.go
++++ pkg/registry/blobs.go
+@@ -165,9 +165,11 @@ type blobs struct {
+ 	blobHandler BlobHandler
+ 
+ 	// Each upload gets a unique id that writes occur to until finalized.
+-	uploads map[string][]byte
+-	lock    sync.Mutex
+-	log     *log.Logger
++	uploads         map[string][]byte
++	createdCallback func(repo string, digest v1.Hash)
++	deletedCallback func(repo string, digest v1.Hash)
++	lock            sync.Mutex
++	log             *log.Logger
+ }
+ 
+ func (b *blobs) handle(resp http.ResponseWriter, req *http.Request) *regError {
+@@ -381,6 +383,9 @@ func (b *blobs) handle(resp http.ResponseWriter, req *http.Request) *regError {
+ 				}
+ 				return regErrInternal(err)
+ 			}
++			if b.createdCallback != nil {
++				b.createdCallback(repo, h)
++			}
+ 			resp.Header().Set("Docker-Content-Digest", h.String())
+ 			resp.WriteHeader(http.StatusCreated)
+ 			return nil
+@@ -504,6 +509,9 @@ func (b *blobs) handle(resp http.ResponseWriter, req *http.Request) *regError {
+ 		}
+ 
+ 		delete(b.uploads, target)
++		if b.deletedCallback != nil {
++			b.deletedCallback(repo, h)
++		}
+ 		resp.Header().Set("Docker-Content-Digest", h.String())
+ 		resp.WriteHeader(http.StatusCreated)
+ 		return nil
+diff --git pkg/registry/manifest.go pkg/registry/manifest.go
+index db8a8dc6..ff5fe7fd 100644
+--- pkg/registry/manifest.go
++++ pkg/registry/manifest.go
+@@ -46,9 +46,11 @@ type manifest struct {
+ 
+ type manifests struct {
+ 	// maps repo -> manifest tag/digest -> manifest
+-	manifests map[string]map[string]manifest
+-	lock      sync.RWMutex
+-	log       *log.Logger
++	manifests      map[string]map[string]manifest
++	putCallback    func(repo, target, contentType string, blob []byte) error
++	deleteCallback func(repo, target, contentType string, blob []byte) error
++	lock           sync.RWMutex
++	log            *log.Logger
+ }
+ 
+ func isManifest(req *http.Request) bool {
+@@ -204,6 +206,16 @@ func (m *manifests) handle(resp http.ResponseWriter, req *http.Request) *regErro
+ 			}
+ 		}
+ 
++		if m.putCallback != nil {
++			if err := m.putCallback(repo, target, mf.contentType, mf.blob); err != nil {
++				return &regError{
++					Status:  http.StatusInternalServerError,
++					Code:    "INTERNAL_ERROR",
++					Message: fmt.Sprintf("Error in callback: %v", err),
++				}
++			}
++		}
++
+ 		m.lock.Lock()
+ 		defer m.lock.Unlock()
+ 
+@@ -230,7 +242,7 @@ func (m *manifests) handle(resp http.ResponseWriter, req *http.Request) *regErro
+ 			}
+ 		}
+ 
+-		_, ok := m.manifests[repo][target]
++		mf, ok := m.manifests[repo][target]
+ 		if !ok {
+ 			return &regError{
+ 				Status:  http.StatusNotFound,
+@@ -239,6 +251,16 @@ func (m *manifests) handle(resp http.ResponseWriter, req *http.Request) *regErro
+ 			}
+ 		}
+ 
++		if m.deleteCallback != nil {
++			if err := m.deleteCallback(repo, target, mf.contentType, mf.blob); err != nil {
++				return &regError{
++					Status:  http.StatusInternalServerError,
++					Code:    "INTERNAL_ERROR",
++					Message: fmt.Sprintf("Error in callback: %v", err),
++				}
++			}
++		}
++
+ 		delete(m.manifests[repo], target)
+ 		resp.WriteHeader(http.StatusAccepted)
+ 		return nil
+diff --git pkg/registry/registry.go pkg/registry/registry.go
+index 2f8fd112..ec6acc1c 100644
+--- pkg/registry/registry.go
++++ pkg/registry/registry.go
+@@ -29,6 +29,8 @@ import (
+ 	"math/rand"
+ 	"net/http"
+ 	"os"
++
++	v1 "github.com/google/go-containerregistry/pkg/v1"
+ )
+ 
+ type registry struct {
+@@ -142,3 +144,27 @@ func WithBlobHandler(h BlobHandler) Option {
+ 		r.blobs.blobHandler = h
+ 	}
+ }
++
++func WithBlobCreatedCallback(cb func(repo string, digest v1.Hash)) Option {
++	return func(r *registry) {
++		r.blobs.createdCallback = cb
++	}
++}
++
++func WithBlobDeletedCallback(cb func(repo string, digest v1.Hash)) Option {
++	return func(r *registry) {
++		r.blobs.deletedCallback = cb
++	}
++}
++
++func WithManifestPutCallback(cb func(repo, target, contentType string, blob []byte) error) Option {
++	return func(r *registry) {
++		r.manifests.putCallback = cb
++	}
++}
++
++func WithManifestDeleteCallback(cb func(repo, target, contentType string, blob []byte) error) Option {
++	return func(r *registry) {
++		r.manifests.deleteCallback = cb
++	}
++}

@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"io"
 
-	registryv1 "github.com/malt3/go-containerregistry/pkg/v1"
-	registrytypes "github.com/malt3/go-containerregistry/pkg/v1/types"
+	registryv1 "github.com/google/go-containerregistry/pkg/v1"
+	registrytypes "github.com/google/go-containerregistry/pkg/v1/types"
 )
 
 type image struct {

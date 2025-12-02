@@ -11,14 +11,8 @@
       "matchFileNames": ["**/MODULE.bazel"]
     },
     {
-      "groupName": "forked go-containerregistry",
-      "matchManagers": ["gomod"],
-      "matchPackageNames": ["github.com/malt3/go-containerregistry"]
-    },
-    {
       "groupName": "Go dependencies",
-      "matchManagers": ["gomod"],
-      "excludePackageNames": ["github.com/malt3/go-containerregistry"]
+      "matchManagers": ["gomod"]
     }
   ]
 }
