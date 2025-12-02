@@ -108,7 +108,9 @@ func (l *loader) LoadAll(ctx context.Context, ops []api.IndexedLoadDeployOperati
 
 			// Load all blobs in parallel...
 			contentStore := client.ContentStore()
-			uploadBlobsParallel(ctx, contentStore, blobs, defaultWorkers)
+			if err := uploadBlobsParallel(ctx, contentStore, blobs, defaultWorkers); err != nil {
+				return nil, fmt.Errorf("uploading blobs to containerd: %w", err)
+			}
 
 			// ...then all images
 			for _, op := range ops {
