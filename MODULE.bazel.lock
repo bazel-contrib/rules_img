@@ -225,7 +225,7 @@
     "@@rules_bazel_integration_test+//:extensions.bzl%bazel_binaries": {
       "general": {
         "bzlTransitiveDigest": "XC9nqZ31LIbq8N7cEK+rYa2iXNQLcJ3cyGWw+zPZlc0=",
-        "usagesDigest": "Bx531KeQZGsSbMVEFQvHlz3EWacuLoslN3MfkrvDHbw=",
+        "usagesDigest": "+GAY5kVjTqf5Rjba2aH2TkmS3oLlioGLEkpN5HqKsc8=",
         "recordedFileInputs": {},
         "recordedDirentsInputs": {},
         "envVariables": {},
