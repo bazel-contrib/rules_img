@@ -214,6 +214,11 @@ func runBazelCommands(bazel, workspaceDir string) error {
 	startupFlags = append(startupFlags, "--bazelrc="+filepath.Join(".bazelrc"))
 	startupFlags = append(startupFlags, "--bazelrc="+filepath.Join(".bazelrc.generated"))
 
+	// Inject additional bazelrc if specified via environment variable
+	if injectedBazelrc := os.Getenv("BAZEL_INTEGRATION_TEST_INJECT_BAZELRC"); injectedBazelrc != "" {
+		startupFlags = append(startupFlags, "--bazelrc="+injectedBazelrc)
+	}
+
 	setupCommands, testCommands, shutdownCommands := bazelCommands(bazel, startupFlags)
 
 	defer func() {

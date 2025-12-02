@@ -17,10 +17,18 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
     - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6
+    - name: Generate BuildBuddy bazelrc
+      uses: ./.github/actions/generate-buildbuddy-bazelrc
+      with:
+        template-path: .github/workflows/.bazelrc.buildbuddy
+        output-path: .github/workflows/.bazelrc.buildbuddy.generated
+        api-key: ${{ secrets.BUILDBUDDY_API_KEY }}
     - name: Setup Bazel
       uses: bazel-contrib/setup-bazel@4fd964a13a440a8aeb0be47350db2fc640f19ca8 # 0.15.0
       with:
-        bazelrc: import %workspace%/.github/workflows/ci.bazelrc
+        bazelrc: |
+          import %workspace%/.github/workflows/ci.bazelrc
+          import %workspace%/.github/workflows/.bazelrc.buildbuddy.generated
     - name: Run buildifier
       run: bazelisk run //util:buildifier.check
   tidy_and_test_matrix:
@@ -32,13 +40,21 @@ jobs:
     if: ${{ github.event_name == 'merge_group' }}
     steps:
     - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6
+    - name: Generate BuildBuddy bazelrc
+      uses: ./.github/actions/generate-buildbuddy-bazelrc
+      with:
+        template-path: .github/workflows/.bazelrc.buildbuddy
+        output-path: .github/workflows/.bazelrc.buildbuddy.generated
+        api-key: ${{ secrets.BUILDBUDDY_API_KEY }}
     - name: Setup Bazel
       uses: bazel-contrib/setup-bazel@4fd964a13a440a8aeb0be47350db2fc640f19ca8 # 0.15.0
       with:
         bazelisk-cache: true
         disk-cache: ${{ github.workflow }}-${{ matrix.runner }}-tidy_and_test_matrix
         repository-cache: true
-        bazelrc: import %workspace%/.github/workflows/ci.bazelrc
+        bazelrc: |
+          import %workspace%/.github/workflows/ci.bazelrc
+          import %workspace%/.github/workflows/.bazelrc.buildbuddy.generated
     - name: Execute Tests
       run: bazelisk test //... @rules_img_tool//... @rules_img_pull_tool//...
   integration_test_matrix:
@@ -54,15 +70,26 @@ jobs:
       packages: read
     steps:
     - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6
+    - name: Generate BuildBuddy bazelrc
+      uses: ./.github/actions/generate-buildbuddy-bazelrc
+      with:
+        template-path: .github/workflows/.bazelrc.buildbuddy
+        output-path: .github/workflows/.bazelrc.buildbuddy.generated
+        api-key: ${{ secrets.BUILDBUDDY_API_KEY }}
     - name: Setup Bazel
       uses: bazel-contrib/setup-bazel@4fd964a13a440a8aeb0be47350db2fc640f19ca8 # 0.15.0
       with:
         bazelisk-cache: true
         disk-cache: ${{ github.workflow }}-${{ matrix.runner }}-integration_test_matrix
         repository-cache: true
-        bazelrc: import %workspace%/.github/workflows/ci.bazelrc
+        bazelrc: |
+          import %workspace%/.github/workflows/ci.bazelrc
+          import %workspace%/.github/workflows/.bazelrc.buildbuddy.generated
     - name: Execute Integration Tests
-      run: bazelisk test "//e2e:integration_tests"
+      shell: bash
+      env:
+        MSYS_NO_PATHCONV: 1
+      run: bazelisk test '//e2e:integration_tests' --test_env=BAZEL_INTEGRATION_TEST_INJECT_BAZELRC="${PWD}/.github/workflows/.bazelrc.buildbuddy.generated" --sandbox_add_mount_pair="${PWD}/.github/workflows/.bazelrc.buildbuddy.generated"
   all-tests-passed:
     runs-on: ubuntu-latest
     needs: [buildifier_check, tidy_and_test_matrix, integration_test_matrix]
