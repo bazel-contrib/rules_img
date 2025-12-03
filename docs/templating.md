@@ -195,3 +195,205 @@ image_push(
     stamp = "enabled",
 )
 ```
+
+## Accessing Base Image Data
+
+The `image_manifest` rule automatically provides access to the base image's configuration and manifest through template variables. This allows you to reference or extend metadata from the base image.
+
+### Available Base Data
+
+When using a `base` image in `image_manifest`, the following template variables are available:
+
+- **`.base.config`** - The base image's OCI configuration JSON
+- **`.base.manifest`** - The base image's OCI manifest JSON
+
+**Important**: All JSON field names are automatically converted to lowercase for case-insensitive access. For example, if the parent config has `"Architecture": "amd64"`, you access it as `.base.config.architecture`.
+
+### Common Use Cases
+
+#### Accessing Architecture and OS
+
+```starlark
+image_manifest(
+    name = "my_image",
+    base = "@alpine",
+    layers = [":app_layer"],
+    labels = {
+        "base.architecture": "{{.base.config.architecture}}",  # e.g., "amd64"
+        "base.os": "{{.base.config.os}}",                      # e.g., "linux"
+    },
+)
+```
+
+#### Extending Environment Variables from Parent
+
+The parent image's environment variables are stored as an array of `"KEY=VALUE"` strings in `.base.config.config.env`. Use the `getkv`, `appendkv`, or `prependkv` functions to work with them:
+
+```starlark
+image_manifest(
+    name = "my_image",
+    base = "@distroless_base",
+    layers = [":app_layer"],
+    env = {
+        # Extend PATH from parent by appending a custom directory
+        # If the base sets $PATH to "/usr/bin:/bin", this results in "/usr/bin:/bin:/custom/bin"
+        "PATH": """{{appendkv .base.config.config.env "PATH" ":/custom/bin"}}""",
+
+        # Or prepend to LD_LIBRARY_PATH
+        # If the base sets $LD_LIBRARY_PATH to "/usr/lib", this results in "/opt/lib:/usr/lib"
+        "LD_LIBRARY_PATH": """{{prependkv .base.config.config.env "LD_LIBRARY_PATH" "/opt/lib:"}}""",
+
+        # Access other parent env vars
+        "PARENT_HOME": """{{getkv .base.config.config.env "HOME"}}""",
+    },
+)
+```
+
+#### Accessing Parent User
+
+```starlark
+image_manifest(
+    name = "my_image",
+    base = "@alpine",
+    layers = [":app_layer"],
+    labels = {
+        # Note: lowercase field names
+        "base.user": "{{.base.config.config.user}}",
+    },
+)
+```
+
+#### Accessing Parent Manifest Metadata
+
+```starlark
+image_manifest(
+    name = "my_image",
+    base = "@alpine",
+    layers = [":app_layer"],
+    annotations = {
+        "parent.digest": "{{.base.manifest.config.digest}}",
+        "parent.mediatype": "{{.base.manifest.mediatype}}",
+    },
+)
+```
+
+### Parent Data in image_index
+
+The `image_index` rule also provides access to the first manifest's data through `.base.config` and `.base.manifest`:
+
+```starlark
+image_index(
+    name = "multiarch",
+    manifests = [":image_amd64", ":image_arm64"],
+    annotations = {
+        # Accesses the first manifest's config
+        "reference.architecture": "{{.base.config.architecture}}",
+    },
+)
+```
+
+## Template Functions
+
+In addition to standard Go template features, several custom functions are available to help work with OCI image metadata:
+
+### Key-Value Array Functions
+
+OCI image configurations store environment variables and other settings as arrays of `"KEY=VALUE"` strings. These functions help extract and manipulate such values:
+
+#### `getkv`
+
+Extracts a value from a key-value array.
+
+**Syntax**: `getkv <array> <key>`
+
+```starlark
+env = {
+    # Extract PATH from parent's env array
+    "ORIGINAL_PATH": """{{getkv .base.config.config.env "PATH"}}""",
+}
+```
+
+**Example**: If the parent has `["PATH=/usr/bin", "HOME=/root"]`, then `getkv .base.config.config.env "PATH"` returns `/usr/bin`.
+
+#### `appendkv`
+
+Extracts a value from a key-value array and appends a suffix.
+
+**Syntax**: `appendkv <array> <key> <suffix>`
+
+```starlark
+env = {
+    # Extend PATH by appending a custom directory
+    "PATH": """{{appendkv .base.config.config.env "PATH" ":/custom/bin"}}""",
+}
+```
+
+**Example**: If parent has `PATH=/usr/bin`, this returns `/usr/bin:/custom/bin`.
+
+If the key doesn't exist in the array, returns just the suffix.
+
+#### `prependkv`
+
+Extracts a value from a key-value array and prepends a prefix.
+
+**Syntax**: `prependkv <array> <key> <prefix>`
+
+```starlark
+env = {
+    # Extend LD_LIBRARY_PATH by prepending
+    "LD_LIBRARY_PATH": """{{prependkv .base.config.config.env "LD_LIBRARY_PATH" "/opt/lib:"}}""",
+}
+```
+
+**Example**: If parent has `LD_LIBRARY_PATH=/usr/lib`, this returns `/opt/lib:/usr/lib`.
+
+If the key doesn't exist in the array, returns just the prefix.
+
+### String Manipulation Functions
+
+#### `split`
+
+Splits a string by a separator.
+
+**Syntax**: `split <string> <separator>`
+
+```starlark
+# Split PATH into components (returns a slice)
+{{range split .path ":"}}{{.}}{{end}}
+```
+
+#### `join`
+
+Joins a slice of strings with a separator.
+
+**Syntax**: `join <slice> <separator>`
+
+```starlark
+# Join slice with colons
+{{join .components ":"}}
+```
+
+#### `hasprefix`, `hassuffix`
+
+Check if a string has a given prefix or suffix.
+
+**Syntax**: `hasprefix <string> <prefix>` or `hassuffix <string> <suffix>`
+
+```starlark
+{{if hasprefix .path "/usr"}}starts with /usr{{end}}
+{{if hassuffix .tag "-dev"}}is a dev tag{{end}}
+```
+
+#### `trimprefix`, `trimsuffix`
+
+Remove a prefix or suffix from a string.
+
+**Syntax**: `trimprefix <string> <prefix>` or `trimsuffix <string> <suffix>`
+
+```starlark
+# Remove /usr prefix
+{{trimprefix .path "/usr"}}
+
+# Remove -dev suffix
+{{trimsuffix .tag "-dev"}}
+```

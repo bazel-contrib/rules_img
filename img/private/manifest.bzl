@@ -334,6 +334,14 @@ def _image_manifest_impl(ctx):
         annotations_file = ctx.file.annotations_file
         newline_delimited_lists_files = {"annotations": annotations_file}
 
+    # Prepare json_vars with base image data if available
+    json_vars = None
+    if base != None:
+        json_vars = {
+            "base.config": base.config,
+            "base.manifest": base.manifest,
+        }
+
     # Try to expand templates - this will return None if no templates need expansion
     config_json = expand_or_write(
         ctx = ctx,
@@ -341,6 +349,7 @@ def _image_manifest_impl(ctx):
         output_name = ctx.label.name + "_config_templates.json",
         only_if_stamping = True,
         newline_delimited_lists_files = newline_delimited_lists_files,
+        json_vars = json_vars,
     )
 
     if config_json != None:

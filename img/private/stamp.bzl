@@ -57,7 +57,7 @@ def should_stamp(*, ctx, template_strings):
         want_stamp = want_stamp,
     )
 
-def expand_or_write(*, ctx, templates, output_name, only_if_stamping = False, newline_delimited_lists_files = None):
+def expand_or_write(*, ctx, templates, output_name, only_if_stamping = False, newline_delimited_lists_files = None, json_vars = None):
     """Either expand templates or write JSON directly based on build_settings.
 
     Args:
@@ -66,6 +66,7 @@ def expand_or_write(*, ctx, templates, output_name, only_if_stamping = False, ne
         output_name: The name for the output file
         only_if_stamping: If True, only create the file if stamping is needed (templates contain {{}})
         newline_delimited_lists_files: Optional dict mapping template keys to File objects containing newline-delimited lists
+        json_vars: Optional dict mapping variable paths (e.g., "parent.config") to File objects containing JSON
 
     Returns:
         The File object for the final JSON, or None if only_if_stamping=True and no stamping needed
@@ -73,14 +74,14 @@ def expand_or_write(*, ctx, templates, output_name, only_if_stamping = False, ne
     build_settings = get_build_settings(ctx)
     stamp_settings = should_stamp(ctx = ctx, template_strings = [json.encode(v) for v in templates.values()])
 
-    # If only_if_stamping is True and no stamping is needed and no newline-delimited files provided, return None
-    if only_if_stamping and not stamp_settings.want_stamp and not newline_delimited_lists_files:
+    # If only_if_stamping is True and no stamping is needed and no newline-delimited files or json_vars provided, return None
+    if only_if_stamping and not stamp_settings.want_stamp and not newline_delimited_lists_files and not json_vars:
         return None
 
     final_json = ctx.actions.declare_file(output_name)
 
     # Determine if we need template expansion
-    needs_expansion = build_settings or stamp_settings.want_stamp or newline_delimited_lists_files
+    needs_expansion = build_settings or stamp_settings.want_stamp or newline_delimited_lists_files or json_vars
 
     if needs_expansion:
         # Add build settings to the request for template expansion
@@ -122,6 +123,12 @@ def expand_or_write(*, ctx, templates, output_name, only_if_stamping = False, ne
             if ctx.info_file:
                 args.extend(["--stamp", ctx.info_file.path])
                 inputs.append(ctx.info_file)
+
+        # Add json_vars files if provided
+        if json_vars:
+            for var_path, json_file in json_vars.items():
+                args.extend(["--json-var", "{}={}".format(var_path, json_file.path)])
+                inputs.append(json_file)
 
         args.extend([template_json.path, final_json.path])
 
