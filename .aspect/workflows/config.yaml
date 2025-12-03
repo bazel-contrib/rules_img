@@ -3,31 +3,20 @@
 tasks:
     # Note: we don't support Bazel 6 or earlier
     - test:
-          name: Bazel 8
-          id: bazel-8
+          name: Bazel 9
+          id: bazel-9
           env:
-              USE_BAZEL_VERSION: 8.x
+              USE_BAZEL_VERSION: 9.0.0rc3
           targets:
               - "//..."
               - "@rules_img_tool//..."
               - "@rules_img_pull_tool//..."
-    # TODO(malt3): Enable Bazel 9 testing when Aspect supports it.
-    # I'm seeing this issue in Aspect Workflows:
-    #   invalid command name 'analyze-profile:workflows'.
-    # - test:
-    #       name: Bazel 9
-    #       id: bazel-9
-    #       env:
-    #           USE_BAZEL_VERSION: 9.0.0rc1
-    #       targets:
-    #           - "//..."
-    #           - "@rules_img_tool//..."
-    #           - "@rules_img_pull_tool//..."
     - test:
           name: Integration Tests
           id: integration-tests
           targets: ["//e2e:integration_tests"]
     - buildifier:
+        id: buildifier
         queue: aspect-small
         target: //util:buildifier.check
         fix_target: //util:buildifier.fix
