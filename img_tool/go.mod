@@ -18,9 +18,9 @@ require (
 	github.com/opencontainers/go-digest v1.0.0
 	github.com/opencontainers/image-spec v1.1.1
 	golang.org/x/sync v0.18.0
-	google.golang.org/genproto/googleapis/api v0.0.0-20251124214823-79d6a2a48846
-	google.golang.org/genproto/googleapis/bytestream v0.0.0-20251124214823-79d6a2a48846
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20251124214823-79d6a2a48846
+	google.golang.org/genproto/googleapis/api v0.0.0-20251202230838-ff82c1b0f217
+	google.golang.org/genproto/googleapis/bytestream v0.0.0-20251202230838-ff82c1b0f217
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20251202230838-ff82c1b0f217
 	google.golang.org/grpc v1.77.0
 	google.golang.org/protobuf v1.36.10
 )
