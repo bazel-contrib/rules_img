@@ -20,8 +20,8 @@ image_manifest(
     ],
     env = {
         # Extend PATH from parent alpine image by adding /custom/bin
-        # Use the appendkv convenience function
-        "PATH": """{{appendkv .base.config.config.env "PATH" ":/custom/bin"}}""",
+        # Uses template variable for existing PATH
+        "PATH": "{{ $PATH }}:/custom/bin",
         # Also demonstrate accessing other base image metadata
         "BASE_ARCH": "{{.base.config.architecture}}",
         "BASE_OS": "{{.base.config.os}}",

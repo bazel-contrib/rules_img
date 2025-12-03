@@ -204,6 +204,7 @@ The `image_manifest` rule automatically provides access to the base image's conf
 
 When using a `base` image in `image_manifest`, the following template variables are available:
 
+- **`$<ENV>`** - An environment variable from the base image (like `$PATH`)
 - **`.base.config`** - The base image's OCI configuration JSON
 - **`.base.manifest`** - The base image's OCI manifest JSON
 
@@ -236,8 +237,12 @@ image_manifest(
     layers = [":app_layer"],
     env = {
         # Extend PATH from parent by appending a custom directory
-        # If the base sets $PATH to "/usr/bin:/bin", this results in "/usr/bin:/bin:/custom/bin"
-        "PATH": """{{appendkv .base.config.config.env "PATH" ":/custom/bin"}}""",
+        # If the base sets $PATH to "/usr/bin:/bin", this results in "/usr/bin:/bin:/opt/bin"
+        "PATH": "{{ $PATH }}:/opt/bin",
+
+        # Extend PYTHONPATH from parent by appending a custom directory
+        # If the base sets $PYTHONPATH to "/usr/lib/python/site-packages", this results in "/usr/lib/python/site-packages:/custom/site-packages"
+        "PYTHONPATH": """{{appendkv .base.config.config.env "PYTHONPATH" ":/custom/site-packages"}}""",
 
         # Or prepend to LD_LIBRARY_PATH
         # If the base sets $LD_LIBRARY_PATH to "/usr/lib", this results in "/opt/lib:/usr/lib"

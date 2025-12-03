@@ -336,11 +336,13 @@ def _image_manifest_impl(ctx):
 
     # Prepare json_vars with base image data if available
     json_vars = None
+    expose_kvs = None
     if base != None:
         json_vars = {
             "base.config": base.config,
             "base.manifest": base.manifest,
         }
+        expose_kvs = ["base.config.config.env"]
 
     # Try to expand templates - this will return None if no templates need expansion
     config_json = expand_or_write(
@@ -350,6 +352,7 @@ def _image_manifest_impl(ctx):
         only_if_stamping = True,
         newline_delimited_lists_files = newline_delimited_lists_files,
         json_vars = json_vars,
+        expose_kvs = expose_kvs,
     )
 
     if config_json != None:
