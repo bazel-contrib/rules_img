@@ -18,6 +18,15 @@ image_manifest(
         "/bin/cat",
         "/hello.txt",
     ],
+    env = {
+        # Extend PATH from parent alpine image by adding /custom/bin
+        # Uses template variable for existing PATH
+        "PATH": "{{ $PATH }}:/custom/bin",
+        # Also demonstrate accessing other base image metadata
+        "BASE_ARCH": "{{.base.config.architecture}}",
+        "BASE_OS": "{{.base.config.os}}",
+        "SCHEMA_VERSION": "{{.base.manifest.schemaversion}}",
+    },
     layers = [":layer"],
     visibility = ["//visibility:public"],
 )

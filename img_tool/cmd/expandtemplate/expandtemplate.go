@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"maps"
@@ -64,11 +65,21 @@ func (bs buildSettings) AsTemplateData() map[string]any {
 
 // ExpandTemplateProcess is the main entry point for the expand-template subcommand
 func ExpandTemplateProcess(ctx context.Context, args []string) {
-	// Define flags for stamp files
+	// Define flags for stamp files and JSON variables
 	var stampFiles []string
+	var jsonVars []string
+	var exposeKVs []string
 	flagSet := flag.NewFlagSet("expand-template", flag.ExitOnError)
 	flagSet.Func("stamp", "Path to a stamp file (can be specified multiple times)", func(s string) error {
 		stampFiles = append(stampFiles, s)
+		return nil
+	})
+	flagSet.Func("json-var", "Map JSON file into template data (format: path.to.key=file.json)", func(s string) error {
+		jsonVars = append(jsonVars, s)
+		return nil
+	})
+	flagSet.Func("expose-kv", "Expose keys from a KV array as template variables (format: path.to.kvarray)", func(s string) error {
+		exposeKVs = append(exposeKVs, s)
 		return nil
 	})
 
@@ -81,20 +92,20 @@ func ExpandTemplateProcess(ctx context.Context, args []string) {
 	// Get positional arguments
 	args = flagSet.Args()
 	if len(args) != 2 {
-		fmt.Fprintf(os.Stderr, "Usage: img expand-template [--stamp file]... <input.json> <output.json>\n")
+		fmt.Fprintf(os.Stderr, "Usage: img expand-template [--stamp file]... [--json-var path=file.json]... [--expose-kv path.to.kvarray]... <input.json> <output.json>\n")
 		os.Exit(1)
 	}
 
 	inputPath := args[0]
 	outputPath := args[1]
 
-	if err := expandTemplates(inputPath, outputPath, stampFiles); err != nil {
+	if err := expandTemplates(inputPath, outputPath, stampFiles, jsonVars, exposeKVs); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 }
 
-func expandTemplates(inputPath, outputPath string, stampFiles []string) error {
+func expandTemplates(inputPath, outputPath string, stampFiles []string, jsonVars []string, exposeKVs []string) error {
 	// Read input JSON
 	inputData, err := os.ReadFile(inputPath)
 	if err != nil {
@@ -122,11 +133,33 @@ func expandTemplates(inputPath, outputPath string, stampFiles []string) error {
 	}
 
 	// Add build settings to template data
-	for k, v := range request.BuildSettings {
-		buildSettings[k] = v
-	}
+	maps.Copy(buildSettings, request.BuildSettings)
 
 	templateData := buildSettings.AsTemplateData()
+
+	// Process JSON variables into a separate map with case-insensitive keys
+	jsonVarData := make(map[string]any)
+	for _, jsonVar := range jsonVars {
+		if err := processJSONVar(jsonVar, jsonVarData); err != nil {
+			return fmt.Errorf("processing json-var %q: %w", jsonVar, err)
+		}
+	}
+
+	// Normalize JSON var data to lowercase keys for case-insensitive access
+	jsonVarData = makeCaseInsensitiveMap(jsonVarData)
+
+	// Merge: start with jsonVarData, then overlay templateData (allowing overrides)
+	finalData := make(map[string]any)
+	maps.Copy(finalData, jsonVarData)
+	maps.Copy(finalData, templateData)
+	templateData = finalData
+	// Expose keys from KV arrays as template variables
+	prelude, err := variableDefinitionPrelude(templateData, exposeKVs)
+	if err != nil {
+		// if an error occurs here, it most likely indicates a missing path in the template data.
+		// this should be handled gracefully.
+		prelude = ""
+	}
 	output := make(map[string]json.RawMessage)
 
 	// Expand each template
@@ -134,7 +167,8 @@ func expandTemplates(inputPath, outputPath string, stampFiles []string) error {
 		var valueStr string
 		if err := json.Unmarshal(rawValue, &valueStr); err == nil {
 			// Single string template
-			expanded, err := expandTemplate(valueStr, templateData)
+			templateStr := prelude + valueStr
+			expanded, err := expandTemplate(templateStr, templateData)
 			if err != nil {
 				return fmt.Errorf("expanding template for key %q: %w", key, err)
 			}
@@ -147,7 +181,8 @@ func expandTemplates(inputPath, outputPath string, stampFiles []string) error {
 			// List of strings template
 			expandedList := make([]string, len(valueList))
 			for i, v := range valueList {
-				expanded, err := expandTemplate(v, templateData)
+				templateStr := prelude + v
+				expanded, err := expandTemplate(templateStr, templateData)
 				if err != nil {
 					return fmt.Errorf("expanding template for key %q index %d: %w", key, i, err)
 				}
@@ -173,7 +208,8 @@ func expandTemplates(inputPath, outputPath string, stampFiles []string) error {
 			// Map of string to string template
 			expandedMap := make(map[string]string)
 			for k, v := range valueMap {
-				expanded, err := expandTemplate(v, templateData)
+				templateStr := prelude + v
+				expanded, err := expandTemplate(templateStr, templateData)
 				if err != nil {
 					return fmt.Errorf("expanding template for key %q map key %q: %w", key, k, err)
 				}
@@ -207,7 +243,20 @@ func expandTemplate(tmplStr string, data map[string]any) (string, error) {
 		return "", nil
 	}
 
-	tmpl, err := template.New("expand").Parse(tmplStr)
+	// Add custom template functions
+	funcMap := template.FuncMap{
+		"getkv":      getKVFromArray,
+		"appendkv":   appendKV,
+		"prependkv":  prependKV,
+		"split":      strings.Split,
+		"join":       strings.Join,
+		"hasprefix":  strings.HasPrefix,
+		"hassuffix":  strings.HasSuffix,
+		"trimprefix": strings.TrimPrefix,
+		"trimsuffix": strings.TrimSuffix,
+	}
+
+	tmpl, err := template.New("expand").Funcs(funcMap).Parse(tmplStr)
 	if err != nil {
 		return "", fmt.Errorf("parsing template: %w", err)
 	}
@@ -218,6 +267,118 @@ func expandTemplate(tmplStr string, data map[string]any) (string, error) {
 	}
 
 	return buf.String(), nil
+}
+
+func defineVariable(varName, val string) string {
+	return fmt.Sprintf("{{- $%s := %q -}}\n", varName, val)
+}
+
+func extractKeysFromKVArray(kvArray any) []string {
+	var keys []string
+
+	arr, ok := kvArray.([]any)
+	if !ok {
+		return keys
+	}
+
+	for _, item := range arr {
+		if str, ok := item.(string); ok {
+			parts := strings.SplitN(str, "=", 2)
+			if len(parts) == 2 {
+				keys = append(keys, parts[0])
+			}
+		}
+	}
+
+	slices.Sort(keys)
+	return keys
+}
+
+func singleVariableDefinition(builder *strings.Builder, templateData map[string]any, exposeKV string) error {
+	parts := strings.Split(exposeKV, ".")
+	if len(parts) == 0 {
+		return errors.New("empty expose-kv path")
+	}
+	// Navigate to the KV array
+	current := templateData
+	for i, part := range parts {
+		if i == len(parts)-1 {
+			// Last part: should be the KV array
+			kvArray, ok := current[part]
+			if !ok {
+				return fmt.Errorf("path %q not found in template data", exposeKV)
+			}
+
+			// Extract keys from the KV array
+			keys := extractKeysFromKVArray(kvArray)
+			for _, key := range keys {
+				builder.WriteString(defineVariable(key, getKVFromArray(kvArray, key)))
+			}
+		} else {
+			// Intermediate part: navigate deeper
+			next, ok := current[part].(map[string]any)
+			if !ok {
+				return fmt.Errorf("path %q not found in template data", exposeKV)
+			}
+			current = next
+		}
+	}
+	return nil
+}
+
+func variableDefinitionPrelude(templateData map[string]any, exposeKVs []string) (string, error) {
+	var prelude strings.Builder
+	for _, exposeKV := range exposeKVs {
+		if err := singleVariableDefinition(&prelude, templateData, exposeKV); err != nil {
+			return "", fmt.Errorf("defining variables for %q: %w", exposeKV, err)
+		}
+	}
+	return prelude.String(), nil
+}
+
+// getKVFromArray extracts an value from an OCI-style key-value pair array.
+// The array contains strings in "KEY=VALUE" format.
+// Returns the value if found, empty string otherwise.
+func getKVFromArray(kvArray any, key string) string {
+	// Handle []any (from JSON unmarshaling)
+	if arr, ok := kvArray.([]any); ok {
+		prefix := key + "="
+		for _, item := range arr {
+			if str, ok := item.(string); ok {
+				if strings.HasPrefix(str, prefix) {
+					return strings.TrimPrefix(str, prefix)
+				}
+			}
+		}
+	}
+
+	// Handle []string
+	if arr, ok := kvArray.([]string); ok {
+		prefix := key + "="
+		for _, str := range arr {
+			if strings.HasPrefix(str, prefix) {
+				return strings.TrimPrefix(str, prefix)
+			}
+		}
+	}
+
+	return ""
+}
+
+// appendKV finds a key-value pair in an array and appends a suffix to its value.
+// Returns the modified value, or just the suffix if the key is not found.
+// Example: appendkv .base.config.config.env "PATH" ":/custom/bin"
+func appendKV(kvArray any, key string, suffix string) string {
+	value := getKVFromArray(kvArray, key)
+	return value + suffix
+}
+
+// prependKV finds a key-value pair in an array and prepends a prefix to its value.
+// Returns the modified value, or just the prefix if the key is not found.
+// Example: prependkv .base.config.config.env "PATH" "/custom/bin:"
+func prependKV(kvArray any, key string, prefix string) string {
+	value := getKVFromArray(kvArray, key)
+	return prefix + value
 }
 
 // readStampFile reads a Bazel stamp file and adds key-value pairs to the data map
@@ -370,4 +531,89 @@ func mergeNewlineDelimitedFiles(req *request) error {
 	}
 
 	return nil
+}
+
+// processJSONVar parses a --json-var flag value and injects JSON data into the template data.
+// Format: path.to.key=file.json
+// All JSON keys are converted to lowercase for case-insensitive template access.
+func processJSONVar(jsonVar string, templateData map[string]any) error {
+	// Split on first '=' to separate path from file
+	parts := strings.SplitN(jsonVar, "=", 2)
+	if len(parts) != 2 {
+		return fmt.Errorf("invalid format, expected path=file.json")
+	}
+
+	path := parts[0]
+	filePath := parts[1]
+
+	// Read JSON file
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return fmt.Errorf("reading file %s: %w", filePath, err)
+	}
+
+	// Parse JSON into generic structure
+	var jsonData any
+	if err := json.Unmarshal(data, &jsonData); err != nil {
+		return fmt.Errorf("parsing JSON from %s: %w", filePath, err)
+	}
+
+	// Split path into components (e.g., "parent.config" -> ["parent", "config"])
+	pathParts := strings.Split(path, ".")
+	if len(pathParts) == 0 {
+		return fmt.Errorf("empty path")
+	}
+
+	// Navigate/create the nested structure and set the value
+	current := templateData
+	for i, part := range pathParts {
+		if i == len(pathParts)-1 {
+			// Last component: set the value with case-insensitive wrapping
+			current[part] = makeCaseInsensitiveValue(jsonData)
+		} else {
+			// Intermediate component: create or navigate to nested map
+			if existing, ok := current[part]; ok {
+				if existingMap, ok := existing.(map[string]any); ok {
+					current = existingMap
+				} else {
+					return fmt.Errorf("path component %q already exists but is not a map", part)
+				}
+			} else {
+				newMap := make(map[string]any)
+				current[part] = newMap
+				current = newMap
+			}
+		}
+	}
+
+	return nil
+}
+
+// makeCaseInsensitiveMap recursively converts all map keys to lowercase for case-insensitive access
+func makeCaseInsensitiveMap(data map[string]any) map[string]any {
+	result := make(map[string]any)
+
+	for k, v := range data {
+		// Convert keys to lowercase
+		lowerKey := strings.ToLower(k)
+		result[lowerKey] = makeCaseInsensitiveValue(v)
+	}
+
+	return result
+}
+
+// makeCaseInsensitiveValue recursively converts values, lowercasing all map keys
+func makeCaseInsensitiveValue(val any) any {
+	switch v := val.(type) {
+	case map[string]any:
+		return makeCaseInsensitiveMap(v)
+	case []any:
+		result := make([]any, len(v))
+		for i, item := range v {
+			result[i] = makeCaseInsensitiveValue(item)
+		}
+		return result
+	default:
+		return v
+	}
 }

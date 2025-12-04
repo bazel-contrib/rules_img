@@ -2,9 +2,12 @@ package img_toolchain
 
 import (
 	"context"
+	"flag"
 	"path/filepath"
 	"testing"
 )
+
+var verbose = flag.Bool("verbose", false, "enable verbose output for failed assertions")
 
 func TestImgToolchain(t *testing.T) {
 	ctx := context.Background()
@@ -13,6 +16,7 @@ func TestImgToolchain(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create test framework: %v", err)
 	}
+	tf.Verbose = *verbose
 	defer tf.Cleanup()
 
 	testFiles, err := filepath.Glob("testcases/*.ini")
