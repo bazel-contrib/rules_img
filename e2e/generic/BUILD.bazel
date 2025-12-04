@@ -4,6 +4,7 @@ load("@bazel_skylib//rules:write_file.bzl", "write_file")
 load("@rules_img//img:image.bzl", "image_index", "image_manifest")
 load("@rules_img//img:layer.bzl", "file_metadata", "image_layer")
 load("@rules_img//img:push.bzl", "image_push")
+load("@rules_img_images.bzl", "image")
 load("@rules_pkg//pkg:tar.bzl", "pkg_tar")
 load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
 load(":bzl/gen_link.bzl", "gen_dir_link")
@@ -73,6 +74,7 @@ pkg_tar(
 
 image_manifest(
     name = "image_with_empty_uncompressed_tar_layer",
+    base = image("library/nginx"),
     layers = [":empty_tar"],
 )
 

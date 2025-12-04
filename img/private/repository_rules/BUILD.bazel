@@ -51,3 +51,9 @@ bzl_library(
     srcs = ["toolchains_repo.bzl"],
     visibility = ["//img:__subpackages__"],
 )
+
+bzl_library(
+    name = "image_repo",
+    srcs = ["image_repo.bzl"],
+    visibility = ["//img:__subpackages__"],
+)

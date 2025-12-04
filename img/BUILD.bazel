@@ -125,3 +125,10 @@ bzl_library(
         "//img/private/conversion:manifest_from_oci_layout",
     ],
 )
+
+bzl_library(
+    name = "extensions",
+    srcs = ["extensions.bzl"],
+    visibility = ["//visibility:public"],
+    deps = ["//img/private/extensions:images"],
+)

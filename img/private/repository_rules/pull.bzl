@@ -8,7 +8,7 @@ load(
     ":download.bzl",
     _download_blob = "download_blob",
     _download_layers = "download_layers",
-    _download_manifest = "download_manifest",
+    _download_manifest_rctx = "download_manifest_rctx",
     _download_with_tool = "download_with_tool",
 )
 load(":registry.bzl", "get_registries")
@@ -69,7 +69,7 @@ def _pull_impl(rctx):
     )
     if rctx.attr.registry == "docker.io":
         print("Specified docker.io as registry. Did you mean \"index.docker.io\"?")  # buildifier: disable=print
-    root_blob_info = _download_manifest(rctx, downloader = rctx.attr.downloader, reference = reference, **manifest_kwargs)
+    root_blob_info = _download_manifest_rctx(rctx, downloader = rctx.attr.downloader, reference = reference, **manifest_kwargs)
     data = {root_blob_info.digest: root_blob_info.data}
     root_blob = json.decode(root_blob_info.data)
     media_type = get_media_type(root_blob)
@@ -99,7 +99,7 @@ def _pull_impl(rctx):
         if not manifest_index.get("mediaType") in [MEDIA_TYPE_MANIFEST, DOCKER_MANIFEST_V2]:
             continue
         if is_index:
-            manifest_info = _download_manifest(rctx, downloader = rctx.attr.downloader, reference = manifest_index["digest"])
+            manifest_info = _download_manifest_rctx(rctx, downloader = rctx.attr.downloader, reference = manifest_index["digest"])
             data[manifest_info.digest] = manifest_info.data
 
             # Extract platform from index manifest entry

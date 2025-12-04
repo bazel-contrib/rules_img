@@ -320,7 +320,8 @@ This results in a more complex implementation, but also allows for interesting o
     - [`image_manifest_from_oci_layout`](docs/convert.md#image_manifest_from_oci_layout) - Convert oci_image to image_manifest
     - [`image_index_from_oci_layout`](docs/convert.md#image_index_from_oci_layout) - Convert oci_image_index to image_index
   - **Push, Pull and Load Rules**
-    - [`pull`](docs/pull.md#pull) - Pull base images
+    - [`pull`](docs/pull.md#pull) - Repository rule for pulling base images
+    - [`images.pull`](docs/extensions.md#images) - Module extension for pulling base images (EXPERIMENTAL)
     - [`image_push`](docs/push.md#image_push) - Push images to registries
     - [`image_load`](docs/load.md#image_load) - Load images into container daemons
     - [`multi_deploy`](docs/multi_deploy.md#multi_deploy) - Deploy multiple operations as unified command

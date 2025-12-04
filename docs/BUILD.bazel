@@ -37,6 +37,11 @@ stardoc_with_diff_test(
     bzl_library_target = "//img:convert",
 )
 
+stardoc_with_diff_test(
+    name = "extensions",
+    bzl_library_target = "//img:extensions",
+)
+
 # Update all generated documentation
 update_docs(
     name = "update",
