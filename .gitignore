@@ -9,3 +9,5 @@ bazel-*
 .env
 node_modules
 prebuilt_lockfile.json
+tools/bazel
+e2e/*/tools/bazel

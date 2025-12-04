@@ -3,45 +3,17 @@
 load("@bazel_skylib//lib:sets.bzl", "sets")
 load("@pull_hub_repo//:defs.bzl", "tool_for_repository_os")
 load("//img/private:manifest_media_type.bzl", "get_media_type")
+load("//img/private/platforms:constraints.bzl", "map_os_arch_to_constraints")
 load("//img/private/platforms:platforms.bzl", "has_constraint_setting")
 load(
     ":download.bzl",
     _download_blob = "download_blob",
     _download_layers = "download_layers",
-    _download_manifest = "download_manifest",
+    _download_manifest_rctx = "download_manifest_rctx",
     _download_with_tool = "download_with_tool",
     _learn_digest_from_tag = "learn_digest_from_tag",
 )
 load(":registry.bzl", "get_registries")
-
-def _map_os_arch_to_constraints(os_arch_pairs):
-    """Map OS/architecture pairs to Bazel constraint labels.
-
-    Args:
-        os_arch_pairs: List of strings in format "os_arch" (e.g., ["linux_amd64", "darwin_arm64"])
-
-    Returns:
-        String representation of a select expression for target_compatible_with
-    """
-    if not os_arch_pairs:
-        return "[]"
-
-    # If there's only one platform, return its constraints directly
-    if len(os_arch_pairs) == 1:
-        return '["@rules_img//img/constraints:{}"]'.format(os_arch_pairs[0])
-
-    # For multiple platforms, create a select expression
-    select_dict = {}
-    for os_arch in sorted(os_arch_pairs):
-        select_dict['"@rules_img//img/constraints:{}"'.format(os_arch)] = "[]"
-    select_dict['"//conditions:default"'] = '["{}"]'.format(str(Label("@platforms//:incompatible")))
-
-    # Build the select expression string
-    select_items = []
-    for key, value in select_dict.items():
-        select_items.append("        {}: {},".format(key, value))
-
-    return "select({{\n{}\n    }})".format("\n".join(select_items))
 
 def _pull_impl(rctx):
     """Pull an image from a registry and generate a BUILD file."""
@@ -80,7 +52,7 @@ def _pull_impl(rctx):
     )
     if rctx.attr.registry == "docker.io":
         print("Specified docker.io as registry. Did you mean \"index.docker.io\"?")  # buildifier: disable=print
-    root_blob_info = _download_manifest(rctx, downloader = rctx.attr.downloader, reference = reference, **manifest_kwargs)
+    root_blob_info = _download_manifest_rctx(rctx, downloader = rctx.attr.downloader, reference = reference, **manifest_kwargs)
     data = {root_blob_info.digest: root_blob_info.data}
     root_blob = json.decode(root_blob_info.data)
     media_type = get_media_type(root_blob)
@@ -110,7 +82,7 @@ def _pull_impl(rctx):
         if not manifest_index.get("mediaType") in [MEDIA_TYPE_MANIFEST, DOCKER_MANIFEST_V2]:
             continue
         if is_index:
-            manifest_info = _download_manifest(rctx, downloader = rctx.attr.downloader, reference = manifest_index["digest"])
+            manifest_info = _download_manifest_rctx(rctx, downloader = rctx.attr.downloader, reference = manifest_index["digest"])
             data[manifest_info.digest] = manifest_info.data
 
             # Extract platform from index manifest entry
@@ -199,7 +171,7 @@ download_blobs(
         )
 
     # Build target_compatible_with based on discovered platforms
-    target_compatible_with = _map_os_arch_to_constraints(sets.to_list(platforms_set))
+    target_compatible_with = map_os_arch_to_constraints(sets.to_list(platforms_set))
 
     # write out the files
     rctx.file(
