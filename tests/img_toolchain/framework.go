@@ -49,6 +49,7 @@ type AssertionSpec struct {
 	Type     string
 	Path     string
 	Content  string
+	Expected string // For expected values in assertions like json_field_equals
 	Size     int64
 	TarEntry string // For tar-specific assertions, the entry path within the tar
 	Owner    string // For ownership assertions (uid:gid format)
@@ -65,6 +66,7 @@ type TestFramework struct {
 	tempDir       string
 	testdataDir   string
 	t             *testing.T
+	Verbose       bool
 }
 
 type CommandResult struct {
@@ -300,7 +302,7 @@ func parseAssertion(line string) *AssertionSpec {
 			assertion.Path = strings.TrimSpace(parts[0])
 			assertion.Content = strings.TrimSpace(parts[1])
 			if len(parts) == 3 {
-				assertion.Size = int64(len(strings.TrimSpace(parts[2]))) // Store expected value in Size field as length
+				assertion.Expected = strings.TrimSpace(parts[2])
 			}
 		}
 	case "stdout_matches_regex", "stderr_matches_regex":
@@ -598,7 +600,11 @@ func (tf *TestFramework) checkAssertion(assertion AssertionSpec, result *Command
 			return fmt.Errorf("failed to read file %s: %w", assertion.Path, err)
 		}
 		if !strings.Contains(string(content), assertion.Content) {
-			return fmt.Errorf("file %s does not contain %q", assertion.Path, assertion.Content)
+			errMsg := fmt.Sprintf("file %s does not contain %q", assertion.Path, assertion.Content)
+			if tf.Verbose {
+				errMsg += fmt.Sprintf("\nGot:\n%s", string(content))
+			}
+			return fmt.Errorf("%s", errMsg)
 		}
 	case "file_not_contains":
 		fullPath := filepath.Join(tf.tempDir, assertion.Path)
@@ -607,7 +613,11 @@ func (tf *TestFramework) checkAssertion(assertion AssertionSpec, result *Command
 			return fmt.Errorf("failed to read file %s: %w", assertion.Path, err)
 		}
 		if strings.Contains(string(content), assertion.Content) {
-			return fmt.Errorf("file %s contains %q but should not", assertion.Path, assertion.Content)
+			errMsg := fmt.Sprintf("file %s contains %q but should not", assertion.Path, assertion.Content)
+			if tf.Verbose {
+				errMsg += fmt.Sprintf("\nGot:\n%s", string(content))
+			}
+			return fmt.Errorf("%s", errMsg)
 		}
 	case "file_size_gt":
 		fullPath := filepath.Join(tf.tempDir, assertion.Path)
@@ -629,19 +639,35 @@ func (tf *TestFramework) checkAssertion(assertion AssertionSpec, result *Command
 		}
 	case "stdout_contains":
 		if !strings.Contains(result.Stdout, assertion.Content) {
-			return fmt.Errorf("stdout does not contain %q", assertion.Content)
+			errMsg := fmt.Sprintf("stdout does not contain %q", assertion.Content)
+			if tf.Verbose {
+				errMsg += fmt.Sprintf("\nGot:\n%s", result.Stdout)
+			}
+			return fmt.Errorf("%s", errMsg)
 		}
 	case "stdout_not_contains":
 		if strings.Contains(result.Stdout, assertion.Content) {
-			return fmt.Errorf("stdout contains %q but should not", assertion.Content)
+			errMsg := fmt.Sprintf("stdout contains %q but should not", assertion.Content)
+			if tf.Verbose {
+				errMsg += fmt.Sprintf("\nGot:\n%s", result.Stdout)
+			}
+			return fmt.Errorf("%s", errMsg)
 		}
 	case "stderr_contains":
 		if !strings.Contains(result.Stderr, assertion.Content) {
-			return fmt.Errorf("stderr does not contain %q", assertion.Content)
+			errMsg := fmt.Sprintf("stderr does not contain %q", assertion.Content)
+			if tf.Verbose {
+				errMsg += fmt.Sprintf("\nGot:\n%s", result.Stderr)
+			}
+			return fmt.Errorf("%s", errMsg)
 		}
 	case "stderr_not_contains":
 		if strings.Contains(result.Stderr, assertion.Content) {
-			return fmt.Errorf("stderr contains %q but should not", assertion.Content)
+			errMsg := fmt.Sprintf("stderr contains %q but should not", assertion.Content)
+			if tf.Verbose {
+				errMsg += fmt.Sprintf("\nGot:\n%s", result.Stderr)
+			}
+			return fmt.Errorf("%s", errMsg)
 		}
 	case "exit_code":
 		// This is already checked in RunCommand, but we can add it here for completeness
@@ -659,7 +685,11 @@ func (tf *TestFramework) checkAssertion(assertion AssertionSpec, result *Command
 		actualHash := hex.EncodeToString(hash[:])
 		expectedHash := strings.ToLower(assertion.Content)
 		if actualHash != expectedHash {
-			return fmt.Errorf("file %s hash mismatch: expected %s, got %s", assertion.Path, expectedHash, actualHash)
+			errMsg := fmt.Sprintf("file %s hash mismatch: expected %s, got %s", assertion.Path, expectedHash, actualHash)
+			if tf.Verbose {
+				errMsg += fmt.Sprintf("\nFile contents:\n%s", string(content))
+			}
+			return fmt.Errorf("%s", errMsg)
 		}
 	case "file_valid_json":
 		fullPath := filepath.Join(tf.tempDir, assertion.Path)
@@ -694,15 +724,23 @@ func (tf *TestFramework) checkAssertion(assertion AssertionSpec, result *Command
 			return fmt.Errorf("file %s is not valid JSON: %w", assertion.Path, err)
 		}
 		field := assertion.Content
-		if value, exists := jsonData[field]; !exists {
-			return fmt.Errorf("JSON field %s does not exist in file %s", field, assertion.Path)
-		} else {
-			// For now, just convert to string and compare
-			actualValue := fmt.Sprintf("%v", value)
-			expectedValue := string(rune(assertion.Size)) // This is a hack - we need a better way to store expected values
-			if actualValue != expectedValue {
-				return fmt.Errorf("JSON field %s in file %s: expected %s, got %s", field, assertion.Path, expectedValue, actualValue)
+		value, exists := jsonData[field]
+		if !exists {
+			errMsg := fmt.Sprintf("JSON field %s does not exist in file %s", field, assertion.Path)
+			if tf.Verbose {
+				errMsg += fmt.Sprintf("\nFile contents:\n%s", string(content))
 			}
+			return fmt.Errorf("%s", errMsg)
+		}
+		// Convert to string and compare
+		actualValue := fmt.Sprintf("%v", value)
+		expectedValue := assertion.Expected
+		if actualValue != expectedValue {
+			errMsg := fmt.Sprintf("JSON field %s in file %s: expected %s, got %s", field, assertion.Path, expectedValue, actualValue)
+			if tf.Verbose {
+				errMsg += fmt.Sprintf("\nFile contents:\n%s", string(content))
+			}
+			return fmt.Errorf("%s", errMsg)
 		}
 	case "json_field_exists":
 		fullPath := filepath.Join(tf.tempDir, assertion.Path)
