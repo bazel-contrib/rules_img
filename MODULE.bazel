@@ -44,6 +44,7 @@ use_repo(
 
 # toolchains_protoc needs to be placed at the top to ensure the proto toolchain is registered first
 bazel_dep(name = "toolchains_protoc", version = "0.6.0", dev_dependency = True)
+bazel_dep(name = "aspect_bazel_lib", version = "2.21.2", dev_dependency = True)  # only exists to upgrade bazel_lib used by cgrindel_bazel_starlib to a version compatible with Bazel 9
 bazel_dep(name = "bazel_lib", version = "3.0.0", dev_dependency = True)
 bazel_dep(name = "bazel_skylib_gazelle_plugin", version = "1.8.2", dev_dependency = True)
 bazel_dep(name = "buildifier_prebuilt", version = "8.2.1", dev_dependency = True)
@@ -125,5 +126,11 @@ single_version_override(
     patch_strip = 1,
     patches = ["//:0001-protobuf-19679-rm-protoc-dep.patch"],
     version = "33.0",
+)
+
+single_version_override(
+    module_name = "hermetic_cc_toolchain",
+    patch_strip = 1,
+    patches = ["//:hermetic_cc_toolchain.patch"],
 )
 ### REMOVE_BEFORE_RELEASE_END

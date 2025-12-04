@@ -1,0 +1,413 @@
+From e906f270fa38c1fe0b2db346717d2f2cd90da123 Mon Sep 17 00:00:00 2001
+From: Lining Pan <lining_pan@outlook.com>
+Date: Mon, 30 Jun 2025 13:57:42 -0400
+Subject: [PATCH 1/3] feat: reorder the target parameter in zig wrapper (#223)
+
+Closes #222
+---
+ toolchain/zig-wrapper.zig | 28 +++++++++++++++++-----------
+ 1 file changed, 17 insertions(+), 11 deletions(-)
+
+diff --git a/toolchain/zig-wrapper.zig b/toolchain/zig-wrapper.zig
+index d1d59f9f..823ed794 100644
+--- a/toolchain/zig-wrapper.zig
++++ b/toolchain/zig-wrapper.zig
+@@ -5,7 +5,7 @@
+ //
+ // In simple cases it is usually enough to:
+ //
+-//      zig c++ -target <triple> <...>
++//      zig c++ <...> -target <triple>
+ //
+ // However, there are some caveats:
+ //
+@@ -227,17 +227,23 @@ fn parseArgs(
+ 
+     switch (run_mode) {
+         .wrapper => {},
+-        .arg1 => try args.appendSlice(arena, &[_][]const u8{arg0_noexe}),
+-        .cc => |target| try args.appendSlice(arena, &[_][]const u8{
+-            arg0_noexe,
+-            "-target",
+-            target,
+-        }),
++        .arg1, .cc => try args.appendSlice(arena, &[_][]const u8{arg0_noexe}),
+     }
+ 
+     while (argv_it.next()) |arg|
+         try args.append(arena, arg);
+ 
++    // Add -target as the last parameter. The wrapper should overwrite
++    // the target specified by other tools calling the wrapper.
++    // Some tools might pass LLVM target triple, which are rejected by zig.
++    // https://github.com/uber/hermetic_cc_toolchain/issues/222
++    if (run_mode == RunMode.cc) {
++        try args.appendSlice(arena, &[_][]const u8{
++            "-target",
++            run_mode.cc,
++        });
++    }
++
+     return ParseResults{ .exec = .{ .args = args, .env = env } };
+ }
+ 
+@@ -363,11 +369,11 @@ test "zig-wrapper:parseArgs" {
+                         "tools" ++ sep ++ "x86_64-linux-musl" ++ sep ++
+                             ".." ++ sep ++ ".." ++ sep ++ "zig" ++ EXE,
+                         "c++",
+-                        "-target",
+-                        "x86_64-linux-musl",
+                         "main.c",
+                         "-o",
+                         "/dev/null",
++                        "-target",
++                        "x86_64-linux-musl",
+                     },
+                     .env_zig_lib_dir = "tools" ++ sep ++ "x86_64-linux-musl" ++
+                         sep ++ ".." ++ sep ++ ".." ++ sep ++ "lib",
+@@ -407,11 +413,11 @@ test "zig-wrapper:parseArgs" {
+                     .args = &[_][:0]const u8{
+                         "external" ++ sep ++ "zig_sdk" ++ sep ++ "zig" ++ EXE,
+                         "c++",
+-                        "-target",
+-                        "x86_64-linux-gnu.2.28",
+                         "main.c",
+                         "-o",
+                         "/dev/null",
++                        "-target",
++                        "x86_64-linux-gnu.2.28",
+                     },
+                     .env_zig_lib_dir = "external" ++ sep ++ "zig_sdk" ++
+                         sep ++ "lib",
+
+From 5020492c652d4109b57b2567b93e53c5ca426062 Mon Sep 17 00:00:00 2001
+From: Eero Kelly <eerokelly@gmail.com>
+Date: Sat, 4 Oct 2025 08:49:12 -0700
+Subject: [PATCH 2/3] Add path to add extra settings to toolchains (#213)
+
+This will allow toolchains to be configurably more restrictive, e.g. by
+requiring a setting to be enabled in order to select the hermetic
+toolchains.
+
+This could be a solution to
+https://github.com/uber/hermetic_cc_toolchain/issues/205.
+---
+ toolchain/defs.bzl                             | 12 ++++++------
+ toolchain/ext.bzl                              | 18 ++++++++++++++++--
+ .../libc_aware/toolchain/BUILD.bazel.tmpl      |  2 +-
+ toolchain/private/repositories.bzl             |  8 ++++++++
+ toolchain/toolchain/BUILD.bazel.tmpl           |  2 +-
+ toolchain/toolchain/defs.bzl                   | 12 +++++++-----
+ toolchain/utils.bzl                            |  2 ++
+ 7 files changed, 41 insertions(+), 15 deletions(-)
+ create mode 100644 toolchain/utils.bzl
+
+diff --git a/toolchain/defs.bzl b/toolchain/defs.bzl
+index cf8e2dd7..89979b86 100644
+--- a/toolchain/defs.bzl
++++ b/toolchain/defs.bzl
+@@ -2,6 +2,7 @@ load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+ load("@bazel_tools//tools/build_defs/repo:utils.bzl", "read_user_netrc", "use_netrc")
+ load("@hermetic_cc_toolchain//toolchain/private:defs.bzl", "target_structs", "transform_os_name", "zig_tool_path")
+ load("@hermetic_cc_toolchain//toolchain/private:repositories.bzl", "zig_sdk_repository")
++load("@hermetic_cc_toolchain//toolchain:utils.bzl", "quote")
+ load(
+     "@hermetic_cc_toolchain//toolchain/private:zig_sdk.bzl",
+     "HOST_PLATFORM_SHA256",
+@@ -64,7 +65,8 @@ def toolchains(
+         url_formats = [],
+         host_platform_sha256 = HOST_PLATFORM_SHA256,
+         host_platform_ext = _HOST_PLATFORM_EXT,
+-        exec_platforms = {}):
++        exec_platforms = {},
++        extra_target_settings = []):
+     """
+         Download zig toolchain and declare bazel toolchains.
+         The platforms are not registered automatically, that should be done by
+@@ -84,6 +86,7 @@ def toolchains(
+     zig_sdk_repository(
+         name = "zig_sdk",
+         exec_platforms = exec_platforms,
++        extra_target_settings = extra_target_settings,
+     )
+ 
+     # create configs for the HOST
+@@ -115,9 +118,6 @@ def toolchains(
+         private = private_repos,
+     )
+ 
+-def _quote(s):
+-    return "'" + s.replace("'", "'\\''") + "'"
+-
+ def _zig_repository_impl(repository_ctx):
+     exec_os = repository_ctx.attr.exec_os
+     exec_arch = repository_ctx.attr.exec_arch
+@@ -166,8 +166,8 @@ def _zig_repository_impl(repository_ctx):
+             Label(src),
+             executable = False,
+             substitutions = {
+-                "{zig_sdk_path}": _quote("external/zig_sdk"),
+-                "{os}": _quote(exec_os),
++                "{zig_sdk_path}": quote("external/zig_sdk"),
++                "{os}": quote(exec_os),
+                 "{exec_os}": exec_os,
+                 "{exec_cpu}": exec_arch,
+             },
+diff --git a/toolchain/ext.bzl b/toolchain/ext.bzl
+index a9cd3b8d..5f909795 100644
+--- a/toolchain/ext.bzl
++++ b/toolchain/ext.bzl
+@@ -15,11 +15,19 @@ _exec_platform = tag_class(
+     doc = "Zig execution platform tuple",
+ )
+ 
++_extra_target_settings = tag_class(
++    attrs = {
++        "settings": attr.label_list(),
++    },
++    doc = "Each setting is added to every toolchain to make them more restrictive",
++)
++
+ def _toolchains_impl(mctx):
+     exec_platforms = {}
+     root_direct_deps = []
+     root_direct_dev_deps = []
+     is_non_dev_dependency = mctx.root_module_has_non_dev_dependency
++    extra_target_settings = []
+ 
+     for mod in mctx.modules:
+         if mod.is_root:
+@@ -29,7 +37,10 @@ def _toolchains_impl(mctx):
+                     _archs.append(ep.arch)
+                 exec_platforms[ep.os] = _archs
+ 
+-            repos = zig_toolchains(exec_platforms = exec_platforms)
++            for tag in mod.tags.extra_target_settings:
++                extra_target_settings += tag.settings
++
++            repos = zig_toolchains(exec_platforms = exec_platforms, extra_target_settings = extra_target_settings)
+ 
+             root_direct_deps = list(repos.public) if is_non_dev_dependency else []
+             root_direct_dev_deps = list(repos.public) if not is_non_dev_dependency else []
+@@ -46,5 +57,8 @@ def _toolchains_impl(mctx):
+ 
+ toolchains = module_extension(
+     implementation = _toolchains_impl,
+-    tag_classes = {"exec_platform": _exec_platform},
++    tag_classes = {
++        "exec_platform": _exec_platform,
++        "extra_target_settings": _extra_target_settings,
++    },
+ )
+diff --git a/toolchain/libc_aware/toolchain/BUILD.bazel.tmpl b/toolchain/libc_aware/toolchain/BUILD.bazel.tmpl
+index 7031116b..d8bf3e40 100644
+--- a/toolchain/libc_aware/toolchain/BUILD.bazel.tmpl
++++ b/toolchain/libc_aware/toolchain/BUILD.bazel.tmpl
+@@ -7,4 +7,4 @@ package(
+     default_visibility = ["//visibility:public"],
+ )
+ 
+-declare_libc_aware_toolchains(configs = {configs})
++declare_libc_aware_toolchains(configs = {configs}, extra_target_settings = {extra_target_settings})
+diff --git a/toolchain/private/repositories.bzl b/toolchain/private/repositories.bzl
+index dcef34db..a4804f9f 100644
+--- a/toolchain/private/repositories.bzl
++++ b/toolchain/private/repositories.bzl
+@@ -1,12 +1,16 @@
+ load("@hermetic_cc_toolchain//toolchain/private:defs.bzl", "transform_arch_name", "transform_os_name")
++load("@hermetic_cc_toolchain//toolchain:utils.bzl", "quote")
+ 
+ def _define_zig_toolchains(repository_ctx, configs, package = ""):
++    extra_target_settings = "[" + " ".join([quote(str(setting)) + "," for setting in repository_ctx.attr.extra_target_settings]) + "]"
++
+     repository_ctx.template(
+         "toolchain/{}BUILD".format(package),
+         Label("//toolchain/toolchain:BUILD.bazel.tmpl"),
+         executable = False,
+         substitutions = {
+             "{configs}": repr(configs),
++            "{extra_target_settings}": extra_target_settings,
+         },
+     )
+ 
+@@ -16,6 +20,7 @@ def _define_zig_toolchains(repository_ctx, configs, package = ""):
+         executable = False,
+         substitutions = {
+             "{configs}": repr(configs),
++            "{extra_target_settings}": extra_target_settings,
+         },
+     )
+ 
+@@ -91,6 +96,9 @@ zig_sdk_repository = repository_rule(
+             doc = "Dictionary, where the keys are oses and the values are lists of supported architectures",
+             mandatory = True,
+         ),
++        "extra_target_settings": attr.label_list(
++            doc = "Additional settings to add to the generated toolchains, to make them more restrictive",
++        ),
+     },
+     implementation = _zig_sdk_repository_impl,
+ )
+diff --git a/toolchain/toolchain/BUILD.bazel.tmpl b/toolchain/toolchain/BUILD.bazel.tmpl
+index 85504542..0f3c1ad0 100644
+--- a/toolchain/toolchain/BUILD.bazel.tmpl
++++ b/toolchain/toolchain/BUILD.bazel.tmpl
+@@ -4,4 +4,4 @@ package(
+     default_visibility = ["//visibility:public"],
+ )
+ 
+-declare_toolchains(configs = {configs})
++declare_toolchains(configs = {configs}, extra_target_settings = {extra_target_settings})
+diff --git a/toolchain/toolchain/defs.bzl b/toolchain/toolchain/defs.bzl
+index 3ca197cf..73cf6133 100644
+--- a/toolchain/toolchain/defs.bzl
++++ b/toolchain/toolchain/defs.bzl
+@@ -1,6 +1,6 @@
+ load("@hermetic_cc_toolchain//toolchain/private:defs.bzl", "target_structs")
+ 
+-def declare_toolchains(configs = ""):
++def declare_toolchains(configs = "", extra_target_settings = []):
+     for target_config in target_structs():
+         gotarget = target_config.gotarget
+         zigtarget = target_config.zigtarget
+@@ -12,11 +12,11 @@ def declare_toolchains(configs = ""):
+         if hasattr(target_config, "libc_constraint"):
+             extra_constraints = ["@zig_sdk//libc:unconstrained"]
+ 
+-        _declare_toolchain(gotarget, zigtarget, target_config.constraint_values + extra_constraints, configs)
++        _declare_toolchain(gotarget, zigtarget, target_config.constraint_values + extra_constraints, configs, extra_target_settings)
+ 
+     _declare_zig_toolchain("zig", configs)
+ 
+-def declare_libc_aware_toolchains(configs = ""):
++def declare_libc_aware_toolchains(configs = "", extra_target_settings = []):
+     for target_config in target_structs():
+         gotarget = target_config.gotarget
+         zigtarget = target_config.zigtarget
+@@ -25,15 +25,16 @@ def declare_libc_aware_toolchains(configs = ""):
+         # is only selected if libc is not expicitly set and another one that is
+         # only selected if the specific libc variant is selected.
+         if hasattr(target_config, "libc_constraint"):
+-            _declare_toolchain(gotarget, zigtarget, target_config.constraint_values + [target_config.libc_constraint], configs)
++            _declare_toolchain(gotarget, zigtarget, target_config.constraint_values + [target_config.libc_constraint], configs, extra_target_settings)
+ 
+-def _declare_toolchain(gotarget, zigtarget, target_compatible_with, configs):
++def _declare_toolchain(gotarget, zigtarget, target_compatible_with, configs, extra_target_settings):
+     # register two kinds of toolchain targets: Go and Zig conventions.
+     # Go convention: amd64/arm64, linux/darwin
+     native.toolchain(
+         name = gotarget,
+         exec_compatible_with = ["{}//:exec_os".format(configs), "{}//:exec_cpu".format(configs)],
+         target_compatible_with = target_compatible_with,
++        target_settings = extra_target_settings,
+         toolchain = "{}//:{}_cc".format(configs, zigtarget),
+         toolchain_type = "@bazel_tools//tools/cpp:toolchain_type",
+     )
+@@ -43,6 +44,7 @@ def _declare_toolchain(gotarget, zigtarget, target_compatible_with, configs):
+         name = zigtarget,
+         exec_compatible_with = ["{}//:exec_os".format(configs), "{}//:exec_cpu".format(configs)],
+         target_compatible_with = target_compatible_with,
++        target_settings = extra_target_settings,
+         toolchain = "{}//:{}_cc".format(configs, zigtarget),
+         toolchain_type = "@bazel_tools//tools/cpp:toolchain_type",
+     )
+diff --git a/toolchain/utils.bzl b/toolchain/utils.bzl
+new file mode 100644
+index 00000000..7a512489
+--- /dev/null
++++ b/toolchain/utils.bzl
+@@ -0,0 +1,2 @@
++def quote(s):
++    return "'" + s.replace("'", "'\\''") + "'"
+
+From 13e310d47fb6a1a09916c42eb22d83321a8659ac Mon Sep 17 00:00:00 2001
+From: Matt Clarkson <matthew.clarkson@arm.com>
+Date: Thu, 20 Nov 2025 09:55:28 +0000
+Subject: [PATCH 3/3] Support Bazel 9
+
+---
+ MODULE.bazel                        | 1 +
+ toolchain/defs.bzl                  | 2 +-
+ toolchain/private/cc_toolchains.bzl | 3 ++-
+ toolchain/private/repositories.bzl  | 2 +-
+ toolchain/zig_cc_toolchain.bzl      | 6 ++++--
+ 5 files changed, 9 insertions(+), 5 deletions(-)
+
+diff --git a/MODULE.bazel b/MODULE.bazel
+index 7f491a6b..e5c2a952 100644
+--- a/MODULE.bazel
++++ b/MODULE.bazel
+@@ -5,6 +5,7 @@ module(
+ 
+ bazel_dep(name = "bazel_features", version = "1.21.0")
+ bazel_dep(name = "platforms", version = "0.0.10")
++bazel_dep(name = "rules_cc", version = "0.2.14")
+ 
+ bazel_dep(name = "rules_go", version = "0.54.0", dev_dependency = True)
+ 
+diff --git a/toolchain/defs.bzl b/toolchain/defs.bzl
+index 89979b86..b90b93be 100644
+--- a/toolchain/defs.bzl
++++ b/toolchain/defs.bzl
+@@ -1,8 +1,8 @@
+ load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+ load("@bazel_tools//tools/build_defs/repo:utils.bzl", "read_user_netrc", "use_netrc")
++load("@hermetic_cc_toolchain//toolchain:utils.bzl", "quote")
+ load("@hermetic_cc_toolchain//toolchain/private:defs.bzl", "target_structs", "transform_os_name", "zig_tool_path")
+ load("@hermetic_cc_toolchain//toolchain/private:repositories.bzl", "zig_sdk_repository")
+-load("@hermetic_cc_toolchain//toolchain:utils.bzl", "quote")
+ load(
+     "@hermetic_cc_toolchain//toolchain/private:zig_sdk.bzl",
+     "HOST_PLATFORM_SHA256",
+diff --git a/toolchain/private/cc_toolchains.bzl b/toolchain/private/cc_toolchains.bzl
+index 68c4c2ff..efadf184 100644
+--- a/toolchain/private/cc_toolchains.bzl
++++ b/toolchain/private/cc_toolchains.bzl
+@@ -1,4 +1,5 @@
+ load("@hermetic_cc_toolchain//toolchain:zig_cc_toolchain.bzl", "zig_cc_toolchain_config")
++load("@rules_cc//cc/toolchains:cc_toolchain.bzl", "cc_toolchain")
+ load(":defs.bzl", "target_structs", "zig_tool_path")
+ 
+ def declare_cc_toolchains(os, zig_sdk_path):
+@@ -54,7 +55,7 @@ def declare_cc_toolchains(os, zig_sdk_path):
+             visibility = ["//visibility:private"],
+         )
+ 
+-        native.cc_toolchain(
++        cc_toolchain(
+             name = zigtarget + "_cc",
+             toolchain_identifier = zigtarget + "-toolchain",
+             toolchain_config = ":%s_cc_config" % zigtarget,
+diff --git a/toolchain/private/repositories.bzl b/toolchain/private/repositories.bzl
+index a4804f9f..dfd3df5a 100644
+--- a/toolchain/private/repositories.bzl
++++ b/toolchain/private/repositories.bzl
+@@ -1,5 +1,5 @@
+-load("@hermetic_cc_toolchain//toolchain/private:defs.bzl", "transform_arch_name", "transform_os_name")
+ load("@hermetic_cc_toolchain//toolchain:utils.bzl", "quote")
++load("@hermetic_cc_toolchain//toolchain/private:defs.bzl", "transform_arch_name", "transform_os_name")
+ 
+ def _define_zig_toolchains(repository_ctx, configs, package = ""):
+     extra_target_settings = "[" + " ".join([quote(str(setting)) + "," for setting in repository_ctx.attr.extra_target_settings]) + "]"
+diff --git a/toolchain/zig_cc_toolchain.bzl b/toolchain/zig_cc_toolchain.bzl
+index cebe72b6..72fa0c29 100644
+--- a/toolchain/zig_cc_toolchain.bzl
++++ b/toolchain/zig_cc_toolchain.bzl
+@@ -1,6 +1,6 @@
+-load("@bazel_tools//tools/build_defs/cc:action_names.bzl", "ACTION_NAMES")
++load("@rules_cc//cc:action_names.bzl", "ACTION_NAMES")
+ load(
+-    "@bazel_tools//tools/cpp:cc_toolchain_config_lib.bzl",
++    "@rules_cc//cc:cc_toolchain_config_lib.bzl",
+     "artifact_name_pattern",
+     "feature",
+     "feature_set",
+@@ -9,6 +9,8 @@ load(
+     "tool",
+     "tool_path",
+ )
++load("@rules_cc//cc/common:cc_common.bzl", "cc_common")
++load("@rules_cc//cc/toolchains:cc_toolchain_config_info.bzl", "CcToolchainConfigInfo")
+ 
+ all_link_actions = [
+     ACTION_NAMES.cpp_link_executable,
