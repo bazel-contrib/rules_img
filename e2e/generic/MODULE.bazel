@@ -120,9 +120,9 @@ pull(
 
 pull(
     name = "neo4j",
-    digest = "sha256:78ab6b91044a391c0f69a467ad635db55e6870a9ddf779b39e6e60e2604f272d",
+    digest = "sha256:5bd040cfe84b953a893c943cf3be4e4dc3b2758c154c192a6196de9d1e31b11b",
     layer_handling = "lazy",
     registry = "index.docker.io",
     repository = "library/neo4j",
-    tag = "5.26.17-ubi9",
+    tag = "5.26.18-ubi9",
 )
