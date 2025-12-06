@@ -3,6 +3,63 @@
 load("@pull_hub_repo//:defs.bzl", "tool_for_repository_os")
 load(":registry.bzl", "get_registries")
 
+def learn_digest_from_tag(rctx, *, tag, downloader):
+    """Learn the digest of an image from its tag by downloading manifest headers.
+
+    Args:
+        rctx: Repository context.
+        tag: The tag to resolve.
+        downloader: "img_tool" or "bazel".
+
+    Returns:
+        The resolved digest as a string (e.g., "sha256:abc123...") or None if resolution failed.
+    """
+    registries = get_registries(rctx)
+
+    if downloader == "bazel":
+        # Use Bazel's download to get the manifest and extract its digest
+        result = rctx.download(
+            url = [
+                "https://{registry}/v2/{repository}/manifests/{tag}".format(
+                    registry = registry,
+                    repository = rctx.attr.repository,
+                    tag = tag,
+                )
+                for registry in registries
+            ],
+            output = "temp_manifest_for_digest_learning.json",
+        )
+
+        # The digest is the SHA256 of the downloaded manifest
+        return "sha256:" + result.sha256
+    else:
+        # Use img_tool download-manifest command with --print-digest flag
+        tool = tool_for_repository_os(rctx)
+        tool_path = rctx.path(tool)
+        args = [
+            tool_path,
+            "download-manifest",
+            "--repository",
+            rctx.attr.repository,
+            "--tag",
+            tag,
+            "--print-digest",
+        ] + [
+            "--registry={}".format(registry)
+            for registry in registries
+        ]
+        result = rctx.execute(args)
+        if result.return_code != 0:
+            # Failed to get digest
+            return None
+
+        # The digest is printed to stdout
+        digest = result.stdout.strip()
+        if len(digest) > 0 and digest.startswith("sha256:"):
+            return digest
+
+        return None
+
 def _check_existing_blob(rctx, digest, wait_and_read = True):
     """Check if a blob with the given digest already exists.
 

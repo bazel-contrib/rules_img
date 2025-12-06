@@ -9,7 +9,8 @@ Public API for pulling base container images.
 <pre>
 load("@rules_img//img:pull.bzl", "pull")
 
-pull(<a href="#pull-name">name</a>, <a href="#pull-digest">digest</a>, <a href="#pull-downloader">downloader</a>, <a href="#pull-layer_handling">layer_handling</a>, <a href="#pull-registries">registries</a>, <a href="#pull-registry">registry</a>, <a href="#pull-repo_mapping">repo_mapping</a>, <a href="#pull-repository">repository</a>, <a href="#pull-tag">tag</a>)
+pull(<a href="#pull-name">name</a>, <a href="#pull-digest">digest</a>, <a href="#pull-downloader">downloader</a>, <a href="#pull-layer_handling">layer_handling</a>, <a href="#pull-registries">registries</a>, <a href="#pull-registry">registry</a>, <a href="#pull-repo_mapping">repo_mapping</a>, <a href="#pull-repository">repository</a>, <a href="#pull-tag">tag</a>,
+     <a href="#pull-unsafe_allow_tag_without_digest">unsafe_allow_tag_without_digest</a>)
 </pre>
 
 Pulls a container image from a registry using shallow pulling.
@@ -49,5 +50,6 @@ will resolve the tag to a digest at fetch time and print a warning.
 | <a id="pull-repo_mapping"></a>repo_mapping |  In `WORKSPACE` context only: a dictionary from local repository name to global repository name. This allows controls over workspace dependency resolution for dependencies of this repository.<br><br>For example, an entry `"@foo": "@bar"` declares that, for any time this repository depends on `@foo` (such as a dependency on `@foo//some:target`, it should actually resolve that dependency within globally-declared `@bar` (`@bar//some:target`).<br><br>This attribute is _not_ supported in `MODULE.bazel` context (when invoking a repository rule inside a module extension's implementation function).   | <a href="https://bazel.build/rules/lib/dict">Dictionary: String -> String</a> | optional |  |
 | <a id="pull-repository"></a>repository |  The image repository within the registry (e.g., "library/ubuntu", "my-project/my-image").<br><br>For Docker Hub, official images use "library/" prefix (e.g., "library/ubuntu").   | String | required |  |
 | <a id="pull-tag"></a>tag |  The image tag to pull (e.g., "latest", "24.04", "v1.2.3").<br><br>While required, it's recommended to also specify a digest for reproducible builds.   | String | optional |  `""`  |
+| <a id="pull-unsafe_allow_tag_without_digest"></a>unsafe_allow_tag_without_digest |  Allow pulling by tag without specifying a digest.<br><br>**WARNING:** This is not recommended for reproducible builds as tags can be moved to point to different image versions. Only use this when you're managing reproducibility through other means (e.g., content-based tags).<br><br>When enabled, the rule will resolve the tag to a digest at fetch time and use that digest, but will not fail if no digest is explicitly provided.   | Boolean | optional |  `False`  |
 
 

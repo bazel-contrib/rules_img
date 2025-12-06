@@ -126,3 +126,15 @@ pull(
     repository = "library/neo4j",
     tag = "5.26.18-ubi9",
 )
+
+# Example of pulling from GCR by tag without digest
+# This uses the new unsafe_allow_tag_without_digest flag
+# which is useful when you're managing reproducibility through content-based tags
+pull(
+    name = "distroless_base_gcr",
+    layer_handling = "lazy",
+    registry = "gcr.io",
+    repository = "distroless/base-debian12",
+    tag = "latest",
+    unsafe_allow_tag_without_digest = True,
+)
