@@ -4,6 +4,9 @@
     "config:recommended"
   ],
   "labels": ["dependencies"],
+  "allowedPostUpgradeCommands": [
+    "^bazel mod deps --lockfile_mode=update$"
+  ],
   "packageRules": [
     {
       "groupName": "container images",
