@@ -480,6 +480,7 @@ build_test(
         ":manifest_with_merged_annotations",
         ":complex_manifest",
         ":manifest_with_created",
+        ":manifest_extending_gcr_base",
     ],
 )
 
@@ -502,6 +503,7 @@ build_test(
         ":push_complex",
         ":push_with_created",
         ":push_tag_file",
+        ":push_gcr_based",
     ],
 )
 
@@ -546,6 +548,35 @@ build_test(
         ":manifest_with_target_platform_amd64",
         ":platform_transitioned_index",
     ],
+)
+
+# Test: Using GCR image pulled by tag as base
+# This demonstrates the unsafe_allow_tag_without_digest feature
+image_layer(
+    name = "app_layer_for_gcr",
+    srcs = {
+        "/app/script.sh": ":executable_script",
+        "/app/data.txt": ":large_file",
+    },
+)
+
+image_manifest(
+    name = "manifest_extending_gcr_base",
+    base = "@distroless_base_gcr//:image",
+    entrypoint = ["/app/script.sh"],
+    labels = {
+        "base.pulled.by": "tag-without-digest",
+        "test": "gcr_tag_pull",
+    },
+    layers = [":app_layer_for_gcr"],
+)
+
+image_push(
+    name = "push_gcr_based",
+    image = ":manifest_extending_gcr_base",
+    registry = "ghcr.io",
+    repository = "malt3/rules_img/e2e-generic-gcr-based",
+    visibility = ["//visibility:public"],
 )
 
 build_test(

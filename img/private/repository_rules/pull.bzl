@@ -10,6 +10,7 @@ load(
     _download_layers = "download_layers",
     _download_manifest = "download_manifest",
     _download_with_tool = "download_with_tool",
+    _learn_digest_from_tag = "learn_digest_from_tag",
 )
 load(":registry.bzl", "get_registries")
 
@@ -49,7 +50,17 @@ def _pull_impl(rctx):
         have_valid_digest = False
     elif not rctx.attr.digest.startswith("sha256:"):
         have_valid_digest = False
-    reference = rctx.attr.digest if have_valid_digest else rctx.attr.tag
+
+    # Learn the digest from tag if needed
+    digest = rctx.attr.digest
+    if not have_valid_digest and rctx.attr.unsafe_allow_tag_without_digest:
+        # Do an extra roundtrip to learn the digest from the tag
+        learned_digest = _learn_digest_from_tag(rctx, tag = rctx.attr.tag, downloader = rctx.attr.downloader)
+        if learned_digest:
+            digest = learned_digest
+            have_valid_digest = True
+
+    reference = digest if have_valid_digest else rctx.attr.tag
     if len(reference) == 0:
         fail("either digest or tag must be specified")
 
@@ -65,7 +76,7 @@ def _pull_impl(rctx):
         )
 
     manifest_kwargs = dict(
-        canonical_id = rctx.attr.repository + ((":" + rctx.attr.tag) if rctx.attr.tag else ("@" + rctx.attr.digest)),
+        canonical_id = rctx.attr.repository + ((":" + rctx.attr.tag) if rctx.attr.tag else ("@" + digest)),
     )
     if rctx.attr.registry == "docker.io":
         print("Specified docker.io as registry. Did you mean \"index.docker.io\"?")  # buildifier: disable=print
@@ -80,7 +91,7 @@ def _pull_impl(rctx):
         manifests = root_blob.get("manifests", [])
     elif media_type in [MEDIA_TYPE_MANIFEST, DOCKER_MANIFEST_V2]:
         is_index = False
-        manifests = [{"mediaType": MEDIA_TYPE_MANIFEST, "digest": rctx.attr.digest}]
+        manifests = [{"mediaType": MEDIA_TYPE_MANIFEST, "digest": digest}]
     else:
         fail("invalid mediaType in manifest: {}".format(media_type))
 
@@ -220,7 +231,7 @@ alias(
             ),
             maybe_lazy_layer_download = maybe_lazy_layer_download,
             name = repr(name),
-            digest = repr(rctx.attr.digest),
+            digest = repr(digest),
             data = json.encode_indent(
                 data,
                 prefix = "    ",
@@ -240,7 +251,7 @@ alias(
             tag = repr(rctx.attr.tag) if rctx.attr.tag else "None",
         ),
     )
-    if len(rctx.attr.digest) > 0 and hasattr(rctx, "repo_metadata"):
+    if len(digest) > 0 and hasattr(rctx, "repo_metadata"):
         # allows participating in repo contents cache
         return rctx.repo_metadata(reproducible = True)
 
@@ -335,6 +346,17 @@ This attribute controls when and how layer data is fetched from the registry.
 
 * **`bazel`**: Uses Bazel's native HTTP capabilities for downloading manifests and blobs.
 """,
+        ),
+        "unsafe_allow_tag_without_digest": attr.bool(
+            default = False,
+            doc = """Allow pulling by tag without specifying a digest.
+
+**WARNING:** This is not recommended for reproducible builds as tags can be moved
+to point to different image versions. Only use this when you're managing reproducibility
+through other means (e.g., content-based tags).
+
+When enabled, the rule will resolve the tag to a digest at fetch time and use that
+digest, but will not fail if no digest is explicitly provided.""",
         ),
     },
 )

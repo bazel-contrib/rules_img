@@ -20,6 +20,7 @@ func DownloadManifestProcess(ctx context.Context, args []string) {
 	var repository string
 	var outputPath string
 	var registries stringSliceFlag
+	var printDigest bool
 
 	flagSet := flag.NewFlagSet("download-manifest", flag.ExitOnError)
 	flagSet.Usage = func() {
@@ -41,6 +42,7 @@ func DownloadManifestProcess(ctx context.Context, args []string) {
 	flagSet.StringVar(&repository, "repository", "", "Repository name of the image (required)")
 	flagSet.StringVar(&outputPath, "output", "", "Output file path (required)")
 	flagSet.Var(&registries, "registry", "Registry to use (can be specified multiple times, defaults to docker.io)")
+	flagSet.BoolVar(&printDigest, "print-digest", false, "Print only the digest to stdout and exit (useful for learning digests from tags)")
 
 	if err := flagSet.Parse(args); err != nil {
 		flagSet.Usage()
@@ -62,7 +64,7 @@ func DownloadManifestProcess(ctx context.Context, args []string) {
 		flagSet.Usage()
 		os.Exit(1)
 	}
-	if outputPath == "" {
+	if outputPath == "" && !printDigest {
 		fmt.Fprintf(os.Stderr, "Error: --output is required\n")
 		flagSet.Usage()
 		os.Exit(1)
@@ -80,12 +82,13 @@ func DownloadManifestProcess(ctx context.Context, args []string) {
 
 	// Try each registry until success
 	var lastErr error
+	var resolvedDigest string
 	for _, registry := range registries {
 		var err error
 		if digest != "" {
-			err = downloadManifestByDigest(registry, repository, digest, outputPath)
+			err = downloadManifestByDigest(registry, repository, digest, outputPath, printDigest, &resolvedDigest)
 		} else {
-			err = downloadManifestByTag(registry, repository, tag, outputPath)
+			err = downloadManifestByTag(registry, repository, tag, outputPath, printDigest, &resolvedDigest)
 		}
 		if err == nil {
 			break
@@ -99,6 +102,12 @@ func DownloadManifestProcess(ctx context.Context, args []string) {
 		os.Exit(1)
 	}
 
+	// If print-digest mode, just print the digest and exit
+	if printDigest {
+		fmt.Println(resolvedDigest)
+		return
+	}
+
 	// Set file permissions after successful download
 	if err := os.Chmod(outputPath, 0o644); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: Failed to set permission on output file: %v\n", err)
@@ -106,28 +115,36 @@ func DownloadManifestProcess(ctx context.Context, args []string) {
 	}
 }
 
-func downloadManifestByDigest(registry, repository, digest, outputPath string) error {
+func downloadManifestByDigest(registry, repository, digest, outputPath string, printDigest bool, resolvedDigest *string) error {
 	ref, err := name.NewDigest(fmt.Sprintf("%s/%s@%s", registry, repository, digest))
 	if err != nil {
 		return fmt.Errorf("creating manifest reference: %w", err)
 	}
 
-	return downloadManifest(ref, outputPath)
+	return downloadManifest(ref, outputPath, printDigest, resolvedDigest)
 }
 
-func downloadManifestByTag(registry, repository, tag, outputPath string) error {
+func downloadManifestByTag(registry, repository, tag, outputPath string, printDigest bool, resolvedDigest *string) error {
 	ref, err := name.NewTag(fmt.Sprintf("%s/%s:%s", registry, repository, tag))
 	if err != nil {
 		return fmt.Errorf("creating tag reference: %w", err)
 	}
 
-	return downloadManifest(ref, outputPath)
+	return downloadManifest(ref, outputPath, printDigest, resolvedDigest)
 }
 
-func downloadManifest(ref name.Reference, outputPath string) error {
+func downloadManifest(ref name.Reference, outputPath string, printDigest bool, resolvedDigest *string) error {
 	descriptor, err := remote.Get(ref, reg.WithAuthFromMultiKeychain())
 	if err != nil {
 		return fmt.Errorf("getting manifest: %w", err)
+	}
+
+	// Store the resolved digest
+	*resolvedDigest = descriptor.Descriptor.Digest.String()
+
+	// If print-digest mode, we're done - no need to write the file
+	if printDigest {
+		return nil
 	}
 
 	// Check if the output path ends with well known pattern "blobs/sha256/<hash>".
