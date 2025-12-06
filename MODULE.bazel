@@ -46,7 +46,7 @@ use_repo(
 bazel_dep(name = "toolchains_protoc", version = "0.6.0", dev_dependency = True)
 bazel_dep(name = "bazel_lib", version = "3.0.0", dev_dependency = True)
 bazel_dep(name = "bazel_skylib_gazelle_plugin", version = "1.8.2", dev_dependency = True)
-bazel_dep(name = "buildifier_prebuilt", version = "8.2.1", dev_dependency = True)
+bazel_dep(name = "buildifier_prebuilt", version = "8.2.1.1", dev_dependency = True)
 bazel_dep(name = "gazelle", version = "0.47.0", dev_dependency = True)
 bazel_dep(name = "hermetic_cc_toolchain", version = "4.0.1", dev_dependency = True)
 bazel_dep(name = "rules_bazel_integration_test", version = "0.34.0", dev_dependency = True)
