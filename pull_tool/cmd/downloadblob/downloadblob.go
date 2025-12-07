@@ -5,9 +5,11 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
@@ -17,9 +19,8 @@ import (
 
 func DownloadBlobProcess(ctx context.Context, args []string) {
 	var digest string
-	var repository string
 	var outputPath string
-	var registries stringSliceFlag
+	var sources stringSliceFlag
 	var executable bool
 
 	flagSet := flag.NewFlagSet("download-blob", flag.ExitOnError)
@@ -28,8 +29,8 @@ func DownloadBlobProcess(ctx context.Context, args []string) {
 		fmt.Fprintf(flagSet.Output(), "Usage: pull_tool download-blob [OPTIONS]\n")
 		flagSet.PrintDefaults()
 		examples := []string{
-			"pull_tool download-blob --digest sha256:abc123... --repository myapp --output blob.tar.gz",
-			"pull_tool download-blob --digest sha256:abc123... --repository myapp --registry docker.io --output blob.tar.gz",
+			"pull_tool download-blob --digest sha256:abc123... --source library/ubuntu@index.docker.io --output blob.tar.gz",
+			"pull_tool download-blob --digest sha256:abc123... --source library/ubuntu@index.docker.io --source my-mirror/ubuntu@mirror.io --output blob.tar.gz",
 		}
 		fmt.Fprintf(flagSet.Output(), "\nExamples:\n")
 		for _, example := range examples {
@@ -38,9 +39,8 @@ func DownloadBlobProcess(ctx context.Context, args []string) {
 	}
 
 	flagSet.StringVar(&digest, "digest", "", "The digest of the blob to download (required)")
-	flagSet.StringVar(&repository, "repository", "", "Repository name of the image (required)")
 	flagSet.StringVar(&outputPath, "output", "", "Output file path (required)")
-	flagSet.Var(&registries, "registry", "Registry to use (can be specified multiple times, defaults to docker.io)")
+	flagSet.Var(&sources, "source", "Source in format repository@registry (can be specified multiple times for mirrors)")
 	flagSet.BoolVar(&executable, "executable", false, "Mark the output file executable")
 
 	if err := flagSet.Parse(args); err != nil {
@@ -53,39 +53,54 @@ func DownloadBlobProcess(ctx context.Context, args []string) {
 		flagSet.Usage()
 		os.Exit(1)
 	}
-	if repository == "" {
-		fmt.Fprintf(os.Stderr, "Error: --repository is required\n")
-		flagSet.Usage()
-		os.Exit(1)
-	}
 	if outputPath == "" {
 		fmt.Fprintf(os.Stderr, "Error: --output is required\n")
 		flagSet.Usage()
 		os.Exit(1)
 	}
-
-	// Default to docker.io if no registries specified
-	if len(registries) == 0 {
-		registries = []string{"docker.io"}
+	if len(sources) == 0 {
+		fmt.Fprintf(os.Stderr, "Error: at least one --source is required\n")
+		flagSet.Usage()
+		os.Exit(1)
 	}
 
 	if !strings.HasPrefix(digest, "sha256:") {
 		digest = "sha256:" + digest
 	}
 
-	// Try each registry until success
+	// Parse sources into repository@registry pairs
+	var sourcesList []Source
+	for _, src := range sources {
+		parts := strings.SplitN(src, "@", 2)
+		if len(parts) != 2 {
+			fmt.Fprintf(os.Stderr, "Error: invalid source format '%s', expected repository@registry\n", src)
+			os.Exit(1)
+		}
+		sourcesList = append(sourcesList, Source{
+			Repository: parts[0],
+			Registry:   parts[1],
+		})
+	}
+
+	// Randomize sources for load distribution
+	rnd := rand.New(rand.NewSource(time.Now().UnixNano()))
+	rnd.Shuffle(len(sourcesList), func(i, j int) {
+		sourcesList[i], sourcesList[j] = sourcesList[j], sourcesList[i]
+	})
+
+	// Try each source until success
 	var lastErr error
-	for _, registry := range registries {
-		err := downloadFromRegistry(registry, repository, digest, outputPath)
+	for _, source := range sourcesList {
+		err := downloadFromRegistry(source.Registry, source.Repository, digest, outputPath)
 		if err == nil {
 			break
 		}
 		lastErr = err
-		fmt.Fprintf(os.Stderr, "Failed to download from %s: %v\n", registry, err)
+		fmt.Fprintf(os.Stderr, "Failed to download from %s/%s: %v\n", source.Registry, source.Repository, err)
 	}
 
 	if lastErr != nil {
-		fmt.Fprintf(os.Stderr, "Error: Failed to download blob from all registries: %v\n", lastErr)
+		fmt.Fprintf(os.Stderr, "Error: Failed to download blob from all sources: %v\n", lastErr)
 		os.Exit(1)
 	}
 
@@ -101,6 +116,11 @@ func DownloadBlobProcess(ctx context.Context, args []string) {
 			os.Exit(1)
 		}
 	}
+}
+
+type Source struct {
+	Repository string
+	Registry   string
 }
 
 func downloadFromRegistry(registry, repository, digest, outputPath string) error {

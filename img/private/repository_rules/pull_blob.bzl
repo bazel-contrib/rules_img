@@ -1,12 +1,12 @@
 """Repository rule for pulling individual blobs from a container registry."""
 
 load("@pull_hub_repo//:defs.bzl", "tool_for_repository_os")
-load("//img/private/repository_rules:download.bzl", "download_blob", "download_manifest_rctx")
+load("//img/private/repository_rules:download.bzl", "download_blob_from_sources", "download_manifest_from_sources")
 
 def _pull_blob_file_impl(rctx):
     if rctx.attr.handling == "eager":
         # Eager: Download the blob in the repository rule
-        result = download_blob(
+        result = download_blob_from_sources(
             rctx,
             downloader = rctx.attr.downloader,
             digest = rctx.attr.digest,
@@ -36,13 +36,6 @@ filegroup(
         )
     else:  # lazy
         # Lazy: Generate a BUILD file with download_blobs rule
-        # Build registries list
-        registries = []
-        if rctx.attr.registries:
-            registries = list(rctx.attr.registries)
-        if rctx.attr.registry:
-            registries.append(rctx.attr.registry)
-
         # Use sha256_ prefix for lazy blob output name
         digest_filename = rctx.attr.digest.replace("sha256:", "sha256_")
 
@@ -53,20 +46,18 @@ filegroup(
 download_blobs(
     name = "blob",
     digests = ["{digest_filename}"],
-    registries = {registries},
-    repository = {repository},
+    sources = {sources},
     tags = ["requires-network"],
     visibility = ["//visibility:public"],
 )
 """.format(
                 digest_filename = digest_filename,
                 blob_name = repr(rctx.attr.downloaded_file_path),
-                registries = json.encode_indent(
-                    registries,
+                sources = json.encode_indent(
+                    rctx.attr.sources,
                     prefix = "    ",
                     indent = "    ",
                 ),
-                repository = repr(rctx.attr.repository),
             ),
         )
         rctx.file(
@@ -89,20 +80,32 @@ pull_blob_file = repository_rule(
     implementation = _pull_blob_file_impl,
     doc = """Pull a single blob from a container registry.""",
     attrs = {
-        "registry": attr.string(
-            doc = """Registry to pull from (e.g., "index.docker.io").""",
-        ),
-        "registries": attr.string_list(
-            doc = """List of mirror registries to try in order.
-
-These registries will be tried in order before the primary registry. Useful for
-corporate environments with registry mirrors or air-gapped setups.""",
-        ),
-        "repository": attr.string(
+        "sources": attr.string_list_dict(
             mandatory = True,
-            doc = """The image repository within the registry (e.g., "library/ubuntu", "my-project/my-image").
+            doc = """Mapping of image repositories to lists of registries that serve them.
 
-For Docker Hub, official images use "library/" prefix (e.g., "library/ubuntu").""",
+Each entry specifies a repository path and the registries that can serve it:
+- Key: The image repository (e.g., "library/ubuntu", "my-project/my-image")
+- Value: List of registries that serve this repository
+
+All repository@registry combinations will be tried (in random order for load distribution).
+
+Example with single source:
+```python
+sources = {
+    "library/ubuntu": ["index.docker.io", "my-mirror.io"]
+}
+```
+
+Example with multiple sources (mirrors with different repository paths):
+```python
+sources = {
+    "library/ubuntu": ["index.docker.io"],
+    "my-org/ubuntu-mirror": ["private-registry.io", "backup-registry.io"]
+}
+```
+
+If a registry list is empty, it defaults to Docker Hub (index.docker.io).""",
         ),
         "digest": attr.string(
             mandatory = True,
@@ -148,7 +151,7 @@ def _pull_blob_archive_impl(rctx):
     tool = tool_for_repository_os(rctx)
     tool_path = rctx.path(tool)
     output_name = "archive.{}".format(rctx.attr.type if rctx.attr.type != "" else "tgz")
-    result = download_blob(
+    result = download_blob_from_sources(
         rctx,
         downloader = rctx.attr.downloader,
         digest = rctx.attr.digest,
@@ -184,21 +187,32 @@ pull_blob_archive = repository_rule(
     implementation = _pull_blob_archive_impl,
     doc = """Pull and extract a blob from a container registry.""",
     attrs = {
-        "registry": attr.string(
+        "sources": attr.string_list_dict(
             mandatory = True,
-            doc = """Registry to pull from (e.g., "index.docker.io").""",
-        ),
-        "registries": attr.string_list(
-            doc = """List of mirror registries to try in order.
+            doc = """Mapping of image repositories to lists of registries that serve them.
 
-These registries will be tried in order before the primary registry. Useful for
-corporate environments with registry mirrors or air-gapped setups.""",
-        ),
-        "repository": attr.string(
-            mandatory = True,
-            doc = """The image repository within the registry (e.g., "library/ubuntu", "my-project/my-image").
+Each entry specifies a repository path and the registries that can serve it:
+- Key: The image repository (e.g., "library/ubuntu", "my-project/my-image")
+- Value: List of registries that serve this repository
 
-For Docker Hub, official images use "library/" prefix (e.g., "library/ubuntu").""",
+All repository@registry combinations will be tried (in random order for load distribution).
+
+Example with single source:
+```python
+sources = {
+    "library/ubuntu": ["index.docker.io", "my-mirror.io"]
+}
+```
+
+Example with multiple sources (mirrors with different repository paths):
+```python
+sources = {
+    "library/ubuntu": ["index.docker.io"],
+    "my-org/ubuntu-mirror": ["private-registry.io", "backup-registry.io"]
+}
+```
+
+If a registry list is empty, it defaults to Docker Hub (index.docker.io).""",
         ),
         "digest": attr.string(
             mandatory = True,
@@ -240,7 +254,7 @@ def _pull_manifest_blob_impl(rctx):
     elif not rctx.attr.digest.startswith("sha256:"):
         have_valid_digest = False
     reference = rctx.attr.digest if have_valid_digest else rctx.attr.tag
-    manifest_info = download_manifest_rctx(
+    manifest_info = download_manifest_from_sources(
         rctx,
         downloader = rctx.attr.downloader,
         reference = reference,
@@ -284,8 +298,9 @@ pull_manifest_blob = use_repo_rule("@rules_img//img:pull_blob.bzl", "pull_manife
 pull_manifest_blob(
     name = "ubuntu_manifest",
     digest = "sha256:1e622c5f073b4f6bfad6632f2616c7f59ef256e96fe78bf6a595d1dc4376ac02",
-    registry = "index.docker.io",
-    repository = "library/ubuntu",
+    sources = {
+        "library/ubuntu": ["index.docker.io"],
+    },
 )
 ```
 
@@ -293,22 +308,32 @@ The `digest` parameter is recommended for reproducible builds. If omitted, the `
 parameter must be specified instead.
 """,
     attrs = {
-        "registry": attr.string(
-            doc = """Primary registry to pull from (e.g., "index.docker.io", "gcr.io").
-
-If not specified, defaults to Docker Hub. Can be overridden by entries in registries list.""",
-        ),
-        "registries": attr.string_list(
-            doc = """List of mirror registries to try in order.
-
-These registries will be tried in order before the primary registry. Useful for
-corporate environments with registry mirrors or air-gapped setups.""",
-        ),
-        "repository": attr.string(
+        "sources": attr.string_list_dict(
             mandatory = True,
-            doc = """The image repository within the registry (e.g., "library/ubuntu", "my-project/my-image").
+            doc = """Mapping of image repositories to lists of registries that serve them.
 
-For Docker Hub, official images use "library/" prefix (e.g., "library/ubuntu").""",
+Each entry specifies a repository path and the registries that can serve it:
+- Key: The image repository (e.g., "library/ubuntu", "my-project/my-image")
+- Value: List of registries that serve this repository
+
+All repository@registry combinations will be tried (in random order for load distribution).
+
+Example with single source:
+```python
+sources = {
+    "library/ubuntu": ["index.docker.io", "my-mirror.io"]
+}
+```
+
+Example with multiple sources (mirrors with different repository paths):
+```python
+sources = {
+    "library/ubuntu": ["index.docker.io"],
+    "my-org/ubuntu-mirror": ["private-registry.io", "backup-registry.io"]
+}
+```
+
+If a registry list is empty, it defaults to Docker Hub (index.docker.io).""",
         ),
         "digest": attr.string(
             doc = """The manifest digest for reproducible pulls (e.g., "sha256:abc123...").

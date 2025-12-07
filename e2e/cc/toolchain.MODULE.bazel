@@ -153,8 +153,9 @@ filegroup(
 )
 """,
     digest = SYSROOT_DIGESTS["amd64"]["libc++"],
-    registry = "ghcr.io",
-    repository = "malt3/sysroots/libcxx",
+    sources = {
+        "malt3/sysroots/libcxx": ["ghcr.io"],
+    },
     type = "tzst",
 )
 
@@ -168,8 +169,9 @@ filegroup(
 )
 """,
     digest = SYSROOT_DIGESTS["amd64"]["libstdc++"],
-    registry = "ghcr.io",
-    repository = "malt3/sysroots/libstdcxx",
+    sources = {
+        "malt3/sysroots/libstdcxx": ["ghcr.io"],
+    },
     type = "tzst",
 )
 
@@ -183,8 +185,9 @@ filegroup(
 )
 """,
     digest = SYSROOT_DIGESTS["arm64"]["libc++"],
-    registry = "ghcr.io",
-    repository = "malt3/sysroots/libcxx",
+    sources = {
+        "malt3/sysroots/libcxx": ["ghcr.io"],
+    },
     type = "tzst",
 )
 
@@ -198,8 +201,9 @@ filegroup(
 )
 """,
     digest = SYSROOT_DIGESTS["arm64"]["libstdc++"],
-    registry = "ghcr.io",
-    repository = "malt3/sysroots/libstdcxx",
+    sources = {
+        "malt3/sysroots/libstdcxx": ["ghcr.io"],
+    },
     type = "tzst",
 )
 
@@ -209,30 +213,34 @@ pull_blob_file(
     name = "base_image_arm64_libcxx",
     digest = SYSROOT_DIGESTS["arm64"]["libc++"],
     downloaded_file_path = "sysroot.tzst",
-    registry = "ghcr.io",
-    repository = "malt3/sysroots/libcxx",
+    sources = {
+        "malt3/sysroots/libcxx": ["ghcr.io"],
+    },
 )
 
 pull_blob_file(
     name = "base_image_arm64_libstdcxx",
     digest = SYSROOT_DIGESTS["arm64"]["libstdc++"],
     downloaded_file_path = "sysroot.tzst",
-    registry = "ghcr.io",
-    repository = "malt3/sysroots/libstdcxx",
+    sources = {
+        "malt3/sysroots/libstdcxx": ["ghcr.io"],
+    },
 )
 
 pull_blob_file(
     name = "base_image_amd64_libcxx",
     digest = SYSROOT_DIGESTS["amd64"]["libc++"],
     downloaded_file_path = "sysroot.tzst",
-    registry = "ghcr.io",
-    repository = "malt3/sysroots/libcxx",
+    sources = {
+        "malt3/sysroots/libcxx": ["ghcr.io"],
+    },
 )
 
 pull_blob_file(
     name = "base_image_amd64_libstdcxx",
     digest = SYSROOT_DIGESTS["amd64"]["libstdc++"],
     downloaded_file_path = "sysroot.tzst",
-    registry = "ghcr.io",
-    repository = "malt3/sysroots/libstdcxx",
+    sources = {
+        "malt3/sysroots/libstdcxx": ["ghcr.io"],
+    },
 )

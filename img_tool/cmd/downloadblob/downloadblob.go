@@ -5,8 +5,10 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math/rand"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/malt3/go-containerregistry/pkg/name"
 	"github.com/malt3/go-containerregistry/pkg/v1/remote"
@@ -14,11 +16,15 @@ import (
 	reg "github.com/bazel-contrib/rules_img/img_tool/pkg/auth/registry"
 )
 
+type Source struct {
+	Repository string
+	Registry   string
+}
+
 func DownloadBlobProcess(ctx context.Context, args []string) {
 	var digest string
-	var repository string
 	var outputPath string
-	var registries stringSliceFlag
+	var sources stringSliceFlag
 	var executable bool
 
 	flagSet := flag.NewFlagSet("download-blob", flag.ExitOnError)
@@ -27,8 +33,8 @@ func DownloadBlobProcess(ctx context.Context, args []string) {
 		fmt.Fprintf(flagSet.Output(), "Usage: img download-blob [OPTIONS]\n")
 		flagSet.PrintDefaults()
 		examples := []string{
-			"img download-blob --digest sha256:abc123... --repository myapp --output blob.tar.gz",
-			"img download-blob --digest sha256:abc123... --repository myapp --registry docker.io --output blob.tar.gz",
+			"img download-blob --digest sha256:abc123... --source myapp@index.docker.io --output blob.tar.gz",
+			"img download-blob --digest sha256:abc123... --source myapp@index.docker.io --source myapp@mirror.io --output blob.tar.gz",
 		}
 		fmt.Fprintf(flagSet.Output(), "\nExamples:\n")
 		for _, example := range examples {
@@ -37,9 +43,8 @@ func DownloadBlobProcess(ctx context.Context, args []string) {
 	}
 
 	flagSet.StringVar(&digest, "digest", "", "The digest of the blob to download (required)")
-	flagSet.StringVar(&repository, "repository", "", "Repository name of the image (required)")
 	flagSet.StringVar(&outputPath, "output", "", "Output file path (required)")
-	flagSet.Var(&registries, "registry", "Registry to use (can be specified multiple times, defaults to docker.io)")
+	flagSet.Var(&sources, "source", "Source in format repository@registry (can be specified multiple times, defaults to using index.docker.io)")
 	flagSet.BoolVar(&executable, "executable", false, "Mark the output file executable")
 
 	if err := flagSet.Parse(args); err != nil {
@@ -52,50 +57,65 @@ func DownloadBlobProcess(ctx context.Context, args []string) {
 		flagSet.Usage()
 		os.Exit(1)
 	}
-	if repository == "" {
-		fmt.Fprintf(os.Stderr, "Error: --repository is required\n")
-		flagSet.Usage()
-		os.Exit(1)
-	}
 	if outputPath == "" {
 		fmt.Fprintf(os.Stderr, "Error: --output is required\n")
 		flagSet.Usage()
 		os.Exit(1)
 	}
 
-	// Default to docker.io if no registries specified
-	if len(registries) == 0 {
-		registries = []string{"docker.io"}
+	// Parse sources
+	var sourcesList []Source
+	if len(sources) == 0 {
+		fmt.Fprintf(os.Stderr, "Error: at least one --source is required\n")
+		flagSet.Usage()
+		os.Exit(1)
 	}
+
+	for _, src := range sources {
+		parts := strings.SplitN(src, "@", 2)
+		if len(parts) != 2 {
+			fmt.Fprintf(os.Stderr, "Error: source must be in format repository@registry, got: %s\n", src)
+			os.Exit(1)
+		}
+		sourcesList = append(sourcesList, Source{
+			Repository: parts[0],
+			Registry:   parts[1],
+		})
+	}
+
+	// Randomize source order for load distribution
+	rnd := rand.New(rand.NewSource(time.Now().UnixNano()))
+	rnd.Shuffle(len(sourcesList), func(i, j int) {
+		sourcesList[i], sourcesList[j] = sourcesList[j], sourcesList[i]
+	})
 
 	if !strings.HasPrefix(digest, "sha256:") {
 		digest = "sha256:" + digest
 	}
 
-	// Try each registry until success
+	// Try each source until success
 	var lastErr error
-	for _, registry := range registries {
-		err := downloadFromRegistry(registry, repository, digest, outputPath)
+	for _, source := range sourcesList {
+		err := downloadFromRegistry(source.Registry, source.Repository, digest, outputPath)
 		if err == nil {
+			if executable {
+				if err := os.Chmod(outputPath, 0o755); err != nil {
+					fmt.Fprintf(os.Stderr, "Error: Failed to set executable permission on output file: %v\n", err)
+					os.Exit(1)
+				}
+			} else {
+				if err := os.Chmod(outputPath, 0o644); err != nil {
+					fmt.Fprintf(os.Stderr, "Error: Failed to remove executable permission on output file: %v\n", err)
+					os.Exit(1)
+				}
+			}
 			return
 		}
 		lastErr = err
-		fmt.Fprintf(os.Stderr, "Failed to download from %s: %v\n", registry, err)
+		fmt.Fprintf(os.Stderr, "Failed to download from %s/%s: %v\n", source.Registry, source.Repository, err)
 	}
 
-	if executable {
-		if err := os.Chmod(outputPath, 0o755); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: Failed to set executable permission on output file: %v\n", err)
-			os.Exit(1)
-		}
-	} else {
-		if err := os.Chmod(outputPath, 0o644); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: Failed to remove executable permission on output file: %v\n", err)
-			os.Exit(1)
-		}
-	}
-
-	fmt.Fprintf(os.Stderr, "Error: Failed to download blob from all registries: %v\n", lastErr)
+	fmt.Fprintf(os.Stderr, "Error: Failed to download blob from all sources: %v\n", lastErr)
 	os.Exit(1)
 }
 

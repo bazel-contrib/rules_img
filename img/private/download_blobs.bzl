@@ -9,6 +9,7 @@ upfront during repository fetching.
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("//img/private/common:build.bzl", "TOOLCHAIN", "TOOLCHAINS")
 load("//img/private/common:transitions.bzl", "reset_platform_transition")
+load("//img/private/repository_rules:registry.bzl", "get_sources_list")
 
 def _download_blob(ctx, output):
     """Download a layer from a container registry."""
@@ -17,6 +18,9 @@ def _download_blob(ctx, output):
     digest = output.basename.replace("sha256_", "sha256:")
 
     img_toolchain_info = ctx.toolchains[TOOLCHAIN].imgtoolchaininfo
+
+    # Convert sources dict to list of "repository@registry" strings
+    sources_list = get_sources_list(ctx.attr.sources)
 
     # Only set REGISTRY_AUTH_FILE if docker_config_path is non-empty
     docker_config_path = ctx.attr._docker_config_path[BuildSettingInfo].value
@@ -32,13 +36,11 @@ def _download_blob(ctx, output):
             "download-blob",
             "--digest",
             digest,
-            "--repository",
-            ctx.attr.repository,
             "--output",
             output.path,
         ] + [
-            "--registry={}".format(r)
-            for r in ctx.attr.registries
+            "--source={}".format(source)
+            for source in sources_list
         ],
         env = env,
         mnemonic = "DownloadBlob",
@@ -68,11 +70,17 @@ download_blobs = rule(
             doc = "List of digests to download.",
             mandatory = True,
         ),
-        "registries": attr.string_list(
-            doc = "List of registry mirrors used to pull the image.",
-        ),
-        "repository": attr.string(
-            doc = "Repository name of the image.",
+        "sources": attr.string_list_dict(
+            mandatory = True,
+            doc = """Mapping of image repositories to lists of registries that serve them.
+
+Each entry specifies a repository path and the registries that can serve it:
+- Key: The image repository (e.g., "library/ubuntu", "my-project/my-image")
+- Value: List of registries that serve this repository
+
+All repository@registry combinations will be tried (in random order for load distribution).
+
+If a registry list is empty, it defaults to Docker Hub (index.docker.io).""",
         ),
         "_docker_config_path": attr.label(
             default = Label("//img/settings:docker_config_path"),
