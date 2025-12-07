@@ -1,45 +1,95 @@
 """Repository rule for pulling individual blobs from a container registry."""
 
 load("@pull_hub_repo//:defs.bzl", "tool_for_repository_os")
-load("//img/private/repository_rules:download.bzl", "download_blob", "download_manifest")
+load("//img/private/repository_rules:download.bzl", "download_blob", "download_manifest_rctx")
 
 def _pull_blob_file_impl(rctx):
-    result = download_blob(
-        rctx,
-        downloader = rctx.attr.downloader,
-        digest = rctx.attr.digest,
-        wait_and_read = False,
-    )
-    if result.waiter != None:
-        result.waiter.wait()
-    rctx.symlink(
-        result.path,
-        rctx.attr.downloaded_file_path,
-    )
+    if rctx.attr.handling == "eager":
+        # Eager: Download the blob in the repository rule
+        result = download_blob(
+            rctx,
+            downloader = rctx.attr.downloader,
+            digest = rctx.attr.digest,
+            output = rctx.attr.downloaded_file_path,
+            wait_and_read = False,
+        )
+        if result.waiter != None:
+            result.waiter.wait()
 
-    rctx.file(
-        "BUILD.bazel",
-        content = """filegroup(
+        rctx.file(
+            "BUILD.bazel",
+            content = """exports_files([{}])
+
+filegroup(
     name = "output",
     srcs = [{}],
     visibility = ["//visibility:public"],
-)""".format(repr(rctx.attr.downloaded_file_path)),
-    )
-    rctx.file(
-        "file/BUILD.bazel",
-        content = """alias(
+)""".format(repr(rctx.attr.downloaded_file_path), repr(rctx.attr.downloaded_file_path)),
+        )
+        rctx.file(
+            "file/BUILD.bazel",
+            content = """alias(
     name = "file",
     actual = "//:output",
     visibility = ["//visibility:public"],
 )""",
-    )
+        )
+    else:  # lazy
+        # Lazy: Generate a BUILD file with download_blobs rule
+        # Build registries list
+        registries = []
+        if rctx.attr.registries:
+            registries = list(rctx.attr.registries)
+        if rctx.attr.registry:
+            registries.append(rctx.attr.registry)
+
+        # Use sha256_ prefix for lazy blob output name
+        digest_filename = rctx.attr.digest.replace("sha256:", "sha256_")
+
+        rctx.file(
+            "BUILD.bazel",
+            content = """load("@rules_img//img/private:download_blobs.bzl", "download_blobs")
+
+download_blobs(
+    name = "blob",
+    digests = ["{digest_filename}"],
+    registries = {registries},
+    repository = {repository},
+    tags = ["requires-network"],
+    visibility = ["//visibility:public"],
+)
+""".format(
+                digest_filename = digest_filename,
+                blob_name = repr(rctx.attr.downloaded_file_path),
+                registries = json.encode_indent(
+                    registries,
+                    prefix = "    ",
+                    indent = "    ",
+                ),
+                repository = repr(rctx.attr.repository),
+            ),
+        )
+        rctx.file(
+            "file/BUILD.bazel",
+            content = """alias(
+    name = "file",
+    actual = "//:blob",
+    visibility = ["//visibility:public"],
+)""",
+        )
+
+    if len(rctx.attr.digest) > 0 and hasattr(rctx, "repo_metadata"):
+        # allows participating in repo contents cache
+        return rctx.repo_metadata(reproducible = True)
+
+    # only to make buildifier happy
+    return None
 
 pull_blob_file = repository_rule(
     implementation = _pull_blob_file_impl,
     doc = """Pull a single blob from a container registry.""",
     attrs = {
         "registry": attr.string(
-            mandatory = True,
             doc = """Registry to pull from (e.g., "index.docker.io").""",
         ),
         "registries": attr.string_list(
@@ -65,6 +115,19 @@ For Docker Hub, official images use "library/" prefix (e.g., "library/ubuntu")."
         "executable": attr.bool(
             default = False,
             doc = """If the downloaded file should be made executable.""",
+        ),
+        "handling": attr.string(
+            default = "eager",
+            values = ["eager", "lazy"],
+            doc = """Strategy for handling blob downloads.
+
+**Available strategies:**
+
+* **`eager`** (default): Blob data is fetched in the repository rule and is always available.
+
+* **`lazy`**: Blob data is downloaded in a build action when requested. This avoids
+  unnecessary downloads, but requires network access during the build phase.
+  **EXPERIMENTAL:** Use at your own risk.""",
         ),
         "downloader": attr.string(
             default = "img_tool",
@@ -110,6 +173,12 @@ def _pull_blob_archive_impl(rctx):
         "BUILD.bazel",
         content = rctx.attr.build_file_content,
     )
+    if len(rctx.attr.digest) > 0 and hasattr(rctx, "repo_metadata"):
+        # allows participating in repo contents cache
+        return rctx.repo_metadata(reproducible = True)
+
+    # only to make buildifier happy
+    return None
 
 pull_blob_archive = repository_rule(
     implementation = _pull_blob_archive_impl,
@@ -171,7 +240,7 @@ def _pull_manifest_blob_impl(rctx):
     elif not rctx.attr.digest.startswith("sha256:"):
         have_valid_digest = False
     reference = rctx.attr.digest if have_valid_digest else rctx.attr.tag
-    manifest_info = download_manifest(
+    manifest_info = download_manifest_rctx(
         rctx,
         downloader = rctx.attr.downloader,
         reference = reference,
@@ -186,12 +255,20 @@ def _pull_manifest_blob_impl(rctx):
     )
     rctx.file(
         "BUILD.bazel",
-        content = """filegroup(
+        content = """exports_files(["manifest.json"])
+
+filegroup(
     name = "manifest",
     srcs = ["manifest.json"],
     visibility = ["//visibility:public"],
 )""",
     )
+    if len(rctx.attr.digest) > 0 and hasattr(rctx, "repo_metadata"):
+        # allows participating in repo contents cache
+        return rctx.repo_metadata(reproducible = True)
+
+    # only to make buildifier happy
+    return None
 
 pull_manifest_blob = repository_rule(
     implementation = _pull_manifest_blob_impl,

@@ -23,3 +23,8 @@ bzl_library(
     name = "platforms",
     srcs = ["platforms.bzl"],
 )
+
+bzl_library(
+    name = "constraints",
+    srcs = ["constraints.bzl"],
+)

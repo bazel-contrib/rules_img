@@ -84,33 +84,43 @@ def _check_existing_blob(rctx, digest, wait_and_read = True):
         waiter = None,
     )
 
-def download_blob(rctx, *, downloader, digest, wait_and_read = True, **kwargs):
+def download_blob(rctx, *, downloader, digest, wait_and_read = True, repository = None, registries = None, output = None, **kwargs):
     """Download a blob from a container registry using the specified downloader.
 
     Args:
-        rctx: Repository context.
+        rctx: Repository context or module context.
         downloader: "img_tool" or "bazel".
         digest: The blob digest to download.
         wait_and_read: If True, wait for the download to complete and read the data.
                        If False, return a waiter that can be used to wait for the download.
+        repository: The image repository (optional, extracted from rctx.attr if not provided).
+        registries: List of registries (optional, extracted from rctx.attr if not provided).
+        output: Optional output path for the downloaded blob. If not specified, defaults to "blobs/sha256/<sha256>".
         **kwargs: Additional arguments.
 
     Returns:
         A struct containing digest, path, and data of the downloaded blob.
     """
     sha256 = digest.removeprefix("sha256:")
-    output = "blobs/sha256/" + sha256
-    registries = get_registries(rctx)
-    maybe_existing = _check_existing_blob(rctx, digest, wait_and_read)
-    if maybe_existing != None:
-        return maybe_existing
+    if output == None:
+        output = "blobs/sha256/" + sha256
+    if registries == None:
+        registries = get_registries(rctx)
+    if repository == None:
+        repository = rctx.attr.repository
+
+    # Only check for existing blob in default location if using default output path
+    if output == "blobs/sha256/" + sha256:
+        maybe_existing = _check_existing_blob(rctx, digest, wait_and_read)
+        if maybe_existing != None:
+            return maybe_existing
     if downloader == "bazel":
         result = rctx.download(
             url = [
                 "{protocol}://{registry}/v2/{repository}/blobs/{digest}".format(
                     protocol = "https",
                     registry = registry,
-                    repository = rctx.attr.repository,
+                    repository = repository,
                     digest = digest,
                 )
                 for registry in registries
@@ -129,7 +139,7 @@ def download_blob(rctx, *, downloader, digest, wait_and_read = True, **kwargs):
             "--digest",
             digest,
             "--repository",
-            rctx.attr.repository,
+            repository,
             "--output",
             output,
         ] + [
@@ -149,7 +159,7 @@ def download_blob(rctx, *, downloader, digest, wait_and_read = True, **kwargs):
         waiter = result if downloader == "bazel" else None,
     )
 
-def download_manifest(rctx, *, downloader, reference, **kwargs):
+def download_manifest_rctx(rctx, *, downloader, reference, **kwargs):
     """Download a manifest from a container registry using Bazel's downloader.
 
     Args:
@@ -166,7 +176,6 @@ def download_manifest(rctx, *, downloader, reference, **kwargs):
     if reference.startswith("sha256:"):
         have_valid_digest = True
         sha256 = reference.removeprefix("sha256:")
-        kwargs["sha256"] = sha256
         kwargs["output"] = "blobs/sha256/" + sha256
     else:
         kwargs["output"] = "manifest.json"
@@ -175,31 +184,58 @@ def download_manifest(rctx, *, downloader, reference, **kwargs):
         maybe_existing = _check_existing_blob(rctx, reference)
         if maybe_existing != None:
             return maybe_existing
+    return download_manifest(
+        rctx,
+        downloader = downloader,
+        reference = reference,
+        sha256 = sha256,
+        have_valid_digest = have_valid_digest,
+        repository = rctx.attr.repository,
+        registries = registries,
+        **kwargs
+    )
+
+def download_manifest(ctx, *, downloader, reference, sha256, have_valid_digest, repository, registries, **kwargs):
+    """Download a manifest from a container registry using Bazel's downloader or img tool.
+
+    Args:
+        ctx: Repository context or module context.
+        downloader: "img_tool" or "bazel".
+        reference: The manifest reference to download.
+        sha256: digest of the manifest (or None).
+        have_valid_digest: bool indicating the presence of a valid digest.
+        repository: Repository of the image (i.e. library/ubuntu)
+        registries: List of registries that mirror the manifest.
+        **kwargs: Additional arguments.
+
+    Returns:
+        A struct containing digest, path, and data of the downloaded manifest.
+    """
     if downloader == "bazel":
         result = download_manifest_bazel(
-            rctx,
+            ctx,
             reference = reference,
             sha256 = sha256,
             have_valid_digest = have_valid_digest,
-            repository = rctx.attr.repository,
+            repository = repository,
             registries = registries,
             **kwargs
         )
     else:
         # pull tool
         result = download_manifest_img_tool(
-            rctx,
+            ctx,
             reference = reference,
             sha256 = sha256,
             have_valid_digest = have_valid_digest,
-            repository = rctx.attr.repository,
+            repository = repository,
             registries = registries,
         )
 
     if not have_valid_digest:
         fail("""Missing valid image digest. Observed the following digest when pulling manifest for {}:
     sha256:{}""".format(
-            rctx.attr.repository + ":" + rctx.attr.tag,
+            repository,
             result.sha256,
         ))
     return result

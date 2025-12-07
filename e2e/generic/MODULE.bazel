@@ -138,3 +138,14 @@ pull(
     tag = "latest",
     unsafe_allow_tag_without_digest = True,
 )
+
+images = use_extension("@rules_img//img:extensions.bzl", "images")
+images.pull(
+    digest = "sha256:029d4461bd98f124e531380505ceea2072418fdf28752aa73b7b273ba3048903",
+    registries = [
+        "mirror.gcr.io",
+        "index.docker.io",
+    ],
+    repository = "library/nginx",
+)
+use_repo(images, "rules_img_images.bzl")

@@ -15,6 +15,7 @@ bzl_library(
         ":registry",
         "//img/private:manifest_media_type",
         "//img/private/platforms",
+        "//img/private/platforms:constraints",
         "@bazel_skylib//lib:sets",
         "@pull_hub_repo//:defs",
     ],
@@ -50,4 +51,15 @@ bzl_library(
     name = "toolchains_repo",
     srcs = ["toolchains_repo.bzl"],
     visibility = ["//img:__subpackages__"],
+)
+
+bzl_library(
+    name = "image_repo",
+    srcs = ["image_repo.bzl"],
+    visibility = ["//img:__subpackages__"],
+    deps = [
+        "//img/private/platforms",
+        "//img/private/platforms:constraints",
+        "@bazel_skylib//lib:sets",
+    ],
 )
