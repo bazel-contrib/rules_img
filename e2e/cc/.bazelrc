@@ -1,5 +1,12 @@
 common --enable_platform_specific_config
 
+# Workaround for rules_cc no longer being autoloaded by Bazel 9:
+#  https://github.com/bazelbuild/bazel/pull/27593
+#
+# Remove once https://github.com/uber/hermetic_cc_toolchain/pull/233 is merged
+# and released.
+common --incompatible_autoload_externally=+@rules_cc
+
 import %workspace%/.bazelrc.common
 
 try-import %workspace%/.bazelrc.user
