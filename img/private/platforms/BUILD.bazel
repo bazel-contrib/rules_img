@@ -20,11 +20,11 @@ filegroup(
 )
 
 bzl_library(
-    name = "platforms",
-    srcs = ["platforms.bzl"],
+    name = "constraints",
+    srcs = ["constraints.bzl"],
 )
 
 bzl_library(
-    name = "constraints",
-    srcs = ["constraints.bzl"],
+    name = "platforms",
+    srcs = ["platforms.bzl"],
 )

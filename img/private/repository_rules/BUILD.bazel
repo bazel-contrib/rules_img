@@ -42,6 +42,17 @@ bzl_library(
 )
 
 bzl_library(
+    name = "image_repo",
+    srcs = ["image_repo.bzl"],
+    visibility = ["//img:__subpackages__"],
+    deps = [
+        "//img/private/platforms",
+        "//img/private/platforms:constraints",
+        "@bazel_skylib//lib:sets",
+    ],
+)
+
+bzl_library(
     name = "registry",
     srcs = ["registry.bzl"],
     visibility = ["//img:__subpackages__"],
@@ -51,15 +62,4 @@ bzl_library(
     name = "toolchains_repo",
     srcs = ["toolchains_repo.bzl"],
     visibility = ["//img:__subpackages__"],
-)
-
-bzl_library(
-    name = "image_repo",
-    srcs = ["image_repo.bzl"],
-    visibility = ["//img:__subpackages__"],
-    deps = [
-        "//img/private/platforms",
-        "//img/private/platforms:constraints",
-        "@bazel_skylib//lib:sets",
-    ],
 )
