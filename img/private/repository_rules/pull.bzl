@@ -23,11 +23,15 @@ def _pull_impl(rctx):
     elif not rctx.attr.digest.startswith("sha256:"):
         have_valid_digest = False
 
+    # Build sources from legacy attrs for download functions
+    registries = get_registries(rctx)
+    sources = {rctx.attr.repository: registries}
+
     # Learn the digest from tag if needed
     digest = rctx.attr.digest
     if not have_valid_digest and rctx.attr.unsafe_allow_tag_without_digest:
         # Do an extra roundtrip to learn the digest from the tag
-        learned_digest = _learn_digest_from_tag(rctx, tag = rctx.attr.tag, downloader = rctx.attr.downloader)
+        learned_digest = _learn_digest_from_tag(rctx, tag = rctx.attr.tag, downloader = rctx.attr.downloader, sources = sources)
         if learned_digest:
             digest = learned_digest
             have_valid_digest = True
@@ -95,7 +99,7 @@ def _pull_impl(rctx):
         else:
             manifest_info = root_blob_info
         manifest = json.decode(manifest_info.data)
-        config_info = _download_blob(rctx, downloader = rctx.attr.downloader, digest = manifest["config"]["digest"])
+        config_info = _download_blob(rctx, downloader = rctx.attr.downloader, digest = manifest["config"]["digest"], sources = sources)
         data[config_info.digest] = config_info.data
 
         # Extract platform from config if not already found
@@ -118,15 +122,13 @@ def _pull_impl(rctx):
     if rctx.attr.layer_handling == "eager":
         files.update({
             layer.digest: "//:{}".format(layer.path)
-            for layer in _download_layers(rctx, downloader = rctx.attr.downloader, digests = sets.to_list(layer_digests))
+            for layer in _download_layers(rctx, downloader = rctx.attr.downloader, digests = sets.to_list(layer_digests), sources = sources)
         })
     elif rctx.attr.layer_handling == "lazy":
         files.update({
             digest: "//:{}".format(digest.replace("sha256:", "sha256_"))
             for digest in sets.to_list(layer_digests)
         })
-
-    registries = get_registries(rctx)
 
     name = getattr(rctx, "original_name", rctx.attr.name)
     if not hasattr(rctx, "original_name"):
@@ -152,8 +154,7 @@ def _pull_impl(rctx):
 download_blobs(
     name = "layers",
     digests = {layer_digests},
-    registries = {registries},
-    repository = {repository},
+    sources = {sources},
     tags = ["requires-network"],
 )
 """.format(
@@ -162,12 +163,11 @@ download_blobs(
                 prefix = "    ",
                 indent = "    ",
             ).replace("sha256:", "sha256_"),
-            registries = json.encode_indent(
-                registries,
+            sources = json.encode_indent(
+                sources,
                 prefix = "    ",
                 indent = "    ",
             ),
-            repository = repr(rctx.attr.repository),
         )
 
     # Build target_compatible_with based on discovered platforms

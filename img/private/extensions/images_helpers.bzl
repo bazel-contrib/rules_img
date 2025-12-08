@@ -11,17 +11,20 @@ def pull_tag_to_struct(tag):
         tag: Pull tag object with repository, digest, and optional registry/tag fields
 
     Returns:
-        Struct with normalized pull attributes
+        Struct with normalized pull attributes including sources dict
     """
+    registries = []
+    if tag.registry:
+        registries.append(tag.registry)
+    if tag.registries:
+        registries.extend(tag.registries)
     vals = {
         "repository": tag.repository,
+        "registries": registries,
         "digest": tag.digest,
         "layer_handling": tag.layer_handling,
+        "sources": {tag.repository: registries},
     }
-    if tag.registry:
-        vals["registry"] = tag.registry
-    if tag.registries:
-        vals["registries"] = tag.registries
     if tag.tag:
         vals["tag"] = tag.tag
     return struct(**vals)
@@ -35,25 +38,21 @@ def merge_pull_attrs(target, other, other_is_root):
         other_is_root: Whether the other attributes are from the root module
 
     Returns:
-        Merged struct with combined pull attributes
+        Merged struct with combined pull attributes including merged sources
     """
     attrs = {
         "digest": target.digest or other.digest,
     }
-    if other_is_root and other.tag:
+    if other_is_root and hasattr(other, "tag"):
         attrs["tag"] = other.tag
-    elif target.tag:
+    elif hasattr(target, "tag"):
         attrs["tag"] = target.tag
-    elif other.tag:
+    elif hasattr(other, "tag"):
         attrs["tag"] = other.tag
 
     if target.repository == other.repository:
         # if the repositories match, we can merge registries
         registries = sets.make()
-        if hasattr(target, "registry") and target.registry:
-            sets.insert(registries, target.registry)
-        if hasattr(other, "registry") and other.registry:
-            sets.insert(registries, other.registry)
         if hasattr(target, "registries"):
             for reg in target.registries:
                 sets.insert(registries, reg)
@@ -61,23 +60,36 @@ def merge_pull_attrs(target, other, other_is_root):
             for reg in other.registries:
                 sets.insert(registries, reg)
         registries = sorted(sets.to_list(registries))
-        if len(registries) == 1:
-            attrs["registry"] = registries[0]
-        elif len(registries) > 1:
-            attrs["registries"] = registries
+        attrs["registries"] = registries
         attrs["repository"] = target.repository
     else:
         # otherwise, we cannot merge registries
         if other_is_root:
-            if hasattr(other, "registry") and other.registry:
-                attrs["registry"] = other.registry
             if hasattr(other, "registries"):
                 attrs["registries"] = other.registries
-        elif hasattr(target, "registry") and target.registry:
-            attrs["registry"] = target.registry
         elif hasattr(target, "registries"):
             attrs["registries"] = target.registries
         attrs["repository"] = other.repository if other_is_root else target.repository
+
+    # Merge sources dicts from both target and other
+    merged_sources = {}
+    if hasattr(target, "sources"):
+        for repository, registries in target.sources.items():
+            if repository not in merged_sources:
+                merged_sources[repository] = []
+            registries_set = sets.make(merged_sources[repository])
+            for registry in registries:
+                sets.insert(registries_set, registry)
+            merged_sources[repository] = sets.to_list(registries_set)
+    if hasattr(other, "sources"):
+        for repository, registries in other.sources.items():
+            if repository not in merged_sources:
+                merged_sources[repository] = []
+            registries_set = sets.make(merged_sources[repository])
+            for registry in registries:
+                sets.insert(registries_set, registry)
+            merged_sources[repository] = sets.to_list(registries_set)
+    attrs["sources"] = merged_sources
 
     # Layer handling logic:
     # 1. If one is shallow and the other is not, always prefer the non-shallow one
@@ -127,6 +139,58 @@ def get_registries_from_image(img):
         registries = [img.registry] + registries
     return registries
 
+def get_sources_from_image(img):
+    """Build sources dict from an image struct.
+
+    Args:
+        img: Image struct with repository and optional registry/registries fields
+
+    Returns:
+        A sources dict with repository as key and list of registries as value
+    """
+    registries = get_registries_from_image(img)
+    return {img.repository: registries}
+
+def get_merged_sources_from_images(image_digests, images_by_digest):
+    """Build a merged sources dict from multiple images that serve the same blob.
+
+    When multiple images reference the same blob (layer, config, or manifest),
+    this function combines all their sources to maximize download availability.
+    All repositories and registries from all images are merged together.
+
+    Args:
+        image_digests: List of top-level image digests that reference a blob
+        images_by_digest: Dictionary mapping digest to image struct
+
+    Returns:
+        A merged sources dict with all repositories and their registries.
+        For each repository, registries from all images are combined and deduplicated.
+    """
+    merged_sources = {}
+
+    for image_digest in image_digests:
+        if image_digest not in images_by_digest:
+            fail("Image digest '{}' not found in images_by_digest".format(image_digest))
+
+        img = images_by_digest[image_digest]
+
+        # Use the sources field directly from the image struct
+        if not hasattr(img, "sources"):
+            fail("Image digest '{}' does not have sources field".format(image_digest))
+
+        # Merge sources into merged_sources
+        for repository, registries in img.sources.items():
+            if repository not in merged_sources:
+                merged_sources[repository] = []
+
+            # Add registries, avoiding duplicates using sets
+            registries_set = sets.make(merged_sources[repository])
+            for registry in registries:
+                sets.insert(registries_set, registry)
+            merged_sources[repository] = sets.to_list(registries_set)
+
+    return merged_sources
+
 def check_facts_for_manifest(facts, digest):
     """Check if manifest structure is cached in facts.
 
@@ -155,31 +219,29 @@ def download_and_parse_manifest(ctx, digest, img, facts, downloader):
 
     # Check if structure is cached in facts
     cached_ref_graph_entry = check_facts_for_manifest(facts, digest)
+    sources = get_sources_from_image(img)
+
     if cached_ref_graph_entry != None:
         # Structure is cached, but we still need to download the blob
         # download_manifest will use its own blob caching
-        registries = get_registries_from_image(img)
         blob_info = download_manifest(
             ctx,
             downloader = downloader,
             reference = digest,
             sha256 = digest[7:],
             have_valid_digest = True,
-            repository = img.repository,
-            registries = registries,
+            sources = sources,
         )
         return (cached_ref_graph_entry, blob_info.data)
 
     # Download and parse manifest
-    registries = get_registries_from_image(img)
     blob_info = download_manifest(
         ctx,
         downloader = downloader,
         reference = digest,
         sha256 = digest[7:],  # Remove "sha256:" prefix
         have_valid_digest = True,
-        repository = img.repository,
-        registries = registries,
+        sources = sources,
     )
 
     # Parse manifest

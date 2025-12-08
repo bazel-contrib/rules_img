@@ -4,9 +4,11 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
@@ -17,9 +19,8 @@ import (
 func DownloadManifestProcess(ctx context.Context, args []string) {
 	var digest string
 	var tag string
-	var repository string
 	var outputPath string
-	var registries stringSliceFlag
+	var sources stringSliceFlag
 	var printDigest bool
 
 	flagSet := flag.NewFlagSet("download-manifest", flag.ExitOnError)
@@ -28,8 +29,8 @@ func DownloadManifestProcess(ctx context.Context, args []string) {
 		fmt.Fprintf(flagSet.Output(), "Usage: pull_tool download-manifest [OPTIONS]\n")
 		flagSet.PrintDefaults()
 		examples := []string{
-			"pull_tool download-manifest --digest sha256:abc123... --repository myapp --output manifest.json",
-			"pull_tool download-manifest --tag latest --repository myapp --registry docker.io --output manifest.json",
+			"pull_tool download-manifest --digest sha256:abc123... --source library/ubuntu@index.docker.io --output manifest.json",
+			"pull_tool download-manifest --tag latest --source library/ubuntu@index.docker.io --source my-mirror/ubuntu@mirror.io --output manifest.json",
 		}
 		fmt.Fprintf(flagSet.Output(), "\nExamples:\n")
 		for _, example := range examples {
@@ -39,9 +40,8 @@ func DownloadManifestProcess(ctx context.Context, args []string) {
 
 	flagSet.StringVar(&digest, "digest", "", "The digest of the manifest to download")
 	flagSet.StringVar(&tag, "tag", "", "The tag of the manifest to download")
-	flagSet.StringVar(&repository, "repository", "", "Repository name of the image (required)")
-	flagSet.StringVar(&outputPath, "output", "", "Output file path (required)")
-	flagSet.Var(&registries, "registry", "Registry to use (can be specified multiple times, defaults to docker.io)")
+	flagSet.StringVar(&outputPath, "output", "", "Output file path (required unless --print-digest is used)")
+	flagSet.Var(&sources, "source", "Source in format repository@registry (can be specified multiple times for mirrors)")
 	flagSet.BoolVar(&printDigest, "print-digest", false, "Print only the digest to stdout and exit (useful for learning digests from tags)")
 
 	if err := flagSet.Parse(args); err != nil {
@@ -59,8 +59,8 @@ func DownloadManifestProcess(ctx context.Context, args []string) {
 		flagSet.Usage()
 		os.Exit(1)
 	}
-	if repository == "" {
-		fmt.Fprintf(os.Stderr, "Error: --repository is required\n")
+	if len(sources) == 0 {
+		fmt.Fprintf(os.Stderr, "Error: at least one --source is required\n")
 		flagSet.Usage()
 		os.Exit(1)
 	}
@@ -70,35 +70,50 @@ func DownloadManifestProcess(ctx context.Context, args []string) {
 		os.Exit(1)
 	}
 
-	// Default to docker.io if no registries specified
-	if len(registries) == 0 {
-		registries = []string{"docker.io"}
-	}
-
 	// Add sha256: prefix if not present for digest
 	if digest != "" && !strings.HasPrefix(digest, "sha256:") {
 		digest = "sha256:" + digest
 	}
 
-	// Try each registry until success
+	// Parse sources into repository@registry pairs
+	var sourcesList []Source
+	for _, src := range sources {
+		parts := strings.SplitN(src, "@", 2)
+		if len(parts) != 2 {
+			fmt.Fprintf(os.Stderr, "Error: invalid source format '%s', expected repository@registry\n", src)
+			os.Exit(1)
+		}
+		sourcesList = append(sourcesList, Source{
+			Repository: parts[0],
+			Registry:   parts[1],
+		})
+	}
+
+	// Randomize sources for load distribution
+	rnd := rand.New(rand.NewSource(time.Now().UnixNano()))
+	rnd.Shuffle(len(sourcesList), func(i, j int) {
+		sourcesList[i], sourcesList[j] = sourcesList[j], sourcesList[i]
+	})
+
+	// Try each source until success
 	var lastErr error
 	var resolvedDigest string
-	for _, registry := range registries {
+	for _, source := range sourcesList {
 		var err error
 		if digest != "" {
-			err = downloadManifestByDigest(registry, repository, digest, outputPath, printDigest, &resolvedDigest)
+			err = downloadManifestByDigest(source.Registry, source.Repository, digest, outputPath, printDigest, &resolvedDigest)
 		} else {
-			err = downloadManifestByTag(registry, repository, tag, outputPath, printDigest, &resolvedDigest)
+			err = downloadManifestByTag(source.Registry, source.Repository, tag, outputPath, printDigest, &resolvedDigest)
 		}
 		if err == nil {
 			break
 		}
 		lastErr = err
-		fmt.Fprintf(os.Stderr, "Failed to download from %s: %v\n", registry, err)
+		fmt.Fprintf(os.Stderr, "Failed to download from %s/%s: %v\n", source.Registry, source.Repository, err)
 	}
 
 	if lastErr != nil {
-		fmt.Fprintf(os.Stderr, "Error: Failed to download manifest from all registries: %v\n", lastErr)
+		fmt.Fprintf(os.Stderr, "Error: Failed to download manifest from all sources: %v\n", lastErr)
 		os.Exit(1)
 	}
 
@@ -113,6 +128,11 @@ func DownloadManifestProcess(ctx context.Context, args []string) {
 		fmt.Fprintf(os.Stderr, "Error: Failed to set permission on output file: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+type Source struct {
+	Repository string
+	Registry   string
 }
 
 func downloadManifestByDigest(registry, repository, digest, outputPath string, printDigest bool, resolvedDigest *string) error {

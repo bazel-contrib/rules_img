@@ -1,7 +1,7 @@
 """Module extension for pulling container images."""
 
 load("@bazel_skylib//lib:sets.bzl", "sets")
-load("//img/private/extensions:images_helpers.bzl", "build_facts_to_store", "build_image_files_dict", "build_reverse_blob_mappings", "collect_blobs_to_create", "download_and_parse_manifest", "get_registries_from_image", "merge_pull_attrs", "pull_tag_to_struct")
+load("//img/private/extensions:images_helpers.bzl", "build_facts_to_store", "build_image_files_dict", "build_reverse_blob_mappings", "collect_blobs_to_create", "download_and_parse_manifest", "get_merged_sources_from_images", "get_registries_from_image", "merge_pull_attrs", "pull_tag_to_struct")
 load("//img/private/repository_rules:image_repo.bzl", "image_repo")
 load("//img/private/repository_rules:pull_blob.bzl", "pull_blob_file", "pull_manifest_blob")
 
@@ -50,7 +50,7 @@ def _images_impl(ctx):
             if digest not in images_by_digest:
                 images_by_digest[digest] = pull_tag_to_struct(img)
             else:
-                images_by_digest[digest] = merge_pull_attrs(images_by_digest[digest], img, other_is_root = mod.is_root)
+                images_by_digest[digest] = merge_pull_attrs(images_by_digest[digest], pull_tag_to_struct(img), other_is_root = mod.is_root)
             if digest not in digest_visibility:
                 digest_visibility[digest] = []
             visibility_identifier = "{}/{}/{}".format(mod.name, mod.version, img.name or img.repository)
@@ -84,48 +84,34 @@ def _images_impl(ctx):
 
     # Create blob repositories for manifest/index blobs (deduplicated)
     for digest in manifest_blobs.keys():
-        # Use reverse mapping to find source image for this manifest blob
+        # Use reverse mapping to find all source images for this manifest blob
         if digest not in manifest_blob_to_images or len(manifest_blob_to_images[digest]) == 0:
             fail("Could not find source image for manifest/index digest '{}'.".format(digest))
-        source_image_digest = manifest_blob_to_images[digest][0]
-        source_img = images_by_digest[source_image_digest]
 
-        # Get registry info from source image
-        registry = None
-        registries = get_registries_from_image(source_img)
-        if hasattr(source_img, "registry") and source_img.registry:
-            registry = source_img.registry
+        # Build merged sources from all images that serve this blob
+        sources = get_merged_sources_from_images(manifest_blob_to_images[digest], images_by_digest)
 
         repo_name = "blob_{}".format(digest.replace("sha256:", "").replace(":", "_"))
         pull_manifest_blob(
             name = repo_name,
-            registry = registry,
-            registries = registries,
-            repository = source_img.repository,
+            sources = sources,
             digest = digest,
             downloader = downloader,
         )
 
     # Create blob repositories for config/layer blobs (deduplicated, eager)
     for digest in file_blobs.keys():
-        # Use reverse mapping to find source image for this file blob
+        # Use reverse mapping to find all source images for this file blob
         if digest not in file_blob_to_images or len(file_blob_to_images[digest]) == 0:
             fail("Could not find source image for config/layer blob digest '{}'.".format(digest))
-        source_image_digest = file_blob_to_images[digest][0]
-        source_img = images_by_digest[source_image_digest]
 
-        # Get registry info from source image
-        registries = get_registries_from_image(source_img)
-        registry = None
-        if hasattr(source_img, "registry") and source_img.registry:
-            registry = source_img.registry
+        # Build merged sources from all images that serve this blob
+        sources = get_merged_sources_from_images(file_blob_to_images[digest], images_by_digest)
 
         repo_name = "blob_{}".format(digest.replace("sha256:", "").replace(":", "_"))
         pull_blob_file(
             name = repo_name,
-            registry = registry,
-            registries = registries,
-            repository = source_img.repository,
+            sources = sources,
             digest = digest,
             downloaded_file_path = "blob",
             handling = "eager",
@@ -134,24 +120,17 @@ def _images_impl(ctx):
 
     # Create blob repositories for lazy layer blobs (deduplicated, lazy)
     for digest in lazy_file_blobs.keys():
-        # Use reverse mapping to find source image for this file blob
+        # Use reverse mapping to find all source images for this file blob
         if digest not in file_blob_to_images or len(file_blob_to_images[digest]) == 0:
             fail("Could not find source image for lazy layer blob digest '{}'.".format(digest))
-        source_image_digest = file_blob_to_images[digest][0]
-        source_img = images_by_digest[source_image_digest]
 
-        # Get registry info from source image
-        registries = get_registries_from_image(source_img)
-        registry = None
-        if hasattr(source_img, "registry") and source_img.registry:
-            registry = source_img.registry
+        # Build merged sources from all images that serve this blob
+        sources = get_merged_sources_from_images(file_blob_to_images[digest], images_by_digest)
 
         repo_name = "lazy_{}".format(digest.replace("sha256:", "").replace(":", "_"))
         pull_blob_file(
             name = repo_name,
-            registry = registry,
-            registries = registries,
-            repository = source_img.repository,
+            sources = sources,
             digest = digest,
             downloaded_file_path = "blob",
             handling = "lazy",
