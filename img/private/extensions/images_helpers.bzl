@@ -1,6 +1,7 @@
 """Helper functions for the images module extension."""
 
 load("@bazel_skylib//lib:sets.bzl", "sets")
+load("@pull_hub_repo//:defs.bzl", "tool_for_repository_os")
 load("//img/private:manifest_media_type.bzl", "get_media_type", manifest_kind = "kind")
 load("//img/private/repository_rules:download.bzl", "download_manifest")
 
@@ -490,3 +491,123 @@ def build_facts_to_store(oci_ref_graph):
     for digest in oci_ref_graph:
         facts_to_store["oci_ref_graph@{}".format(digest)] = oci_ref_graph[digest]
     return facts_to_store
+
+def reachable_facts_to_dict(images_by_digest, facts):
+    """Extract reachable facts for top-level images into a dictionary.
+
+    Args:
+        images_by_digest: Dictionary mapping digest to image struct
+        facts: Facts dictionary from previous extension evaluation
+
+    Returns:
+        Dictionary of reachable facts for top-level images
+    """
+    reachable_facts = {}
+    children = sets.make()
+    for digest in images_by_digest.keys():
+        fact_key = "oci_ref_graph@{}".format(digest)
+        if fact_key in facts:
+            reachable_facts[fact_key] = facts[fact_key]
+            if facts[fact_key]["kind"] == "index":
+                for child_digest in facts[fact_key].get("manifests", []):
+                    sets.insert(children, child_digest)
+
+    # Now also include all reachable child manifests
+    for child_digest in sets.to_list(children):
+        fact_key = "oci_ref_graph@{}".format(child_digest)
+        if fact_key in facts:
+            reachable_facts[fact_key] = facts[fact_key]
+
+    return reachable_facts
+
+def sync_oci_ref_graph(ctx, images_by_digest, facts, downloader):
+    """Sync the OCI reference graph by downloading manifests.
+
+    Uses parallel downloading with the img_tool, or falls back to sequential
+    downloading for the bazel downloader.
+
+    Args:
+        ctx: Module extension context
+        images_by_digest: Dictionary mapping digest to image struct
+        facts: Facts dictionary from previous extension evaluation
+        downloader: Downloader to use ("img_tool" or "bazel")
+
+    Returns:
+        Dictionary mapping digest to ref_graph_entry
+    """
+    ctx.report_progress("Syncing OCI reference graph...")
+    oci_ref_graph = {}
+
+    # Use pull_tool to prefetch the full OCI ref graph in parallel
+    if downloader == "img_tool":
+        # Prepare facts JSON (convert facts to a format expected by the tool)
+        facts_json_content = json.encode(reachable_facts_to_dict(images_by_digest, facts))
+        ctx.file("facts_input.json", facts_json_content)
+
+        # Prepare images JSON (convert images_by_digest to JSON)
+        # Convert struct objects to dicts for JSON encoding
+        images_for_json = {}
+        for digest, img in images_by_digest.items():
+            images_for_json[digest] = {
+                "repository": img.repository,
+                "registries": img.registries if hasattr(img, "registries") else [],
+                "digest": img.digest,
+                "tag": img.tag if hasattr(img, "tag") else "",
+                "layer_handling": img.layer_handling,
+                "sources": img.sources,
+            }
+        images_json_content = json.encode(images_for_json)
+        ctx.file("images_input.json", images_json_content)
+
+        # Execute sync-oci-ref-graph command
+        tool = tool_for_repository_os(ctx)
+        tool_path = ctx.path(tool)
+
+        result = ctx.execute([
+            tool_path,
+            "sync-oci-ref-graph",
+            "--facts",
+            "facts_input.json",
+            "--images",
+            "images_input.json",
+            "--output",
+            "facts_output.json",
+        ])
+
+        if result.return_code != 0:
+            fail("Failed to sync OCI ref graph: {}{}".format(result.stdout, result.stderr))
+
+        # Read updated facts
+        updated_facts_json = ctx.read("facts_output.json")
+        updated_facts = json.decode(updated_facts_json)
+
+        # Parse updated facts into oci_ref_graph
+        for key, value in updated_facts.items():
+            if key.startswith("oci_ref_graph@"):
+                digest = key.removeprefix("oci_ref_graph@")
+                oci_ref_graph[digest] = value
+        return oci_ref_graph
+
+    # Fallback to sequential downloading for "bazel" downloader
+    # Download top-level manifests/indexes
+    for digest, img in images_by_digest.items():
+        ref_graph_entry, _manifest_data = download_and_parse_manifest(ctx, digest, img, facts, downloader)
+        oci_ref_graph[digest] = ref_graph_entry
+
+    # Download child manifests referenced by indexes
+    manifest_to_download_from_index = {}
+    for parent_digest, ref_graph_entry in oci_ref_graph.items():
+        if ref_graph_entry["kind"] == "index":
+            for child_digest in ref_graph_entry["manifests"]:
+                if child_digest not in oci_ref_graph:
+                    manifest_to_download_from_index[child_digest] = parent_digest
+
+    for digest, index_digest in manifest_to_download_from_index.items():
+        img = images_by_digest[index_digest]
+        ref_graph_entry, _manifest_data = download_and_parse_manifest(ctx, digest, img, facts, downloader)
+        if ref_graph_entry["kind"] != "manifest":
+            fail("Expected manifest for digest '{}' but got '{}'.".format(digest, ref_graph_entry["kind"]))
+        oci_ref_graph[digest] = ref_graph_entry
+
+    ctx.report_progress("OCI reference graph synced with {} entries.".format(len(oci_ref_graph)))
+    return oci_ref_graph

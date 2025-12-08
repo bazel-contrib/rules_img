@@ -10,6 +10,7 @@ go_library(
         "//cmd/downloadblob",
         "//cmd/downloadmanifest",
         "//cmd/internal/pull",
+        "//cmd/syncocirefgraph",
     ],
 )
 

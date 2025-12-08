@@ -9,6 +9,7 @@ filegroup(
         "//cmd/downloadmanifest:go_srcs",
         "//cmd/internal/pull:go_srcs",
         "//cmd/pull_tool:go_srcs",
+        "//cmd/syncocirefgraph:go_srcs",
         "//pkg/auth/registry:go_srcs",
         "//pkg/blobstore:go_srcs",
         "//pkg/transport/cachedblob:go_srcs",

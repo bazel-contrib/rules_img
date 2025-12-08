@@ -1,7 +1,7 @@
 """Module extension for pulling container images."""
 
 load("@bazel_skylib//lib:sets.bzl", "sets")
-load("//img/private/extensions:images_helpers.bzl", "build_facts_to_store", "build_image_files_dict", "build_reverse_blob_mappings", "collect_blobs_to_create", "download_and_parse_manifest", "get_merged_sources_from_images", "get_registries_from_image", "merge_pull_attrs", "pull_tag_to_struct")
+load("//img/private/extensions:images_helpers.bzl", "build_facts_to_store", "build_image_files_dict", "build_reverse_blob_mappings", "collect_blobs_to_create", "get_merged_sources_from_images", "get_registries_from_image", "merge_pull_attrs", "pull_tag_to_struct", "sync_oci_ref_graph")
 load("//img/private/repository_rules:image_repo.bzl", "image_repo")
 load("//img/private/repository_rules:pull_blob.bzl", "pull_blob_file", "pull_manifest_blob")
 
@@ -56,25 +56,8 @@ def _images_impl(ctx):
             visibility_identifier = "{}/{}/{}".format(mod.name, mod.version, img.name or img.repository)
             digest_visibility[digest].append(visibility_identifier)
 
-    # Download top-level manifests/indexes
-    for digest, img in images_by_digest.items():
-        ref_graph_entry, _manifest_data = download_and_parse_manifest(ctx, digest, img, facts, downloader)
-        oci_ref_graph[digest] = ref_graph_entry
-
-    # Download child manifests referenced by indexes
-    manifest_to_download_from_index = {}
-    for parent_digest, ref_graph_entry in oci_ref_graph.items():
-        if ref_graph_entry["kind"] == "index":
-            for child_digest in ref_graph_entry["manifests"]:
-                if child_digest not in oci_ref_graph:
-                    manifest_to_download_from_index[child_digest] = parent_digest
-
-    for digest, index_digest in manifest_to_download_from_index.items():
-        img = images_by_digest[index_digest]
-        ref_graph_entry, _manifest_data = download_and_parse_manifest(ctx, digest, img, facts, downloader)
-        if ref_graph_entry["kind"] != "manifest":
-            fail("Expected manifest for digest '{}' but got '{}'.".format(digest, ref_graph_entry["kind"]))
-        oci_ref_graph[digest] = ref_graph_entry
+    # Sync OCI reference graph by downloading manifests
+    oci_ref_graph = sync_oci_ref_graph(ctx, images_by_digest, facts, downloader)
 
     # Build reverse mappings from blobs to top-level images for fast lookups
     file_blob_to_images, manifest_blob_to_images = build_reverse_blob_mappings(oci_ref_graph, images_by_digest)
