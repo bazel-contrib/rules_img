@@ -17,7 +17,7 @@ require (
 	github.com/malt3/go-containerregistry v0.0.0-20250724131542-7e98b20e9b45
 	github.com/opencontainers/go-digest v1.0.0
 	github.com/opencontainers/image-spec v1.1.1
-	golang.org/x/sync v0.18.0
+	golang.org/x/sync v0.19.0
 	google.golang.org/genproto/googleapis/api v0.0.0-20251202230838-ff82c1b0f217
 	google.golang.org/genproto/googleapis/bytestream v0.0.0-20251202230838-ff82c1b0f217
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20251202230838-ff82c1b0f217
