@@ -1,3 +1,6 @@
 import %workspace%/.bazelrc.common
 
+# Workaround for https://github.com/aspect-build/rules_py/issues/731
+common --incompatible_autoload_externally=+@rules_cc
+
 try-import %workspace%/.bazelrc.user
