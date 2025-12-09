@@ -16,6 +16,7 @@ import (
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/api"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/containerd"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/docker"
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/progress"
 )
 
 type builder struct {
@@ -106,6 +107,23 @@ func (l *loader) LoadAll(ctx context.Context, ops []api.IndexedLoadDeployOperati
 
 			ctx = containerd.WithLease(ctx, lease)
 
+			// Setup progress tracking for concurrent blob uploads
+			ctx, stopProgress := progress.InitProgress(ctx, "loaded")
+			defer stopProgress()
+
+			// Pre-declare all trackers in deterministic order
+			blobNames := make([]string, len(blobs))
+			blobSizes := make([]int64, len(blobs))
+			for i, blob := range blobs {
+				digest, _ := blob.layer.Digest()
+				blobNames[i] = digest.Hex[:12]
+				blobSizes[i], err = blob.layer.Size()
+				if err != nil {
+					return nil, fmt.Errorf("getting size of blob %s: %w", digest.String(), err)
+				}
+			}
+			ctx = progress.DeclareTrackers(ctx, blobNames, blobSizes)
+
 			// Load all blobs in parallel...
 			contentStore := client.ContentStore()
 			if err := uploadBlobsParallel(ctx, contentStore, blobs, defaultWorkers); err != nil {
@@ -186,6 +204,10 @@ func (l *loader) loadContainerd(ctx context.Context, op api.IndexedLoadDeployOpe
 }
 
 func (l *loader) loadViaDocker(ctx context.Context, op api.IndexedLoadDeployOperation) ([]string, error) {
+	// Setup progress tracking for layer streaming
+	ctx, stopProgress := progress.InitProgress(ctx, "loaded")
+	defer stopProgress()
+
 	// Create a pipe to stream the tar to docker load
 	pr, pw := io.Pipe()
 
@@ -314,6 +336,16 @@ func (l *loader) streamManifestToTar(ctx context.Context, manifestInfo api.Manif
 		tw.SetTags(normalizedTags)
 	}
 
+	// Pre-declare trackers for all layers in order
+	layerNames := make([]string, len(manifestInfo.LayerBlobs))
+	layerSizes := make([]int64, len(manifestInfo.LayerBlobs))
+	for i, layerDesc := range manifestInfo.LayerBlobs {
+		digest, _ := registryv1.NewHash(layerDesc.Digest)
+		layerNames[i] = digest.Hex[:12]
+		layerSizes[i] = layerDesc.Size
+	}
+	ctx = progress.DeclareTrackers(ctx, layerNames, layerSizes)
+
 	// Stream layers
 	if err := l.streamLayers(ctx, manifestInfo, tw); err != nil {
 		return nil, fmt.Errorf("streaming layers: %w", err)
@@ -350,7 +382,7 @@ func (l *loader) streamLayers(ctx context.Context, manifestInfo api.ManifestDepl
 		}
 		defer rc.Close()
 
-		if err := tw.WriteLayer(digest, layerDesc.Size, rc); err != nil {
+		if err := tw.WriteLayer(ctx, digest, layerDesc.Size, rc); err != nil {
 			return err
 		}
 	}

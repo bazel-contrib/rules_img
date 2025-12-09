@@ -154,7 +154,12 @@ func storeBlob(ctx context.Context, store containerd.Store, desc ocispec.Descrip
 	// Check if the blob already exists
 	info, err := store.Info(ctx, desc.Digest)
 	if err == nil && info.Digest == desc.Digest && info.Size == desc.Size {
-		// Blob already exists with correct size, nothing to do
+		// Blob already exists with correct size, nothing to do.
+		// We still print a progress writer for consistency.
+		if err := progress.CompletedWriter(ctx, desc.Size, desc.Digest.Hex()[:12]); err != nil {
+			return fmt.Errorf("creating completed progress writer: %w", err)
+		}
+
 		return nil
 	}
 
@@ -173,7 +178,10 @@ func storeBlob(ctx context.Context, store containerd.Store, desc ocispec.Descrip
 	}
 	defer reader.Close()
 
-	pw := progress.Writer(desc.Size, desc.Digest.Hex()[:12])
+	pw, err := progress.Writer(ctx, desc.Size, desc.Digest.Hex()[:12])
+	if err != nil {
+		return fmt.Errorf("creating progress bar: %w", err)
+	}
 	if _, err := io.Copy(io.MultiWriter(bufferedWriter, pw), reader); err != nil {
 		return fmt.Errorf("copying data to writer: %w", err)
 	}

@@ -2,6 +2,7 @@ package docker
 
 import (
 	"archive/tar"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -58,7 +59,7 @@ func (t *TarWriter) WriteConfig(configData []byte) error {
 }
 
 // WriteLayer streams a layer to the tar
-func (t *TarWriter) WriteLayer(layerDigest registryv1.Hash, size int64, reader io.Reader) error {
+func (t *TarWriter) WriteLayer(ctx context.Context, layerDigest registryv1.Hash, size int64, reader io.Reader) error {
 	layerDir := layerDigest.Hex
 	layerPath := path.Join(layerDir, "layer.tar")
 
@@ -73,7 +74,7 @@ func (t *TarWriter) WriteLayer(layerDigest registryv1.Hash, size int64, reader i
 	// Create directory entry
 	if err := t.tw.WriteHeader(&tar.Header{
 		Name:     layerDir + "/",
-		Mode:     0755,
+		Mode:     0o755,
 		Typeflag: tar.TypeDir,
 	}); err != nil {
 		return fmt.Errorf("writing layer directory: %w", err)
@@ -87,15 +88,18 @@ func (t *TarWriter) WriteLayer(layerDigest registryv1.Hash, size int64, reader i
 	// Write layer content
 	hdr := &tar.Header{
 		Name: layerPath,
-		Mode: 0644,
+		Mode: 0o644,
 		Size: size,
 	}
 	if err := t.tw.WriteHeader(hdr); err != nil {
 		return fmt.Errorf("writing layer header: %w", err)
 	}
 
-	// Stream the layer content
-	pw := progress.Writer(size, layerDigest.Hex[:12])
+	// Stream the layer content with progress tracking
+	pw, err := progress.Writer(ctx, size, layerDigest.Hex[:12])
+	if err != nil {
+		return fmt.Errorf("creating progress writer: %w", err)
+	}
 	n, err := io.Copy(io.MultiWriter(t.tw, pw), reader)
 	if err != nil {
 		return fmt.Errorf("streaming layer content: %w", err)
@@ -134,7 +138,7 @@ func (t *TarWriter) Finalize() error {
 func (t *TarWriter) writeFile(name string, data []byte) error {
 	hdr := &tar.Header{
 		Name: name,
-		Mode: 0644,
+		Mode: 0o644,
 		Size: int64(len(data)),
 	}
 	if err := t.tw.WriteHeader(hdr); err != nil {
