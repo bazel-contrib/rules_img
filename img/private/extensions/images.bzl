@@ -1,7 +1,7 @@
 """Module extension for pulling container images."""
 
 load("@bazel_skylib//lib:sets.bzl", "sets")
-load("//img/private/extensions:images_helpers.bzl", "build_facts_to_store", "build_image_files_dict", "build_reverse_blob_mappings", "collect_blobs_to_create", "get_merged_sources_from_images", "get_registries_from_image", "merge_pull_attrs", "pull_tag_to_struct", "sync_oci_ref_graph")
+load("//img/private/extensions:images_helpers.bzl", "build_facts_to_store", "build_image_files_dict", "build_reverse_blob_mappings", "collect_blobs_to_create", "get_merged_sources_from_images", "get_registries_from_image", "merge_pull_attrs", "normalize_repository_name", "pull_tag_to_struct", "sync_oci_ref_graph")
 load("//img/private/repository_rules:image_repo.bzl", "image_repo")
 load("//img/private/repository_rules:pull_blob.bzl", "pull_blob_file", "pull_manifest_blob")
 
@@ -12,6 +12,7 @@ def _images_impl(ctx):
     # We want to create one repository per image digest.
     images_by_digest = {}
     digest_visibility = {}
+    root_module_images_by_name = {}
 
     # oci_ref_graph contains mapping from oci image manifets / indices to their referenced blobs
     # manifest: digest -> {"kind": "manifest", "config": "sha256:...", "layers": ["sha256:...", ...]}
@@ -25,13 +26,21 @@ def _images_impl(ctx):
 
     # Determine downloader to use for root module
     downloader = "img_tool"
+    expose_hub_repo = "auto"
+    expose_image_repos = "auto"
     for mod in ctx.modules:
         for settings in mod.tags.settings:
             if not mod.is_root:
                 continue
 
-            # Store downloader choice in facts for later use
             downloader = settings.downloader
+            expose_hub_repo = settings.hub_repo
+            expose_image_repos = settings.image_repos
+
+    # TODO(malt3): Add feature detection for dict in root_module_direct_deps
+    support_dict_in_root_module_direct_deps = False
+    expose_hub_repo = expose_hub_repo == "enabled" or (expose_hub_repo == "auto" and not support_dict_in_root_module_direct_deps)
+    expose_image_repos = expose_image_repos == "enabled" or (expose_image_repos == "auto" and support_dict_in_root_module_direct_deps)
 
     for mod in ctx.modules:
         names = sets.make()
@@ -55,6 +64,8 @@ def _images_impl(ctx):
                 digest_visibility[digest] = []
             visibility_identifier = "{}/{}/{}".format(mod.name, mod.version, img.name or img.repository)
             digest_visibility[digest].append(visibility_identifier)
+            if mod.is_root:
+                root_module_images_by_name[normalize_repository_name(img.name, img.repository)] = digest
 
     # Sync OCI reference graph by downloading manifests
     oci_ref_graph = sync_oci_ref_graph(ctx, images_by_digest, facts, downloader)
@@ -143,9 +154,22 @@ def _images_impl(ctx):
         digest_visibility = digest_visibility,
     )
 
+    # ctx.root_module_has_non_dev_dependency
+    root_module_direct_deps = {}
+    if expose_hub_repo:
+        root_module_direct_deps["rules_img_images.bzl"] = "rules_img_images.bzl"
+    if expose_image_repos:
+        for name, digest in root_module_images_by_name.items():
+            repo_name = "img_{}".format(digest.replace("sha256:", ""))
+            root_module_direct_deps[name] = repo_name
+
+    # Flatten to list if mapping is not supported.
+    if not support_dict_in_root_module_direct_deps:
+        root_module_direct_deps = root_module_direct_deps.values()
+
     kwargs = {
-        "root_module_direct_deps": ["rules_img_images.bzl"],
-        "root_module_direct_dev_deps": [],
+        "root_module_direct_deps": root_module_direct_deps if ctx.root_module_has_non_dev_dependency else [],
+        "root_module_direct_dev_deps": [] if ctx.root_module_has_non_dev_dependency else root_module_direct_deps,
         "reproducible": True,
     }
     if hasattr(ctx, "facts"):
@@ -299,6 +323,36 @@ _settings_tag = tag_class(
 * **`img_tool`** (default): Uses the `img` tool for all downloads.
 
 * **`bazel`**: Uses Bazel's native HTTP capabilities for downloading manifests and blobs.
+""",
+        ),
+        "hub_repo": attr.string(
+            default = "auto",
+            values = ["auto", "enabled", "disabled"],
+            doc = """Controls visibility of the hub repository @rules_img_images.bzl for image access via the images macro.
+
+**Available options:**
+
+* **`auto`** (default): The hub repository is made visible if named repositories cannot be mapped in the current Bazel version.
+                        This means you either get @rules_img_images.bzl or one repository per image.
+
+* **`enabled`**: Always create and expose the hub repository @rules_img_images.bzl for image access via the images macro.
+
+* **`disabled`**: Do not create the hub repository.
+""",
+        ),
+        "image_repos": attr.string(
+            default = "auto",
+            values = ["auto", "enabled", "disabled"],
+            doc = """Controls visibility of individual image repositories for direct access. Repos internally use the naming scheme img_<digest> and are mapped via friendly names (i.e. "ubuntu") if possible.
+
+**Available options:**
+
+* **`auto`** (default): Individual image repositories are made visible if named repositories can be mapped in the current Bazel version.
+                        This means you either get one repository per image or @rules_img_images.bzl.
+
+* **`enabled`**: Always expose individual image repositories for direct access.
+
+* **`disabled`**: Do not expose individual image repositories.
 """,
         ),
     },

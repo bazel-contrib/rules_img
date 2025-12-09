@@ -3,7 +3,7 @@ load("@rules_img//img:push.bzl", "image_push")
 
 image_push(
     name = "nginx",
-    image = "@nginx",
+    image = "@nginx//:image",
     registry = "ghcr.io",
     repository = "malt3/nginx",
 )
