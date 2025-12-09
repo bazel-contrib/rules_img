@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"slices"
 	"sort"
+	"sync"
 
 	"github.com/malt3/go-containerregistry/pkg/name"
 	registryv1 "github.com/malt3/go-containerregistry/pkg/v1"
@@ -76,7 +77,7 @@ type uploader struct {
 	remoteOptions      []remote.Option
 }
 
-func (u *uploader) PushAll(ctx context.Context, ops []api.IndexedPushDeployOperation, strategy string) ([]string, error) {
+func (u *uploader) PushAll(ctx context.Context, ops []api.IndexedPushDeployOperation, strategy string) (tags []string, retErr error) {
 	if strategy == "bes" {
 		return nil, nil // nothing to do
 	}
@@ -108,9 +109,18 @@ func (u *uploader) PushAll(ctx context.Context, ops []api.IndexedPushDeployOpera
 		}
 	}
 
-	prog := progress.NewIndeterminate()
+	// Setup progress tracking if possible
+	ctx, stopProgress := progress.InitProgress(ctx, "push complete")
+
+	prog := progress.NewIndeterminate(ctx, "pushing")
 	progCh := make(chan registryv1.Update, 16) // buffer so we don't block writes
+
+	wg := &sync.WaitGroup{}
+	wg.Add(1)
+	defer wg.Wait()
 	go func() {
+		defer wg.Done()
+		defer stopProgress()
 		for update := range progCh {
 			prog.SetTotal(update.Total)
 			prog.SetComplete(update.Complete)
