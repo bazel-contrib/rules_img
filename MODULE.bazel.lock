@@ -284,7 +284,7 @@
     "@@rules_bazel_integration_test+//:extensions.bzl%bazel_binaries": {
       "general": {
         "bzlTransitiveDigest": "XC9nqZ31LIbq8N7cEK+rYa2iXNQLcJ3cyGWw+zPZlc0=",
-        "usagesDigest": "S4Rmnti0SWorPxX5ElImz71KSVYhr6DL7oax/bICgJ4=",
+        "usagesDigest": "S0VA81hym2mkTsIWK+e9pzf1rwTJuTuAgA6WriXrI2w=",
         "recordedFileInputs": {},
         "recordedDirentsInputs": {},
         "envVariables": {},
