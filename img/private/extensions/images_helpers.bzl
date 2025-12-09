@@ -520,6 +520,47 @@ def reachable_facts_to_dict(images_by_digest, facts):
 
     return reachable_facts
 
+def normalize_repository_name(name, repository):
+    """Normalize a friendly name and repository into a valid Bazel repository name.
+
+    Bazel repository names must:
+    - Start with a letter (A-Z, a-z) or number (0-9)
+    - Contain only: letters, digits, dash (-), underscore (_), dot (.)
+    - Match pattern: [a-zA-Z0-9][-.\\w]*
+
+    Args:
+        name: Optional friendly name (like "ubuntu"). Can be empty or None.
+        repository: Repository path (like "library/ubuntu")
+
+    Returns:
+        A valid Bazel repository name
+    """
+
+    # Use name if provided and non-empty, otherwise use repository
+    base = name if name else repository
+    if not base:
+        fail("Both name and repository cannot be empty")
+
+    # Replace invalid characters with underscores
+    # Valid chars are: letters, digits, dash, underscore, dot
+    # Invalid chars include: slash, colon, @, etc.
+    normalized = ""
+    for char in base.elems():
+        if char.isalnum() or char in "-_.":
+            normalized += char
+        else:
+            normalized += "_"
+
+    # Ensure it starts with a letter or digit
+    if normalized and not (normalized[0].isalnum()):
+        fail("Normalized repository name '{}' must start with a letter or digit.".format(normalized))
+
+    # Handle edge case of empty result
+    if not normalized:
+        fail("Normalized repository name cannot be empty.")
+
+    return normalized
+
 def sync_oci_ref_graph(ctx, images_by_digest, facts, downloader):
     """Sync the OCI reference graph by downloading manifests.
 

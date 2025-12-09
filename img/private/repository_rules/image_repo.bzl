@@ -97,12 +97,6 @@ image_import(
     target_compatible_with = {target_compatible_with},
     visibility = ["//visibility:public"],
 )
-
-alias(
-    name = {name},
-    actual = ":image",
-    visibility = ["//visibility:public"],
-)
 """.format(
             digest = repr(rctx.attr.digest),
             data = json.encode(data),
@@ -111,7 +105,6 @@ alias(
             repository = repr(rctx.attr.repository),
             tag = repr(rctx.attr.tag) if rctx.attr.tag else "None",
             target_compatible_with = target_compatible_with,
-            name = repr(rctx.attr.name),
         ),
     )
 

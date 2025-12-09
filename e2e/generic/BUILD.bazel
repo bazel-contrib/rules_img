@@ -74,7 +74,7 @@ pkg_tar(
 
 image_manifest(
     name = "image_with_empty_uncompressed_tar_layer",
-    base = image("library/nginx"),
+    base = image("nginx"),
     layers = [":empty_tar"],
 )
 
