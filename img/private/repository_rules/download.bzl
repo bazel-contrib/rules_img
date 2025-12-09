@@ -57,14 +57,13 @@ def learn_digest_from_tag(rctx, *, tag, downloader, sources):
         result = rctx.execute(args)
         if result.return_code != 0:
             # Failed to get digest
-            return None
+            fail("Failed to learn digest from tag {}: {}".format(tag, result.stderr))
 
         # The digest is printed to stdout
         digest = result.stdout.strip()
         if len(digest) > 0 and digest.startswith("sha256:"):
             return digest
-
-        return None
+        fail("Failed to learn digest from tag {}: invalid digest output {}".format(tag, result.stdout))
 
 def _check_existing_blob(rctx, digest, wait_and_read = True):
     """Check if a blob with the given digest already exists.
