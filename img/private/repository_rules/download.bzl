@@ -372,6 +372,7 @@ def download_manifest_img_tool(rctx, *, reference, sha256, have_valid_digest, so
 
     # Convert sources dict to list format
     sources_list = get_sources_list(sources)
+    print(sources_list)
 
     args = [
         tool_path,

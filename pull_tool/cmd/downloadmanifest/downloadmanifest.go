@@ -94,6 +94,7 @@ func DownloadManifestProcess(ctx context.Context, args []string) {
 	rnd.Shuffle(len(sourcesList), func(i, j int) {
 		sourcesList[i], sourcesList[j] = sourcesList[j], sourcesList[i]
 	})
+	fmt.Printf("trying the following sources: %v\n", sourcesList)
 
 	// Try each source until success
 	var lastErr error
