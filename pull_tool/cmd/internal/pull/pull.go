@@ -95,10 +95,10 @@ func PullProcess(ctx context.Context, args []string) {
 	var lastErr error
 	for _, registry := range registries {
 		err := pullFromRegistry(ctx, registry, repository, reference, digest, store, transport, layerHandling, concurrency)
+		lastErr = err
 		if err == nil {
 			return
 		}
-		lastErr = err
 		fmt.Fprintf(os.Stderr, "Failed to download from %s: %v\n", registry, err)
 	}
 

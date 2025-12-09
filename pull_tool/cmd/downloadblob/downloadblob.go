@@ -92,10 +92,10 @@ func DownloadBlobProcess(ctx context.Context, args []string) {
 	var lastErr error
 	for _, source := range sourcesList {
 		err := downloadFromRegistry(source.Registry, source.Repository, digest, outputPath)
+		lastErr = err
 		if err == nil {
 			break
 		}
-		lastErr = err
 		fmt.Fprintf(os.Stderr, "Failed to download from %s/%s: %v\n", source.Registry, source.Repository, err)
 	}
 
