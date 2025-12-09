@@ -105,10 +105,10 @@ func DownloadManifestProcess(ctx context.Context, args []string) {
 		} else {
 			err = downloadManifestByTag(source.Registry, source.Repository, tag, outputPath, printDigest, &resolvedDigest)
 		}
+		lastErr = err
 		if err == nil {
 			break
 		}
-		lastErr = err
 		fmt.Fprintf(os.Stderr, "Failed to download from %s/%s: %v\n", source.Registry, source.Repository, err)
 	}
 

@@ -304,10 +304,10 @@ func downloadManifestFromSources(digest string, sources map[string][]string) ([]
 	for repository, registries := range sources {
 		for _, registry := range registries {
 			data, err := downloadManifest(registry, repository, digest)
+			lastErr = err
 			if err == nil {
 				return data, nil
 			}
-			lastErr = err
 			fmt.Fprintf(os.Stderr, "Warning: Failed to download from %s/%s: %v\n", registry, repository, err)
 		}
 	}
