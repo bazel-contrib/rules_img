@@ -29,7 +29,7 @@ def _pull_impl(rctx):
 
     # Learn the digest from tag if needed
     digest = rctx.attr.digest
-    if not have_valid_digest and rctx.attr.unsafe_allow_tag_without_digest:
+    if rctx.attr.unsafe_allow_tag_without_digest:
         # Do an extra roundtrip to learn the digest from the tag
         learned_digest = _learn_digest_from_tag(rctx, tag = rctx.attr.tag, downloader = rctx.attr.downloader, sources = sources)
         if learned_digest:
