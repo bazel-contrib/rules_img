@@ -488,6 +488,15 @@ func (c *CAS[HM]) StoreTreeKnownHash(fsys fs.FS, treeHash []byte) (linkPath stri
 			return fmt.Errorf("storing file %s: %w", p, err)
 		}
 
+		if linkName == treePath {
+			// This is the first occurrence of this file.
+			// Store() has already written it as a regular file,
+			// so we don't need to write a hardlink to itself.
+			return nil
+		}
+
+		// The file was already stored elsewhere,
+		// so we need to create a hardlink to the first occurrence.
 		header := &tar.Header{
 			Typeflag: tar.TypeLink,
 			Name:     treePath,
@@ -497,6 +506,7 @@ func (c *CAS[HM]) StoreTreeKnownHash(fsys fs.FS, treeHash []byte) (linkPath stri
 		if err := c.writeHeaderAndData(header, nil); err != nil {
 			return fmt.Errorf("writing link for %s: %w", p, err)
 		}
+
 		return nil
 	}); err != nil {
 		return treeBase, fmt.Errorf("storing tree artifact %x in tar: %w", treeHash, err)
