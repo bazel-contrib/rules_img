@@ -5,6 +5,8 @@ import (
 	"errors"
 	"io"
 	"os"
+	"sync"
+	"time"
 
 	"github.com/jedib0t/go-pretty/v6/progress"
 	"golang.org/x/term"
@@ -26,7 +28,7 @@ const (
 //	ctx, stop := progress.InitProgress(ctx)
 //	defer stop()
 func InitProgress(ctx context.Context, doneMessage string) (context.Context, func()) {
-	if !isTTY() {
+	if !wantProgressBar() {
 		return ctx, func() {} // no-op when not a TTY
 	}
 
@@ -44,12 +46,19 @@ func InitProgress(ctx context.Context, doneMessage string) (context.Context, fun
 
 	pw.SetTrackerLength(60)
 	pw.SetTrackerPosition(progress.PositionRight)
+	pw.SetUpdateFrequency(100 * time.Millisecond)
 	pw.SetOutputWriter(os.Stderr)
 
 	go pw.Render()
 
 	ctx = context.WithValue(ctx, writerKey, pw)
-	return ctx, func() { pw.Stop() }
+	return ctx, func() {
+		// This is a bit silly, but we see visual glitches if we don't sleep after calling Stop.
+		// If the image push completes too quickly, the final progress bar
+		// doesn't render properly. Adding a small delay ensures it shows up.
+		pw.Stop()
+		time.Sleep(110 * time.Millisecond)
+	}
 }
 
 // fromContext retrieves the progress writer from the context, if any.
@@ -129,7 +138,7 @@ func DeclareTrackers(ctx context.Context, names []string, sizes []int64) context
 //	if err != nil { return err }
 //	io.Copy(io.MultiWriter(destFile, pw), srcReader)
 func Writer(ctx context.Context, size int64, desc string) (io.Writer, error) {
-	if !isTTY() {
+	if !wantProgressBar() {
 		return io.Discard, nil
 	}
 
@@ -161,7 +170,7 @@ func Writer(ctx context.Context, size int64, desc string) (io.Writer, error) {
 }
 
 func CompletedWriter(ctx context.Context, size int64, desc string) error {
-	if !isTTY() {
+	if !wantProgressBar() {
 		return nil
 	}
 
@@ -223,6 +232,17 @@ func (i *Indeterminate) SetComplete(complete int64) {
 	}
 }
 
+func (i *Indeterminate) Done(err error) {
+	if i.tracker == nil {
+		return
+	}
+	if err == nil {
+		i.tracker.MarkAsDone()
+		return
+	}
+	i.tracker.MarkAsErrored()
+}
+
 // NewIndeterminate creates a new indeterminate progress tracker.
 // If a progress writer is attached to the context (via InitProgress), it will add a tracker to it.
 // Otherwise, returns a no-op tracker.
@@ -236,7 +256,7 @@ func (i *Indeterminate) SetComplete(complete int64) {
 //	tracker.SetTotal(totalSize) // once known
 //	tracker.SetComplete(bytesUploaded) // as progress is made
 func NewIndeterminate(ctx context.Context, message string) *Indeterminate {
-	if !isTTY() {
+	if !wantProgressBar() {
 		return &Indeterminate{} // Return empty struct when not a TTY
 	}
 
@@ -256,7 +276,17 @@ func NewIndeterminate(ctx context.Context, message string) *Indeterminate {
 	return &Indeterminate{tracker: tracker}
 }
 
-// isTTY checks if stderr is a terminal.
-func isTTY() bool {
-	return term.IsTerminal(int(os.Stderr.Fd()))
+var noProgressEnvVars = []string{
+	"NO_PROGRESS",
+	"NO_INTERACTIVE",
+	"NO_COLOR",
 }
+
+var wantProgressBar = sync.OnceValue(func() bool {
+	for _, envVar := range noProgressEnvVars {
+		if _, exists := os.LookupEnv(envVar); exists {
+			return false
+		}
+	}
+	return term.IsTerminal(int(os.Stderr.Fd()))
+})
