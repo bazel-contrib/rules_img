@@ -154,7 +154,6 @@ def _image_index_from_oci_layout(ctx):
     for idx_str in sorted(manifest_platforms.keys()):
         info = manifest_outputs[idx_str]
         manifest_infos.append(ImageManifestInfo(
-            base_image = None,
             descriptor = info["descriptor"],
             manifest = info["manifest"],
             config = info["config"],

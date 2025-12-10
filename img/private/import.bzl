@@ -119,7 +119,6 @@ def _build_manifest_info(ctx, digest, descriptor = None, index_position = None, 
             missing_blobs.append(layer["digest"].removeprefix("sha256:"))
         layers.append(layer_info)
     return ImageManifestInfo(
-        base_image = None,
         descriptor = _write_manifest_descriptor(ctx, digest, manifest, platform, descriptor, index_position),
         manifest = _digest_to_file(ctx, digest),
         config = _digest_to_file(ctx, config_digest),

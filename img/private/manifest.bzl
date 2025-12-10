@@ -415,7 +415,6 @@ def _image_manifest_impl(ctx):
             oci_tarball = depset([_build_oci_layout(ctx, "tar", manifest_out, config_out, layers)]),
         ),
         ImageManifestInfo(
-            base_image = base,
             descriptor = descriptor_out,
             manifest = manifest_out,
             config = config_out,
