@@ -5,7 +5,6 @@ Information about a single-platform container image (manifest, config, and layer
 """
 
 FIELDS = dict(
-    base_image = "ImageManifestInfo or ImageIndexInfo of the base image (or None).",
     descriptor = "File containing the descriptor of the manifest.",
     manifest = "File containing the raw image manifest (application/vnd.oci.image.index.v1+json).",
     config = "File containing the raw image config (application/vnd.oci.image.config.v1+json).",

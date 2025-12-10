@@ -105,7 +105,6 @@ def _image_manifest_from_oci_layout(ctx):
             oci_layout = depset([src_dir]),
         ),
         ImageManifestInfo(
-            base_image = None,
             descriptor = output_descriptor,
             manifest = output_manifest,
             config = output_config,
