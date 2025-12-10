@@ -19,7 +19,7 @@ use_repo(
 
 go_deps = use_extension("@gazelle//:extensions.bzl", "go_deps")
 go_deps.from_file(go_mod = "//:go.mod")
-use_repo(go_deps, "com_github_google_go_containerregistry")
+use_repo(go_deps, "com_github_awslabs_amazon_ecr_credential_helper_ecr_login", "com_github_chrismellard_docker_credential_acr_env", "com_github_google_go_containerregistry")
 
 pull_bootstrap = use_repo_rule("//pull/private:pull_bootstrap.bzl", "pull_bootstrap")
 
