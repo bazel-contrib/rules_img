@@ -107,27 +107,31 @@ func (l *loader) LoadAll(ctx context.Context, ops []api.IndexedLoadDeployOperati
 
 			ctx = containerd.WithLease(ctx, lease)
 
-			// Setup progress tracking for concurrent blob uploads
-			ctx, stopProgress := progress.InitProgress(ctx, "loaded")
-			defer stopProgress()
+			// extra scope to ensure progress stops before printing tags
+			// otherwise, the "defer" will run too late
+			{
+				// Setup progress tracking for concurrent blob uploads
+				ctx, stopProgress := progress.InitProgress(ctx, "loaded")
+				defer stopProgress()
 
-			// Pre-declare all trackers in deterministic order
-			blobNames := make([]string, len(blobs))
-			blobSizes := make([]int64, len(blobs))
-			for i, blob := range blobs {
-				digest, _ := blob.layer.Digest()
-				blobNames[i] = digest.Hex[:12]
-				blobSizes[i], err = blob.layer.Size()
-				if err != nil {
-					return nil, fmt.Errorf("getting size of blob %s: %w", digest.String(), err)
+				// Pre-declare all trackers in deterministic order
+				blobNames := make([]string, len(blobs))
+				blobSizes := make([]int64, len(blobs))
+				for i, blob := range blobs {
+					digest, _ := blob.layer.Digest()
+					blobNames[i] = digest.Hex[:12]
+					blobSizes[i], err = blob.layer.Size()
+					if err != nil {
+						return nil, fmt.Errorf("getting size of blob %s: %w", digest.String(), err)
+					}
 				}
-			}
-			ctx = progress.DeclareTrackers(ctx, blobNames, blobSizes)
+				ctx = progress.DeclareTrackers(ctx, blobNames, blobSizes)
 
-			// Load all blobs in parallel...
-			contentStore := client.ContentStore()
-			if err := uploadBlobsParallel(ctx, contentStore, blobs, defaultWorkers); err != nil {
-				return nil, fmt.Errorf("uploading blobs to containerd: %w", err)
+				// Load all blobs in parallel...
+				contentStore := client.ContentStore()
+				if err := uploadBlobsParallel(ctx, contentStore, blobs, defaultWorkers); err != nil {
+					return nil, fmt.Errorf("uploading blobs to containerd: %w", err)
+				}
 			}
 
 			// ...then all images
@@ -204,10 +208,6 @@ func (l *loader) loadContainerd(ctx context.Context, op api.IndexedLoadDeployOpe
 }
 
 func (l *loader) loadViaDocker(ctx context.Context, op api.IndexedLoadDeployOperation) ([]string, error) {
-	// Setup progress tracking for layer streaming
-	ctx, stopProgress := progress.InitProgress(ctx, "loaded")
-	defer stopProgress()
-
 	// Create a pipe to stream the tar to docker load
 	pr, pw := io.Pipe()
 
@@ -336,16 +336,6 @@ func (l *loader) streamManifestToTar(ctx context.Context, manifestInfo api.Manif
 		tw.SetTags(normalizedTags)
 	}
 
-	// Pre-declare trackers for all layers in order
-	layerNames := make([]string, len(manifestInfo.LayerBlobs))
-	layerSizes := make([]int64, len(manifestInfo.LayerBlobs))
-	for i, layerDesc := range manifestInfo.LayerBlobs {
-		digest, _ := registryv1.NewHash(layerDesc.Digest)
-		layerNames[i] = digest.Hex[:12]
-		layerSizes[i] = layerDesc.Size
-	}
-	ctx = progress.DeclareTrackers(ctx, layerNames, layerSizes)
-
 	// Stream layers
 	if err := l.streamLayers(ctx, manifestInfo, tw); err != nil {
 		return nil, fmt.Errorf("streaming layers: %w", err)
@@ -367,6 +357,19 @@ func (l *loader) streamManifestToTar(ctx context.Context, manifestInfo api.Manif
 }
 
 func (l *loader) streamLayers(ctx context.Context, manifestInfo api.ManifestDeployInfo, tw *docker.TarWriter) error {
+	// Pre-declare trackers for all layers in order
+	layerNames := make([]string, len(manifestInfo.LayerBlobs))
+	layerSizes := make([]int64, len(manifestInfo.LayerBlobs))
+	for i, layerDesc := range manifestInfo.LayerBlobs {
+		digest, _ := registryv1.NewHash(layerDesc.Digest)
+		layerNames[i] = digest.Hex[:12]
+		layerSizes[i] = layerDesc.Size
+	}
+	// Setup progress tracking for layer streaming
+	ctx, stopProgress := progress.InitProgress(ctx, "loaded")
+	ctx = progress.DeclareTrackers(ctx, layerNames, layerSizes)
+	defer stopProgress()
+
 	for _, layerDesc := range manifestInfo.LayerBlobs {
 		digest, err := registryv1.NewHash(layerDesc.Digest)
 		if err != nil {

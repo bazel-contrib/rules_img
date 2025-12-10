@@ -207,10 +207,6 @@ func storeBlob(ctx context.Context, store containerd.Store, desc ocispec.Descrip
 	return nil
 }
 
-func digest(data []byte) ocigodigest.Digest {
-	return ocigodigest.FromBytes(data)
-}
-
 func contains(slice []string, item string) bool {
 	for _, s := range slice {
 		if s == item {

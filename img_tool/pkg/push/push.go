@@ -121,10 +121,15 @@ func (u *uploader) PushAll(ctx context.Context, ops []api.IndexedPushDeployOpera
 	go func() {
 		defer wg.Done()
 		defer stopProgress()
+		var err error
 		for update := range progCh {
 			prog.SetTotal(update.Total)
 			prog.SetComplete(update.Complete)
+			if update.Error != nil {
+				err = update.Error
+			}
 		}
+		prog.Done(err)
 	}()
 
 	// push all collected tags in parallel
