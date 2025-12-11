@@ -99,9 +99,9 @@ pull(
 # image that contains a manifest without explicit mediaType field
 pull(
     name = "envoy",
-    digest = "sha256:d68fc27a15a17ae3b13df8c8631523a2fe1192b39ec867dffe870b666c55c2dd",
+    digest = "sha256:08acc53db6f4ac46e77e36b203c5254b4a2549869314bb54cf97aab81baa4566",
     repository = "envoyproxy/envoy",
-    tag = "v1.36.3",
+    tag = "v1.36.4",
 )
 
 pull(
@@ -128,7 +128,7 @@ pull(
 images = use_extension("@rules_img//img:extensions.bzl", "images")
 images.pull(
     name = "nginx",
-    digest = "sha256:029d4461bd98f124e531380505ceea2072418fdf28752aa73b7b273ba3048903",
+    digest = "sha256:fb01117203ff38c2f9af91db1a7409459182a37c87cced5cb442d1d8fcc66d19",
     registries = [
         "mirror.gcr.io",
         "index.docker.io",
