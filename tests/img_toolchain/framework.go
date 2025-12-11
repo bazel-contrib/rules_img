@@ -993,9 +993,12 @@ func (tf *TestFramework) checkLayerInvariants(tarPath string) error {
 	var normalizationErrors []string
 	var deduplicationErrors []string
 	var topologicalErrors []string
+	var nonDirectoryChildErrors []string
 	// Track content+metadata hashes for deduplication check
 	// Maps hash -> first entry name with that hash
 	seenContentHashes := make(map[string]string)
+	// Track non-directory entries to check for invalid children
+	nonDirectoryEntries := make(map[string]byte) // maps path -> typeflag
 
 	for {
 		header, err := tarReader.Next()
@@ -1124,6 +1127,42 @@ func (tf *TestFramework) checkLayerInvariants(tarPath string) error {
 				}
 			}
 		}
+
+		// Check 6: Non-directory entries cannot have children
+		// First, check if current entry has a non-directory parent
+		entryPath := header.Name
+		for nonDirPath, nonDirType := range nonDirectoryEntries {
+			// Check if nonDirPath is a prefix of current entry
+			// We need to ensure it's a proper path prefix (not just string prefix)
+			if entryPath == nonDirPath {
+				continue // Same entry, skip
+			}
+			if strings.HasPrefix(entryPath, nonDirPath+"/") ||
+			   (header.Typeflag == tar.TypeDir && strings.HasPrefix(entryPath, nonDirPath)) {
+				var typeStr string
+				switch nonDirType {
+				case tar.TypeReg:
+					typeStr = "regular file"
+				case tar.TypeSymlink:
+					typeStr = "symlink"
+				case tar.TypeLink:
+					typeStr = "hardlink"
+				default:
+					typeStr = fmt.Sprintf("non-directory (type %d)", nonDirType)
+				}
+				nonDirectoryChildErrors = append(nonDirectoryChildErrors,
+					fmt.Sprintf("entry %s has parent %s which is a %s (cannot have children)",
+						entryPath, nonDirPath, typeStr))
+				break // Only report first violation for this entry
+			}
+		}
+
+		// Track non-directory entries for future checks
+		if header.Typeflag != tar.TypeDir {
+			// Remove trailing slash if present (shouldn't happen, but be safe)
+			cleanPath := strings.TrimSuffix(entryPath, "/")
+			nonDirectoryEntries[cleanPath] = header.Typeflag
+		}
 	}
 
 	// Report any errors found
@@ -1154,6 +1193,12 @@ func (tf *TestFramework) checkLayerInvariants(tarPath string) error {
 		tf.PrintTarContents(tarPath)
 		return fmt.Errorf("tar file %s has topological ordering violations:\n  - %s",
 			tarPath, strings.Join(topologicalErrors, "\n  - "))
+	}
+
+	if len(nonDirectoryChildErrors) > 0 {
+		tf.PrintTarContents(tarPath)
+		return fmt.Errorf("tar file %s has non-directory entries with children:\n  - %s",
+			tarPath, strings.Join(nonDirectoryChildErrors, "\n  - "))
 	}
 
 	// Future checks can be added here, such as:
