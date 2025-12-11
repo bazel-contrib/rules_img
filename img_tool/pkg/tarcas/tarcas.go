@@ -461,7 +461,7 @@ func (c *CAS[HM]) StoreTreeKnownHash(fsys fs.FS, treeHash []byte) (linkPath stri
 
 	header := &tar.Header{
 		Typeflag: tar.TypeDir,
-		Name:     treeBase,
+		Name:     treeBase + "/",
 		Mode:     0o755,
 	}
 	if err := c.writeHeaderAndData(header, nil); err != nil {
