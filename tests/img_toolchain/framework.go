@@ -994,6 +994,7 @@ func (tf *TestFramework) checkLayerInvariants(tarPath string) error {
 	var deduplicationErrors []string
 	var topologicalErrors []string
 	var nonDirectoryChildErrors []string
+	var selfReferenceErrors []string
 	// Track content+metadata hashes for deduplication check
 	// Maps hash -> first entry name with that hash
 	seenContentHashes := make(map[string]string)
@@ -1009,6 +1010,14 @@ func (tf *TestFramework) checkLayerInvariants(tarPath string) error {
 			return fmt.Errorf("error reading tar: %w", err)
 		}
 
+		// Check for self-referencing hardlinks FIRST (before duplicate check)
+		// This gives a clearer error message for this specific case
+		if header.Typeflag == tar.TypeLink && header.Name == header.Linkname {
+			selfReferenceErrors = append(selfReferenceErrors,
+				fmt.Sprintf("hardlink %s points to itself (self-reference not allowed)",
+					header.Name))
+		}
+
 		// Check 1: No duplicate entry names
 		if seenNames[header.Name] {
 			duplicates = append(duplicates, header.Name)
@@ -1021,11 +1030,11 @@ func (tf *TestFramework) checkLayerInvariants(tarPath string) error {
 			seenRegularFiles[header.Name] = true
 		}
 
-		// Check 2: Hardlink validation
+		// Check 2: Hardlink validation (target existence and type)
 		if header.Typeflag == tar.TypeLink {
 			linkTarget := header.Linkname
 
-			// Check if the target exists in entries we've already seen
+			// Check 2a: Target must exist and come before the hardlink
 			if !seenNames[linkTarget] {
 				hardlinkErrors = append(hardlinkErrors,
 					fmt.Sprintf("hardlink %s points to %s which does not exist or appears later in tar",
@@ -1166,6 +1175,14 @@ func (tf *TestFramework) checkLayerInvariants(tarPath string) error {
 	}
 
 	// Report any errors found
+	// Check self-references FIRST before duplicates, since self-referencing hardlinks
+	// will also trigger duplicate entry detection, but self-reference is more specific
+	if len(selfReferenceErrors) > 0 {
+		tf.PrintTarContents(tarPath)
+		return fmt.Errorf("tar file %s has self-referencing hardlinks:\n  - %s",
+			tarPath, strings.Join(selfReferenceErrors, "\n  - "))
+	}
+
 	if len(duplicates) > 0 {
 		tf.PrintTarContents(tarPath)
 		return fmt.Errorf("tar file %s contains duplicate entries: %v", tarPath, duplicates)
