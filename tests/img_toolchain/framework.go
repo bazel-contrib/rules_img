@@ -992,13 +992,10 @@ func (tf *TestFramework) checkLayerInvariants(tarPath string) error {
 	var hardlinkErrors []string
 	var normalizationErrors []string
 	var deduplicationErrors []string
+	var topologicalErrors []string
 	// Track content+metadata hashes for deduplication check
 	// Maps hash -> first entry name with that hash
 	seenContentHashes := make(map[string]string)
-	// TODO: Re-enable topological ordering check once layer tool bug is fixed
-	// The layer tool currently creates directory entries AFTER their children in some cases
-	// (e.g., foo/bar/baz.exe.runfiles/ appears after foo/bar/baz.exe.runfiles/_main/data/1.txt)
-	// var topologicalErrors []string
 
 	for {
 		header, err := tarReader.Next()
@@ -1110,8 +1107,6 @@ func (tf *TestFramework) checkLayerInvariants(tarPath string) error {
 		}
 
 		// Check 5: Topological ordering - directories must come before their children
-		// TODO: Re-enable once layer tool bug is fixed (see topologicalErrors declaration above)
-		/*
 		if header.Typeflag == tar.TypeDir {
 			// For each directory entry, check if we've already seen any of its children
 			dirPath := header.Name
@@ -1129,7 +1124,6 @@ func (tf *TestFramework) checkLayerInvariants(tarPath string) error {
 				}
 			}
 		}
-		*/
 	}
 
 	// Report any errors found
@@ -1156,14 +1150,11 @@ func (tf *TestFramework) checkLayerInvariants(tarPath string) error {
 			tarPath, strings.Join(deduplicationErrors, "\n  - "))
 	}
 
-	// TODO: Re-enable topological ordering error reporting once layer tool bug is fixed
-	/*
 	if len(topologicalErrors) > 0 {
 		tf.PrintTarContents(tarPath)
 		return fmt.Errorf("tar file %s has topological ordering violations:\n  - %s",
 			tarPath, strings.Join(topologicalErrors, "\n  - "))
 	}
-	*/
 
 	// Future checks can be added here, such as:
 	// - Check for hardlink cycles (e.g., A -> B -> C -> A)

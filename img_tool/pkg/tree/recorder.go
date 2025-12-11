@@ -186,23 +186,6 @@ func (r Recorder) Executable(binaryPath, target string, accessor runfilesSupplie
 	if err := r.RegularFileFromPath(binaryPath, target); err != nil {
 		return err
 	}
-	// Next, record the root directory of the runfiles tree.
-	runfilesHdr := &tar.Header{
-		Typeflag: tar.TypeDir,
-		Name:     target + ".runfiles/",
-		Mode:     0o755,
-	}
-
-	// Apply metadata if provider is set
-	if r.metadata != nil {
-		if err := r.metadata.ApplyToHeader(runfilesHdr, runfilesHdr.Name); err != nil {
-			return fmt.Errorf("applying metadata: %w", err)
-		}
-	}
-
-	if err := r.tf.WriteHeader(runfilesHdr); err != nil {
-		return err
-	}
 
 	// Finally, record the contents of the runfiles tree.
 	for p, node := range accessor.Items() {
