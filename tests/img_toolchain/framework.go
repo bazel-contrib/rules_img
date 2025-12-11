@@ -992,13 +992,14 @@ func (tf *TestFramework) checkLayerInvariants(tarPath string) error {
 	var hardlinkErrors []string
 	var normalizationErrors []string
 	var deduplicationErrors []string
+	var topologicalErrors []string
+	var nonDirectoryChildErrors []string
+	var selfReferenceErrors []string
 	// Track content+metadata hashes for deduplication check
 	// Maps hash -> first entry name with that hash
 	seenContentHashes := make(map[string]string)
-	// TODO: Re-enable topological ordering check once layer tool bug is fixed
-	// The layer tool currently creates directory entries AFTER their children in some cases
-	// (e.g., foo/bar/baz.exe.runfiles/ appears after foo/bar/baz.exe.runfiles/_main/data/1.txt)
-	// var topologicalErrors []string
+	// Track non-directory entries to check for invalid children
+	nonDirectoryEntries := make(map[string]byte) // maps path -> typeflag
 
 	for {
 		header, err := tarReader.Next()
@@ -1007,6 +1008,14 @@ func (tf *TestFramework) checkLayerInvariants(tarPath string) error {
 		}
 		if err != nil {
 			return fmt.Errorf("error reading tar: %w", err)
+		}
+
+		// Check for self-referencing hardlinks FIRST (before duplicate check)
+		// This gives a clearer error message for this specific case
+		if header.Typeflag == tar.TypeLink && header.Name == header.Linkname {
+			selfReferenceErrors = append(selfReferenceErrors,
+				fmt.Sprintf("hardlink %s points to itself (self-reference not allowed)",
+					header.Name))
 		}
 
 		// Check 1: No duplicate entry names
@@ -1021,11 +1030,11 @@ func (tf *TestFramework) checkLayerInvariants(tarPath string) error {
 			seenRegularFiles[header.Name] = true
 		}
 
-		// Check 2: Hardlink validation
+		// Check 2: Hardlink validation (target existence and type)
 		if header.Typeflag == tar.TypeLink {
 			linkTarget := header.Linkname
 
-			// Check if the target exists in entries we've already seen
+			// Check 2a: Target must exist and come before the hardlink
 			if !seenNames[linkTarget] {
 				hardlinkErrors = append(hardlinkErrors,
 					fmt.Sprintf("hardlink %s points to %s which does not exist or appears later in tar",
@@ -1110,8 +1119,6 @@ func (tf *TestFramework) checkLayerInvariants(tarPath string) error {
 		}
 
 		// Check 5: Topological ordering - directories must come before their children
-		// TODO: Re-enable once layer tool bug is fixed (see topologicalErrors declaration above)
-		/*
 		if header.Typeflag == tar.TypeDir {
 			// For each directory entry, check if we've already seen any of its children
 			dirPath := header.Name
@@ -1129,10 +1136,53 @@ func (tf *TestFramework) checkLayerInvariants(tarPath string) error {
 				}
 			}
 		}
-		*/
+
+		// Check 6: Non-directory entries cannot have children
+		// First, check if current entry has a non-directory parent
+		entryPath := header.Name
+		for nonDirPath, nonDirType := range nonDirectoryEntries {
+			// Check if nonDirPath is a prefix of current entry
+			// We need to ensure it's a proper path prefix (not just string prefix)
+			if entryPath == nonDirPath {
+				continue // Same entry, skip
+			}
+			if strings.HasPrefix(entryPath, nonDirPath+"/") ||
+			   (header.Typeflag == tar.TypeDir && strings.HasPrefix(entryPath, nonDirPath)) {
+				var typeStr string
+				switch nonDirType {
+				case tar.TypeReg:
+					typeStr = "regular file"
+				case tar.TypeSymlink:
+					typeStr = "symlink"
+				case tar.TypeLink:
+					typeStr = "hardlink"
+				default:
+					typeStr = fmt.Sprintf("non-directory (type %d)", nonDirType)
+				}
+				nonDirectoryChildErrors = append(nonDirectoryChildErrors,
+					fmt.Sprintf("entry %s has parent %s which is a %s (cannot have children)",
+						entryPath, nonDirPath, typeStr))
+				break // Only report first violation for this entry
+			}
+		}
+
+		// Track non-directory entries for future checks
+		if header.Typeflag != tar.TypeDir {
+			// Remove trailing slash if present (shouldn't happen, but be safe)
+			cleanPath := strings.TrimSuffix(entryPath, "/")
+			nonDirectoryEntries[cleanPath] = header.Typeflag
+		}
 	}
 
 	// Report any errors found
+	// Check self-references FIRST before duplicates, since self-referencing hardlinks
+	// will also trigger duplicate entry detection, but self-reference is more specific
+	if len(selfReferenceErrors) > 0 {
+		tf.PrintTarContents(tarPath)
+		return fmt.Errorf("tar file %s has self-referencing hardlinks:\n  - %s",
+			tarPath, strings.Join(selfReferenceErrors, "\n  - "))
+	}
+
 	if len(duplicates) > 0 {
 		tf.PrintTarContents(tarPath)
 		return fmt.Errorf("tar file %s contains duplicate entries: %v", tarPath, duplicates)
@@ -1156,14 +1206,17 @@ func (tf *TestFramework) checkLayerInvariants(tarPath string) error {
 			tarPath, strings.Join(deduplicationErrors, "\n  - "))
 	}
 
-	// TODO: Re-enable topological ordering error reporting once layer tool bug is fixed
-	/*
 	if len(topologicalErrors) > 0 {
 		tf.PrintTarContents(tarPath)
 		return fmt.Errorf("tar file %s has topological ordering violations:\n  - %s",
 			tarPath, strings.Join(topologicalErrors, "\n  - "))
 	}
-	*/
+
+	if len(nonDirectoryChildErrors) > 0 {
+		tf.PrintTarContents(tarPath)
+		return fmt.Errorf("tar file %s has non-directory entries with children:\n  - %s",
+			tarPath, strings.Join(nonDirectoryChildErrors, "\n  - "))
+	}
 
 	// Future checks can be added here, such as:
 	// - Check for hardlink cycles (e.g., A -> B -> C -> A)
