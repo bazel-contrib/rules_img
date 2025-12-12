@@ -57,6 +57,7 @@ bzl_library(
         "//img/private/providers:push_settings_info",
         "//img/private/providers:stamp_setting_info",
         "@bazel_skylib//rules:common_settings",
+        "@hermetic_launcher//launcher:lib_bzl",
         "@platforms//host:constraints_lib",
     ],
 )
@@ -78,6 +79,7 @@ bzl_library(
         "//img/private/providers:pull_info",
         "//img/private/providers:stamp_setting_info",
         "@bazel_skylib//rules:common_settings",
+        "@hermetic_launcher//launcher:lib_bzl",
         "@platforms//host:constraints_lib",
     ],
 )
@@ -172,6 +174,7 @@ bzl_library(
         "//img/private/providers:push_settings_info",
         "//img/private/providers:stamp_setting_info",
         "@bazel_skylib//rules:common_settings",
+        "@hermetic_launcher//launcher:lib_bzl",
         "@platforms//host:constraints_lib",
     ],
 )

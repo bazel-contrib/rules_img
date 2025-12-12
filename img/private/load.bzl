@@ -1,6 +1,7 @@
 """Load rule for importing images into a container daemon."""
 
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
+load("@hermetic_launcher//launcher:lib.bzl", "launcher")
 load("@platforms//host:constraints.bzl", "HOST_CONSTRAINTS")
 load("//img/private:root_symlinks.bzl", "calculate_root_symlinks")
 load("//img/private:stamp.bzl", "expand_or_write")
@@ -154,10 +155,14 @@ def _image_load_impl(ctx):
     """Implementation of the load rule."""
     loader = ctx.actions.declare_file(ctx.label.name + ".exe")
     img_toolchain_info = ctx.exec_groups["host"].toolchains[TOOLCHAIN].imgtoolchaininfo
-    ctx.actions.symlink(
-        output = loader,
-        target_file = img_toolchain_info.tool_exe,
-        is_executable = True,
+    embedded_args, transformed_args = launcher.args_from_entrypoint(executable_file = img_toolchain_info.tool_exe)
+    launcher.compile_stub(
+        ctx = ctx,
+        embedded_args = embedded_args,
+        transformed_args = transformed_args,
+        output_file = loader,
+        cfg = "exec",
+        template_exec_group = "host",
     )
     manifest_info = ctx.attr.image[ImageManifestInfo] if ImageManifestInfo in ctx.attr.image else None
     index_info = ctx.attr.image[ImageIndexInfo] if ImageIndexInfo in ctx.attr.image else None
@@ -217,7 +222,7 @@ def _image_load_impl(ctx):
         DefaultInfo(
             files = depset([dispatch_json]),
             executable = loader,
-            runfiles = ctx.runfiles(root_symlinks = root_symlinks),
+            runfiles = ctx.runfiles(files = [img_toolchain_info.tool_exe], root_symlinks = root_symlinks),
         ),
         RunEnvironmentInfo(
             environment = environment,
@@ -421,8 +426,8 @@ Available strategies:
     exec_groups = {
         "host": exec_group(
             exec_compatible_with = HOST_CONSTRAINTS,
-            toolchains = TOOLCHAINS,
+            toolchains = [launcher.template_exec_toolchain_type] + TOOLCHAINS,
         ),
     },
-    toolchains = TOOLCHAINS,
+    toolchains = [launcher.finalizer_toolchain_type] + TOOLCHAINS,
 )
