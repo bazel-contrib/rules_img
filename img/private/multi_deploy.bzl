@@ -2,6 +2,7 @@
 
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("@platforms//host:constraints.bzl", "HOST_CONSTRAINTS")
+load("@rules_runfiles_stub//stub:lib.bzl", "stub")
 load("//img/private:root_symlinks.bzl", "calculate_root_symlinks")
 load("//img/private/common:build.bzl", "TOOLCHAIN", "TOOLCHAINS")
 load("//img/private/common:transitions.bzl", "reset_platform_transition")
@@ -89,10 +90,14 @@ def _multi_deploy_impl(ctx):
     # Create the executable
     deployer = ctx.actions.declare_file(ctx.label.name + ".exe")
     img_toolchain_info = ctx.exec_groups["host"].toolchains[TOOLCHAIN].imgtoolchaininfo
-    ctx.actions.symlink(
-        output = deployer,
-        target_file = img_toolchain_info.tool_exe,
-        is_executable = True,
+    embedded_args, transformed_args = stub.args_from_entrypoint(executable_file = img_toolchain_info.tool_exe)
+    stub.compile_stub(
+        ctx = ctx,
+        embedded_args = embedded_args,
+        transformed_args = transformed_args,
+        output_file = deployer,
+        cfg = "exec",
+        template_exec_group = "host",
     )
 
     # Merge all deploy manifests
@@ -269,8 +274,8 @@ Available strategies:
     exec_groups = {
         "host": exec_group(
             exec_compatible_with = HOST_CONSTRAINTS,
-            toolchains = TOOLCHAINS,
+            toolchains = [stub.template_exec_toolchain_type] + TOOLCHAINS,
         ),
     },
-    toolchains = TOOLCHAINS,
+    toolchains = [stub.finalizer_toolchain_type] + TOOLCHAINS,
 )

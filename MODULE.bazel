@@ -7,6 +7,10 @@ module(
 bazel_dep(name = "bazel_skylib", version = "1.7.1")
 bazel_dep(name = "platforms", version = "0.0.11")
 
+# TODO: do not release this change!!
+# This dep needs to be published before rules_img can be released.
+bazel_dep(name = "rules_runfiles_stub", version = "0.1.20251212")
+
 prebuilt_img_tool = use_extension("@rules_img//img/private/prebuilt:prebuilt.bzl", "prebuilt_img_tool")
 prebuilt_img_tool.collection(
     name = "img_toolchain",
@@ -127,4 +131,11 @@ single_version_override(
     patches = ["//:0001-protobuf-19679-rm-protoc-dep.patch"],
     version = "33.0",
 )
+
+git_override(
+    module_name = "rules_runfiles_stub",
+    commit = "206eb63bb32104f162346b99a53eb60c13ef6a9c",
+    remote = "https://github.com/malt3/runfiles-stub.git",
+)
+
 ### REMOVE_BEFORE_RELEASE_END

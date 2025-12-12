@@ -20,6 +20,14 @@ local_path_override(
 )
 
 register_toolchains("@rules_img_tool//toolchain:all")
+
+# Delete this before releasing!!
+# TODO: remove this before releasing!!
+git_override(
+    module_name = "rules_runfiles_stub",
+    commit = "206eb63bb32104f162346b99a53eb60c13ef6a9c",
+    remote = "https://github.com/malt3/runfiles-stub.git",
+)
 # END BAZEL_DEP
 
 bazel_dep(name = "rules_go", version = "0.59.0")
