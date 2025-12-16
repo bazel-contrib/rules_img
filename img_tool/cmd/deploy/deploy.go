@@ -25,31 +25,41 @@ import (
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/push"
 )
 
-func PushProcess(ctx context.Context, args []string) {
-	panic("not implemented")
-}
-
-func DeployDispatch(ctx context.Context, rawRequest []byte) {
-	// Parse command-line arguments from os.Args
+func DeployProcess(ctx context.Context, args []string) {
+	var requestFile string
 	var additionalTags stringSliceFlag
 	var overrideRegistry string
 	var overrideRepository string
 	var platforms string
 
-	fs := flag.NewFlagSet("push", flag.ContinueOnError)
-	fs.Var(&additionalTags, "tag", "Additional tag to apply (can be used multiple times)")
-	fs.Var(&additionalTags, "t", "Additional tag to apply (can be used multiple times)")
-	fs.StringVar(&overrideRegistry, "registry", "", "Override registry to push to")
-	fs.StringVar(&overrideRepository, "repository", "", "Override repository to push to")
-	fs.StringVar(&platforms, "platform", "", "Comma-separated list of platforms to load (e.g., linux/amd64). If not set, loads the platform closest to the host (or the single available platform). Use 'all' to load the full multi-platform index. Doesn't affect push, only load.")
+	flagSet := flag.NewFlagSet("deploy", flag.ContinueOnError)
+	flagSet.StringVar(&requestFile, "request-file", "", "Deploy manifest JSON request file")
+	flagSet.Var(&additionalTags, "tag", "Additional tag to apply (can be used multiple times)")
+	flagSet.Var(&additionalTags, "t", "Additional tag to apply (can be used multiple times)")
+	flagSet.StringVar(&overrideRegistry, "registry", "", "Override registry to push to")
+	flagSet.StringVar(&overrideRepository, "repository", "", "Override repository to push to")
+	flagSet.StringVar(&platforms, "platform", "", "Comma-separated list of platforms to load (e.g., linux/amd64). If not set, loads the platform closest to the host (or the single available platform). Use 'all' to load the full multi-platform index. Doesn't affect push, only load.")
 
-	// Parse os.Args, skipping the program name
-	if len(os.Args) > 1 {
-		if err := fs.Parse(os.Args[1:]); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: failed to parse flags: %v\n", err)
-			fs.Usage()
-			os.Exit(1)
-		}
+	if err := flagSet.Parse(args); err != nil {
+		flagSet.Usage()
+		os.Exit(1)
+	}
+
+	if flagSet.NArg() != 0 {
+		flagSet.Usage()
+		os.Exit(1)
+	}
+
+	if requestFile == "" {
+		fmt.Fprintln(os.Stderr, "Error: --request-file is required")
+		flagSet.Usage()
+		os.Exit(1)
+	}
+
+	rawRequest, err := os.ReadFile(requestFile)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error reading request file %s: %v\n", requestFile, err)
+		os.Exit(1)
 	}
 
 	// Parse platforms
@@ -228,4 +238,12 @@ func credentialHelperPath() string {
 		return tweagCredentialHelper
 	}
 	return ""
+}
+
+func parseRequestFile(requestFilePath string) ([]byte, error) {
+	rawRequest, err := os.ReadFile(requestFilePath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "reading request file: %v\n", err)
+	}
+	return rawRequest, nil
 }
