@@ -8,6 +8,7 @@ go_library(
     visibility = ["//visibility:private"],
     deps = [
         "//cmd/compress",
+        "//cmd/deploy",
         "//cmd/deploymetadata",
         "//cmd/dockersave",
         "//cmd/downloadblob",
@@ -19,7 +20,6 @@ go_library(
         "//cmd/manifest",
         "//cmd/manifestfromocilayout",
         "//cmd/ocilayout",
-        "//cmd/push",
         "//cmd/validate",
         "@rules_go//go/runfiles",
     ],

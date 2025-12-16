@@ -261,13 +261,6 @@ When adding new public rules:
 4. Add the option to `img/settings/BUILD.bazel`
 5. Update documentation
 
-### Adding a New Push Strategy
-
-1. Implement the pusher in `img_tool/pkg/push/`
-2. Add it to the push command in `img_tool/cmd/push/push.go`
-3. Update the push strategy setting in `img/settings/BUILD.bazel`
-4. Document it in `docs/push-strategies.md`
-
 ### Debugging
 
 ```bash
