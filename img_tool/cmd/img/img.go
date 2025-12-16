@@ -8,6 +8,7 @@ import (
 	"github.com/bazelbuild/rules_go/go/runfiles"
 
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/compress"
+	"github.com/bazel-contrib/rules_img/img_tool/cmd/deploy"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/deploymetadata"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/dockersave"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/downloadblob"
@@ -19,7 +20,6 @@ import (
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/manifest"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/manifestfromocilayout"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/ocilayout"
-	"github.com/bazel-contrib/rules_img/img_tool/cmd/push"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/validate"
 )
 
@@ -74,7 +74,7 @@ func Run(ctx context.Context, args []string) {
 	case "validate":
 		validate.ValidationProcess(ctx, args[2:])
 	case "push":
-		push.PushProcess(ctx, args[2:])
+		deploy.PushProcess(ctx, args[2:])
 	case "deploy-metadata":
 		deploymetadata.DeployMetadataProcess(ctx, args[2:])
 	case "deploy-merge":
@@ -121,7 +121,7 @@ func runfilesDispatch(ctx context.Context, args []string) bool {
 	// and we have a special root symlink indicating that this binary
 	// is using a json command.
 
-	push.DeployDispatch(ctx, rawRequest)
+	deploy.DeployDispatch(ctx, rawRequest)
 
 	return true
 }
