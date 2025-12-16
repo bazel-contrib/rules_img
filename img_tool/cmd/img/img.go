@@ -8,7 +8,7 @@ import (
 	"github.com/bazelbuild/rules_go/go/runfiles"
 
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/compress"
-	"github.com/bazel-contrib/rules_img/img_tool/cmd/deploy"
+	"github.com/bazel-contrib/rules_img/img_tool/cmd/deploymetadata"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/dockersave"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/downloadblob"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/expandtemplate"
@@ -76,9 +76,9 @@ func Run(ctx context.Context, args []string) {
 	case "push":
 		push.PushProcess(ctx, args[2:])
 	case "deploy-metadata":
-		deploy.DeployMetadataProcess(ctx, args[2:])
+		deploymetadata.DeployMetadataProcess(ctx, args[2:])
 	case "deploy-merge":
-		deploy.DeployMergeProcess(ctx, args[2:])
+		deploymetadata.DeployMergeProcess(ctx, args[2:])
 	case "compress":
 		compress.CompressProcess(ctx, args[2:])
 	case "docker-save":
