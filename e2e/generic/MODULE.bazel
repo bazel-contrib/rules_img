@@ -23,7 +23,7 @@ register_toolchains("@rules_img_tool//toolchain:all")
 # END BAZEL_DEP
 
 bazel_dep(name = "bazel_skylib", version = "1.7.1")
-bazel_dep(name = "container_structure_test", version = "1.21.1")
+bazel_dep(name = "container_structure_test", version = "1.22.1")
 bazel_dep(name = "platforms", version = "0.0.11")
 bazel_dep(name = "rules_distroless", version = "0.6.1")
 bazel_dep(name = "rules_pkg", version = "1.1.0")
