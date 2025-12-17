@@ -225,9 +225,10 @@ func (vfs *VFS) SizeOf(digest registryv1.Hash) (int64, error) {
 }
 
 type vfsBuilder struct {
-	dm                       api.DeployManifest
-	casReader                casReader
-	containerRegistryOptions []remote.Option
+	dm                         api.DeployManifest
+	casReader                  casReader
+	containerRegistryOptions   []remote.Option
+	runfilesRootSymlinksPrefix string
 }
 
 func Builder(dm api.DeployManifest) *vfsBuilder {
@@ -242,6 +243,20 @@ func (b *vfsBuilder) WithCASReader(br casReader) *vfsBuilder {
 func (b *vfsBuilder) WithContainerRegistryOption(o remote.Option) *vfsBuilder {
 	b.containerRegistryOptions = append(b.containerRegistryOptions, o)
 	return b
+}
+
+func (b *vfsBuilder) WithRunfilesRootSymlinksPrefix(prefix string) *vfsBuilder {
+	b.runfilesRootSymlinksPrefix = prefix
+	return b
+}
+
+// rlocation wraps runfiles.Rlocation and adds the runfiles root symlinks prefix if configured.
+func (b *vfsBuilder) rlocation(runfilesPath string) (string, error) {
+	fullPath := runfilesPath
+	if b.runfilesRootSymlinksPrefix != "" {
+		fullPath = path.Join(b.runfilesRootSymlinksPrefix, runfilesPath)
+	}
+	return runfiles.Rlocation(fullPath)
 }
 
 func (b *vfsBuilder) Build() (*VFS, error) {
@@ -279,11 +294,11 @@ func (b *vfsBuilder) ingest() (map[string]blobEntry, map[string]blobEntry, error
 		}
 		if op.RootKind == "index" {
 			// There must be a "index.json" file in the runfiles
-			manifests[op.Root.Digest] = localIndex(i, op.Root)
+			manifests[op.Root.Digest] = b.localIndex(i, op.Root)
 		}
 		for manifestIndex, manifest := range op.Manifests {
-			manifests[manifest.Descriptor.Digest] = localManifest(i, manifestIndex, manifest.Descriptor)
-			blobs[manifest.Config.Digest] = localConfig(i, manifestIndex, manifest.Config)
+			manifests[manifest.Descriptor.Digest] = b.localManifest(i, manifestIndex, manifest.Descriptor)
+			blobs[manifest.Config.Digest] = b.localConfig(i, manifestIndex, manifest.Config)
 			for layerIndex, layer := range manifest.LayerBlobs {
 				blob, err := b.layerBlob(i, manifestIndex, layerIndex, strategy, op.PullInfo, manifest, layer)
 				if err != nil {
@@ -347,7 +362,7 @@ func (b *vfsBuilder) layerBlob(operationIndex int, manifestIndex int, layerIndex
 
 // layerFromFile tries to find the layer in the runfiles tree. If it exists, it returns the blobEntry and true.
 func (b *vfsBuilder) layerFromFile(operationIndex int, manifestIndex int, layerIndex int, desc api.Descriptor) (blobEntry, bool) {
-	fpath, err := runfiles.Rlocation(layerRunfilesPath(operationIndex, manifestIndex, layerIndex))
+	fpath, err := b.rlocation(layerRunfilesPath(operationIndex, manifestIndex, layerIndex))
 	if err != nil {
 		return blobEntry{}, false
 	}
@@ -442,12 +457,12 @@ type blobEntry struct {
 	Opener   func() (io.ReadCloser, error)
 }
 
-func localIndex(operationIndex int, desc api.Descriptor) blobEntry {
+func (b *vfsBuilder) localIndex(operationIndex int, desc api.Descriptor) blobEntry {
 	return blobEntry{
 		Descriptor: desc,
 		Location:   "file",
 		Opener: func() (io.ReadCloser, error) {
-			fpath, err := runfiles.Rlocation(path.Join(fmt.Sprintf("%d", operationIndex), "index.json"))
+			fpath, err := b.rlocation(path.Join(fmt.Sprintf("%d", operationIndex), "index.json"))
 			if err != nil {
 				return nil, err
 			}
@@ -456,12 +471,12 @@ func localIndex(operationIndex int, desc api.Descriptor) blobEntry {
 	}
 }
 
-func localManifest(operationIndex int, manifestIndex int, desc api.Descriptor) blobEntry {
+func (b *vfsBuilder) localManifest(operationIndex int, manifestIndex int, desc api.Descriptor) blobEntry {
 	return blobEntry{
 		Descriptor: desc,
 		Location:   "file",
 		Opener: func() (io.ReadCloser, error) {
-			fpath, err := runfiles.Rlocation(path.Join(fmt.Sprintf("%d", operationIndex), "manifests", fmt.Sprintf("%d", manifestIndex), "manifest.json"))
+			fpath, err := b.rlocation(path.Join(fmt.Sprintf("%d", operationIndex), "manifests", fmt.Sprintf("%d", manifestIndex), "manifest.json"))
 			if err != nil {
 				return nil, err
 			}
@@ -470,12 +485,12 @@ func localManifest(operationIndex int, manifestIndex int, desc api.Descriptor) b
 	}
 }
 
-func localConfig(operationIndex int, manifestIndex int, desc api.Descriptor) blobEntry {
+func (b *vfsBuilder) localConfig(operationIndex int, manifestIndex int, desc api.Descriptor) blobEntry {
 	return blobEntry{
 		Descriptor: desc,
 		Location:   "file",
 		Opener: func() (io.ReadCloser, error) {
-			fpath, err := runfiles.Rlocation(path.Join(fmt.Sprintf("%d", operationIndex), "manifests", fmt.Sprintf("%d", manifestIndex), "config.json"))
+			fpath, err := b.rlocation(path.Join(fmt.Sprintf("%d", operationIndex), "manifests", fmt.Sprintf("%d", manifestIndex), "config.json"))
 			if err != nil {
 				return nil, err
 			}
