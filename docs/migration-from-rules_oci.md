@@ -649,6 +649,8 @@ image_index_from_oci_layout(
 
 Container structure tests verify the contents and configuration of your images.
 
+> See a working example in [`e2e/generic/integrationtest/container_structure_test`](/e2e/generic/integrationtest/container_structure_test).
+
 ### rules_oci
 
 ```starlark
@@ -671,14 +673,22 @@ container_structure_test(
 
 ### rules_img
 
+#### Option 1: Using the Tar Driver (Doesn't require Docker daemon)
+
 ```starlark
 load("@container_structure_test//:defs.bzl", "container_structure_test")
 load("@rules_img//img:load.bzl", "image_load")
 
 image_load(
-    name = "image_tarball",
+    name = "load_image",
     image = ":app_image",
     tag = "test:latest",
+)
+
+filegroup(
+    name = "image_tarball",
+    srcs = [":load_image"],
+    output_group = "tarball",
 )
 
 container_structure_test(
@@ -688,6 +698,28 @@ container_structure_test(
     configs = ["test_config.yaml"],
 )
 ```
+
+#### Option 2: Using the Docker Driver
+
+```starlark
+load("@container_structure_test//:defs.bzl", "container_structure_test")
+load("@rules_img//img:load.bzl", "image_load")
+
+image_load(
+    name = "load_image",
+    image = ":app_image",
+    tag = "test:latest",
+)
+
+container_structure_test(
+    name = "structure_test_docker",
+    driver = "docker",
+    image = ":load_image",
+    configs = ["test_config.yaml"],
+)
+```
+
+This approach requires Docker to be available and will load the image into the Docker daemon before testing.
 
 ---
 
