@@ -6,7 +6,7 @@ module(
 
 bazel_dep(name = "bazel_skylib", version = "1.9.0")
 bazel_dep(name = "platforms", version = "1.0.0")
-bazel_dep(name = "hermetic_launcher", version = "0.0.2")
+bazel_dep(name = "hermetic_launcher", version = "0.0.3")
 
 prebuilt_img_tool = use_extension("@rules_img//img/private/prebuilt:prebuilt.bzl", "prebuilt_img_tool")
 prebuilt_img_tool.collection(
