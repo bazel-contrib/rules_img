@@ -217,6 +217,7 @@ def _image_load_impl(ctx):
         "IMG_REAPI_ENDPOINT",
         "IMG_CREDENTIAL_HELPER",
         "DOCKER_CONFIG",
+        "LOADER_BINARY",
     ]
 
     # Add REGISTRY_AUTH_FILE if docker_config_path is set
@@ -349,13 +350,17 @@ Available options:
   is slower and limited to single-platform images.
 - **`podman`**: Loads via Podman daemon using `podman load` command. Similar to Docker
   fallback mode, this is slower than containerd and limited to single-platform images.
+- **`generic`**: Loads via a custom container runtime. The loader will invoke the command
+  specified in the `LOADER_BINARY` environment variable with the `load` subcommand. For example,
+  if `LOADER_BINARY=nerdctl`, it will run `nerdctl load`. Limited to single-platform images.
+  Requires `LOADER_BINARY` to be set at runtime.
 
 The best performance is achieved with:
 - Direct containerd access (daemon = "containerd")
 - Docker 23.0+ with containerd storage enabled and accessible containerd socket
 """,
             default = "auto",
-            values = ["auto", "docker", "containerd", "podman"],
+            values = ["auto", "docker", "containerd", "podman", "generic"],
         ),
         "tag": attr.string(
             doc = """Tag to apply when loading the image.

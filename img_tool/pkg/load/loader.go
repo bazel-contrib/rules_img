@@ -77,10 +77,10 @@ func (l *loader) LoadAll(ctx context.Context, ops []api.IndexedLoadDeployOperati
 		} else if op.Daemon == "docker" {
 			hasDocker = true
 		}
-		// Note: podman operations don't need containerd, so we don't track them
+		// Note: podman and generic operations don't need containerd, so we don't track them
 	}
 
-	// try to connect to containerd once (but not for podman-only loads)
+	// try to connect to containerd once (but not for podman/generic-only loads)
 	var client *containerd.Client
 	needsContainerd := hasContainerd || hasDocker
 	if needsContainerd {
@@ -159,8 +159,8 @@ func (l *loader) LoadAll(ctx context.Context, ops []api.IndexedLoadDeployOperati
 				}
 				pushedTags = append(pushedTags, loadedTags...)
 			}
-		case "docker", "podman":
-			// Load all images via docker/podman load
+		case "docker", "podman", "generic":
+			// Load all images via docker/podman/generic load
 			for _, op := range ops {
 				loadedTags, err := l.loadViaDockerOrPodman(ctx, op)
 				if err != nil {
