@@ -16,10 +16,14 @@ func Load(tarReader io.Reader) error {
 	return loadWithBinary(tarReader, loaderBinary)
 }
 
-// LoadWithDaemon pipes the tar stream to the specified daemon (docker or podman)
+// LoadWithDaemon pipes the tar stream to the specified daemon (docker, podman, or generic)
 func LoadWithDaemon(tarReader io.Reader, daemon string) error {
 	loaderBinary, ok := os.LookupEnv("LOADER_BINARY")
 	if !ok {
+		// For generic daemon, LOADER_BINARY must be set by the user
+		if daemon == "generic" {
+			return fmt.Errorf("generic daemon requires LOADER_BINARY environment variable to be set")
+		}
 		loaderBinary = daemon
 	}
 	return loadWithBinary(tarReader, loaderBinary)
