@@ -68,10 +68,27 @@ func (l *loader) LoadAll(ctx context.Context, ops []api.IndexedLoadDeployOperati
 	ctx = containerd.WithNamespace(ctx, "moby")
 	var pushedTags []string
 
-	// try to connect to containerd once
-	client, err := l.connect(ctx, "containerd")
-	if err == nil {
-		defer client.Close()
+	// Check what daemons we're targeting
+	hasContainerd := false
+	hasDocker := false
+	for _, op := range ops {
+		if op.Daemon == "containerd" {
+			hasContainerd = true
+		} else if op.Daemon == "docker" {
+			hasDocker = true
+		}
+		// Note: podman operations don't need containerd, so we don't track them
+	}
+
+	// try to connect to containerd once (but not for podman-only loads)
+	var client *containerd.Client
+	needsContainerd := hasContainerd || hasDocker
+	if needsContainerd {
+		var err error
+		client, err = l.connect(ctx, "containerd", hasDocker)
+		if err == nil {
+			defer client.Close()
+		}
 	}
 
 	for _, op := range ops {
@@ -142,12 +159,12 @@ func (l *loader) LoadAll(ctx context.Context, ops []api.IndexedLoadDeployOperati
 				}
 				pushedTags = append(pushedTags, loadedTags...)
 			}
-		case "docker":
-			// Load all images via docker load
+		case "docker", "podman":
+			// Load all images via docker/podman load
 			for _, op := range ops {
-				loadedTags, err := l.loadViaDocker(ctx, op)
+				loadedTags, err := l.loadViaDockerOrPodman(ctx, op)
 				if err != nil {
-					return nil, fmt.Errorf("loading image via docker: %w", err)
+					return nil, fmt.Errorf("loading image via %s: %w", daemon, err)
 				}
 				pushedTags = append(pushedTags, loadedTags...)
 			}
@@ -161,7 +178,7 @@ func (l *loader) LoadAll(ctx context.Context, ops []api.IndexedLoadDeployOperati
 // loadContainerd loads an image into containerd
 // Assumes blobs are already uploaded
 func (l *loader) loadContainerd(ctx context.Context, op api.IndexedLoadDeployOperation) ([]string, error) {
-	client, err := l.connect(ctx, op.Daemon)
+	client, err := l.connect(ctx, op.Daemon, false)
 	if err != nil {
 		return nil, fmt.Errorf("connecting to containerd: %w", err)
 	}
@@ -207,14 +224,14 @@ func (l *loader) loadContainerd(ctx context.Context, op api.IndexedLoadDeployOpe
 	return loadedTags, nil
 }
 
-func (l *loader) loadViaDocker(ctx context.Context, op api.IndexedLoadDeployOperation) ([]string, error) {
-	// Create a pipe to stream the tar to docker load
+func (l *loader) loadViaDockerOrPodman(ctx context.Context, op api.IndexedLoadDeployOperation) ([]string, error) {
+	// Create a pipe to stream the tar to docker/podman load
 	pr, pw := io.Pipe()
 
-	// Start docker load in the background
+	// Start docker/podman load in the background
 	errCh := make(chan error, 1)
 	go func() {
-		err := docker.Load(pr)
+		err := docker.LoadWithDaemon(pr, op.Daemon)
 		pr.Close()
 		errCh <- err
 	}()
@@ -223,12 +240,12 @@ func (l *loader) loadViaDocker(ctx context.Context, op api.IndexedLoadDeployOper
 	loadedTags, err := l.streamDockerTar(ctx, op, pw)
 	pw.Close() // Always close, even on error
 
-	// Wait for docker load to complete
+	// Wait for docker/podman load to complete
 	loadErr := <-errCh
 
 	// Return the first error
 	if err != nil {
-		return nil, fmt.Errorf("streaming tar to docker load: stream error: %w, load error: %w", err, loadErr)
+		return nil, fmt.Errorf("streaming tar to %s load: stream error: %w, load error: %w", op.Daemon, err, loadErr)
 	}
 	if loadErr != nil {
 		return nil, loadErr
@@ -392,7 +409,7 @@ func (l *loader) streamLayers(ctx context.Context, manifestInfo api.ManifestDepl
 	return nil
 }
 
-func (l *loader) connect(ctx context.Context, daemon string) (*containerd.Client, error) {
+func (l *loader) connect(ctx context.Context, daemon string, showDockerWarnings bool) (*containerd.Client, error) {
 	if l.clientConn != nil {
 		return l.clientConn, nil
 	}
@@ -401,25 +418,27 @@ func (l *loader) connect(ctx context.Context, daemon string) (*containerd.Client
 	}
 	client, err := ConnectToContainerd(ctx)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Connecting to containerd failed: %v\n", err)
-		// Print warning about performance impact and digest differences
-		fmt.Fprintln(os.Stderr, "\n\033[33mWARNING: Docker is not using containerd storage backend.\033[0m")
-		fmt.Fprintln(os.Stderr, "This will use 'docker load' which is significantly slower than direct containerd loading.")
-		fmt.Fprintln(os.Stderr, "")
-		fmt.Fprintln(os.Stderr, "\033[33mIMPORTANT: The digest of the image will be different due to the use of 'docker load'.\033[0m")
-		fmt.Fprintln(os.Stderr, "Docker load creates a custom Docker manifest that doesn't adhere to OCI spec.")
-		fmt.Fprintln(os.Stderr, "If you can load into the containerd backend, you can load the exact OCI image with the expected digest.")
-		fmt.Fprintln(os.Stderr, "See: https://github.com/bazel-contrib/rules_img/issues/76")
-		fmt.Fprintln(os.Stderr, "")
-		if runtime.GOOS == "darwin" {
-			fmt.Fprintln(os.Stderr, "\033[33mmacOS note:\033[0m On macOS, containerd runs in a Linux VM, so the containerd socket")
-			fmt.Fprintln(os.Stderr, "is never accessible from the host. Docker is working on exposing the content store")
-			fmt.Fprintln(os.Stderr, "via the docker socket, which will soon make incremental loading available via the docker socket.")
+		// Print warning about performance impact and digest differences (only for Docker)
+		if showDockerWarnings {
+			fmt.Fprintf(os.Stderr, "Connecting to containerd failed: %v\n", err)
+			fmt.Fprintln(os.Stderr, "\n\033[33mWARNING: Docker is not using containerd storage backend.\033[0m")
+			fmt.Fprintln(os.Stderr, "This will use 'docker load' which is significantly slower than direct containerd loading.")
 			fmt.Fprintln(os.Stderr, "")
-		} else {
-			fmt.Fprintln(os.Stderr, "To improve performance, configure Docker to use containerd:")
-			fmt.Fprintln(os.Stderr, "  https://docs.docker.com/storage/containerd/")
+			fmt.Fprintln(os.Stderr, "\033[33mIMPORTANT: The digest of the image will be different due to the use of 'docker load'.\033[0m")
+			fmt.Fprintln(os.Stderr, "Docker load creates a custom Docker manifest that doesn't adhere to OCI spec.")
+			fmt.Fprintln(os.Stderr, "If you can load into the containerd backend, you can load the exact OCI image with the expected digest.")
+			fmt.Fprintln(os.Stderr, "See: https://github.com/bazel-contrib/rules_img/issues/76")
 			fmt.Fprintln(os.Stderr, "")
+			if runtime.GOOS == "darwin" {
+				fmt.Fprintln(os.Stderr, "\033[33mmacOS note:\033[0m On macOS, containerd runs in a Linux VM, so the containerd socket")
+				fmt.Fprintln(os.Stderr, "is never accessible from the host. Docker is working on exposing the content store")
+				fmt.Fprintln(os.Stderr, "via the docker socket, which will soon make incremental loading available via the docker socket.")
+				fmt.Fprintln(os.Stderr, "")
+			} else {
+				fmt.Fprintln(os.Stderr, "To improve performance, configure Docker to use containerd:")
+				fmt.Fprintln(os.Stderr, "  https://docs.docker.com/storage/containerd/")
+				fmt.Fprintln(os.Stderr, "")
+			}
 		}
 		l.haveContainerd = false
 		l.triedContainerd = true

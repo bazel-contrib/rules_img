@@ -257,10 +257,10 @@ def _image_load_impl(ctx):
 
 image_load = rule(
     implementation = _image_load_impl,
-    doc = """Loads container images into a local daemon (Docker or containerd).
+    doc = """Loads container images into a local daemon (Docker, containerd, or Podman).
 
 This rule creates an executable target that imports OCI images into your local
-container runtime. It supports both Docker and containerd, with intelligent
+container runtime. It supports Docker, Podman, and containerd, with intelligent
 detection of the best loading method for optimal performance.
 
 Key features:
@@ -346,13 +346,15 @@ Available options:
 - **`docker`**: Loads via Docker daemon. When Docker uses containerd storage (23.0+),
   loads directly into containerd. Otherwise falls back to `docker load` command which
   is slower and limited to single-platform images.
+- **`podman`**: Loads via Podman daemon using `podman load` command. Similar to Docker
+  fallback mode, this is slower than containerd and limited to single-platform images.
 
 The best performance is achieved with:
 - Direct containerd access (daemon = "containerd")
 - Docker 23.0+ with containerd storage enabled and accessible containerd socket
 """,
             default = "auto",
-            values = ["auto", "docker", "containerd"],
+            values = ["auto", "docker", "containerd", "podman"],
         ),
         "tag": attr.string(
             doc = """Tag to apply when loading the image.

@@ -58,6 +58,7 @@ string_flag(
     values = [
         "docker",
         "containerd",
+        "podman",
     ],
     visibility = ["//img/private:__subpackages__"],
 )

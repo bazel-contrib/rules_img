@@ -71,7 +71,7 @@ common --@rules_img//img/settings:push_strategy=eager
 common --@rules_img//img/settings:load_strategy=eager
 
 # The daemon to target with image_load
-# "docker" or "containerd"
+# "docker", "containerd", or "podman"
 common --@rules_img//img/settings:load_daemon=docker
 
 # Bazel remote cache to use for lazy pushing of container images.

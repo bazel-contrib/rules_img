@@ -1,6 +1,6 @@
 """Public API for loading container images into a daemon.
 
-The `image_load` rule creates an executable target that loads container images into a local daemon (containerd or Docker).
+The `image_load` rule creates an executable target that loads container images into a local daemon (containerd, Docker, or Podman).
 
 ## Example
 
