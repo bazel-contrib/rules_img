@@ -5,7 +5,7 @@ load("@hermetic_launcher//launcher:lib.bzl", "launcher")
 load("@platforms//host:constraints.bzl", "HOST_CONSTRAINTS")
 load("//img/private:root_symlinks.bzl", "calculate_root_symlinks", "symlink_name_prefix")
 load("//img/private:stamp.bzl", "expand_or_write")
-load("//img/private/common:build.bzl", "TOOLCHAIN", "TOOLCHAINS")
+load("//img/private/common:build.bzl", "DATA_TOOLCHAIN", "TOOLCHAIN", "TOOLCHAINS")
 load("//img/private/common:transitions.bzl", "reset_platform_transition")
 load("//img/private/providers:deploy_info.bzl", "DeployInfo")
 load("//img/private/providers:index_info.bzl", "ImageIndexInfo")
@@ -191,7 +191,17 @@ def _image_load_impl(ctx):
         configuration_json = configuration_json,
     )
     loader = ctx.actions.declare_file(ctx.label.name + ".exe")
-    img_toolchain_info = ctx.exec_groups["host"].toolchains[TOOLCHAIN].imgtoolchaininfo
+    if ctx.attr.tool_cfg == "host":
+        img_toolchain_info = ctx.exec_groups["host"].toolchains[TOOLCHAIN].imgtoolchaininfo
+        template_exec_group = "host"
+        template_cfg = "exec"
+    elif ctx.attr.tool_cfg == "target":
+        img_toolchain_info = ctx.toolchains[DATA_TOOLCHAIN].imgtoolchaininfo
+        template_exec_group = None
+        template_cfg = "target"
+    else:
+        fail("Invalid tool_cfg: {}".format(ctx.attr.tool_cfg))
+
     embedded_args, transformed_args = launcher.args_from_entrypoint(executable_file = img_toolchain_info.tool_exe)
     embedded_args.extend(["deploy", "--runfiles-root-symlinks-prefix", root_symlinks_prefix, "--request-file"])
     embedded_args, transformed_args = launcher.append_runfile(
@@ -204,8 +214,8 @@ def _image_load_impl(ctx):
         embedded_args = embedded_args,
         transformed_args = transformed_args,
         output_file = loader,
-        cfg = "exec",
-        template_exec_group = "host",
+        cfg = template_cfg,
+        template_exec_group = template_exec_group,
     )
 
     # Build environment for RunEnvironmentInfo
@@ -423,6 +433,18 @@ Available strategies:
             default = "auto",
             values = ["auto", "enabled", "disabled"],
         ),
+        "tool_cfg": attr.string(
+            doc = """**Experimental**: This attribute may be removed if we find a way to automatically select the correct loader platform based on the context of use.
+Configuration of the loader executable. By default, the loader executable is always chosen for the host platform, regardless of the value of `--platforms`. Setting this attribute to 'target' makes the loader match the target platform instead.
+The `"target"` option is useful when the "image_load" target is used as a data dependency of an integration test.
+
+Available options:
+- **`host`** (default): Loader executable matches the host platform.
+- **`target`**: Loader executable matches the target platform(s) specified via `--platforms`.
+""",
+            default = "host",
+            values = ["host", "target"],
+        ),
         "_load_settings": attr.label(
             default = Label("//img/private/settings:load"),
             providers = [LoadSettingsInfo],
@@ -448,5 +470,9 @@ Available strategies:
             toolchains = [launcher.template_exec_toolchain_type] + TOOLCHAINS,
         ),
     },
-    toolchains = [launcher.finalizer_toolchain_type] + TOOLCHAINS,
+    toolchains = [
+        launcher.finalizer_toolchain_type,
+        launcher.template_toolchain_type,
+        DATA_TOOLCHAIN,
+    ] + TOOLCHAINS,
 )

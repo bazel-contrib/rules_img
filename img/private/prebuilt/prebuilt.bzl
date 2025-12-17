@@ -20,6 +20,13 @@ toolchain(
     exec_compatible_with = {constraints},
     toolchain = "img_{platform_name}",
     toolchain_type = "@rules_img//img:toolchain_type",
+)
+
+toolchain(
+    name = "img_{platform_name}_data_toolchain",
+    target_compatible_with = {constraints},
+    toolchain = "img_{platform_name}",
+    toolchain_type = "@rules_img//img:data_toolchain_type",
 )""".format(
         platform_name = platform_name,
         tool_target = tool_target,
