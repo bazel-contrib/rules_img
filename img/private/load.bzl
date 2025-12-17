@@ -153,17 +153,6 @@ def _build_docker_tarball(ctx, configuration_json, manifest_info):
 
 def _image_load_impl(ctx):
     """Implementation of the load rule."""
-    loader = ctx.actions.declare_file(ctx.label.name + ".exe")
-    img_toolchain_info = ctx.exec_groups["host"].toolchains[TOOLCHAIN].imgtoolchaininfo
-    embedded_args, transformed_args = launcher.args_from_entrypoint(executable_file = img_toolchain_info.tool_exe)
-    launcher.compile_stub(
-        ctx = ctx,
-        embedded_args = embedded_args,
-        transformed_args = transformed_args,
-        output_file = loader,
-        cfg = "exec",
-        template_exec_group = "host",
-    )
     manifest_info = ctx.attr.image[ImageManifestInfo] if ImageManifestInfo in ctx.attr.image else None
     index_info = ctx.attr.image[ImageIndexInfo] if ImageIndexInfo in ctx.attr.image else None
     if manifest_info == None and index_info == None:
@@ -196,11 +185,27 @@ def _image_load_impl(ctx):
         newline_delimited_lists_files = newline_delimited_lists_files,
     )
 
-    dispatch_json = _compute_load_metadata(
+    deploy_metadata = _compute_load_metadata(
         ctx = ctx,
         configuration_json = configuration_json,
     )
-    root_symlinks["dispatch.json"] = dispatch_json
+    loader = ctx.actions.declare_file(ctx.label.name + ".exe")
+    img_toolchain_info = ctx.exec_groups["host"].toolchains[TOOLCHAIN].imgtoolchaininfo
+    embedded_args, transformed_args = launcher.args_from_entrypoint(executable_file = img_toolchain_info.tool_exe)
+    embedded_args.extend(["deploy", "--request-file"])
+    embedded_args, transformed_args = launcher.append_runfile(
+        file = deploy_metadata,
+        embedded_args = embedded_args,
+        transformed_args = transformed_args,
+    )
+    launcher.compile_stub(
+        ctx = ctx,
+        embedded_args = embedded_args,
+        transformed_args = transformed_args,
+        output_file = loader,
+        cfg = "exec",
+        template_exec_group = "host",
+    )
 
     # Build environment for RunEnvironmentInfo
     environment = {
@@ -220,9 +225,15 @@ def _image_load_impl(ctx):
 
     providers = [
         DefaultInfo(
-            files = depset([dispatch_json]),
+            files = depset([loader]),
             executable = loader,
-            runfiles = ctx.runfiles(files = [img_toolchain_info.tool_exe], root_symlinks = root_symlinks),
+            runfiles = ctx.runfiles(
+                files = [
+                    img_toolchain_info.tool_exe,
+                    deploy_metadata,
+                ],
+                root_symlinks = root_symlinks,
+            ),
         ),
         RunEnvironmentInfo(
             environment = environment,
@@ -230,7 +241,7 @@ def _image_load_impl(ctx):
         ),
         DeployInfo(
             image = image_provider,
-            deploy_manifest = dispatch_json,
+            deploy_manifest = deploy_metadata,
         ),
     ]
 

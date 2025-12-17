@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/bazelbuild/rules_go/go/runfiles"
-
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/compress"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/deploy"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/deploymetadata"
@@ -38,20 +36,11 @@ Commands:
   manifest-from-oci-layout converts an OCI layout to an image manifest
   oci-layout               assembles an OCI layout directory from manifest and layers
   validate                 validates layers and images
-  push                     pushes an image to a registry
+  deploy                   pushes an image to a registry or loads it into a local container runtime
   deploy-metadata          calculates metadata for deploying an image (push/load)
   deploy-merge             merges multiple deploy manifests into a single deployment`
 
 func Run(ctx context.Context, args []string) {
-	if runfilesDispatch(ctx, args[1:]) {
-		// Check if we got a special command
-		// via runfiels root symlinks.
-		// If so, we don't need to
-		// invoke the normal command line interface.
-		return
-	}
-
-	// Otherwise, we invoke the normal command line interface.
 	if len(args) < 2 {
 		fmt.Fprintln(os.Stderr, usage)
 		os.Exit(1)
@@ -73,8 +62,8 @@ func Run(ctx context.Context, args []string) {
 		indexfromocilayout.IndexFromOCILayoutProcess(ctx, args[2:])
 	case "validate":
 		validate.ValidationProcess(ctx, args[2:])
-	case "push":
-		deploy.PushProcess(ctx, args[2:])
+	case "deploy":
+		deploy.DeployProcess(ctx, args[2:])
 	case "deploy-metadata":
 		deploymetadata.DeployMetadataProcess(ctx, args[2:])
 	case "deploy-merge":
@@ -93,37 +82,6 @@ func Run(ctx context.Context, args []string) {
 		fmt.Fprintln(os.Stderr, usage)
 		os.Exit(1)
 	}
-}
-
-func runfilesDispatch(ctx context.Context, args []string) bool {
-	// Check if the command is run from a Bazel runfiles context
-	// with a special root symlink indicating that this binary is used
-	// to push/load an image.
-	rf, err := runfiles.New()
-	if err != nil {
-		return false
-	}
-	requestPath, err := rf.Rlocation("dispatch.json")
-	if err != nil {
-		return false
-	}
-	if _, err := os.Stat(requestPath); err != nil {
-		return false
-	}
-
-	rawRequest, err := os.ReadFile(requestPath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "reading request file: %v\n", err)
-		os.Exit(1)
-	}
-
-	// If we got here, we are in a Bazel runfiles context
-	// and we have a special root symlink indicating that this binary
-	// is using a json command.
-
-	deploy.DeployDispatch(ctx, rawRequest)
-
-	return true
 }
 
 func main() {

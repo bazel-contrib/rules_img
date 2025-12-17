@@ -87,10 +87,19 @@ def _multi_deploy_impl(ctx):
     if not ctx.attr.operations:
         fail("operations attribute cannot be empty")
 
+    # Merge all deploy manifests
+    deploy_metadata = _compute_multi_deploy_metadata(ctx = ctx)
+
     # Create the executable
     deployer = ctx.actions.declare_file(ctx.label.name + ".exe")
     img_toolchain_info = ctx.exec_groups["host"].toolchains[TOOLCHAIN].imgtoolchaininfo
     embedded_args, transformed_args = launcher.args_from_entrypoint(executable_file = img_toolchain_info.tool_exe)
+    embedded_args.extend(["deploy", "--request-file"])
+    embedded_args, transformed_args = launcher.append_runfile(
+        file = deploy_metadata,
+        embedded_args = embedded_args,
+        transformed_args = transformed_args,
+    )
     launcher.compile_stub(
         ctx = ctx,
         embedded_args = embedded_args,
@@ -99,9 +108,6 @@ def _multi_deploy_impl(ctx):
         cfg = "exec",
         template_exec_group = "host",
     )
-
-    # Merge all deploy manifests
-    dispatch_json = _compute_multi_deploy_metadata(ctx = ctx)
 
     # Collect all image providers for root symlinks
     images = _collect_all_image_providers(ctx)
@@ -125,9 +131,6 @@ def _multi_deploy_impl(ctx):
         )
         root_symlinks.update(symlinks)
 
-    # Add the dispatch JSON
-    root_symlinks["dispatch.json"] = dispatch_json
-
     # Merge environment settings from push and load
     environment = {}
     inherited_environment = ["DOCKER_CONFIG"]
@@ -150,9 +153,15 @@ def _multi_deploy_impl(ctx):
 
     return [
         DefaultInfo(
-            files = depset([dispatch_json]),
+            files = depset([deployer]),
             executable = deployer,
-            runfiles = ctx.runfiles(files = [img_toolchain_info.tool_exe], root_symlinks = root_symlinks),
+            runfiles = ctx.runfiles(
+                files = [
+                    img_toolchain_info.tool_exe,
+                    deploy_metadata,
+                ],
+                root_symlinks = root_symlinks,
+            ),
         ),
         RunEnvironmentInfo(
             environment = environment,
