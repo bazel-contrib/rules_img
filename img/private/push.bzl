@@ -3,7 +3,7 @@
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("@hermetic_launcher//launcher:lib.bzl", "launcher")
 load("@platforms//host:constraints.bzl", "HOST_CONSTRAINTS")
-load("//img/private:root_symlinks.bzl", "calculate_root_symlinks")
+load("//img/private:root_symlinks.bzl", "calculate_root_symlinks", "symlink_name_prefix")
 load("//img/private:stamp.bzl", "expand_or_write")
 load("//img/private/common:build.bzl", "TOOLCHAIN", "TOOLCHAINS")
 load("//img/private/common:transitions.bzl", "reset_platform_transition")
@@ -109,7 +109,8 @@ def _image_push_impl(ctx):
         fail("image must provide either ImageManifestInfo or ImageIndexInfo, not both")
     image_provider = manifest_info if manifest_info != None else index_info
 
-    root_symlinks = calculate_root_symlinks(index_info, manifest_info, include_layers = _push_strategy(ctx) == "eager")
+    root_symlinks_prefix = symlink_name_prefix(ctx)
+    root_symlinks = calculate_root_symlinks(index_info, manifest_info, include_layers = _push_strategy(ctx) == "eager", symlink_name_prefix = root_symlinks_prefix)
 
     templates = dict(
         registry = ctx.attr.registry,
@@ -138,7 +139,7 @@ def _image_push_impl(ctx):
     pusher = ctx.actions.declare_file(ctx.label.name + ".exe")
     img_toolchain_info = ctx.exec_groups["host"].toolchains[TOOLCHAIN].imgtoolchaininfo
     embedded_args, transformed_args = launcher.args_from_entrypoint(executable_file = img_toolchain_info.tool_exe)
-    embedded_args.extend(["deploy", "--request-file"])
+    embedded_args.extend(["deploy", "--runfiles-root-symlinks-prefix", root_symlinks_prefix, "--request-file"])
     embedded_args, transformed_args = launcher.append_runfile(
         file = deploy_metadata,
         embedded_args = embedded_args,

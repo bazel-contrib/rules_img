@@ -27,6 +27,7 @@ import (
 
 func DeployProcess(ctx context.Context, args []string) {
 	var requestFile string
+	var runfilesRootSymlinksPrefix string
 	var additionalTags stringSliceFlag
 	var overrideRegistry string
 	var overrideRepository string
@@ -34,6 +35,7 @@ func DeployProcess(ctx context.Context, args []string) {
 
 	flagSet := flag.NewFlagSet("deploy", flag.ContinueOnError)
 	flagSet.StringVar(&requestFile, "request-file", "", "Deploy manifest JSON request file")
+	flagSet.StringVar(&runfilesRootSymlinksPrefix, "runfiles-root-symlinks-prefix", "", "Prefix for runfiles root symlinks")
 	flagSet.Var(&additionalTags, "tag", "Additional tag to apply (can be used multiple times)")
 	flagSet.Var(&additionalTags, "t", "Additional tag to apply (can be used multiple times)")
 	flagSet.StringVar(&overrideRegistry, "registry", "", "Override registry to push to")
@@ -72,13 +74,13 @@ func DeployProcess(ctx context.Context, args []string) {
 		}
 	}
 
-	if err := DeployWithExtras(ctx, rawRequest, []string(additionalTags), overrideRegistry, overrideRepository, platformList); err != nil {
+	if err := DeployWithExtras(ctx, rawRequest, []string(additionalTags), overrideRegistry, overrideRepository, platformList, runfilesRootSymlinksPrefix); err != nil {
 		fmt.Fprintf(os.Stderr, "Error during deploy: %v\n", err)
 		os.Exit(1)
 	}
 }
 
-func DeployWithExtras(ctx context.Context, rawRequest []byte, additionalTags []string, overrideRegistry, overrideRepository string, platformList []string) error {
+func DeployWithExtras(ctx context.Context, rawRequest []byte, additionalTags []string, overrideRegistry, overrideRepository string, platformList []string, runfilesRootSymlinksPrefix string) error {
 	var req api.DeployManifest
 	decoder := json.NewDecoder(bytes.NewReader(rawRequest))
 	decoder.DisallowUnknownFields()
@@ -139,6 +141,9 @@ func DeployWithExtras(ctx context.Context, rawRequest []byte, additionalTags []s
 	}
 
 	vfsBuilder := deployvfs.Builder(req).WithContainerRegistryOption(registry.WithAuthFromMultiKeychain())
+	if runfilesRootSymlinksPrefix != "" {
+		vfsBuilder = vfsBuilder.WithRunfilesRootSymlinksPrefix(runfilesRootSymlinksPrefix)
+	}
 	if casReader != nil {
 		vfsBuilder = vfsBuilder.WithCASReader(casReader)
 	}
@@ -238,12 +243,4 @@ func credentialHelperPath() string {
 		return tweagCredentialHelper
 	}
 	return ""
-}
-
-func parseRequestFile(requestFilePath string) ([]byte, error) {
-	rawRequest, err := os.ReadFile(requestFilePath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "reading request file: %v\n", err)
-	}
-	return rawRequest, nil
 }
