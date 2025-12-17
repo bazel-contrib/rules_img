@@ -2,7 +2,7 @@
 
 Public API for loading container images into a daemon.
 
-The `image_load` rule creates an executable target that loads container images into a local daemon (containerd or Docker).
+The `image_load` rule creates an executable target that loads container images into a local daemon (containerd, Docker, or Podman).
 
 ## Example
 
@@ -71,10 +71,10 @@ load("@rules_img//img:load.bzl", "image_load")
 image_load(<a href="#image_load-name">name</a>, <a href="#image_load-build_settings">build_settings</a>, <a href="#image_load-daemon">daemon</a>, <a href="#image_load-image">image</a>, <a href="#image_load-stamp">stamp</a>, <a href="#image_load-strategy">strategy</a>, <a href="#image_load-tag">tag</a>, <a href="#image_load-tag_file">tag_file</a>, <a href="#image_load-tag_list">tag_list</a>)
 </pre>
 
-Loads container images into a local daemon (Docker or containerd).
+Loads container images into a local daemon (Docker, containerd, or Podman).
 
 This rule creates an executable target that imports OCI images into your local
-container runtime. It supports both Docker and containerd, with intelligent
+container runtime. It supports Docker, Podman, and containerd, with intelligent
 detection of the best loading method for optimal performance.
 
 Key features:
@@ -152,7 +152,7 @@ Performance notes:
 | :------------- | :------------- | :------------- | :------------- | :------------- |
 | <a id="image_load-name"></a>name |  A unique name for this target.   | <a href="https://bazel.build/concepts/labels#target-names">Name</a> | required |  |
 | <a id="image_load-build_settings"></a>build_settings |  Build settings to use for [template expansion](/docs/templating.md). Keys are setting names, values are labels to string_flag targets.   | Dictionary: String -> Label | optional |  `{}`  |
-| <a id="image_load-daemon"></a>daemon |  Container daemon to use for loading the image.<br><br>Available options: - **`auto`** (default): Uses the global default setting (usually `docker`) - **`containerd`**: Loads directly into containerd namespace. Supports multi-platform images   and incremental loading. - **`docker`**: Loads via Docker daemon. When Docker uses containerd storage (23.0+),   loads directly into containerd. Otherwise falls back to `docker load` command which   is slower and limited to single-platform images.<br><br>The best performance is achieved with: - Direct containerd access (daemon = "containerd") - Docker 23.0+ with containerd storage enabled and accessible containerd socket   | String | optional |  `"auto"`  |
+| <a id="image_load-daemon"></a>daemon |  Container daemon to use for loading the image.<br><br>Available options: - **`auto`** (default): Uses the global default setting (usually `docker`) - **`containerd`**: Loads directly into containerd namespace. Supports multi-platform images   and incremental loading. - **`docker`**: Loads via Docker daemon. When Docker uses containerd storage (23.0+),   loads directly into containerd. Otherwise falls back to `docker load` command which   is slower and limited to single-platform images. - **`podman`**: Loads via Podman daemon using `podman load` command. Similar to Docker   fallback mode, this is slower than containerd and limited to single-platform images.<br><br>The best performance is achieved with: - Direct containerd access (daemon = "containerd") - Docker 23.0+ with containerd storage enabled and accessible containerd socket   | String | optional |  `"auto"`  |
 | <a id="image_load-image"></a>image |  Image to load. Should provide ImageManifestInfo or ImageIndexInfo.   | <a href="https://bazel.build/concepts/labels">Label</a> | required |  |
 | <a id="image_load-stamp"></a>stamp |  Whether to use stamping for [template expansion](/docs/templating.md). If 'enabled', uses volatile-status.txt and version.txt if present. 'auto' uses the global default setting.   | String | optional |  `"auto"`  |
 | <a id="image_load-strategy"></a>strategy |  Strategy for handling image layers during load.<br><br>Available strategies: - **`auto`** (default): Uses the global default load strategy - **`eager`**: Downloads all layers during the build phase. Ensures all layers are   available locally before running the load command. - **`lazy`**: Downloads layers only when needed during the load operation. More   efficient for large images where some layers might already exist in the daemon.   | String | optional |  `"auto"`  |
