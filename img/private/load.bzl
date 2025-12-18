@@ -3,6 +3,7 @@
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("@hermetic_launcher//launcher:lib.bzl", "launcher")
 load("@platforms//host:constraints.bzl", "HOST_CONSTRAINTS")
+load("//img/private:layer_path_hints.bzl", "layer_hints_for_deploy_metadata")
 load("//img/private:root_symlinks.bzl", "calculate_root_symlinks", "symlink_name_prefix")
 load("//img/private:stamp.bzl", "expand_or_write")
 load("//img/private/common:build.bzl", "DATA_TOOLCHAIN", "TOOLCHAIN", "TOOLCHAINS")
@@ -60,6 +61,7 @@ def _target_info(ctx):
 def _compute_load_metadata(*, ctx, configuration_json):
     inputs = [configuration_json]
     args = ctx.actions.args()
+    load_metadata_args = [args]
     args.add("deploy-metadata")
     args.add("--command", "load")
     manifest_info = ctx.attr.image[ImageManifestInfo] if ImageManifestInfo in ctx.attr.image else None
@@ -95,17 +97,30 @@ def _compute_load_metadata(*, ctx, configuration_json):
         inputs.append(index_info.index)
         inputs.extend([manifest.manifest for manifest in index_info.manifests])
 
+    outputs = []
+    layer_hints_file = layer_hints_for_deploy_metadata(
+        ctx,
+        index_info = index_info,
+        manifest_info = manifest_info,
+        strategy = _load_strategy(ctx),
+        args = load_metadata_args,
+        inputs = inputs,
+        outputs = outputs,
+    )
     metadata_out = ctx.actions.declare_file(ctx.label.name + ".json")
-    args.add(metadata_out.path)
+    output_args = ctx.actions.args()
+    output_args.add(metadata_out)
+    load_metadata_args.append(output_args)
+    outputs.append(metadata_out)
     img_toolchain_info = ctx.toolchains[TOOLCHAIN].imgtoolchaininfo
     ctx.actions.run(
         inputs = inputs,
-        outputs = [metadata_out],
+        outputs = outputs,
         executable = img_toolchain_info.tool_exe,
-        arguments = [args],
+        arguments = load_metadata_args,
         mnemonic = "LoadMetadata",
     )
-    return metadata_out
+    return metadata_out, layer_hints_file
 
 def _build_docker_tarball(ctx, configuration_json, manifest_info):
     """Build the Docker save tarball for the image.
@@ -186,10 +201,13 @@ def _image_load_impl(ctx):
         newline_delimited_lists_files = newline_delimited_lists_files,
     )
 
-    deploy_metadata = _compute_load_metadata(
+    deploy_metadata, layer_hints = _compute_load_metadata(
         ctx = ctx,
         configuration_json = configuration_json,
     )
+    if layer_hints != None:
+        root_symlinks["{}layer_hints".format(root_symlinks_prefix)] = layer_hints
+
     loader = ctx.actions.declare_file(ctx.label.name + ".exe")
     if ctx.attr.tool_cfg == "host":
         img_toolchain_info = ctx.exec_groups["host"].toolchains[TOOLCHAIN].imgtoolchaininfo
@@ -254,6 +272,7 @@ def _image_load_impl(ctx):
         DeployInfo(
             image = image_provider,
             deploy_manifest = deploy_metadata,
+            layer_hints = layer_hints,
         ),
     ]
 

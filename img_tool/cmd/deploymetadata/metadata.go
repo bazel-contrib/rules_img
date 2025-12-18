@@ -28,6 +28,8 @@ var (
 	originalRepository      string
 	orginalTag              string
 	originalDigest          string
+	layerHintsInputPath     string
+	layerHintsOutputPath    string
 )
 
 func DeployMetadataProcess(ctx context.Context, args []string) {
@@ -58,6 +60,8 @@ func DeployMetadataProcess(ctx context.Context, args []string) {
 	flagSet.StringVar(&originalRepository, "original-repository", "", `(Optional) original repository that the base of this image was pulled from.`)
 	flagSet.StringVar(&orginalTag, "original-tag", "", `(Optional) original tag that the base of this image was pulled from.`)
 	flagSet.StringVar(&originalDigest, "original-digest", "", `(Optional) original digest that the base of this image was pulled from.`)
+	flagSet.StringVar(&layerHintsInputPath, "layer-hints-paths-file-input", "", `(Optional) path to file containing layer path hints (null-separated blob/metadata pairs).`)
+	flagSet.StringVar(&layerHintsOutputPath, "layer-hints-paths-output", "", `(Optional) path to write resolved layer hints output.`)
 	flagSet.Func("manifest-path", `Path to a manifest file. Format: index=path (e.g., 0=foo.json). Can be specified multiple times.`, func(value string) error {
 		parts := strings.SplitN(value, "=", 2)
 		if len(parts) != 2 {
@@ -129,6 +133,17 @@ func DeployMetadataProcess(ctx context.Context, args []string) {
 		fmt.Fprintf(os.Stderr, "Error: invalid strategy %q\n", strategy)
 		flagSet.Usage()
 		os.Exit(1)
+	}
+	if (layerHintsInputPath == "" && layerHintsOutputPath != "") || (layerHintsInputPath != "" && layerHintsOutputPath == "") {
+		fmt.Fprintln(os.Stderr, "Error: both --layer-hints-paths-file-input= and --layer-hints-paths-output must be specified together")
+		flagSet.Usage()
+		os.Exit(1)
+	}
+	if layerHintsInputPath != "" {
+		if err := processLayerHints(layerHintsInputPath, layerHintsOutputPath); err != nil {
+			fmt.Fprintf(os.Stderr, "Error processing layer hints: %v\n", err)
+			os.Exit(1)
+		}
 	}
 	if err := WriteMetadata(ctx, outputPath); err != nil {
 		fmt.Fprintf(os.Stderr, "Error writing deploy metadata: %v\n", err)
