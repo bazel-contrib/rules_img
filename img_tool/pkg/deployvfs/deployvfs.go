@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 
 	"github.com/bazelbuild/rules_go/go/runfiles"
 	registryname "github.com/malt3/go-containerregistry/pkg/name"
@@ -22,6 +23,14 @@ import (
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/cas"
 )
 
+// Stats tracks statistics about blob access in the VFS.
+// All fields are accessed atomically for thread safety.
+type Stats struct {
+	LayersFromLocalDisk   atomic.Uint64 // Layers opened from local disk
+	LayersFromRegistry    atomic.Uint64 // Layers opened from registry
+	LayersFromRemoteCache atomic.Uint64 // Layers opened from remote cache
+}
+
 // VFS represents a virtual file system for deployment manifests and their associated blobs.
 // It merges multiple data sources into a single coherent view:
 // - runfiles tree of the push/load tool
@@ -32,6 +41,12 @@ type VFS struct {
 	dm        api.DeployManifest
 	blobs     map[string]blobEntry
 	manifests map[string]blobEntry
+	stats     *Stats
+}
+
+// Stats returns the current statistics for the VFS.
+func (vfs *VFS) Stats() *Stats {
+	return vfs.stats
 }
 
 func (vfs *VFS) Layer(digest registryv1.Hash) (registryv1.Layer, error) {
@@ -233,10 +248,14 @@ type vfsBuilder struct {
 	containerRegistryOptions   []remote.Option
 	runfilesRootSymlinksPrefix string
 	layerHints                 map[string][]string // digest -> []paths
+	stats                      *Stats
 }
 
 func Builder(dm api.DeployManifest) *vfsBuilder {
-	return &vfsBuilder{dm: dm}
+	return &vfsBuilder{
+		dm:    dm,
+		stats: &Stats{},
+	}
 }
 
 func (b *vfsBuilder) WithCASReader(br casReader) *vfsBuilder {
@@ -279,6 +298,7 @@ func (b *vfsBuilder) Build() (*VFS, error) {
 		dm:        b.dm,
 		blobs:     blobs,
 		manifests: manifests,
+		stats:     b.stats,
 	}, nil
 }
 
@@ -454,10 +474,13 @@ func (b *vfsBuilder) layerFromFile(operationIndex int, manifestIndex int, layerI
 		return blobEntry{}, false
 	}
 	if _, err := os.Stat(fpath); err == nil {
+		stats := b.stats
 		return blobEntry{
 			Descriptor: desc,
 			Location:   "file",
+			stats:      stats,
 			Opener: func() (io.ReadCloser, error) {
+				stats.LayersFromLocalDisk.Add(1)
 				return os.Open(fpath)
 			},
 		}, true
@@ -478,9 +501,11 @@ func (b *vfsBuilder) layerFromRegistry(pullInfo api.PullInfo, missingBlobs []str
 	for _, missing := range missingBlobs {
 		if missing == sha256Hex {
 			// the layer is marked as missing, so it must exist in one of the original registries
+			stats := b.stats
 			return blobEntry{
 				Descriptor: desc,
 				Location:   "registry",
+				stats:      stats,
 				Opener: func() (io.ReadCloser, error) {
 					pullInfo := pullInfo
 					for _, registry := range pullInfo.OriginalBaseImageRegistries {
@@ -496,6 +521,7 @@ func (b *vfsBuilder) layerFromRegistry(pullInfo api.PullInfo, missingBlobs []str
 						if err != nil {
 							continue
 						}
+						stats.LayersFromRegistry.Add(1)
 						return rc, nil
 					}
 					return nil, fmt.Errorf("layer %s not found in any of the original registries", desc.Digest)
@@ -524,14 +550,17 @@ func (b *vfsBuilder) layerFromCAS(desc api.Descriptor) (blobEntry, bool) {
 		hintPaths = b.layerHints[desc.Digest]
 	}
 
+	stats := b.stats
 	return blobEntry{
 		Descriptor: desc,
 		Location:   "remote_cache",
+		stats:      stats,
 		Opener: func() (io.ReadCloser, error) {
 			// First, try to open from local paths if we have hints
 			for _, localPath := range hintPaths {
 				if file, err := os.Open(localPath); err == nil {
-					// Successfully opened local file
+					// Successfully opened local file from layer hints
+					stats.LayersFromLocalDisk.Add(1)
 					return file, nil
 				}
 				// If open failed, try the next path
@@ -546,6 +575,7 @@ func (b *vfsBuilder) layerFromCAS(desc api.Descriptor) (blobEntry, bool) {
 			if err != nil {
 				return nil, err
 			}
+			stats.LayersFromRemoteCache.Add(1)
 			return casReader.ReaderForBlob(context.TODO(), digest)
 		},
 	}, true
@@ -565,6 +595,7 @@ type blobEntry struct {
 	api.Descriptor
 	Location string // "file", "registry", "remote_cache", "stub"
 	Opener   func() (io.ReadCloser, error)
+	stats    *Stats // reference to VFS stats for tracking
 }
 
 func (b *vfsBuilder) localIndex(operationIndex int, desc api.Descriptor) blobEntry {
