@@ -200,6 +200,10 @@ func DeployWithExtras(ctx context.Context, rawRequest []byte, additionalTags []s
 		return fmt.Errorf("deploying images: %w", err)
 	}
 
+	// Print VFS statistics to stderr
+	stats := vfs.Stats()
+	fmt.Fprintf(os.Stderr, "    layer transfers: %d from disk, %d from container registry, %d from remote cache\n", stats.LayersFromLocalDisk.Load(), stats.LayersFromRegistry.Load(), stats.LayersFromRemoteCache.Load())
+
 	// Print all pushed tags to stdout, one per line.
 	for _, tag := range pushedTags {
 		fmt.Println(tag)
