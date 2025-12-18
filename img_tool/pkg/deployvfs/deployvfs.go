@@ -1,12 +1,14 @@
 package deployvfs
 
 import (
+	"bufio"
 	"context"
 	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
 	"path"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -24,6 +26,7 @@ import (
 // It merges multiple data sources into a single coherent view:
 // - runfiles tree of the push/load tool
 // - registry of base image (if base image is shallow)
+// - undeclared local output files (via layer hints)
 // - Bazel remote cache
 type VFS struct {
 	dm        api.DeployManifest
@@ -229,6 +232,7 @@ type vfsBuilder struct {
 	casReader                  casReader
 	containerRegistryOptions   []remote.Option
 	runfilesRootSymlinksPrefix string
+	layerHints                 map[string][]string // digest -> []paths
 }
 
 func Builder(dm api.DeployManifest) *vfsBuilder {
@@ -260,6 +264,13 @@ func (b *vfsBuilder) rlocation(runfilesPath string) (string, error) {
 }
 
 func (b *vfsBuilder) Build() (*VFS, error) {
+	// Try to load layer hints if available
+	if err := b.loadLayerHints(); err != nil {
+		// Layer hints are optional, log but don't fail
+		// We could add debug logging here if needed
+		_ = err
+	}
+
 	blobs, manifests, err := b.ingest()
 	if err != nil {
 		return nil, err
@@ -269,6 +280,82 @@ func (b *vfsBuilder) Build() (*VFS, error) {
 		blobs:     blobs,
 		manifests: manifests,
 	}, nil
+}
+
+// loadLayerHints attempts to load layer hints from the runfiles.
+// Layer hints are only enabled if:
+// 1. BUILD_WORKSPACE_DIRECTORY environment variable is set
+// 2. A layer_hints file exists under the runfiles prefix
+func (b *vfsBuilder) loadLayerHints() error {
+	// Check if BUILD_WORKSPACE_DIRECTORY is set
+	workspaceDir := os.Getenv("BUILD_WORKSPACE_DIRECTORY")
+	if workspaceDir == "" {
+		return fmt.Errorf("BUILD_WORKSPACE_DIRECTORY not set, layer hints disabled")
+	}
+
+	// Try to find layer_hints file in runfiles
+	layerHintsPath, err := b.rlocation("layer_hints")
+	if err != nil {
+		return fmt.Errorf("layer_hints file not found in runfiles: %w", err)
+	}
+
+	// Check if file exists
+	if _, err := os.Stat(layerHintsPath); err != nil {
+		return fmt.Errorf("layer_hints file does not exist: %w", err)
+	}
+
+	// Parse the layer hints file
+	hints, err := parseLayerHints(layerHintsPath, workspaceDir)
+	if err != nil {
+		return fmt.Errorf("parsing layer hints file: %w", err)
+	}
+
+	b.layerHints = hints
+	return nil
+}
+
+// parseLayerHints reads a layer hints file and returns a map of digest -> []paths.
+// File format: digest\0path1\0path2...\n
+// Paths are made absolute by joining with workspaceDir.
+func parseLayerHints(hintsPath string, workspaceDir string) (map[string][]string, error) {
+	file, err := os.Open(hintsPath)
+	if err != nil {
+		return nil, fmt.Errorf("opening layer hints file: %w", err)
+	}
+	defer file.Close()
+
+	hints := make(map[string][]string)
+	scanner := bufio.NewScanner(file)
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		if line == "" {
+			continue // skip empty lines
+		}
+
+		// Split by null byte
+		parts := strings.Split(line, "\x00")
+		if len(parts) < 1 {
+			return nil, fmt.Errorf("invalid line format: expected at least 1 part")
+		}
+
+		digest := parts[0]
+		paths := parts[1:]
+
+		// Make paths absolute by joining with workspace directory
+		absolutePaths := make([]string, len(paths))
+		for i, p := range paths {
+			absolutePaths[i] = filepath.FromSlash(path.Join(workspaceDir, p))
+		}
+
+		hints[digest] = absolutePaths
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("reading layer hints file: %w", err)
+	}
+
+	return hints, nil
 }
 
 func (b *vfsBuilder) ingest() (map[string]blobEntry, map[string]blobEntry, error) {
@@ -422,16 +509,39 @@ func (b *vfsBuilder) layerFromRegistry(pullInfo api.PullInfo, missingBlobs []str
 	return blobEntry{}, false
 }
 
-// layerFromCAS tries to find the layer in the bazel remote cache. If it exists, it returns the blobEntry and true.
+// layerFromCAS tries to find the layer using a two-step fallback strategy:
+// 1. If layer hints are available, try to read from local paths in BUILD_WORKSPACE_DIRECTORY
+// 2. Fall back to reading from the bazel remote cache
+// If it exists in either location, it returns the blobEntry and true.
 func (b *vfsBuilder) layerFromCAS(desc api.Descriptor) (blobEntry, bool) {
-	if b.casReader == nil {
+	if b.casReader == nil && b.layerHints == nil {
 		return blobEntry{}, false
 	}
+
+	// Get potential local paths from layer hints
+	var hintPaths []string
+	if b.layerHints != nil {
+		hintPaths = b.layerHints[desc.Digest]
+	}
+
 	return blobEntry{
 		Descriptor: desc,
 		Location:   "remote_cache",
 		Opener: func() (io.ReadCloser, error) {
+			// First, try to open from local paths if we have hints
+			for _, localPath := range hintPaths {
+				if file, err := os.Open(localPath); err == nil {
+					// Successfully opened local file
+					return file, nil
+				}
+				// If open failed, try the next path
+			}
+
+			// All local paths failed (or no hints), fall back to remote cache
 			casReader := b.casReader
+			if casReader == nil {
+				return nil, fmt.Errorf("blob with digest %s not found in local hints and no remote cache configured", desc.Digest)
+			}
 			digest, err := digestFromDescriptor(desc)
 			if err != nil {
 				return nil, err

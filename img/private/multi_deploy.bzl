@@ -32,18 +32,30 @@ def _compute_multi_deploy_metadata(*, ctx):
     """Compute the merged deploy metadata from all operations."""
     inputs = []
     deploy_manifests = []
+    layer_hints_files = []
 
-    # Collect all deploy manifests from operations
+    # Collect all deploy manifests and layer hints from operations
     for operation in ctx.attr.operations:
         deploy_info = operation[DeployInfo]
         deploy_manifests.append(deploy_info.deploy_manifest)
         inputs.append(deploy_info.deploy_manifest)
+        if deploy_info.layer_hints != None:
+            layer_hints_files.append(deploy_info.layer_hints)
+            inputs.append(deploy_info.layer_hints)
 
     # Create the merge command
     args = ctx.actions.args()
     args.add("deploy-merge")
     args.add("--push-strategy", _multi_deploy_strategy(ctx, "push"))
     args.add("--load-strategy", _multi_deploy_strategy(ctx, "load"))
+
+    # Add layer hints inputs and output if any exist
+    layer_hints_out = None
+    if layer_hints_files:
+        for layer_hints_file in layer_hints_files:
+            args.add("--layer-hints-input", layer_hints_file.path)
+        layer_hints_out = ctx.actions.declare_file(ctx.label.name + ".layer_hints")
+        args.add("--layer-hints-output", layer_hints_out.path)
 
     # Add input deploy manifest files
     for manifest in deploy_manifests:
@@ -53,15 +65,19 @@ def _compute_multi_deploy_metadata(*, ctx):
     metadata_out = ctx.actions.declare_file(ctx.label.name + ".json")
     args.add(metadata_out.path)
 
+    outputs = [metadata_out]
+    if layer_hints_out != None:
+        outputs.append(layer_hints_out)
+
     img_toolchain_info = ctx.toolchains[TOOLCHAIN].imgtoolchaininfo
     ctx.actions.run(
         inputs = inputs,
-        outputs = [metadata_out],
+        outputs = outputs,
         executable = img_toolchain_info.tool_exe,
         arguments = [args],
         mnemonic = "MultiDeployMerge",
     )
-    return metadata_out
+    return metadata_out, layer_hints_out
 
 def _collect_all_image_providers(ctx):
     """Collect all image providers from operations to build root symlinks."""
@@ -88,7 +104,7 @@ def _multi_deploy_impl(ctx):
         fail("operations attribute cannot be empty")
 
     # Merge all deploy manifests
-    deploy_metadata = _compute_multi_deploy_metadata(ctx = ctx)
+    deploy_metadata, layer_hints = _compute_multi_deploy_metadata(ctx = ctx)
 
     # Create the executable
     root_symlinks_prefix = symlink_name_prefix(ctx)
@@ -132,6 +148,10 @@ def _multi_deploy_impl(ctx):
             symlink_name_prefix = root_symlinks_prefix,
         )
         root_symlinks.update(symlinks)
+
+    # Add merged layer hints to root symlinks if present
+    if layer_hints != None:
+        root_symlinks["{}layer_hints".format(root_symlinks_prefix)] = layer_hints
 
     # Merge environment settings from push and load
     environment = {}

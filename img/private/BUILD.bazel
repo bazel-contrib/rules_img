@@ -40,10 +40,17 @@ bzl_library(
 )
 
 bzl_library(
+    name = "layer_path_hints",
+    srcs = ["layer_path_hints.bzl"],
+    visibility = ["//img:__subpackages__"],
+)
+
+bzl_library(
     name = "push",
     srcs = ["push.bzl"],
     visibility = ["//img:__subpackages__"],
     deps = [
+        ":layer_path_hints",
         ":root_symlinks",
         ":stamp",
         "//img:providers",
@@ -67,6 +74,7 @@ bzl_library(
     srcs = ["load.bzl"],
     visibility = ["//img:__subpackages__"],
     deps = [
+        ":layer_path_hints",
         ":root_symlinks",
         ":stamp",
         "//img/private/common:build",

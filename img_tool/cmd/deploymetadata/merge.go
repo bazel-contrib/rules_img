@@ -11,8 +11,10 @@ import (
 )
 
 var (
-	pushStrategy string
-	loadStrategy string
+	pushStrategy              string
+	loadStrategy              string
+	mergeLayerHintsInputPaths []string
+	mergeLayerHintsOutputPath string
 )
 
 func DeployMergeProcess(ctx context.Context, args []string) {
@@ -32,6 +34,11 @@ func DeployMergeProcess(ctx context.Context, args []string) {
 	}
 	flagSet.StringVar(&pushStrategy, "push-strategy", "lazy", `Push strategy to use for all push operations. One of "eager", "lazy", "cas_registry", or "bes".`)
 	flagSet.StringVar(&loadStrategy, "load-strategy", "lazy", `Load strategy to use for all load operations. One of "eager", "lazy".`)
+	flagSet.Func("layer-hints-input", `(Optional) path to layer hints file to merge. Can be specified multiple times.`, func(value string) error {
+		mergeLayerHintsInputPaths = append(mergeLayerHintsInputPaths, value)
+		return nil
+	})
+	flagSet.StringVar(&mergeLayerHintsOutputPath, "layer-hints-output", "", `(Optional) path to write merged layer hints output.`)
 
 	if err := flagSet.Parse(args); err != nil {
 		flagSet.Usage()
@@ -64,6 +71,21 @@ func DeployMergeProcess(ctx context.Context, args []string) {
 		fmt.Fprintf(os.Stderr, "Error: invalid load strategy %q\n", loadStrategy)
 		flagSet.Usage()
 		os.Exit(1)
+	}
+
+	// Validate layer hints flags
+	if (len(mergeLayerHintsInputPaths) == 0 && mergeLayerHintsOutputPath != "") || (len(mergeLayerHintsInputPaths) > 0 && mergeLayerHintsOutputPath == "") {
+		fmt.Fprintln(os.Stderr, "Error: both --layer-hints-input and --layer-hints-output must be specified together")
+		flagSet.Usage()
+		os.Exit(1)
+	}
+
+	// Merge layer hints if provided
+	if len(mergeLayerHintsInputPaths) > 0 {
+		if err := mergeLayerHintsFiles(mergeLayerHintsInputPaths, mergeLayerHintsOutputPath); err != nil {
+			fmt.Fprintf(os.Stderr, "Error merging layer hints: %v\n", err)
+			os.Exit(1)
+		}
 	}
 
 	if err := MergeDeployManifests(ctx, inputPaths, outputPath); err != nil {

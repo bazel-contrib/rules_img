@@ -3,6 +3,7 @@
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("@hermetic_launcher//launcher:lib.bzl", "launcher")
 load("@platforms//host:constraints.bzl", "HOST_CONSTRAINTS")
+load("//img/private:layer_path_hints.bzl", "layer_hints_for_deploy_metadata")
 load("//img/private:root_symlinks.bzl", "calculate_root_symlinks", "symlink_name_prefix")
 load("//img/private:stamp.bzl", "expand_or_write")
 load("//img/private/common:build.bzl", "TOOLCHAIN", "TOOLCHAINS")
@@ -52,6 +53,7 @@ def _get_tags(ctx):
 def _compute_push_metadata(*, ctx, configuration_json):
     inputs = [configuration_json]
     args = ctx.actions.args()
+    push_metadata_args = [args]
     args.add("deploy-metadata")
     args.add("--command", "push")
     manifest_info = ctx.attr.image[ImageManifestInfo] if ImageManifestInfo in ctx.attr.image else None
@@ -87,17 +89,30 @@ def _compute_push_metadata(*, ctx, configuration_json):
         inputs.append(index_info.index)
         inputs.extend([manifest.manifest for manifest in index_info.manifests])
 
+    outputs = []
+    layer_hints_file = layer_hints_for_deploy_metadata(
+        ctx,
+        index_info = index_info,
+        manifest_info = manifest_info,
+        strategy = _push_strategy(ctx),
+        args = push_metadata_args,
+        inputs = inputs,
+        outputs = outputs,
+    )
     metadata_out = ctx.actions.declare_file(ctx.label.name + ".json")
-    args.add(metadata_out.path)
+    output_args = ctx.actions.args()
+    output_args.add(metadata_out)
+    push_metadata_args.append(output_args)
+    outputs.append(metadata_out)
     img_toolchain_info = ctx.toolchains[TOOLCHAIN].imgtoolchaininfo
     ctx.actions.run(
         inputs = inputs,
-        outputs = [metadata_out],
+        outputs = outputs,
         executable = img_toolchain_info.tool_exe,
-        arguments = [args],
+        arguments = push_metadata_args,
         mnemonic = "PushMetadata",
     )
-    return metadata_out
+    return metadata_out, layer_hints_file
 
 def _image_push_impl(ctx):
     """Implementation of the push rule."""
@@ -108,9 +123,6 @@ def _image_push_impl(ctx):
     if manifest_info != None and index_info != None:
         fail("image must provide either ImageManifestInfo or ImageIndexInfo, not both")
     image_provider = manifest_info if manifest_info != None else index_info
-
-    root_symlinks_prefix = symlink_name_prefix(ctx)
-    root_symlinks = calculate_root_symlinks(index_info, manifest_info, include_layers = _push_strategy(ctx) == "eager", symlink_name_prefix = root_symlinks_prefix)
 
     templates = dict(
         registry = ctx.attr.registry,
@@ -132,10 +144,20 @@ def _image_push_impl(ctx):
         newline_delimited_lists_files = newline_delimited_lists_files,
     )
 
-    deploy_metadata = _compute_push_metadata(
+    deploy_metadata, layer_hints = _compute_push_metadata(
         ctx = ctx,
         configuration_json = configuration_json,
     )
+    root_symlinks_prefix = symlink_name_prefix(ctx)
+    root_symlinks = calculate_root_symlinks(
+        index_info,
+        manifest_info,
+        include_layers = _push_strategy(ctx) == "eager",
+        symlink_name_prefix = root_symlinks_prefix,
+    )
+    if layer_hints != None:
+        root_symlinks["{}layer_hints".format(root_symlinks_prefix)] = layer_hints
+
     pusher = ctx.actions.declare_file(ctx.label.name + ".exe")
     img_toolchain_info = ctx.exec_groups["host"].toolchains[TOOLCHAIN].imgtoolchaininfo
     embedded_args, transformed_args = launcher.args_from_entrypoint(executable_file = img_toolchain_info.tool_exe)
@@ -170,15 +192,13 @@ def _image_push_impl(ctx):
     if docker_config_path:
         environment["REGISTRY_AUTH_FILE"] = docker_config_path
 
+    direct_runfiles = [img_toolchain_info.tool_exe, deploy_metadata]
     return [
         DefaultInfo(
             files = depset([pusher]),
             executable = pusher,
             runfiles = ctx.runfiles(
-                files = [
-                    img_toolchain_info.tool_exe,
-                    deploy_metadata,
-                ],
+                files = direct_runfiles,
                 root_symlinks = root_symlinks,
             ),
         ),
@@ -189,6 +209,7 @@ def _image_push_impl(ctx):
         DeployInfo(
             image = image_provider,
             deploy_manifest = deploy_metadata,
+            layer_hints = layer_hints,
         ),
     ]
 
