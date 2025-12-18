@@ -20,6 +20,7 @@ ATTRS = dict(
 )
 
 TOOLCHAIN_TYPE = str(Label("//img:toolchain_type"))
+DATA_TOOLCHAIN_TYPE = str(Label("//img:data_toolchain_type"))
 
 def _image_toolchain_impl(ctx):
     image_toolchain_info = ImageToolchainInfo(

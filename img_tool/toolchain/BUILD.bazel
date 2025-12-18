@@ -4,7 +4,7 @@ These toolchains are not registered by default.
 You need to register them explicitly if you want to build from source.
 """
 
-load("@rules_img//img:image_toolchain.bzl", "TOOLCHAIN_TYPE", "image_toolchain")
+load("@rules_img//img:image_toolchain.bzl", "DATA_TOOLCHAIN_TYPE", "TOOLCHAIN_TYPE", "image_toolchain")
 load(":def.bzl", "goarch_to_constraint", "goos_to_constraint", "platform_tuples")
 
 package(
@@ -28,6 +28,19 @@ package(
         ],
         toolchain = ":image_toolchain_{}_{}".format(os, arch),
         toolchain_type = TOOLCHAIN_TYPE,
+    )
+    for os, arch in platform_tuples
+]
+
+[
+    toolchain(
+        name = "data_toolchain_{}_{}".format(os, arch),
+        target_compatible_with = [
+            goos_to_constraint(os),
+            goarch_to_constraint(arch),
+        ],
+        toolchain = ":image_toolchain_{}_{}".format(os, arch),
+        toolchain_type = DATA_TOOLCHAIN_TYPE,
     )
     for os, arch in platform_tuples
 ]
