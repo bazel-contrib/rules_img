@@ -25,7 +25,7 @@ register_toolchains("@rules_img_tool//toolchain:all")
 bazel_dep(name = "bazel_skylib", version = "1.8.1")
 bazel_dep(name = "platforms", version = "0.0.11")
 
-bazel_dep(name = "rules_cc", version = "0.2.14", dev_dependency = True)
+bazel_dep(name = "rules_cc", version = "0.2.16", dev_dependency = True)
 
 # All of the hermetic C++ toolchain setup is done in a separate MODULE.bazel file.
 # This setup is not important for the e2e tests and it is hard to read.
