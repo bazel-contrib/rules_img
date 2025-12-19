@@ -164,6 +164,10 @@ func processOCILayoutIndex() error {
 		sourceVariant := ""
 		if sourceManifest.Platform.Variant != "" {
 			sourceVariant = sourceManifest.Platform.Variant
+		} else if sourceManifest.Platform.Architecture == "arm64" {
+			// ARM64 defaults to v8 variant
+			// See: https://github.com/containerd/platforms/blob/2e51fd9435bd985e1753954b24f4b0453f4e4767/platforms.go#L290
+			sourceVariant = "v8"
 		}
 
 		// Validate that the platform matches
@@ -259,6 +263,10 @@ func convertManifest(manifestDesc *specv1.Descriptor, manifestIdx int, arch, ope
 		manifestVariant := ""
 		if manifestDesc.Platform.Variant != "" {
 			manifestVariant = manifestDesc.Platform.Variant
+		} else if manifestDesc.Platform.Architecture == "arm64" {
+			// ARM64 defaults to v8 variant
+			// See: https://github.com/containerd/platforms/blob/2e51fd9435bd985e1753954b24f4b0453f4e4767/platforms.go#L290
+			manifestVariant = "v8"
 		}
 		if manifestVariant != variant {
 			return specv1.Descriptor{}, fmt.Errorf("manifest descriptor variant mismatch: has %s, but %s was requested", manifestVariant, variant)
