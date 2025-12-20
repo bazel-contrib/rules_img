@@ -32,7 +32,7 @@ bazel_dep(name = "rules_shell", version = "0.6.1")
 bazel_dep(name = "tar.bzl", version = "0.7.0")
 bazel_dep(name = "rules_apko", version = "1.5.28")
 
-# TODO(remove once apko version 1.5.29 is published
+# TODO remove once apko version 1.5.29 is published
 git_override(
     module_name = "rules_apko",
     commit = "26085d141e46b3c49979978b5fa6552638c9984c",

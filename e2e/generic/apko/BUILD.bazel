@@ -2,7 +2,7 @@ load("@rules_apko//apko:defs.bzl", "apko_image")
 load("@rules_img//img:convert.bzl", "image_index_from_oci_layout", "image_manifest_from_oci_layout")
 load("@rules_img//img:media_types.bzl", "GZIP_LAYER")
 
-# Small example wolfi image - using this because thier builder disobeys the spec, and doesn't
+# Small example wolfi image - using this because their builder disobeys the spec, and doesn't
 # specify an architecture variant when building for arm64/v8.
 apko_image(
     name = "wolfi_base",
@@ -20,7 +20,7 @@ image_manifest_from_oci_layout(
     os = "linux",
 )
 
-# Verify that we can build a index when the arm64 architecture variant is unspecified
+# Verify that we can build an index when the arm64 architecture variant is unspecified
 image_index_from_oci_layout(
     name = "converted_apko_index",
     src = ":wolfi_base",
