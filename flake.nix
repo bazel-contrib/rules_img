@@ -14,19 +14,31 @@
         pkgs = import nixpkgs {
           inherit system;
         };
+        isLinux = pkgs.stdenv.isLinux;
         bazel_pkgs = bazel-env.packages.${system};
+        # Common packages for all platforms
+        commonPkgs = with pkgs; [
+          pre-commit
+        ];
       in
-      rec {
-        packages.dev = (bazel_pkgs.bazel-full-env.override {
-          name = "dev";
-          extraPkgs = [
-            pkgs.pre-commit
-          ];
+      if isLinux then
+        rec {
+          packages.dev = (bazel_pkgs.bazel-full-env.override {
+            name = "dev";
+            extraPkgs = commonPkgs;
+          });
+          packages.bazel-fhs = bazel_pkgs.bazel-full;
+          devShells.dev = packages.dev.env;
+          devShells.default = pkgs.mkShell {
+            packages = [ packages.dev bazel_pkgs.bazel-full ] ++ commonPkgs;
+          };
+        }
+      else
+        {
+          # macOS: simpler dev shell without Bazel
+          # Use Bazelisk instead.
+          devShells.default = pkgs.mkShell {
+            packages = commonPkgs;
+          };
         });
-        packages.bazel-fhs = bazel_pkgs.bazel-full;
-        devShells.dev = packages.dev.env;
-        devShells.default = pkgs.mkShell {
-          packages = [ packages.dev bazel_pkgs.bazel-full pkgs.pre-commit ];
-        };
-      });
 }
