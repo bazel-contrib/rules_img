@@ -11,10 +11,10 @@ import (
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/dockersave"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/downloadblob"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/expandtemplate"
+	"github.com/bazel-contrib/rules_img/img_tool/cmd/hash"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/index"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/indexfromocilayout"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/layer"
-	"github.com/bazel-contrib/rules_img/img_tool/cmd/layermeta"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/manifest"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/manifestfromocilayout"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/ocilayout"
@@ -28,10 +28,10 @@ Commands:
   docker-save              assembles a Docker save compatible directory or tarball
   download-blob            downloads a single blob from a registry
   expand-template          expands Go templates in push request JSON
+  hash                     computes file hashes and layer metadata (supports persistent worker mode)
   index                    creates a multi-platform image index
   index-from-oci-layout    converts an OCI layout to an image index
   layer                    creates a layer from files
-  layer-metadata           creates a layer metadata file from a layer
   manifest                 creates an image manifest and config from layers
   manifest-from-oci-layout converts an OCI layout to an image manifest
   oci-layout               assembles an OCI layout directory from manifest and layers
@@ -50,8 +50,6 @@ func Run(ctx context.Context, args []string) {
 	switch command {
 	case "layer":
 		layer.LayerProcess(ctx, args[2:])
-	case "layer-metadata":
-		layermeta.LayerMetadataProcess(ctx, args[2:])
 	case "manifest":
 		manifest.ManifestProcess(ctx, args[2:])
 	case "manifest-from-oci-layout":
@@ -74,6 +72,8 @@ func Run(ctx context.Context, args []string) {
 		dockersave.DockerSaveProcess(ctx, args[2:])
 	case "download-blob":
 		downloadblob.DownloadBlobProcess(ctx, args[2:])
+	case "hash":
+		hash.HashProcess(ctx, args[2:])
 	case "oci-layout":
 		ocilayout.OCILayoutProcess(ctx, args[2:])
 	case "expand-template":

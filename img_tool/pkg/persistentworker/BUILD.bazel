@@ -1,0 +1,14 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "persistentworker",
+    srcs = [
+        "args.go",
+        "handler.go",
+        "options.go",
+        "worker.go",
+        "workrequest.go",
+    ],
+    importpath = "github.com/bazel-contrib/rules_img/img_tool/pkg/persistentworker",
+    visibility = ["//visibility:public"],
+)
