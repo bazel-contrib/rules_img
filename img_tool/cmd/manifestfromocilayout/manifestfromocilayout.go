@@ -167,6 +167,10 @@ func processOCILayout() error {
 		manifestVariant := ""
 		if manifestDesc.Platform.Variant != "" {
 			manifestVariant = manifestDesc.Platform.Variant
+		} else if manifestDesc.Platform.Architecture == "arm64" {
+			// ARM64 defaults to v8 variant
+			// See: https://github.com/containerd/platforms/blob/2e51fd9435bd985e1753954b24f4b0453f4e4767/platforms.go#L290
+			manifestVariant = "v8"
 		}
 		if manifestVariant != variant {
 			return fmt.Errorf("manifest descriptor variant mismatch: has %s, but %s was requested", manifestVariant, variant)
@@ -297,6 +301,10 @@ func findManifestForPlatform(index *specv1.Index, arch, os, variant string) (*sp
 			descVariant := ""
 			if desc.Platform.Variant != "" {
 				descVariant = desc.Platform.Variant
+			} else if desc.Platform.Architecture == "arm64" {
+				// ARM64 defaults to v8 variant
+				// See: https://github.com/containerd/platforms/blob/2e51fd9435bd985e1753954b24f4b0453f4e4767/platforms.go#L290
+				descVariant = "v8"
 			}
 			if descVariant == variant {
 				return desc, nil
