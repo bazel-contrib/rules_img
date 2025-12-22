@@ -92,19 +92,31 @@ def calculate_layer_info(*, ctx, media_type, tar_file, metadata_file, estargz, a
         LayerInfo provider with blob, metadata, and media type.
     """
     args = ctx.actions.args()
-    args.add("layer-metadata")
+    args.add("--digest=sha256")
+    args.add("--encoding=layer-metadata")
     args.add("--name", ctx.label)
     for key, value in annotations.items():
         args.add("--annotation", "{}={}".format(key, value))
-    args.add(tar_file.path)
-    args.add(metadata_file.path)
+    args.add(tar_file)
+    args.add(metadata_file)
+    args.set_param_file_format("multiline")
+    args.use_param_file("@%s", use_always = True)
+
     img_toolchain_info = ctx.toolchains[TOOLCHAIN].imgtoolchaininfo
     ctx.actions.run(
         inputs = [tar_file],
         outputs = [metadata_file],
         executable = img_toolchain_info.tool_exe,
-        arguments = [args],
+        arguments = ["hash", args],
         mnemonic = "LayerMetadata",
+        execution_requirements = {
+            "requires-worker-protocol": "json",
+            "supports-workers": "1",
+            "supports-multiplex-workers": "1",
+            "supports-multiplex-sandboxing": "1",
+            "supports-worker-cancellation": "1",
+            "supports-path-mapping": "1",
+        },
     )
     return LayerInfo(
         blob = tar_file,
