@@ -462,8 +462,14 @@ func overlayNewConfigValues(config *specv1.Image, layers []api.Descriptor, templ
 		}
 	}
 
+	// NOTE: Setting entrypoint clears Cmd, which is consistent with Docker/Dockerfile behavior.
+	// This matches the behavior of rules_oci and crane.
+	// See: https://github.com/bazel-contrib/rules_img/issues/368
+	// See: https://github.com/bazel-contrib/rules_oci/issues/649
+	// See: https://github.com/google/go-containerregistry/blob/c3d1dcc932076c15b65b8b9acfff1d47ded2ebf9/cmd/crane/cmd/mutate.go#L107
 	if len(entrypoint) > 0 {
 		config.Config.Entrypoint = []string(entrypoint)
+		config.Config.Cmd = nil
 	}
 
 	if len(cmd) > 0 {
