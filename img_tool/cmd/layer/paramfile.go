@@ -32,6 +32,13 @@ func readParamFile(paramFile string) (addFiles, error) {
 		switch typeOfFile {
 		case "f":
 			typ = api.RegularFile
+			// Bazel's is_directory attribute doesn't work for source directories,
+			// so source directories are marked as "f" in the args file even though
+			// they're actually directories. We need to check the actual filesystem
+			// type to handle this edge case.
+			if fileInfo, err := os.Stat(file); err == nil && fileInfo.IsDir() {
+				typ = api.Directory
+			}
 		case "d":
 			typ = api.Directory
 		case "l":

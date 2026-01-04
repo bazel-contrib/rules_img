@@ -215,7 +215,7 @@ func (t *treeHasher) collectRegularFile(p string, i fs.FileInfo) error {
 		return err
 	}
 
-	fileNode := DetailedFileNode(contentHasher.Sum(nil), i)
+	fileNode := DefaultFileNode(contentHasher.Sum(nil), i)
 	t.fileNodes[p] = fileNode
 	return nil
 }

@@ -78,6 +78,17 @@ image_manifest(
     layers = [":empty_tar"],
 )
 
+# Edge case: Source directory
+image_layer(
+    name = "src_dir_layer",
+    srcs = {"deep": ":deep_structure"},
+    target_compatible_with = select({
+        # TODO: Inspect why Windows has issues with directory layers
+        "@platforms//os:windows": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
+)
+
 # Edge case: Empty layer
 image_layer(
     name = "empty_layer",
