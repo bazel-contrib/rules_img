@@ -1,0 +1,19 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "dirtree",
+    srcs = [
+        "builder.go",
+        "dirtree.go",
+        "persistentworker.go",
+    ],
+    importpath = "github.com/bazel-contrib/rules_img/img_tool/cmd/dirtree",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/api",
+        "//pkg/persistentworker",
+        "//pkg/proto/remote-apis/build/bazel/remote/execution/v2",
+        "@com_github_zeebo_blake3//:blake3",
+        "@org_golang_google_protobuf//proto",
+    ],
+)

@@ -8,6 +8,7 @@ import (
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/compress"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/deploy"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/deploymetadata"
+	"github.com/bazel-contrib/rules_img/img_tool/cmd/dirtree"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/dockersave"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/downloadblob"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/expandtemplate"
@@ -25,6 +26,7 @@ const usage = `Usage: img [COMMAND] [ARGS...]
 
 Commands:
   compress                 (re-)compresses a layer
+  dirtree                  builds Remote Execution API Directory tree from inputs (supports persistent worker mode)
   docker-save              assembles a Docker save compatible directory or tarball
   download-blob            downloads a single blob from a registry
   expand-template          expands Go templates in push request JSON
@@ -68,6 +70,8 @@ func Run(ctx context.Context, args []string) {
 		deploymetadata.DeployMergeProcess(ctx, args[2:])
 	case "compress":
 		compress.CompressProcess(ctx, args[2:])
+	case "dirtree":
+		dirtree.DirtreeProcess(ctx, args[2:])
 	case "docker-save":
 		dockersave.DockerSaveProcess(ctx, args[2:])
 	case "download-blob":

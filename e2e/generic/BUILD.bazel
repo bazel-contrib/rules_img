@@ -4,6 +4,7 @@ load("@bazel_skylib//rules:write_file.bzl", "write_file")
 load("@rules_img//img:image.bzl", "image_index", "image_manifest")
 load("@rules_img//img:layer.bzl", "file_metadata", "image_layer")
 load("@rules_img//img:push.bzl", "image_push")
+load("@rules_img//img:rbe_layer.bzl", "image_rbe_layer")
 load("@rules_img_images.bzl", "image")
 load("@rules_pkg//pkg:tar.bzl", "pkg_tar")
 load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
@@ -367,6 +368,61 @@ image_layer(
     annotations_file = ":layer_annotations_file",
 )
 
+# RBE Layer tests: Remote Execution API Directory trees instead of tar files
+# Simple RBE layer with basic files
+image_rbe_layer(
+    name = "simple_rbe_layer",
+    srcs = {
+        "file1.txt": ":large_file",
+        "file2.txt": ":unicode_file",
+    },
+)
+
+# RBE layer with symlinks
+image_rbe_layer(
+    name = "rbe_layer_with_symlinks",
+    srcs = {
+        "bin/script": ":executable_script",
+        "data/file.txt": ":large_file",
+    },
+    symlinks = {
+        "script_link": "/bin/script",
+        "data_link": "/data",
+    },
+)
+
+# RBE layer using blake3 hash function
+image_rbe_layer(
+    name = "rbe_layer_blake3",
+    srcs = {
+        "file1.txt": ":large_file",
+        "file2.txt": ":unicode_file",
+    },
+    digest_function = "blake3",
+)
+
+# RBE layer with executable and runfiles
+image_rbe_layer(
+    name = "rbe_layer_with_runfiles",
+    srcs = {
+        "bin/app": ":executable_script_with_runfiles",
+    },
+)
+
+# RBE layer with mixed content
+image_rbe_layer(
+    name = "rbe_layer_mixed",
+    srcs = {
+        "bin/script": ":executable_script",
+        "data/large.txt": ":large_file",
+        "data/binary.dat": ":binary_file",
+        "data/unicode.txt": ":unicode_file",
+    },
+    symlinks = {
+        "link_to_script": "/bin/script",
+    },
+)
+
 # Edge case: Manifest with complex configuration
 image_manifest(
     name = "complex_manifest",
@@ -469,6 +525,17 @@ build_test(
         ":heavily_annotated_layer",
         ":layer_with_annotations_file",
         ":layer_with_merged_annotations",
+    ],
+)
+
+build_test(
+    name = "rbe_layer_tests",
+    targets = [
+        ":simple_rbe_layer",
+        ":rbe_layer_with_symlinks",
+        ":rbe_layer_blake3",
+        ":rbe_layer_with_runfiles",
+        ":rbe_layer_mixed",
     ],
 )
 
@@ -585,6 +652,7 @@ build_test(
     name = "all_tests",
     targets = [
         ":layer_tests",
+        ":rbe_layer_tests",
         ":manifest_tests",
         ":index_tests",
         ":push_tests",

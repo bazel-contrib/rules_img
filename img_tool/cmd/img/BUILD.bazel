@@ -10,6 +10,7 @@ go_library(
         "//cmd/compress",
         "//cmd/deploy",
         "//cmd/deploymetadata",
+        "//cmd/dirtree",
         "//cmd/dockersave",
         "//cmd/downloadblob",
         "//cmd/expandtemplate",
