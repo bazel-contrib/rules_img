@@ -1,0 +1,15 @@
+load("@rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "integration_test",
+    srcs = ["integration_test.go"],
+    data = ["//load:load_image"],
+    tags = [
+        "manual",
+        "requires-docker",
+        "requires-network",
+    ],
+    deps = [
+        "@rules_go//go/runfiles",
+    ],
+)

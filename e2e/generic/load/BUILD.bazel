@@ -40,10 +40,10 @@ image_index(
     ],
 )
 
-# load an image (single platform)
+# load an image
 image_load(
     name = "load_image",
-    image = ":image",
+    image = ":index",
     tag = "ghcr.io/malt3/rules_img:sideloaded",
     visibility = ["//visibility:public"],
 )
