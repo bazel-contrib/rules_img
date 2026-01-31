@@ -99,7 +99,6 @@ bazel_integration_tests(
     # bazel 9 drops WORKSPACE support.
     bazel_versions = [
         "7.4.0",
-        "8.4.2",
     ],
     tags = TAGS,
     test_runner = "//img/private/integration_test_runner",
@@ -131,7 +130,6 @@ test_suite(
         "workspace",
         [
             "7.4.0",
-            "8.4.2",
         ],
     ),
     visibility = ["//:__subpackages__"],

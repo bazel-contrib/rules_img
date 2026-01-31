@@ -127,7 +127,12 @@ func (s *Store) WriteLarge(digest string, r io.Reader) error {
 	}
 
 	// Atomically rename to final location
+	// if the OS supports it (Windows doesn't really).
 	if err := os.Rename(tempPath, path); err != nil {
+		// if renaming fails, check if the destination is already correct.
+		if s.Exists(digest) {
+			return nil
+		}
 		return fmt.Errorf("renaming blob %s to final location: %w", digest, err)
 	}
 
