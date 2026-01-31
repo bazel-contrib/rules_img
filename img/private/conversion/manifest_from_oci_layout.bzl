@@ -131,6 +131,7 @@ image_manifest_from_oci_layout = rule(
             values = [
                 "386",
                 "amd64",
+                "arm",
                 "arm64",
                 "mips64",
                 "ppc64le",
