@@ -1,6 +1,6 @@
 module(
     name = "rules_img",
-    version = "0.3.3",
+    version = "0.3.4",
     compatibility_level = 1,
 )
 
@@ -53,8 +53,8 @@ bazel_dep(name = "gazelle", version = "0.47.0", dev_dependency = True)
 bazel_dep(name = "hermetic_cc_toolchain", version = "4.0.1", dev_dependency = True)
 bazel_dep(name = "rules_bazel_integration_test", version = "0.34.0", dev_dependency = True)
 bazel_dep(name = "rules_go", version = "0.59.0", dev_dependency = True)
-bazel_dep(name = "rules_img_pull_tool", version = "0.3.3", dev_dependency = True)
-bazel_dep(name = "rules_img_tool", version = "0.3.3", dev_dependency = True)
+bazel_dep(name = "rules_img_pull_tool", version = "0.3.4", dev_dependency = True)
+bazel_dep(name = "rules_img_tool", version = "0.3.4", dev_dependency = True)
 bazel_dep(name = "rules_pkg", version = "1.2.0", dev_dependency = True)
 bazel_dep(name = "rules_python", version = "1.7.0", dev_dependency = True)
 bazel_dep(name = "stardoc", version = "0.8.0", dev_dependency = True)
