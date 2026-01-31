@@ -57,7 +57,7 @@ bazel_dep(name = "rules_img_pull_tool", version = "0.3.3", dev_dependency = True
 bazel_dep(name = "rules_img_tool", version = "0.3.3", dev_dependency = True)
 bazel_dep(name = "rules_pkg", version = "1.2.0", dev_dependency = True)
 bazel_dep(name = "rules_python", version = "1.7.0", dev_dependency = True)
-bazel_dep(name = "stardoc", version = "0.8.0", dev_dependency = True)
+bazel_dep(name = "stardoc", version = "0.8.1", dev_dependency = True)
 
 # Register a source-built toolchain of the img tool
 # for use in this repository (in dev mode).
