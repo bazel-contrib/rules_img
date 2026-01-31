@@ -1,10 +1,12 @@
 package protohelper
 
 import (
+	"context"
+	"encoding/base64"
 	"fmt"
+	"net/url"
 	"os"
 	"slices"
-	"strings"
 	"sync"
 
 	"google.golang.org/grpc"
@@ -17,11 +19,13 @@ import (
 
 func Client(uri string, helper credhelper.Helper, opts ...grpc.DialOption) (*grpc.ClientConn, error) {
 	opts = slices.Clone(opts)
-	schemeAndRest := strings.SplitN(uri, "://", 2)
-	if len(schemeAndRest) != 2 {
-		return nil, fmt.Errorf("invalid uri for grpc: %s", uri)
+
+	parsed, err := url.Parse(uri)
+	if err != nil {
+		return nil, fmt.Errorf("invalid uri for grpc: %s: %w", uri, err)
 	}
-	switch schemeAndRest[0] {
+
+	switch parsed.Scheme {
 	case "grpc":
 		// unencrypted grpc
 		warnUnencryptedGRPC(uri)
@@ -29,14 +33,45 @@ func Client(uri string, helper credhelper.Helper, opts ...grpc.DialOption) (*grp
 	case "grpcs":
 		opts = append(opts, grpc.WithTransportCredentials(credentials.NewTLS(nil)))
 	default:
-		return nil, fmt.Errorf("unsupported scheme for grpc: %s", schemeAndRest[0])
+		return nil, fmt.Errorf("unsupported scheme for grpc: %s", parsed.Scheme)
 	}
 
-	target := fmt.Sprintf("dns:%s", schemeAndRest[1])
+	// If userinfo is present, add Basic auth credentials
+	if parsed.User != nil && parsed.User.String() != "" {
+		opts = append(opts, grpc.WithPerRPCCredentials(basicAuthFromUserinfo(parsed.User)))
+	}
+
+	target := fmt.Sprintf("dns:%s", parsed.Host)
 
 	opts = append(opts, grpcheaderinterceptor.DialOptions(helper)...)
 
 	return grpc.NewClient(target, opts...)
+}
+
+// basicAuthCredentials implements grpc.PerRPCCredentials for Basic auth.
+type basicAuthCredentials struct {
+	username string
+	password string
+}
+
+func basicAuthFromUserinfo(userinfo *url.Userinfo) *basicAuthCredentials {
+	password, _ := userinfo.Password()
+	return &basicAuthCredentials{
+		username: userinfo.Username(),
+		password: password,
+	}
+}
+
+func (c *basicAuthCredentials) GetRequestMetadata(ctx context.Context, uri ...string) (map[string]string, error) {
+	auth := c.username + ":" + c.password
+	encoded := base64.StdEncoding.EncodeToString([]byte(auth))
+	return map[string]string{
+		"authorization": "Basic " + encoded,
+	}, nil
+}
+
+func (c *basicAuthCredentials) RequireTransportSecurity() bool {
+	return false
 }
 
 func warnUnencryptedGRPC(uri string) {

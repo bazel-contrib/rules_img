@@ -1,4 +1,4 @@
-load("@rules_go//go:def.bzl", "go_library")
+load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "protohelper",
@@ -12,4 +12,10 @@ go_library(
         "@org_golang_google_grpc//credentials",
         "@org_golang_google_grpc//credentials/insecure",
     ],
+)
+
+go_test(
+    name = "protohelper_test",
+    srcs = ["protohelper_test.go"],
+    embed = [":protohelper"],
 )
