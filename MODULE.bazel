@@ -45,17 +45,17 @@ use_repo(
 
 # toolchains_protoc needs to be placed at the top to ensure the proto toolchain is registered first
 bazel_dep(name = "toolchains_protoc", version = "0.6.0", dev_dependency = True)
-bazel_dep(name = "aspect_bazel_lib", version = "2.22.0", dev_dependency = True)  # only exists to upgrade bazel_lib used by cgrindel_bazel_starlib to a version compatible with Bazel 9
-bazel_dep(name = "bazel_lib", version = "3.0.1", dev_dependency = True)
+bazel_dep(name = "aspect_bazel_lib", version = "2.22.5", dev_dependency = True)  # only exists to upgrade bazel_lib used by cgrindel_bazel_starlib to a version compatible with Bazel 9
+bazel_dep(name = "bazel_lib", version = "3.1.1", dev_dependency = True)
 bazel_dep(name = "bazel_skylib_gazelle_plugin", version = "1.9.0", dev_dependency = True)
-bazel_dep(name = "buildifier_prebuilt", version = "8.2.1", dev_dependency = True)
+bazel_dep(name = "buildifier_prebuilt", version = "8.2.1.2", dev_dependency = True)
 bazel_dep(name = "gazelle", version = "0.47.0", dev_dependency = True)
 bazel_dep(name = "hermetic_cc_toolchain", version = "4.0.1", dev_dependency = True)
 bazel_dep(name = "rules_bazel_integration_test", version = "0.34.0", dev_dependency = True)
 bazel_dep(name = "rules_go", version = "0.59.0", dev_dependency = True)
 bazel_dep(name = "rules_img_pull_tool", version = "0.3.3", dev_dependency = True)
 bazel_dep(name = "rules_img_tool", version = "0.3.3", dev_dependency = True)
-bazel_dep(name = "rules_pkg", version = "1.1.0", dev_dependency = True)
+bazel_dep(name = "rules_pkg", version = "1.2.0", dev_dependency = True)
 bazel_dep(name = "rules_python", version = "1.7.0", dev_dependency = True)
 bazel_dep(name = "stardoc", version = "0.8.0", dev_dependency = True)
 
