@@ -119,6 +119,21 @@ pull(
     unsafe_allow_tag_without_digest = True,
 )
 
+pull(
+    name = "distroless_static",
+    digest = "sha256:3f2b64ef97bd285e36132c684e6b2ae8f2723293d09aae046196cca64251acac",
+    layer_handling = "eager",
+    registry = "gcr.io",
+    repository = "distroless/static",
+)
+
+pull(
+    name = "nanoserver",
+    digest = "sha256:4bfc3ec32a8b9bb5e7a182440c517b0706267d88fda77b54acddf819920400ad",
+    registry = "mcr.microsoft.com",
+    repository = "windows/nanoserver",
+)
+
 images = use_extension("@rules_img//img:extensions.bzl", "images")
 images.pull(
     name = "nginx",
