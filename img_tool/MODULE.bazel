@@ -4,21 +4,15 @@ module(
     compatibility_level = 1,
 )
 
-# needs to be placed at the top to ensure the proto toolchain is registered first
-bazel_dep(name = "toolchains_protoc", version = "0.6.0", dev_dependency = True)
-
 bazel_dep(name = "rules_img", version = "0.3.4")
 bazel_dep(name = "bazel_lib", version = "3.1.1")
 bazel_dep(name = "bazel_skylib", version = "1.7.1")
 bazel_dep(name = "gazelle", version = "0.47.0")
 bazel_dep(name = "googleapis", version = "0.0.0-20251211-05f65958")
 bazel_dep(name = "platforms", version = "0.0.11")
-bazel_dep(name = "protobuf", version = "33.2")
+bazel_dep(name = "protobuf", version = "33.5")
 bazel_dep(name = "rules_go", version = "0.59.0")
 bazel_dep(name = "rules_proto", version = "7.1.0")
-
-protoc = use_extension("@toolchains_protoc//protoc:extensions.bzl", "protoc", dev_dependency = True)
-protoc.toolchain(version = "v33.0")
 
 go_sdk = use_extension("@rules_go//go:extensions.bzl", "go_sdk")
 go_sdk.from_file(

@@ -13,6 +13,9 @@ query --deleted_packages=e2e/cc,e2e/cc/base,e2e/cc/custom_standard_library,e2e/c
 #  https://github.com/googleapis/googleapis/blob/c9578f6385fe0fb9067c5dba8d7cdda39efac0ff/google/devtools/build/v1/BUILD.bazel#L168-L176
 common --incompatible_autoload_externally=+@rules_cc,+@rules_python
 
+# enable prebuilt protoc toolchain
+common --@protobuf//bazel/toolchains:prefer_prebuilt_protoc=true
+
 common --override_module=rules_img_tool=%workspace%/img_tool
 common --override_module=rules_img_pull_tool=%workspace%/pull_tool
 
