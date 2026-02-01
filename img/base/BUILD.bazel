@@ -1,0 +1,32 @@
+load("@rules_img//img:image.bzl", "image_manifest")
+
+package(default_visibility = ["//visibility:public"])
+
+# This is equivalent to "FROM scratch" in a Dockerfile.
+# Note that you can also set `base = None` for the same effect.
+image_manifest(name = "scratch")
+
+# This is a dummy target that can be selected, but cannot be built.
+# It is useful as a default select arm of the `base` attribute:
+#
+# image_manifest(
+#     ...
+#     base = select({
+#         "@platforms//os:linux": "@distroless_static",
+#         "@platforms//os:windows": "@nanoserver",
+#         "//conditions:default": "@rules_img//img/base:incompatible",
+#     }),
+#     ...
+# )
+#
+# In effect, you can always cquery this target, but never build it.
+image_manifest(
+    name = "incompatible",
+    target_compatible_with = ["@platforms//:incompatible"],
+)
+
+filegroup(
+    name = "all_files",
+    srcs = glob(["**"]),
+    visibility = ["//img/private/release:__subpackages__"],
+)

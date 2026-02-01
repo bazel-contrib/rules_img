@@ -7,8 +7,9 @@ load("@rules_img//img:push.bzl", "image_push")
 alias(
     name = "base",
     actual = select({
+        "@platforms//os:linux": "@distroless_static",
         "@platforms//os:windows": "@nanoserver",
-        "//conditions:default": "@distroless_static",
+        "//conditions:default": "@rules_img//img/base:incompatible",
     }),
 )
 

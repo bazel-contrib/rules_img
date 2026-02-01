@@ -4,6 +4,7 @@
 release_files = [
     "//:all_files",
     "//img:all_files",
+    "//img/base:all_files",
     "//img/constraints:all_files",
     "//img/constraints/amd64:all_files",
     "//img/constraints/arm:all_files",
