@@ -30,6 +30,7 @@ type CAS[HM hashHelper] struct {
 	storedTrees    map[string]struct{}
 	firstBlobPaths map[string]string // maps hash to first occurrence path
 	firstNodePaths map[string]string // maps nodeHash to first occurrence path
+	firstTreePaths map[string]string // maps treeHash to first occurrence path
 	closed         bool
 	digestFS       *digestfs.FileSystem
 	dirs           map[string]struct{}
@@ -57,6 +58,7 @@ func New[HM hashHelper](appender api.TarAppender, opts ...Option) *CAS[HM] {
 		storedTrees:    make(map[string]struct{}),
 		firstBlobPaths: make(map[string]string),
 		firstNodePaths: make(map[string]string),
+		firstTreePaths: make(map[string]string),
 		digestFS:       digestfs.New(helper),
 		dirs:           make(map[string]struct{}),
 		options:        options,
@@ -83,6 +85,7 @@ func NewWithDigestFS[HM hashHelper](appender api.TarAppender, digestFS *digestfs
 		storedTrees:    make(map[string]struct{}),
 		firstBlobPaths: make(map[string]string),
 		firstNodePaths: make(map[string]string),
+		firstTreePaths: make(map[string]string),
 		digestFS:       digestFS,
 		dirs:           make(map[string]struct{}),
 		options:        options,
@@ -439,33 +442,33 @@ func (c *CAS[HM]) StoreNodeFromPath(filePath string, hdr *tar.Header) (linkPath 
 	return linkPath, hash, size, err
 }
 
-func (c *CAS[HM]) StoreTree(fsys fs.FS) (linkPath string, err error) {
+func (c *CAS[HM]) StoreTree(fsys fs.FS, intendedPath string) (linkPath string, err error) {
 	var hashMaker HM
 	treeHasher := merkle.NewTreeHasher(fsys, hashMaker.New)
 	rootHash, err := treeHasher.Build()
 	if err != nil {
 		return "", fmt.Errorf("calculating tree hash before storing tree artifact in tar: %w", err)
 	}
-	return c.StoreTreeKnownHash(fsys, rootHash)
+	return c.StoreTreeKnownHash(fsys, intendedPath, rootHash)
 }
 
-func (c *CAS[HM]) StoreTreeKnownHash(fsys fs.FS, treeHash []byte) (linkPath string, err error) {
+func (c *CAS[HM]) StoreTreeKnownHash(fsys fs.FS, intendedPath string, treeHash []byte) (linkPath string, err error) {
+	hashStr := string(treeHash)
 	// Every regular file in the tree is a CAS object, so we need to store it,
 	// along with a hardlink to the CAS object.
 	// For now, we don't support any special metadata for tree artifacts and disallow empty directories,
 	// so we can get away with storing a single directory entry (for the root directory of the tree).
-	treeBase := casPath("tree", treeHash)
-	if _, exists := c.storedTrees[string(treeHash)]; exists {
+	if treeBase, exists := c.firstTreePaths[hashStr]; exists {
 		return treeBase, nil
 	}
 
 	header := &tar.Header{
 		Typeflag: tar.TypeDir,
-		Name:     treeBase + "/",
+		Name:     intendedPath + "/",
 		Mode:     0o755,
 	}
 	if err := c.writeHeaderAndData(header, nil); err != nil {
-		return treeBase, err
+		return "", err
 	}
 
 	// Store the tree children in the tar file.
@@ -482,7 +485,7 @@ func (c *CAS[HM]) StoreTreeKnownHash(fsys fs.FS, treeHash []byte) (linkPath stri
 			return fmt.Errorf("opening file %s: %w", p, err)
 		}
 		defer f.Close()
-		treePath := path.Join(treeBase, p)
+		treePath := path.Join(intendedPath, p)
 		linkName, _, _, err := c.Store(f, treePath)
 		if err != nil {
 			return fmt.Errorf("storing file %s: %w", p, err)
@@ -509,12 +512,13 @@ func (c *CAS[HM]) StoreTreeKnownHash(fsys fs.FS, treeHash []byte) (linkPath stri
 
 		return nil
 	}); err != nil {
-		return treeBase, fmt.Errorf("storing tree artifact %x in tar: %w", treeHash, err)
+		return "", fmt.Errorf("storing tree artifact %x in tar: %w", treeHash, err)
 	}
 
-	c.storedTrees[string(treeHash)] = struct{}{}
+	c.storedTrees[hashStr] = struct{}{}
+	c.firstTreePaths[hashStr] = intendedPath
 	c.treeOrder = append(c.treeOrder, treeHash)
-	return treeBase, nil
+	return "", nil
 }
 
 func (c *CAS[HM]) writeHeaderOrDefer(hdr *tar.Header, data io.Reader) error {
@@ -541,10 +545,6 @@ func (c *CAS[HM]) writeHeaderOrDefer(hdr *tar.Header, data io.Reader) error {
 	// Or are in intertwined mode (CAS and non-CAS objects are mixed together as they are written)
 	// Or we are in CASFirst mode and we are about to close the tar (so we need to write the deferred files)
 	return c.writeHeaderAndData(hdr, data)
-}
-
-func casPath(blobKind string, hash []byte) string {
-	return fmt.Sprintf(".cas/%s/%x", blobKind, hash)
 }
 
 func callbackModeFromTarType(hdr *tar.Header) WriteHeaderCallbackFilter {
