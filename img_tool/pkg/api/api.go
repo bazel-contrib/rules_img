@@ -116,8 +116,8 @@ type CAS interface {
 	StoreKnownHashAndSize(r io.Reader, blobHash []byte, size int64, intendedPath string) (linkPath string, err error)
 	StoreNode(r io.Reader, hdr *tar.Header) (linkPath string, blobHash []byte, size int64, err error)
 	StoreNodeKnownHash(r io.Reader, hdr *tar.Header, blobHash []byte) (linkPath string, err error)
-	StoreTree(fsys fs.FS) (linkPath string, err error)
-	StoreTreeKnownHash(fsys fs.FS, treeHash []byte) (linkPath string, err error)
+	StoreTree(fsys fs.FS, intendedPath string) (linkPath string, err error)
+	StoreTreeKnownHash(fsys fs.FS, intendedPath string, treeHash []byte) (linkPath string, err error)
 }
 
 type CASStateSupplier interface {

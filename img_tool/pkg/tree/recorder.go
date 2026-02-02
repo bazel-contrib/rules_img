@@ -168,9 +168,13 @@ func (r Recorder) TreeFromPath(dirPath, target string) error {
 // Tree records a directory tree (including all files and subdirectories).
 // It creates a symlink in the tar file that points to the root of the tree.
 func (r Recorder) Tree(fsys fs.FS, target string) error {
-	linkPath, err := r.tf.StoreTree(fsys)
+	linkPath, err := r.tf.StoreTree(fsys, target)
 	if err != nil {
 		return err
+	}
+
+	if linkPath == "" {
+		return nil
 	}
 
 	hdr := &tar.Header{
