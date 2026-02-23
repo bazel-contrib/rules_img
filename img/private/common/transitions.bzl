@@ -94,3 +94,28 @@ single_platform_transition = transition(
         _original_platforms_setting,
     ],
 )
+
+_host_platform_setting = "//command_line_option:host_platform"
+
+def _host_platform_transition_impl(settings, _attr):
+    """Transition to the host platform.
+
+    Reads the --host_platform value (which Bazel resolves to
+    @local_config_platform//:host by default) and sets --platforms to it.
+    This avoids a direct label reference to @local_config_platform, which
+    is a built-in repo not visible to non-root modules in Bzlmod.
+
+    This is used to resolve toolchains (img tool, launcher template) for the
+    host platform via target_compatible_with matching. Unlike the "host"
+    exec_group approach, this does not require the host platform to be a
+    registered execution platform — only a known target platform — making it
+    compatible with cross-platform RBE setups (e.g. macOS host with
+    Linux-only remote executors).
+    """
+    return {_platforms_setting: [str(settings[_host_platform_setting])]}
+
+host_platform_transition = transition(
+    implementation = _host_platform_transition_impl,
+    inputs = [_host_platform_setting],
+    outputs = [_platforms_setting],
+)

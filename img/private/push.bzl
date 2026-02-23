@@ -2,12 +2,12 @@
 
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("@hermetic_launcher//launcher:lib.bzl", "launcher")
-load("@platforms//host:constraints.bzl", "HOST_CONSTRAINTS")
 load("//img/private:layer_path_hints.bzl", "layer_hints_for_deploy_metadata")
 load("//img/private:root_symlinks.bzl", "calculate_root_symlinks", "symlink_name_prefix")
 load("//img/private:stamp.bzl", "expand_or_write")
 load("//img/private/common:build.bzl", "TOOLCHAIN", "TOOLCHAINS")
-load("//img/private/common:transitions.bzl", "reset_platform_transition")
+load("//img/private/common:transitions.bzl", "host_platform_transition", "reset_platform_transition")
+load("//img/private/host_tools:host_tools.bzl", "HostToolsInfo", "compile_host_stub")
 load("//img/private/providers:deploy_info.bzl", "DeployInfo")
 load("//img/private/providers:index_info.bzl", "ImageIndexInfo")
 load("//img/private/providers:manifest_info.bzl", "ImageManifestInfo")
@@ -159,21 +159,21 @@ def _image_push_impl(ctx):
         root_symlinks["{}layer_hints".format(root_symlinks_prefix)] = layer_hints
 
     pusher = ctx.actions.declare_file(ctx.label.name + ".exe")
-    img_toolchain_info = ctx.exec_groups["host"].toolchains[TOOLCHAIN].imgtoolchaininfo
-    embedded_args, transformed_args = launcher.args_from_entrypoint(executable_file = img_toolchain_info.tool_exe)
+    host_tools_info = ctx.attr._host_tools[0][HostToolsInfo]
+    img_tool_exe = host_tools_info.img_tool_exe
+    embedded_args, transformed_args = launcher.args_from_entrypoint(executable_file = img_tool_exe)
     embedded_args.extend(["deploy", "--runfiles-root-symlinks-prefix", root_symlinks_prefix, "--request-file"])
     embedded_args, transformed_args = launcher.append_runfile(
         file = deploy_metadata,
         embedded_args = embedded_args,
         transformed_args = transformed_args,
     )
-    launcher.compile_stub(
+    compile_host_stub(
         ctx = ctx,
         embedded_args = embedded_args,
         transformed_args = transformed_args,
         output_file = pusher,
-        cfg = "exec",
-        template_exec_group = "host",
+        template = host_tools_info.template_exe,
     )
 
     # Build environment for RunEnvironmentInfo
@@ -192,7 +192,7 @@ def _image_push_impl(ctx):
     if docker_config_path:
         environment["REGISTRY_AUTH_FILE"] = docker_config_path
 
-    direct_runfiles = [img_toolchain_info.tool_exe, deploy_metadata]
+    direct_runfiles = [img_tool_exe, deploy_metadata]
     return [
         DefaultInfo(
             files = depset([pusher]),
@@ -405,6 +405,11 @@ See [template expansion](/docs/templating.md) for available stamp variables.
             default = "auto",
             values = ["auto", "enabled", "disabled"],
         ),
+        "_host_tools": attr.label(
+            default = Label("//img/private/host_tools"),
+            cfg = host_platform_transition,
+            providers = [HostToolsInfo],
+        ),
         "_push_settings": attr.label(
             default = Label("//img/private/settings:push"),
             providers = [PushSettingsInfo],
@@ -420,11 +425,5 @@ See [template expansion](/docs/templating.md) for available stamp variables.
     },
     executable = True,
     cfg = reset_platform_transition,
-    exec_groups = {
-        "host": exec_group(
-            exec_compatible_with = HOST_CONSTRAINTS,
-            toolchains = [launcher.template_exec_toolchain_type] + TOOLCHAINS,
-        ),
-    },
     toolchains = [launcher.finalizer_toolchain_type] + TOOLCHAINS,
 )

@@ -57,6 +57,7 @@ bzl_library(
         "//img/private/common:build",
         "//img/private/common:transitions",
         "//img/private/common:write_index_json",
+        "//img/private/host_tools:host_tools_bzl",
         "//img/private/providers:deploy_info",
         "//img/private/providers:index_info",
         "//img/private/providers:manifest_info",
@@ -65,7 +66,6 @@ bzl_library(
         "//img/private/providers:stamp_setting_info",
         "@bazel_skylib//rules:common_settings",
         "@hermetic_launcher//launcher:lib_bzl",
-        "@platforms//host:constraints_lib",
     ],
 )
 
@@ -79,6 +79,7 @@ bzl_library(
         ":stamp",
         "//img/private/common:build",
         "//img/private/common:transitions",
+        "//img/private/host_tools:host_tools_bzl",
         "//img/private/providers:deploy_info",
         "//img/private/providers:index_info",
         "//img/private/providers:load_settings_info",
@@ -88,7 +89,6 @@ bzl_library(
         "//img/private/providers:stamp_setting_info",
         "@bazel_skylib//rules:common_settings",
         "@hermetic_launcher//launcher:lib_bzl",
-        "@platforms//host:constraints_lib",
     ],
 )
 
@@ -177,13 +177,13 @@ bzl_library(
         ":root_symlinks",
         "//img/private/common:build",
         "//img/private/common:transitions",
+        "//img/private/host_tools:host_tools_bzl",
         "//img/private/providers:deploy_info",
         "//img/private/providers:load_settings_info",
         "//img/private/providers:push_settings_info",
         "//img/private/providers:stamp_setting_info",
         "@bazel_skylib//rules:common_settings",
         "@hermetic_launcher//launcher:lib_bzl",
-        "@platforms//host:constraints_lib",
     ],
 )
 

@@ -2,12 +2,12 @@
 
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("@hermetic_launcher//launcher:lib.bzl", "launcher")
-load("@platforms//host:constraints.bzl", "HOST_CONSTRAINTS")
 load("//img/private:layer_path_hints.bzl", "layer_hints_for_deploy_metadata")
 load("//img/private:root_symlinks.bzl", "calculate_root_symlinks", "symlink_name_prefix")
 load("//img/private:stamp.bzl", "expand_or_write")
 load("//img/private/common:build.bzl", "DATA_TOOLCHAIN", "TOOLCHAIN", "TOOLCHAINS")
-load("//img/private/common:transitions.bzl", "reset_platform_transition")
+load("//img/private/common:transitions.bzl", "host_platform_transition", "reset_platform_transition")
+load("//img/private/host_tools:host_tools.bzl", "HostToolsInfo", "compile_host_stub")
 load("//img/private/providers:deploy_info.bzl", "DeployInfo")
 load("//img/private/providers:index_info.bzl", "ImageIndexInfo")
 load("//img/private/providers:load_settings_info.bzl", "LoadSettingsInfo")
@@ -210,31 +210,38 @@ def _image_load_impl(ctx):
 
     loader = ctx.actions.declare_file(ctx.label.name + ".exe")
     if ctx.attr.tool_cfg == "host":
-        img_toolchain_info = ctx.exec_groups["host"].toolchains[TOOLCHAIN].imgtoolchaininfo
-        template_exec_group = "host"
-        template_cfg = "exec"
+        host_tools_info = ctx.attr._host_tools[0][HostToolsInfo]
+        img_tool_exe = host_tools_info.img_tool_exe
+        template = host_tools_info.template_exe
     elif ctx.attr.tool_cfg == "target":
-        img_toolchain_info = ctx.toolchains[DATA_TOOLCHAIN].imgtoolchaininfo
-        template_exec_group = None
-        template_cfg = "target"
+        img_tool_exe = ctx.toolchains[DATA_TOOLCHAIN].imgtoolchaininfo.tool_exe
+        template = None
     else:
         fail("Invalid tool_cfg: {}".format(ctx.attr.tool_cfg))
 
-    embedded_args, transformed_args = launcher.args_from_entrypoint(executable_file = img_toolchain_info.tool_exe)
+    embedded_args, transformed_args = launcher.args_from_entrypoint(executable_file = img_tool_exe)
     embedded_args.extend(["deploy", "--runfiles-root-symlinks-prefix", root_symlinks_prefix, "--request-file"])
     embedded_args, transformed_args = launcher.append_runfile(
         file = deploy_metadata,
         embedded_args = embedded_args,
         transformed_args = transformed_args,
     )
-    launcher.compile_stub(
-        ctx = ctx,
-        embedded_args = embedded_args,
-        transformed_args = transformed_args,
-        output_file = loader,
-        cfg = template_cfg,
-        template_exec_group = template_exec_group,
-    )
+    if template != None:
+        compile_host_stub(
+            ctx = ctx,
+            embedded_args = embedded_args,
+            transformed_args = transformed_args,
+            output_file = loader,
+            template = template,
+        )
+    else:
+        launcher.compile_stub(
+            ctx = ctx,
+            embedded_args = embedded_args,
+            transformed_args = transformed_args,
+            output_file = loader,
+            cfg = "target",
+        )
 
     # Build environment for RunEnvironmentInfo
     environment = {
@@ -259,7 +266,7 @@ def _image_load_impl(ctx):
             executable = loader,
             runfiles = ctx.runfiles(
                 files = [
-                    img_toolchain_info.tool_exe,
+                    img_tool_exe,
                     deploy_metadata,
                 ],
                 root_symlinks = root_symlinks,
@@ -464,6 +471,11 @@ Available options:
             default = "host",
             values = ["host", "target"],
         ),
+        "_host_tools": attr.label(
+            default = Label("//img/private/host_tools"),
+            cfg = host_platform_transition,
+            providers = [HostToolsInfo],
+        ),
         "_load_settings": attr.label(
             default = Label("//img/private/settings:load"),
             providers = [LoadSettingsInfo],
@@ -483,14 +495,10 @@ Available options:
     },
     executable = True,
     cfg = reset_platform_transition,
-    exec_groups = {
-        "host": exec_group(
-            exec_compatible_with = HOST_CONSTRAINTS,
-            toolchains = [launcher.template_exec_toolchain_type] + TOOLCHAINS,
-        ),
-    },
     toolchains = [
         launcher.finalizer_toolchain_type,
+        # template_toolchain_type is needed for the tool_cfg="target" path
+        # where launcher.compile_stub resolves the template from ctx.toolchains.
         launcher.template_toolchain_type,
         DATA_TOOLCHAIN,
     ] + TOOLCHAINS,
