@@ -8,6 +8,7 @@ This module provides utilities for mapping between Go platform identifiers
 platform_tuples = [
     ("linux", "amd64"),
     ("linux", "arm64"),
+    ("linux", "s390x"),
     ("darwin", "amd64"),
     ("darwin", "arm64"),
     ("windows", "amd64"),
@@ -45,5 +46,7 @@ def goarch_to_constraint(goarch):
         return "@platforms//cpu:x86_64"
     elif goarch == "arm64":
         return "@platforms//cpu:aarch64"
+    elif goarch == "s390x":
+        return "@platforms//cpu:s390x"
     else:
         fail("Unknown goarch: {}".format(goarch))

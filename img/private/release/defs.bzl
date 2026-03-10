@@ -15,6 +15,7 @@ GOOS_WINDOWS = "windows"
 
 GOARCH_AMD64 = "amd64"
 GOARCH_ARM64 = "arm64"
+GOARCH_S390X = "s390x"
 GOARCH_RISCV64 = "riscv64"
 
 go_to_constraint_value = {
@@ -23,6 +24,7 @@ go_to_constraint_value = {
     GOOS_WINDOWS: "@platforms//os:windows",
     GOARCH_AMD64: "@platforms//cpu:x86_64",
     GOARCH_ARM64: "@platforms//cpu:arm64",
+    GOARCH_S390X: "@platforms//cpu:s390x",
     GOARCH_RISCV64: "@platforms//cpu:riscv64",
 }
 
@@ -36,13 +38,14 @@ _goos_list = [
 _goarch_list = [
     GOARCH_AMD64,
     GOARCH_ARM64,
+    GOARCH_S390X,
     # TODO: fix rules_go upstream:
     # add riscv64 to BAZEL_GOARCH_CONSTRAINTS
     GOARCH_RISCV64,
 ]
 
 _os_to_arches = {
-    GOOS_LINUX: [GOARCH_AMD64, GOARCH_ARM64],
+    GOOS_LINUX: [GOARCH_AMD64, GOARCH_ARM64, GOARCH_S390X],
     GOOS_DARWIN: [GOARCH_AMD64, GOARCH_ARM64],
     GOOS_WINDOWS: [GOARCH_AMD64, GOARCH_ARM64],
 }

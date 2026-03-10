@@ -119,6 +119,7 @@ _tuples = [
     # linux
     (LINUX, AMD64),
     (LINUX, ARM64),
+    (LINUX, S390X),
 
     # darwin
     (DARWIN, AMD64),
