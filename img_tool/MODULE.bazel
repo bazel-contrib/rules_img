@@ -5,7 +5,7 @@ module(
 )
 
 bazel_dep(name = "rules_img", version = "0.3.4")
-bazel_dep(name = "bazel_lib", version = "3.1.1")
+bazel_dep(name = "bazel_lib", version = "3.2.2")
 bazel_dep(name = "bazel_skylib", version = "1.7.1")
 bazel_dep(name = "gazelle", version = "0.47.0")
 bazel_dep(name = "googleapis", version = "0.0.0-20260109-6145b5ff")
