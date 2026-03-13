@@ -20,7 +20,10 @@ import (
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/progress"
 )
 
-const defaultWorkers = 4
+const (
+	defaultWorkers = 4
+	writeBufferSize = 2 * 1024 * 1024
+)
 
 type Request struct {
 	Command   string           `json:"command"`
@@ -170,7 +173,7 @@ func storeBlob(ctx context.Context, store containerd.Store, desc ocispec.Descrip
 	}
 	defer writer.Close()
 
-	bufferedWriter := bufio.NewWriter(writer)
+	bufferedWriter := bufio.NewWriterSize(writer, writeBufferSize)
 
 	reader, err := layer.Compressed()
 	if err != nil {
