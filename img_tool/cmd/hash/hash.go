@@ -79,6 +79,7 @@ type hashRequest struct {
 	output      string
 	layerMeta   bool
 	name        string
+	mediaType   string
 	annotations map[string]string
 }
 
@@ -119,6 +120,7 @@ func parseHashRequest(args []string) (*hashRequest, error) {
 	digest := flags.String("digest", "sha256", "Hash algorithm (sha256 or sha512)")
 	encoding := flags.String("encoding", "raw", "Output encoding (raw, hex, sri, oci-digest, layer-metadata)")
 	name := flags.String("name", "", "Layer name (only used with layer-metadata encoding)")
+	mediaType := flags.String("media-type", "", "Override layer media type (only used with layer-metadata encoding; e.g. application/vnd.cncf.helm.chart.content.v1.tar for Helm charts)")
 	annotations := make(annotationsFlag)
 	flags.Var(&annotations, "annotation", "Add an annotation as key=value (only used with layer-metadata encoding)")
 
@@ -152,6 +154,7 @@ func parseHashRequest(args []string) (*hashRequest, error) {
 		output:      positionalArgs[1],
 		layerMeta:   layerMeta,
 		name:        *name,
+		mediaType:   *mediaType,
 		annotations: annotations,
 	}, nil
 }

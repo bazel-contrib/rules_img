@@ -25,6 +25,7 @@ var (
 	variant               string
 	layerFromMetadataArgs fileList
 	configFragment        string
+	configMediaType       string
 	configTemplates       string
 	baseManifest          string
 	baseConfig            string
@@ -62,7 +63,8 @@ func ManifestProcess(_ context.Context, args []string) {
 	flagSet.StringVar(&architecture, "architecture", "amd64", `The architecture of the image. Defaults to amd64.`)
 	flagSet.StringVar(&variant, "variant", "", `The platform variant (e.g., v3 for amd64/v3, v8 for arm64/v8).`)
 	flagSet.Var(&layerFromMetadataArgs, "layer-from-metadata", `Ordered list of layer metadata files that will make up the image, as produced by "img layer --metadata".`)
-	flagSet.StringVar(&configFragment, "config-fragment", "", `A JSON file containing a config fragment to be merged into the final config. This is useful for adding custom labels or other metadata to the image.`)
+	flagSet.StringVar(&configFragment, "config-fragment", "", `A JSON file containing a config fragment to be merged into the final config. This is useful for adding custom labels or other metadata to the image. When --config-media-type is set to a non-OCI type (e.g. application/vnd.cncf.helm.config.v1+json for Helm), this file is used as the entire config blob as-is.`)
+	flagSet.StringVar(&configMediaType, "config-media-type", "", `Override the config blob media type. When set to a non-OCI image config type (e.g. application/vnd.cncf.helm.config.v1+json for Helm charts), --config-fragment is required and used verbatim as the config blob with no OCI image structure.`)
 	flagSet.StringVar(&configTemplates, "config-templates", "", `A JSON file containing template-expanded env, labels, and annotations values.`)
 	flagSet.StringVar(&baseManifest, "base-manifest", "", `A JSON file containing a base manifest to be merged into the final manifest. This is useful for adding custom layers or other metadata to the image.`)
 	flagSet.StringVar(&baseConfig, "base-config", "", `A JSON file containing a base config to be merged into the final config. This is useful for adding custom labels or other metadata to the image.`)
@@ -87,6 +89,11 @@ func ManifestProcess(_ context.Context, args []string) {
 	if flagSet.NArg() != 0 {
 		fmt.Fprintf(os.Stderr, "Unexpected positional arguments: %s\n", strings.Join(flagSet.Args(), " "))
 		flagSet.Usage()
+		os.Exit(1)
+	}
+
+	if configMediaType != "" && configMediaType != specv1.MediaTypeImageConfig && configFragment == "" {
+		fmt.Fprintf(os.Stderr, "--config-media-type %s requires --config-fragment\n", configMediaType)
 		os.Exit(1)
 	}
 
@@ -128,16 +135,30 @@ func ManifestProcess(_ context.Context, args []string) {
 		createdTime = ct
 	}
 
-	config, err := prepareConfig(layers, templatesData, createdTime)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to prepare config: %v\n", err)
-		os.Exit(1)
-	}
+	var configRaw []byte
+	if (configMediaType == "") {
+		configMediaType = specv1.MediaTypeImageConfig
 
-	configRaw, err := json.Marshal(config)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to marshal config: %v\n", err)
-		os.Exit(1)
+		config, err := prepareConfig(layers, templatesData, createdTime)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to prepare config: %v\n", err)
+			os.Exit(1)
+		}
+
+		configRaw, err = json.Marshal(config)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to marshal config: %v\n", err)
+			os.Exit(1)
+		}
+	} else {
+		// read the config fragment as-is instead of merging it with the base config
+		// this is useful for non-OCI config media types (e.g. application/vnd.cncf.helm.config.v1+json for Helm charts)
+		var err error
+		configRaw, err = os.ReadFile(configFragment)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to read config fragment: %v\n", err)
+			os.Exit(1)
+		}
 	}
 	sha256Hash := sha256.Sum256(configRaw)
 
@@ -157,7 +178,7 @@ func ManifestProcess(_ context.Context, args []string) {
 		},
 		MediaType: specv1.MediaTypeImageManifest,
 		Config: specv1.Descriptor{
-			MediaType: specv1.MediaTypeImageConfig,
+			MediaType: configMediaType,
 			Digest:    digest.NewDigestFromBytes(digest.SHA256, sha256Hash[:]),
 			Size:      int64(len(configRaw)),
 		},

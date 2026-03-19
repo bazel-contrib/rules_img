@@ -95,6 +95,7 @@ def calculate_layer_info(*, ctx, media_type, tar_file, metadata_file, estargz, a
     args.add("--digest=sha256")
     args.add("--encoding=layer-metadata")
     args.add("--name", ctx.label)
+    args.add("--media-type", media_type)
     for key, value in annotations.items():
         args.add("--annotation", "{}={}".format(key, value))
     args.add(tar_file)
