@@ -13,6 +13,7 @@ release_files = [
     "//img/constraints/riscv64:all_files",
     "//img/deploy_tool:all_files",
     "//img/deploy_tool/for_host:all_files",
+    "//img/layer:all_files",
     "//img/private:all_files",
     "//img/private/common:all_files",
     "//img/private/config:all_files",
