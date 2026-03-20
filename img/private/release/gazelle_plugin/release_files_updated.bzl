@@ -7,8 +7,8 @@ def _release_files_test_impl(ctx):
     wrapper = ctx.actions.declare_file(ctx.label.name + ".sh")
 
     substitutions = {
-        "@@TOOL@@": ctx.executable.update_release_files_binary.short_path,
-        "@@MODULE_BAZEL@@": ctx.file.module_bazel.short_path,  # MODULE.bazel
+        "{TOOL}": ctx.executable.update_release_files_binary.short_path,
+        "{MODULE_BAZEL}": ctx.file.module_bazel.short_path,  # MODULE.bazel
     }
 
     ctx.actions.expand_template(
@@ -50,7 +50,6 @@ def release_files_test(
         name,
         update_release_files_binary,
         tags = None,
-        native = native,
         **kwargs):
     """Factory function that creates a test to check if release_files is up to date.
 
@@ -58,7 +57,6 @@ def release_files_test(
         name: name of the test
         update_release_files_binary: the update_release_files binary target to test with
         tags: additional tags for the test
-        native: the native module to use for the test rule
         **kwargs: additional arguments to pass to the test rule
     """
 
