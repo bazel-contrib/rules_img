@@ -8,6 +8,7 @@ load("//img/private:root_symlinks.bzl", "calculate_root_symlinks", "symlink_name
 load("//img/private:stamp.bzl", "expand_or_write")
 load("//img/private/common:build.bzl", "TOOLCHAIN", "TOOLCHAINS")
 load("//img/private/common:transitions.bzl", "reset_platform_transition")
+load("//img/private/providers:cross_mount_info.bzl", "CrossMountInfo")
 load("//img/private/providers:deploy_info.bzl", "DeployInfo")
 load("//img/private/providers:index_info.bzl", "ImageIndexInfo")
 load("//img/private/providers:manifest_info.bzl", "ImageManifestInfo")
@@ -73,6 +74,11 @@ def _compute_push_metadata(*, ctx, configuration_json):
         args.add("--original-tag", target_info["original_tag"])
     if "original_digest" in target_info and target_info["original_digest"] != None:
         args.add("--original-digest", target_info["original_digest"])
+
+    if ctx.attr.cross_mount_from != None:
+        cross_mount = ctx.attr.cross_mount_from[CrossMountInfo]
+        args.add("--cross-mount-registry", cross_mount.registry)
+        args.add("--cross-mount-repository", cross_mount.repository)
 
     if manifest_info != None:
         args.add("--root-path", manifest_info.manifest.path)
@@ -210,6 +216,10 @@ def _image_push_impl(ctx):
             image = image_provider,
             deploy_manifest = deploy_metadata,
             layer_hints = layer_hints,
+        ),
+        CrossMountInfo(
+            registry = ctx.attr.registry,
+            repository = ctx.attr.repository,
         ),
     ]
 
@@ -365,6 +375,10 @@ Each tag is subject to [template expansion](/docs/templating.md).
         "image": attr.label(
             doc = "Image to push. Should provide ImageManifestInfo or ImageIndexInfo.",
             mandatory = True,
+        ),
+        "cross_mount_from": attr.label(
+            doc = "An image_push target whose layers may be cross-mounted during push.",
+            providers = [CrossMountInfo],
         ),
         "strategy": attr.string(
             doc = """Push strategy to use.

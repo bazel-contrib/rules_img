@@ -9,8 +9,8 @@ Public API for container image push rules.
 <pre>
 load("@rules_img//img:push.bzl", "image_push")
 
-image_push(<a href="#image_push-name">name</a>, <a href="#image_push-build_settings">build_settings</a>, <a href="#image_push-image">image</a>, <a href="#image_push-registry">registry</a>, <a href="#image_push-repository">repository</a>, <a href="#image_push-stamp">stamp</a>, <a href="#image_push-strategy">strategy</a>, <a href="#image_push-tag">tag</a>, <a href="#image_push-tag_file">tag_file</a>,
-           <a href="#image_push-tag_list">tag_list</a>)
+image_push(<a href="#image_push-name">name</a>, <a href="#image_push-build_settings">build_settings</a>, <a href="#image_push-cross_mount_from">cross_mount_from</a>, <a href="#image_push-image">image</a>, <a href="#image_push-registry">registry</a>, <a href="#image_push-repository">repository</a>, <a href="#image_push-stamp">stamp</a>, <a href="#image_push-strategy">strategy</a>,
+           <a href="#image_push-tag">tag</a>, <a href="#image_push-tag_file">tag_file</a>, <a href="#image_push-tag_list">tag_list</a>)
 </pre>
 
 Pushes container images to a registry.
@@ -109,6 +109,7 @@ bazel run //path/to:push_app
 | :------------- | :------------- | :------------- | :------------- | :------------- |
 | <a id="image_push-name"></a>name |  A unique name for this target.   | <a href="https://bazel.build/concepts/labels#target-names">Name</a> | required |  |
 | <a id="image_push-build_settings"></a>build_settings |  Build settings for template expansion.<br><br>Maps template variable names to string_flag targets. These values can be used in registry, repository, and tag attributes using `{{.VARIABLE_NAME}}` syntax (Go template).<br><br>Example: <pre><code class="language-python">build_settings = {&#10;    "REGISTRY": "//settings:docker_registry",&#10;    "VERSION": "//settings:app_version",&#10;}</code></pre><br><br>See [template expansion](/docs/templating.md) for more details.   | Dictionary: String -> Label | optional |  `{}`  |
+| <a id="image_push-cross_mount_from"></a>cross_mount_from |  An image_push target whose layers may be cross-mounted during push.   | <a href="https://bazel.build/concepts/labels">Label</a> | optional |  `None`  |
 | <a id="image_push-image"></a>image |  Image to push. Should provide ImageManifestInfo or ImageIndexInfo.   | <a href="https://bazel.build/concepts/labels">Label</a> | required |  |
 | <a id="image_push-registry"></a>registry |  Registry URL to push the image to.<br><br>Common registries: - Docker Hub: `index.docker.io` - Google Container Registry: `gcr.io` or `us.gcr.io` - GitHub Container Registry: `ghcr.io` - Amazon ECR: `123456789.dkr.ecr.us-east-1.amazonaws.com`<br><br>Subject to [template expansion](/docs/templating.md).   | String | optional |  `""`  |
 | <a id="image_push-repository"></a>repository |  Repository path within the registry.<br><br>Subject to [template expansion](/docs/templating.md).   | String | optional |  `""`  |
