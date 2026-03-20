@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # This script is used by the release_files test to run the update tool in test mode
-TOOL="@@TOOL@@"
+TOOL="{TOOL}"
 
 # MODULE.bazel
 MODULE_ROOT=$(dirname "$(realpath "MODULE.bazel")")
