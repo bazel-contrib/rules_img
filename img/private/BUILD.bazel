@@ -64,6 +64,7 @@ bzl_library(
         "//img/private/common:default_deploy_tool",
         "//img/private/common:transitions",
         "//img/private/common:write_index_json",
+        "//img/private/providers:cross_mount_info",
         "//img/private/providers:deploy_info",
         "//img/private/providers:deploy_tool_info",
         "//img/private/providers:index_info",

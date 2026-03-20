@@ -7,6 +7,12 @@ filegroup(
 )
 
 bzl_library(
+    name = "cross_mount_info",
+    srcs = ["cross_mount_info.bzl"],
+    visibility = ["//img:__subpackages__"],
+)
+
+bzl_library(
     name = "deploy_info",
     srcs = ["deploy_info.bzl"],
     visibility = ["//img:__subpackages__"],
