@@ -458,7 +458,7 @@ func (c *CAS[HM]) StoreTreeKnownHash(fsys fs.FS, intendedPath string, treeHash [
 	// along with a hardlink to the CAS object.
 	// For now, we don't support any special metadata for tree artifacts and disallow empty directories,
 	// so we can get away with storing a single directory entry (for the root directory of the tree).
-	if treeBase, exists := c.firstTreePaths[hashStr]; exists {
+	if treeBase, exists := c.firstTreePaths[hashStr]; exists && c.deduplicateTreeArtifacts {
 		return treeBase, nil
 	}
 

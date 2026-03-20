@@ -59,6 +59,11 @@ common --@rules_img//img/settings:estargz=enabled
 # This is disabled by default to avoid overwriting existing directory permissions in lower layers.
 common --@rules_img//img/settings:create_parent_directories=disabled
 
+# How to handle duplicate tree artifacts (directories) in layers.
+# "full" stores each tree at its intended path (no tree-level deduplication).
+# "deduplicate_symlink" replaces duplicate trees with symlinks to the first occurrence.
+common --@rules_img//img/settings:layer_tree_artifact_handling=full
+
 # Opt-in to stamping of image_push rules
 common --@rules_img//img/settings:stamp=disabled
 

@@ -34,6 +34,7 @@ type options struct {
 	writeHeaderCallback       WriteHeaderCallback
 	writeHeaderCallbackFilter WriteHeaderCallbackFilter
 	createParentDirectories   bool
+	deduplicateTreeArtifacts  bool
 }
 
 type CreateParentDirectories bool
@@ -45,3 +46,7 @@ func (f WriteHeaderCallback) apply(opts *options) { opts.writeHeaderCallback = f
 func (f WriteHeaderCallbackFilter) apply(opts *options) { opts.writeHeaderCallbackFilter = f }
 
 func (c CreateParentDirectories) apply(opts *options) { opts.createParentDirectories = bool(c) }
+
+type DeduplicateTreeArtifacts bool
+
+func (d DeduplicateTreeArtifacts) apply(opts *options) { opts.deduplicateTreeArtifacts = bool(d) }
