@@ -135,3 +135,13 @@ string_flag(
     ],
     visibility = ["//visibility:public"],
 )
+
+string_flag(
+    name = "layer_tree_artifact_handling",
+    build_setting_default = "full",
+    values = [
+        "full",
+        "deduplicate_symlink",
+    ],
+    visibility = ["//visibility:public"],
+)

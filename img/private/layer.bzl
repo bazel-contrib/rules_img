@@ -85,6 +85,10 @@ def _image_layer_impl(ctx):
         create_parent_directories = ctx.attr._default_create_parent_directories[BuildSettingInfo].value
     create_parent_directories_enabled = create_parent_directories == "enabled"
 
+    tree_artifact_handling = ctx.attr.tree_artifact_handling
+    if tree_artifact_handling == "auto":
+        tree_artifact_handling = ctx.attr._default_tree_artifact_handling[BuildSettingInfo].value
+
     if compression == "gzip":
         out_ext = ".tgz"
         media_type = "application/vnd.oci.image.layer.v1.tar+gzip"
@@ -104,6 +108,7 @@ def _image_layer_impl(ctx):
         args.append("--estargz")
     if create_parent_directories_enabled:
         args.append("--create-parent-directories")
+    args.extend(["--layer-tree-artifact-handling", tree_artifact_handling])
     for key, value in ctx.attr.annotations.items():
         args.extend(["--annotation", "{}={}".format(key, value)])
     if ctx.attr.annotations_file != None:
@@ -270,6 +275,14 @@ When enabled, the layer will be optimized for lazy pulling and will be compatibl
 If set to 'auto', uses the global default create_parent_directories setting.
 When enabled, parent directories will be created automatically for all files in the layer.""",
         ),
+        "tree_artifact_handling": attr.string(
+            default = "auto",
+            values = ["auto", "full", "deduplicate_symlink"],
+            doc = """How to handle duplicate tree artifacts (directories) in the layer.
+If set to 'full', each tree artifact is stored at its intended path (no deduplication).
+If set to 'deduplicate_symlink', duplicate tree artifacts are replaced with symlinks to the first occurrence.
+If set to 'auto', uses the global default from --@rules_img//img/settings:layer_tree_artifact_handling.""",
+        ),
         "include_runfiles": attr.bool(
             default = True,
             doc = """Whether to include runfiles for executable targets.
@@ -316,6 +329,10 @@ Metadata specified here overrides any defaults from default_metadata.""",
         ),
         "_default_create_parent_directories": attr.label(
             default = Label("//img/settings:create_parent_directories"),
+            providers = [BuildSettingInfo],
+        ),
+        "_default_tree_artifact_handling": attr.label(
+            default = Label("//img/settings:layer_tree_artifact_handling"),
             providers = [BuildSettingInfo],
         ),
         "_compression_jobs": attr.label(
