@@ -1,6 +1,7 @@
 """Image rule for assembling OCI images based on a set of layers."""
 
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
+load("//img/private:annotations_util.bzl", "extract_annotations_from_pull_info")
 load("//img/private:stamp.bzl", "expand_or_write")
 load("//img/private/common:build.bzl", "TOOLCHAIN", "TOOLCHAINS")
 load("//img/private/common:layer_helper.bzl", "allow_tar_files", "calculate_layer_info", "extension_to_compression")
@@ -264,15 +265,21 @@ def _image_manifest_impl(ctx):
     variant = ctx.attr._os_cpu[TargetPlatformInfo].variant
     history = []
     layers = []
+    pull_info = None
+    computed_annotations = {}
     if base != None:
         history = base.structured_config.get("history", [])
         layers.extend(base.layers)
         inputs.append(base.manifest)
         inputs.append(base.config)
+        inputs.append(base.descriptor)
         args.add("--base-manifest", base.manifest.path)
         args.add("--base-config", base.config.path)
+        args.add("--base-descriptor", base.descriptor.path)
     if ctx.attr.base != None and PullInfo in ctx.attr.base:
-        providers.append(ctx.attr.base[PullInfo])
+        pull_info = ctx.attr.base[PullInfo]
+        computed_annotations.update(extract_annotations_from_pull_info(pull_info))
+        providers.append(pull_info)
     for (layer_idx, layer) in enumerate(ctx.attr.layers):
         if LayerInfo in layer:
             # Use pre-built layer metadata
@@ -321,13 +328,6 @@ def _image_manifest_impl(ctx):
         inputs.append(ctx.file.created)
         args.add("--created", ctx.file.created.path)
 
-    # Handle template expansion for labels, env, and annotations
-    templates = {
-        "env": ctx.attr.env,
-        "labels": ctx.attr.labels,
-        "annotations": ctx.attr.annotations,
-    }
-
     # Prepare newline_delimited_lists_files if annotations_file is provided
     newline_delimited_lists_files = None
     if ctx.attr.annotations_file != None:
@@ -336,13 +336,28 @@ def _image_manifest_impl(ctx):
 
     # Prepare json_vars with base image data if available
     json_vars = None
+    json_path_to_root = None
     expose_kvs = None
     if base != None:
         json_vars = {
             "base.config": base.config,
             "base.manifest": base.manifest,
+            "base.digest": base.descriptor,
         }
+        json_path_to_root = {"base.digest": "digest"}
         expose_kvs = ["base.config.config.env"]
+
+    # Finalize annotation templates.
+    # The values set by the user directly on the image_manifest
+    # take precedence over everything else.
+    computed_annotations.update(ctx.attr.annotations)
+
+    # Handle template expansion for labels, env, and annotations
+    templates = {
+        "env": ctx.attr.env,
+        "labels": ctx.attr.labels,
+        "annotations": computed_annotations,
+    }
 
     # Try to expand templates - this will return None if no templates need expansion
     config_json = expand_or_write(
@@ -352,6 +367,7 @@ def _image_manifest_impl(ctx):
         only_if_stamping = True,
         newline_delimited_lists_files = newline_delimited_lists_files,
         json_vars = json_vars,
+        json_path_to_root = json_path_to_root,
         expose_kvs = expose_kvs,
     )
 
@@ -365,7 +381,7 @@ def _image_manifest_impl(ctx):
             args.add("--env", "%s=%s" % (key, value))
         for key, value in ctx.attr.labels.items():
             args.add("--label", "%s=%s" % (key, value))
-        for key, value in ctx.attr.annotations.items():
+        for key, value in computed_annotations.items():
             args.add("--annotation", "%s=%s" % (key, value))
 
     # Add other image config attributes

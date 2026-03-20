@@ -57,7 +57,7 @@ def should_stamp(*, ctx, template_strings):
         want_stamp = want_stamp,
     )
 
-def expand_or_write(*, ctx, templates, output_name, only_if_stamping = False, newline_delimited_lists_files = None, json_vars = None, expose_kvs = None):
+def expand_or_write(*, ctx, templates, output_name, only_if_stamping = False, newline_delimited_lists_files = None, json_vars = None, json_path_to_root = None, expose_kvs = None):
     """Either expand templates or write JSON directly based on build_settings.
 
     Args:
@@ -67,6 +67,7 @@ def expand_or_write(*, ctx, templates, output_name, only_if_stamping = False, ne
         only_if_stamping: If True, only create the file if stamping is needed (templates contain {{}})
         newline_delimited_lists_files: Optional dict mapping template keys to File objects containing newline-delimited lists
         json_vars: Optional dict mapping variable paths (e.g., "parent.config") to File objects containing JSON
+        json_path_to_root: Optional dict mapping json-var names to dot-separated paths selecting a sub-object as root
         expose_kvs: Optional list of template keys whose values are OCI-style key-value pair arrays to expose as template variables
 
     Returns:
@@ -130,6 +131,9 @@ def expand_or_write(*, ctx, templates, output_name, only_if_stamping = False, ne
             for var_path, json_file in json_vars.items():
                 args.extend(["--json-var", "{}={}".format(var_path, json_file.path)])
                 inputs.append(json_file)
+        if json_path_to_root:
+            for var_name, root_path in json_path_to_root.items():
+                args.extend(["--json-path-to-root", "{}={}".format(var_name, root_path)])
         if expose_kvs:
             for kv_path in expose_kvs:
                 args.extend(["--expose-kv", kv_path])
