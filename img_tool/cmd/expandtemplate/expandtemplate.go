@@ -69,6 +69,7 @@ func ExpandTemplateProcess(ctx context.Context, args []string) {
 	var stampFiles []string
 	var jsonVars []string
 	var exposeKVs []string
+	var jsonPathToRoots []string
 	flagSet := flag.NewFlagSet("expand-template", flag.ExitOnError)
 	flagSet.Func("stamp", "Path to a stamp file (can be specified multiple times)", func(s string) error {
 		stampFiles = append(stampFiles, s)
@@ -82,6 +83,10 @@ func ExpandTemplateProcess(ctx context.Context, args []string) {
 		exposeKVs = append(exposeKVs, s)
 		return nil
 	})
+	flagSet.Func("json-path-to-root", "Select a sub-path as root for a json-var (format: varname=path.to.root)", func(s string) error {
+		jsonPathToRoots = append(jsonPathToRoots, s)
+		return nil
+	})
 
 	// Parse flags
 	if err := flagSet.Parse(args); err != nil {
@@ -92,20 +97,20 @@ func ExpandTemplateProcess(ctx context.Context, args []string) {
 	// Get positional arguments
 	args = flagSet.Args()
 	if len(args) != 2 {
-		fmt.Fprintf(os.Stderr, "Usage: img expand-template [--stamp file]... [--json-var path=file.json]... [--expose-kv path.to.kvarray]... <input.json> <output.json>\n")
+		fmt.Fprintf(os.Stderr, "Usage: img expand-template [--stamp file]... [--json-var path=file.json]... [--json-path-to-root varname=path.to.root]... [--expose-kv path.to.kvarray]... <input.json> <output.json>\n")
 		os.Exit(1)
 	}
 
 	inputPath := args[0]
 	outputPath := args[1]
 
-	if err := expandTemplates(inputPath, outputPath, stampFiles, jsonVars, exposeKVs); err != nil {
+	if err := expandTemplates(inputPath, outputPath, stampFiles, jsonVars, jsonPathToRoots, exposeKVs); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 }
 
-func expandTemplates(inputPath, outputPath string, stampFiles []string, jsonVars []string, exposeKVs []string) error {
+func expandTemplates(inputPath, outputPath string, stampFiles []string, jsonVars []string, jsonPathToRoots []string, exposeKVs []string) error {
 	// Read input JSON
 	inputData, err := os.ReadFile(inputPath)
 	if err != nil {
@@ -142,6 +147,13 @@ func expandTemplates(inputPath, outputPath string, stampFiles []string, jsonVars
 	for _, jsonVar := range jsonVars {
 		if err := processJSONVar(jsonVar, jsonVarData); err != nil {
 			return fmt.Errorf("processing json-var %q: %w", jsonVar, err)
+		}
+	}
+
+	// Apply json-path-to-root: select a sub-path as root for a json-var
+	for _, ptr := range jsonPathToRoots {
+		if err := applyPathToRoot(ptr, jsonVarData); err != nil {
+			return fmt.Errorf("processing json-path-to-root %q: %w", ptr, err)
 		}
 	}
 
@@ -616,4 +628,56 @@ func makeCaseInsensitiveValue(val any) any {
 	default:
 		return v
 	}
+}
+
+// applyPathToRoot takes a "varname=path.to.root" string, navigates into the
+// json-var data at varname following the dot-separated path, and replaces the
+// value at varname with the sub-object found at the path.
+func applyPathToRoot(spec string, jsonVarData map[string]any) error {
+	parts := strings.SplitN(spec, "=", 2)
+	if len(parts) != 2 {
+		return fmt.Errorf("invalid format, expected varname=path.to.root")
+	}
+
+	varName := parts[0]
+	rootPath := parts[1]
+
+	// Find the json-var: navigate to the varname using dot-separated path
+	varParts := strings.Split(varName, ".")
+	parentMap := jsonVarData
+	for i, p := range varParts[:len(varParts)-1] {
+		next, ok := parentMap[p]
+		if !ok {
+			return fmt.Errorf("json-var path component %q not found (full path: %s)", p, strings.Join(varParts[:i+1], "."))
+		}
+		nextMap, ok := next.(map[string]any)
+		if !ok {
+			return fmt.Errorf("json-var path component %q is not a map", strings.Join(varParts[:i+1], "."))
+		}
+		parentMap = nextMap
+	}
+
+	leafKey := varParts[len(varParts)-1]
+	value, ok := parentMap[leafKey]
+	if !ok {
+		return fmt.Errorf("json-var %q not found in template data", varName)
+	}
+
+	// Navigate into the value following rootPath
+	pathParts := strings.Split(rootPath, ".")
+	current := value
+	for _, p := range pathParts {
+		m, ok := current.(map[string]any)
+		if !ok {
+			return fmt.Errorf("cannot navigate into non-map at path component %q in root path %q", p, rootPath)
+		}
+		current, ok = m[p]
+		if !ok {
+			return fmt.Errorf("path component %q not found in root path %q", p, rootPath)
+		}
+	}
+
+	// Replace the value at varName with the sub-object
+	parentMap[leafKey] = current
+	return nil
 }

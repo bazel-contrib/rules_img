@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"maps"
@@ -28,6 +29,7 @@ var (
 	configTemplates       string
 	baseManifest          string
 	baseConfig            string
+	baseDescriptor        string
 	manifestOutput        string
 	configOutput          string
 	descriptorOutput      string
@@ -66,6 +68,7 @@ func ManifestProcess(_ context.Context, args []string) {
 	flagSet.StringVar(&configTemplates, "config-templates", "", `A JSON file containing template-expanded env, labels, and annotations values.`)
 	flagSet.StringVar(&baseManifest, "base-manifest", "", `A JSON file containing a base manifest to be merged into the final manifest. This is useful for adding custom layers or other metadata to the image.`)
 	flagSet.StringVar(&baseConfig, "base-config", "", `A JSON file containing a base config to be merged into the final config. This is useful for adding custom labels or other metadata to the image.`)
+	flagSet.StringVar(&baseDescriptor, "base-descriptor", "", `A JSON file containing the descriptor of the base manifest.`)
 	flagSet.StringVar(&manifestOutput, "manifest", "", `The output file for the final manifest.`)
 	flagSet.StringVar(&configOutput, "config", "", `The output file for the final config.`)
 	flagSet.StringVar(&descriptorOutput, "descriptor", "", `The output file for the descriptor of the manifest.`)
@@ -168,6 +171,13 @@ func ManifestProcess(_ context.Context, args []string) {
 	annotationsToApply := annotations
 	if templatesData != nil && templatesData.Annotations != nil {
 		annotationsToApply = templatesData.Annotations
+	}
+
+	// Set base image digest annotation if we have a base descriptor
+	annotationsToApply, err = annotationsFromBaseImageDescriptorFile(baseDescriptor, annotationsToApply)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to compute annotations: %v\n", err)
+		os.Exit(1)
 	}
 
 	if len(annotationsToApply) > 0 {
@@ -551,4 +561,33 @@ func readCreatedTimestamp(filePath string) (*time.Time, error) {
 	}
 
 	return &t, nil
+}
+
+func annotationsFromBaseImageDescriptorFile(filePath string, annotations map[string]string) (map[string]string, error) {
+	if len(filePath) == 0 {
+		// We may not have a base image.
+		return nil, nil
+	}
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("reading descriptor file for base image: %w", err)
+	}
+	var desc specv1.Descriptor
+	if err := json.Unmarshal(data, &desc); err != nil {
+		return nil, fmt.Errorf("decoding descriptor file for base image: %w", err)
+	}
+
+	digest := desc.Digest.String()
+	if len(digest) == 0 {
+		return nil, errors.New("decoding descriptor file for base image: expected digest to be set")
+	}
+
+	if annotations == nil {
+		annotations = make(map[string]string)
+	}
+	if _, exists := annotations["org.opencontainers.image.base.digest"]; !exists {
+		annotations["org.opencontainers.image.base.digest"] = digest
+	}
+
+	return annotations, nil
 }
