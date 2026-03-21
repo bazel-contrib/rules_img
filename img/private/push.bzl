@@ -76,6 +76,9 @@ def _compute_push_metadata(*, ctx, configuration_json):
     if "original_digest" in target_info and target_info["original_digest"] != None:
         args.add("--original-digest", target_info["original_digest"])
 
+    if ctx.attr._push_settings[PushSettingsInfo].cross_mount == "disabled":
+        args.add("--cross-mount-disabled")
+
     if ctx.attr.cross_mount_from != None:
         cross_mount = ctx.attr.cross_mount_from[CrossMountInfo]
         args.add("--cross-mount-registry", cross_mount.registry)

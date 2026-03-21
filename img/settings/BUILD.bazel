@@ -145,3 +145,13 @@ string_flag(
     ],
     visibility = ["//visibility:public"],
 )
+
+string_flag(
+    name = "cross_mount",
+    build_setting_default = "enabled",
+    values = [
+        "enabled",
+        "disabled",
+    ],
+    visibility = ["//img/private:__subpackages__"],
+)
