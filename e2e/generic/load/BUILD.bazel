@@ -132,6 +132,15 @@ image_load(
     visibility = ["//visibility:public"],
 )
 
+# Load an image with tool_cfg = "target" (used as data dependency of integration tests)
+image_load(
+    name = "load_image_target_cfg",
+    image = ":image",
+    tag = "ghcr.io/malt3/rules_img:target-cfg",
+    tool_cfg = "target",
+    visibility = ["//visibility:public"],
+)
+
 build_test(
     name = "test",
     targets = [
@@ -143,5 +152,6 @@ build_test(
         ":load_normalized",
         ":load_multi_tags",
         ":load_tag_file",
+        ":load_image_target_cfg",
     ],
 )

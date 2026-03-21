@@ -1,3 +1,4 @@
+load("@bazel_skylib//rules:build_test.bzl", "build_test")
 load("@rules_img//img:multi_deploy.bzl", "multi_deploy")
 load("@rules_img//img:push.bzl", "image_push")
 
@@ -22,5 +23,13 @@ multi_deploy(
         "//:push_annotated",
         "//:push_index",
         "//:push_complex",
+    ],
+)
+
+build_test(
+    name = "test",
+    targets = [
+        ":nginx",
+        ":multi_deploy",
     ],
 )

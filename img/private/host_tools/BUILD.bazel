@@ -1,0 +1,22 @@
+load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
+load(":host_tools.bzl", "host_tools")
+
+host_tools(
+    name = "host_tools",
+    visibility = ["//img:__subpackages__"],
+)
+
+bzl_library(
+    name = "host_tools_bzl",
+    srcs = ["host_tools.bzl"],
+    visibility = ["//img:__subpackages__"],
+    deps = [
+        "//img/private/common:build",
+    ],
+)
+
+filegroup(
+    name = "all_files",
+    srcs = glob(["**"]),
+    visibility = ["//img/private/release:__subpackages__"],
+)
