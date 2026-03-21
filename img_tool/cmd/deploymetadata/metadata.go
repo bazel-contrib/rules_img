@@ -30,6 +30,10 @@ var (
 	originalDigest          string
 	layerHintsInputPath     string
 	layerHintsOutputPath    string
+
+	crossMountDisabled   bool
+	crossMountRegistry   string
+	crossMountRepository string
 )
 
 func DeployMetadataProcess(ctx context.Context, args []string) {
@@ -53,6 +57,9 @@ func DeployMetadataProcess(ctx context.Context, args []string) {
 	flagSet.StringVar(&rootKind, "root-kind", "", `Kind of the root manifest ("manifest" or "index").`)
 	flagSet.StringVar(&configurationPath, "configuration-file", "", `Path to the configuration file.`)
 	flagSet.StringVar(&strategy, "strategy", "eager", `Push strategy to use. One of "eager", "lazy", "cas_registry", or "bes".`)
+	flagSet.BoolVar(&crossMountDisabled, "cross-mount-disabled", false, `Disable cross-repository blob mounting entirely.`)
+	flagSet.StringVar(&crossMountRegistry, "cross-mount-registry", "", `(Optional) registry of a repository from which layers can be cross-mounted.`)
+	flagSet.StringVar(&crossMountRepository, "cross-mount-repository", "", `(Optional) repository from which layers can be cross-mounted.`)
 	flagSet.Func("original-registry", `(Optional) original registry that the base of this image was pulled from. Can be specified multiple times.`, func(value string) error {
 		originalRegistries = append(originalRegistries, value)
 		return nil
@@ -252,11 +259,21 @@ func WriteMetadata(ctx context.Context, outputPath string) error {
 		}
 	}
 
+	var crossMountSource *api.CrossMountSource
+	if crossMountRegistry != "" && crossMountRepository != "" {
+		crossMountSource = &api.CrossMountSource{
+			Registry:   crossMountRegistry,
+			Repository: crossMountRepository,
+		}
+	}
+
 	baseCommand := api.BaseCommandOperation{
-		Command:   command,
-		RootKind:  rootKind,
-		Root:      rootDescriptor,
-		Manifests: manifests,
+		Command:            command,
+		RootKind:           rootKind,
+		Root:               rootDescriptor,
+		Manifests:          manifests,
+		CrossMountDisabled: crossMountDisabled,
+		CrossMountSource:   crossMountSource,
 		PullInfo: api.PullInfo{
 			OriginalBaseImageRegistries: originalRegistries,
 			OriginalBaseImageRepository: originalRepository,
