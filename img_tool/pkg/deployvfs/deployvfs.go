@@ -418,7 +418,7 @@ func (b *vfsBuilder) ingest() (map[string]blobEntry, map[string]blobEntry, error
 			manifests[manifest.Descriptor.Digest] = b.localManifest(i, manifestIndex, manifest.Descriptor)
 			blobs[manifest.Config.Digest] = b.localConfig(i, manifestIndex, manifest.Config)
 			for layerIndex, layer := range manifest.LayerBlobs {
-				blob, err := b.layerBlob(i, manifestIndex, layerIndex, strategy, op.PullInfo, op.CrossMountSource, manifest, layer)
+				blob, err := b.layerBlob(i, manifestIndex, layerIndex, strategy, op.PullInfo, op.CrossMountDisabled, op.CrossMountSource, manifest, layer)
 				if err != nil {
 					return nil, nil, fmt.Errorf("locating source for layer with digest %s with index %d in manifest %d of operation %d: %w", layer.Digest, layerIndex, manifestIndex, i, err)
 				}
@@ -448,14 +448,17 @@ func (b *vfsBuilder) ingest() (map[string]blobEntry, map[string]blobEntry, error
 	return blobs, manifests, nil
 }
 
-func (b *vfsBuilder) layerBlob(operationIndex int, manifestIndex int, layerIndex int, strategy string, pullInfo api.PullInfo, crossMountSource *api.CrossMountSource, manifestInfo api.ManifestDeployInfo, desc api.Descriptor) (blobEntry, error) {
+func (b *vfsBuilder) layerBlob(operationIndex int, manifestIndex int, layerIndex int, strategy string, pullInfo api.PullInfo, crossMountDisabled bool, crossMountSource *api.CrossMountSource, manifestInfo api.ManifestDeployInfo, desc api.Descriptor) (blobEntry, error) {
 	// we try the following sources, in order:
 	// 1. runfiles tree
 	// 2. registry of base image (if base image is shallow, blob was marked as "missing blob" (exists remotely) and strategy allows it)
 	// 3. bazel remote cache (lazy strategy)
 	// 4. stub blob (cas_registry stategy where all blobs are assumed to already be in the remote CAS)
 
-	hint := crossMountHint(crossMountSource, pullInfo)
+	var hint string
+	if !crossMountDisabled {
+		hint = crossMountHint(crossMountSource, pullInfo)
+	}
 
 	if entry, found := b.layerFromFile(operationIndex, manifestIndex, layerIndex, desc); found {
 		entry.crossMountFrom = hint
