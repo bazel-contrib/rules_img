@@ -10,6 +10,9 @@ bazel_dep(name = "gazelle", version = "0.47.0")
 bazel_dep(name = "rules_go", version = "0.60.0")
 
 go_sdk = use_extension("@rules_go//go:extensions.bzl", "go_sdk")
+go_sdk.from_file(
+    go_mod = "//:go.mod",
+)
 
 # Known to exist since it is instantiated by rules_go itself.
 use_repo(
