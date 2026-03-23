@@ -29,7 +29,7 @@ def _root_symlinks_arg(x):
 
 def _symlinks_arg(x):
     type = _file_type(x.target_file)
-    return "{}\0{}{}".format(x.path, type, x.target_file.path)
+    return "_main/{}\0{}{}".format(x.path, type, x.target_file.path)
 
 def _symlink_tuple_to_arg(pair):
     source = pair[0]

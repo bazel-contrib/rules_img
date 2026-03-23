@@ -70,6 +70,9 @@ write_file(
 binary_with_runfiles_symlinks(
     name = "bin_with_runfiles_symlinks",
     binary = "script.sh",
+    root_symlinks = {
+        "a_root_symlink": ":unicode_file",
+    },
     symlinks = {
         "foo/bar": ":unicode_file",
         "baz/qux": ":unicode_file",
