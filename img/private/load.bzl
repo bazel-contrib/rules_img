@@ -2,13 +2,14 @@
 
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("@hermetic_launcher//launcher:lib.bzl", "launcher")
-load("@platforms//host:constraints.bzl", "HOST_CONSTRAINTS")
 load("//img/private:layer_path_hints.bzl", "layer_hints_for_deploy_metadata")
 load("//img/private:root_symlinks.bzl", "calculate_root_symlinks", "symlink_name_prefix")
 load("//img/private:stamp.bzl", "expand_or_write")
-load("//img/private/common:build.bzl", "DATA_TOOLCHAIN", "TOOLCHAIN", "TOOLCHAINS")
+load("//img/private/common:build.bzl", "TOOLCHAIN", "TOOLCHAINS")
+load("//img/private/common:default_deploy_tool.bzl", "default_deploy_tool")
 load("//img/private/common:transitions.bzl", "reset_platform_transition")
 load("//img/private/providers:deploy_info.bzl", "DeployInfo")
+load("//img/private/providers:deploy_tool_info.bzl", "DeployToolInfo")
 load("//img/private/providers:index_info.bzl", "ImageIndexInfo")
 load("//img/private/providers:load_settings_info.bzl", "LoadSettingsInfo")
 load("//img/private/providers:manifest_info.bzl", "ImageManifestInfo")
@@ -209,18 +210,8 @@ def _image_load_impl(ctx):
         root_symlinks["{}layer_hints".format(root_symlinks_prefix)] = layer_hints
 
     loader = ctx.actions.declare_file(ctx.label.name + ".exe")
-    if ctx.attr.tool_cfg == "host":
-        img_toolchain_info = ctx.exec_groups["host"].toolchains[TOOLCHAIN].imgtoolchaininfo
-        template_exec_group = "host"
-        template_cfg = "exec"
-    elif ctx.attr.tool_cfg == "target":
-        img_toolchain_info = ctx.toolchains[DATA_TOOLCHAIN].imgtoolchaininfo
-        template_exec_group = None
-        template_cfg = "target"
-    else:
-        fail("Invalid tool_cfg: {}".format(ctx.attr.tool_cfg))
-
-    embedded_args, transformed_args = launcher.args_from_entrypoint(executable_file = img_toolchain_info.tool_exe)
+    deploy_tool_info = ctx.attr.deploy_tool[DeployToolInfo] if ctx.attr.deploy_tool != None else ctx.attr._deploy_tool[DeployToolInfo]
+    embedded_args, transformed_args = launcher.args_from_entrypoint(executable_file = deploy_tool_info.img_deploy_exe)
     embedded_args.extend(["deploy", "--runfiles-root-symlinks-prefix", root_symlinks_prefix, "--request-file"])
     embedded_args, transformed_args = launcher.append_runfile(
         file = deploy_metadata,
@@ -232,8 +223,7 @@ def _image_load_impl(ctx):
         embedded_args = embedded_args,
         transformed_args = transformed_args,
         output_file = loader,
-        cfg = template_cfg,
-        template_exec_group = template_exec_group,
+        template_file = deploy_tool_info.launcher_template,
     )
 
     # Build environment for RunEnvironmentInfo
@@ -259,7 +249,7 @@ def _image_load_impl(ctx):
             executable = loader,
             runfiles = ctx.runfiles(
                 files = [
-                    img_toolchain_info.tool_exe,
+                    deploy_tool_info.img_deploy_exe,
                     deploy_metadata,
                 ],
                 root_symlinks = root_symlinks,
@@ -464,6 +454,15 @@ Available options:
             default = "host",
             values = ["host", "target"],
         ),
+        "deploy_tool": attr.label(
+            doc = """Optional label of a deploy tool target providing `DeployToolInfo` (created with `img_deploy_tool` from `@rules_img//img:deploy_tool.bzl`). When set, overrides `tool_cfg`.""",
+            mandatory = False,
+            providers = [DeployToolInfo],
+        ),
+        "_deploy_tool": attr.label(
+            default = default_deploy_tool,
+            providers = [DeployToolInfo],
+        ),
         "_load_settings": attr.label(
             default = Label("//img/private/settings:load"),
             providers = [LoadSettingsInfo],
@@ -483,15 +482,7 @@ Available options:
     },
     executable = True,
     cfg = reset_platform_transition,
-    exec_groups = {
-        "host": exec_group(
-            exec_compatible_with = HOST_CONSTRAINTS,
-            toolchains = [launcher.template_exec_toolchain_type] + TOOLCHAINS,
-        ),
-    },
     toolchains = [
         launcher.finalizer_toolchain_type,
-        launcher.template_toolchain_type,
-        DATA_TOOLCHAIN,
     ] + TOOLCHAINS,
 )

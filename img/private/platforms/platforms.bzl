@@ -168,3 +168,9 @@ def has_constraint_setting(goos, goarch):
         if tup[0] == goos and tup[1] == goarch:
             return True
     return False
+
+def select_for_goos_and_goarch_dict(d):
+    return {
+        str(Label("//img/constraints:" + goos_goarch)): v
+        for goos_goarch, v in d.items()
+    }

@@ -5,7 +5,7 @@ different platforms, including downloading, selecting, and registering them
 as Bazel toolchains.
 """
 
-load("//img/private/platforms:platforms.bzl", "platform_for_goos_and_goarch", "platform_for_repository_os")
+load("//img/private/platforms:platforms.bzl", "platform_for_goos_and_goarch", "platform_for_repository_os", "select_for_goos_and_goarch_dict")
 
 def _prebuilt_toolchain_definition_for_platform(platform_name, tool_target):
     platform = platform_for_goos_and_goarch(platform_name)
@@ -32,6 +32,10 @@ toolchain(
         tool_target = tool_target,
         constraints = json.encode_indent(platform.constraints, prefix = "    ", indent = "    "),
     )
+
+def _select_tool(tools_dict):
+    select_arms = select_for_goos_and_goarch_dict(tools_dict)
+    return "select({})".format(json.encode_indent(select_arms, prefix = "    ", indent = "    "))
 
 def _prebuilt_collection_hub_repo_impl(rctx):
     toolchain_defs = "\n".join([_prebuilt_toolchain_definition_for_platform(
@@ -69,15 +73,43 @@ def tool_for_repository_os(rctx):
     return Label(TOOLS[key])
 """.format(json.encode_indent(rctx.attr.tools, indent = "    ")),
     )
+    actual_target = _select_tool(rctx.attr.tools)
+    if rctx.attr.source_built != None:
+        actual_target = repr(str(rctx.attr.source_built))
+    rctx.file(
+        "target/BUILD.bazel",
+        """\
+alias(
+    name = "target",
+    actual = {},
+    visibility = ["//visibility:public"],
+)
+""".format(actual_target),
+    )
+    rctx.file(
+        "host/BUILD.bazel",
+        """\
+load("@rules_img//img/private:file_for_host.bzl", "file_for_host")
+
+file_for_host(
+    name = "host",
+    file = {},
+    visibility = ["//visibility:public"],
+)
+""".format(actual_target),
+    )
 
 prebuilt_collection_hub_repo = repository_rule(
     implementation = _prebuilt_collection_hub_repo_impl,
     attrs = {
         "tools": attr.string_dict(),
+        "source_built": attr.label(),
     },
 )
 
 def _prebuilt_pull_hub_repo_impl(rctx):
+    if rctx.attr.source_built != None:
+        fail("pull tool is only used in repository rules and can't make use of compiled targets.")
     rctx.file("BUILD.bazel", """load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
 
 bzl_library(
@@ -106,6 +138,7 @@ prebuilt_pull_hub_repo = repository_rule(
     implementation = _prebuilt_pull_hub_repo_impl,
     attrs = {
         "tools": attr.string_dict(),
+        "source_built": attr.label(),
     },
 )
 
@@ -186,6 +219,7 @@ _prebuilt_tool_from_file = tag_class(attrs = {"collection": attr.string(), "file
 _prebuilt_tool_download = tag_class(attrs = {"collection": attr.string()} | _prebuilt_attrs)
 _prebuilt_pull_tool_download = tag_class(attrs = {"collection": attr.string()} | _prebuilt_pull_tool_attrs)
 _host_tool = tag_class(attrs = {"binary": attr.label()})
+_source_built = tag_class(attrs = {"collection": attr.string(), "target": attr.label()})
 
 def _lockfile_to_dict(lockfile, basename):
     requested_tools = {}
@@ -214,12 +248,18 @@ def _prebuilt_img_tool_collection_for_module(ctx, mod):
         fail("module {} requested host_tool tag class more than once".format(mod))
     elif len(mod.tags.host_tool) == 1:
         host_tool = mod.tags.host_tool[0].binary
-    return (requested_tools, collections, host_tool)
+    source_built = None
+    if len(mod.tags.source_built) > 1:
+        fail("module {} requested source_built tag more than once".format(mod))
+    elif len(mod.tags.source_built) == 1:
+        source_built = mod.tags.source_built[0].target
+    return (requested_tools, collections, host_tool, source_built)
 
 def _prebuilt_tool_helper(ctx, tool_path, hub_repo_fn, tool_repo_fn = prebuilt_img_tool_repo):
     requested_tools = {}
     collections = {}
     host_tool = None
+    source_built = None
     root_module = None
     for mod in ctx.modules:
         if mod.is_root:
@@ -235,6 +275,9 @@ def _prebuilt_tool_helper(ctx, tool_path, hub_repo_fn, tool_repo_fn = prebuilt_i
             # only "rules_img_pull_tool" (or the root module)
             # are allowed to set this
             host_tool = for_module[2]
+        if mod.name == "rules_img_tool":
+            # only "rules_img_tool" is allowed to set this
+            source_built = for_module[3]
     root_module_direct_deps = []
     if root_module != None:
         for_root_module = _prebuilt_img_tool_collection_for_module(ctx, root_module)
@@ -262,6 +305,7 @@ def _prebuilt_tool_helper(ctx, tool_path, hub_repo_fn, tool_repo_fn = prebuilt_i
         hub_repo_fn(
             name = collection_name,
             tools = tools,
+            source_built = source_built,
         )
 
     return ctx.extension_metadata(
@@ -284,6 +328,7 @@ prebuilt_img_tool = module_extension(
         "from_file": _prebuilt_tool_from_file,
         "download": _prebuilt_tool_download,
         "host_tool": _host_tool,
+        "source_built": _source_built,
     },
 )
 
@@ -302,5 +347,6 @@ pull_tool = module_extension(
         "from_file": _prebuilt_tool_from_file,
         "download": _prebuilt_pull_tool_download,
         "host_tool": _host_tool,
+        "source_built": _source_built,
     },
 )

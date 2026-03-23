@@ -65,3 +65,9 @@ bzl_library(
     srcs = ["stamp_setting_info.bzl"],
     visibility = ["//img:__subpackages__"],
 )
+
+bzl_library(
+    name = "deploy_tool_info",
+    srcs = ["deploy_tool_info.bzl"],
+    visibility = ["//img:__subpackages__"],
+)

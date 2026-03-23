@@ -2,6 +2,7 @@
 
 _platforms_setting = "//command_line_option:platforms"
 _original_platforms_setting = str(Label("//img/private/settings:original_platforms"))
+_host_platform_setting = "//command_line_option:host_platform"
 
 def _encode_platforms(platforms):
     return ",".join([str(platform) for platform in platforms])
@@ -93,4 +94,13 @@ single_platform_transition = transition(
         _platforms_setting,
         _original_platforms_setting,
     ],
+)
+
+def _host_platform_transition_impl(settings, _attr):
+    return {_platforms_setting: str(settings[_host_platform_setting])}
+
+host_platform_transition = transition(
+    implementation = _host_platform_transition_impl,
+    inputs = [_host_platform_setting],
+    outputs = [_platforms_setting],
 )

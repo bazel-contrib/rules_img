@@ -37,3 +37,9 @@ bzl_library(
     srcs = ["transitions.bzl"],
     visibility = ["//img:__subpackages__"],
 )
+
+bzl_library(
+    name = "default_deploy_tool",
+    srcs = ["default_deploy_tool.bzl"],
+    visibility = ["//img:__subpackages__"],
+)

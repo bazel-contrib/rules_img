@@ -61,9 +61,11 @@ bzl_library(
         ":stamp",
         "//img:providers",
         "//img/private/common:build",
+        "//img/private/common:default_deploy_tool",
         "//img/private/common:transitions",
         "//img/private/common:write_index_json",
         "//img/private/providers:deploy_info",
+        "//img/private/providers:deploy_tool_info",
         "//img/private/providers:index_info",
         "//img/private/providers:manifest_info",
         "//img/private/providers:pull_info",
@@ -71,7 +73,6 @@ bzl_library(
         "//img/private/providers:stamp_setting_info",
         "@bazel_skylib//rules:common_settings",
         "@hermetic_launcher//launcher:lib_bzl",
-        "@platforms//host:constraints_lib",
     ],
 )
 
@@ -84,8 +85,10 @@ bzl_library(
         ":root_symlinks",
         ":stamp",
         "//img/private/common:build",
+        "//img/private/common:default_deploy_tool",
         "//img/private/common:transitions",
         "//img/private/providers:deploy_info",
+        "//img/private/providers:deploy_tool_info",
         "//img/private/providers:index_info",
         "//img/private/providers:load_settings_info",
         "//img/private/providers:manifest_info",
@@ -94,7 +97,6 @@ bzl_library(
         "//img/private/providers:stamp_setting_info",
         "@bazel_skylib//rules:common_settings",
         "@hermetic_launcher//launcher:lib_bzl",
-        "@platforms//host:constraints_lib",
     ],
 )
 
@@ -183,14 +185,15 @@ bzl_library(
     deps = [
         ":root_symlinks",
         "//img/private/common:build",
+        "//img/private/common:default_deploy_tool",
         "//img/private/common:transitions",
         "//img/private/providers:deploy_info",
+        "//img/private/providers:deploy_tool_info",
         "//img/private/providers:load_settings_info",
         "//img/private/providers:push_settings_info",
         "//img/private/providers:stamp_setting_info",
         "@bazel_skylib//rules:common_settings",
         "@hermetic_launcher//launcher:lib_bzl",
-        "@platforms//host:constraints_lib",
     ],
 )
 
@@ -210,4 +213,18 @@ bzl_library(
     name = "root_symlinks",
     srcs = ["root_symlinks.bzl"],
     visibility = ["//img:__subpackages__"],
+)
+
+bzl_library(
+    name = "deploy_tool",
+    srcs = ["deploy_tool.bzl"],
+    visibility = ["//img:__subpackages__"],
+    deps = ["//img/private/providers:deploy_tool_info"],
+)
+
+bzl_library(
+    name = "file_for_host",
+    srcs = ["file_for_host.bzl"],
+    visibility = ["//img:__subpackages__"],
+    deps = ["//img/private/common:transitions"],
 )
