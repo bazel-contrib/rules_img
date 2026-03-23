@@ -185,6 +185,9 @@ def _multi_deploy_impl(ctx):
                 root_symlinks = root_symlinks,
             ),
         ),
+        OutputGroupInfo(
+            deploy_manifest = depset([deploy_metadata]),
+        ),
         RunEnvironmentInfo(
             environment = environment,
             inherited_environment = inherited_environment,

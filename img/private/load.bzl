@@ -253,7 +253,17 @@ def _image_load_impl(ctx):
     if docker_config_path:
         environment["REGISTRY_AUTH_FILE"] = docker_config_path
 
-    providers = [
+    output_groups = dict(
+        deploy_manifest = depset([deploy_metadata]),
+    )
+
+    # Add tarball output group only for single-platform images (manifest_info)
+    # Index info (multi-platform) is not supported by docker-save command
+    if manifest_info != None:
+        tarball = _build_docker_tarball(ctx, configuration_json, manifest_info)
+        output_groups["tarball"] = depset([tarball])
+
+    return [
         DefaultInfo(
             files = depset([loader]),
             executable = loader,
@@ -265,6 +275,7 @@ def _image_load_impl(ctx):
                 root_symlinks = root_symlinks,
             ),
         ),
+        OutputGroupInfo(**output_groups),
         RunEnvironmentInfo(
             environment = environment,
             inherited_environment = inherited_environment,
@@ -275,16 +286,6 @@ def _image_load_impl(ctx):
             layer_hints = layer_hints,
         ),
     ]
-
-    # Add tarball output group only for single-platform images (manifest_info)
-    # Index info (multi-platform) is not supported by docker-save command
-    if manifest_info != None:
-        tarball = _build_docker_tarball(ctx, configuration_json, manifest_info)
-        providers.append(OutputGroupInfo(
-            tarball = depset([tarball]),
-        ))
-
-    return providers
 
 image_load = rule(
     implementation = _image_load_impl,
