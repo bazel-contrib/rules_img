@@ -29,7 +29,7 @@ def _root_symlinks_arg(x):
 
 def _symlinks_arg(x):
     type = _file_type(x.target_file)
-    return "{}\0{}{}_main/{}".format(x.path, type, x.target_file.path)
+    return "{}\0{}{}".format(x.path, type, x.target_file.path)
 
 def _symlink_tuple_to_arg(pair):
     source = pair[0]
@@ -147,8 +147,11 @@ def _image_layer_impl(ctx):
             executable_runfiles_args.add_all(runfiles.root_symlinks, map_each = _root_symlinks_arg)
             args.append(executable_runfiles_args)
             inputs.append(runfiles.files)
-            inputs.append(runfiles.symlinks)
-            inputs.append(runfiles.root_symlinks)
+            symlink_inputs = []
+            symlink_inputs.extend([symlink_entry.target_file for symlink_entry in runfiles.symlinks.to_list()])
+            symlink_inputs.extend([symlink_entry.target_file for symlink_entry in runfiles.root_symlinks.to_list()])
+            if len(symlink_inputs) > 0:
+                inputs.append(depset(symlink_inputs))
             repo_mapping_manifest = _get_repo_mapping_manifest(files)
             if repo_mapping_manifest != None:
                 inputs.append(depset([repo_mapping_manifest]))
