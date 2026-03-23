@@ -7,6 +7,7 @@ load("@rules_img//img:push.bzl", "image_push")
 load("@rules_img_images.bzl", "image")
 load("@rules_pkg//pkg:tar.bzl", "pkg_tar")
 load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
+load(":bzl/binary_with_runfiles_symlinks.bzl", "binary_with_runfiles_symlinks")
 load(":bzl/gen_link.bzl", "gen_dir_link")
 
 # Test files for various scenarios
@@ -64,6 +65,15 @@ write_file(
         "こんにちは\n",
         "🚀🎉\n",
     ],
+)
+
+binary_with_runfiles_symlinks(
+    name = "bin_with_runfiles_symlinks",
+    binary = "script.sh",
+    symlinks = {
+        "foo/bar": ":unicode_file",
+        "baz/qux": ":unicode_file",
+    },
 )
 
 # This tar file consists of only NULL bytes (end-of-file marker for tar)
@@ -125,6 +135,7 @@ image_layer(
     name = "symlinks_layer",
     srcs = {
         "bin/script": ":executable_script_with_runfiles",
+        "bin/runfiles_symlinks.sh": ":bin_with_runfiles_symlinks",
     },
 )
 
