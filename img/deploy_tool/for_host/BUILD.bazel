@@ -1,0 +1,16 @@
+"""Defines a set of prebuilt deploy tools for the host platform"""
+
+load("//img:deploy_tool.bzl", "img_deploy_tool")
+
+img_deploy_tool(
+    name = "for_host",
+    img_deploy_exe = "@img_toolchain//host",
+    launcher_template = "@hermetic_launcher//launcher/template:prebuilt_for_host",
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "all_files",
+    srcs = glob(["**"]),
+    visibility = ["//img/private/release:__subpackages__"],
+)

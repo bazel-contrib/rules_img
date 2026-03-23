@@ -137,3 +137,10 @@ bzl_library(
     visibility = ["//visibility:public"],
     deps = ["//img/private/extensions:images"],
 )
+
+bzl_library(
+    name = "deploy_tool",
+    srcs = ["deploy_tool.bzl"],
+    visibility = ["//visibility:public"],
+    deps = ["//img/private:deploy_tool"],
+)

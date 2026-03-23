@@ -9,8 +9,8 @@ Public API for container image push rules.
 <pre>
 load("@rules_img//img:push.bzl", "image_push")
 
-image_push(<a href="#image_push-name">name</a>, <a href="#image_push-build_settings">build_settings</a>, <a href="#image_push-image">image</a>, <a href="#image_push-registry">registry</a>, <a href="#image_push-repository">repository</a>, <a href="#image_push-stamp">stamp</a>, <a href="#image_push-strategy">strategy</a>, <a href="#image_push-tag">tag</a>, <a href="#image_push-tag_file">tag_file</a>,
-           <a href="#image_push-tag_list">tag_list</a>)
+image_push(<a href="#image_push-name">name</a>, <a href="#image_push-build_settings">build_settings</a>, <a href="#image_push-deploy_tool">deploy_tool</a>, <a href="#image_push-image">image</a>, <a href="#image_push-registry">registry</a>, <a href="#image_push-repository">repository</a>, <a href="#image_push-stamp">stamp</a>, <a href="#image_push-strategy">strategy</a>, <a href="#image_push-tag">tag</a>,
+           <a href="#image_push-tag_file">tag_file</a>, <a href="#image_push-tag_list">tag_list</a>, <a href="#image_push-tool_cfg">tool_cfg</a>)
 </pre>
 
 Pushes container images to a registry.
@@ -109,6 +109,7 @@ bazel run //path/to:push_app
 | :------------- | :------------- | :------------- | :------------- | :------------- |
 | <a id="image_push-name"></a>name |  A unique name for this target.   | <a href="https://bazel.build/concepts/labels#target-names">Name</a> | required |  |
 | <a id="image_push-build_settings"></a>build_settings |  Build settings for template expansion.<br><br>Maps template variable names to string_flag targets. These values can be used in registry, repository, and tag attributes using `{{.VARIABLE_NAME}}` syntax (Go template).<br><br>Example: <pre><code class="language-python">build_settings = {&#10;    "REGISTRY": "//settings:docker_registry",&#10;    "VERSION": "//settings:app_version",&#10;}</code></pre><br><br>See [template expansion](/docs/templating.md) for more details.   | Dictionary: String -> Label | optional |  `{}`  |
+| <a id="image_push-deploy_tool"></a>deploy_tool |  Optional label of a deploy tool target providing `DeployToolInfo` (created with `img_deploy_tool` from `@rules_img//img:deploy_tool.bzl`). When set, overrides `tool_cfg`.   | <a href="https://bazel.build/concepts/labels">Label</a> | optional |  `None`  |
 | <a id="image_push-image"></a>image |  Image to push. Should provide ImageManifestInfo or ImageIndexInfo.   | <a href="https://bazel.build/concepts/labels">Label</a> | required |  |
 | <a id="image_push-registry"></a>registry |  Registry URL to push the image to.<br><br>Common registries: - Docker Hub: `index.docker.io` - Google Container Registry: `gcr.io` or `us.gcr.io` - GitHub Container Registry: `ghcr.io` - Amazon ECR: `123456789.dkr.ecr.us-east-1.amazonaws.com`<br><br>Subject to [template expansion](/docs/templating.md).   | String | optional |  `""`  |
 | <a id="image_push-repository"></a>repository |  Repository path within the registry.<br><br>Subject to [template expansion](/docs/templating.md).   | String | optional |  `""`  |
@@ -117,5 +118,6 @@ bazel run //path/to:push_app
 | <a id="image_push-tag"></a>tag |  Tag to apply to the pushed image.<br><br>Optional - if omitted, the image is pushed by digest only.<br><br>Subject to [template expansion](/docs/templating.md).   | String | optional |  `""`  |
 | <a id="image_push-tag_file"></a>tag_file |  File containing newline-delimited tags to apply to the pushed image.<br><br>The file should contain one tag per line. Empty lines are ignored. Tags from this file are merged with tags specified via `tag` or `tag_list` attributes.<br><br>Example file content: <pre><code>latest&#10;v1.0.0&#10;stable</code></pre><br><br>Can be combined with `tag` or `tag_list` to merge tags from multiple sources. Each tag is subject to [template expansion](/docs/templating.md).   | <a href="https://bazel.build/concepts/labels">Label</a> | optional |  `None`  |
 | <a id="image_push-tag_list"></a>tag_list |  List of tags to apply to the pushed image.<br><br>Useful for applying multiple tags in a single push:<br><br><pre><code class="language-python">tag_list = ["latest", "v1.0.0", "stable"]</code></pre><br><br>Cannot be used together with `tag`. Can be combined with `tag_file` to merge tags from both sources. Each tag is subject to [template expansion](/docs/templating.md).   | List of strings | optional |  `[]`  |
+| <a id="image_push-tool_cfg"></a>tool_cfg |  Configuration of the pusher executable platform.<br><br>Available options: - **`host`** (default): Pusher executable matches the host platform. - **`target`**: Pusher executable matches the target platform(s) specified via `--platforms`.   | String | optional |  `"host"`  |
 
 

@@ -2,11 +2,12 @@
 
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("@hermetic_launcher//launcher:lib.bzl", "launcher")
-load("@platforms//host:constraints.bzl", "HOST_CONSTRAINTS")
 load("//img/private:root_symlinks.bzl", "calculate_root_symlinks", "symlink_name_prefix")
 load("//img/private/common:build.bzl", "TOOLCHAIN", "TOOLCHAINS")
+load("//img/private/common:default_deploy_tool.bzl", "default_deploy_tool")
 load("//img/private/common:transitions.bzl", "reset_platform_transition")
 load("//img/private/providers:deploy_info.bzl", "DeployInfo")
+load("//img/private/providers:deploy_tool_info.bzl", "DeployToolInfo")
 load("//img/private/providers:load_settings_info.bzl", "LoadSettingsInfo")
 load("//img/private/providers:push_settings_info.bzl", "PushSettingsInfo")
 load("//img/private/providers:stamp_setting_info.bzl", "StampSettingInfo")
@@ -109,8 +110,8 @@ def _multi_deploy_impl(ctx):
     # Create the executable
     root_symlinks_prefix = symlink_name_prefix(ctx)
     deployer = ctx.actions.declare_file(ctx.label.name + ".exe")
-    img_toolchain_info = ctx.exec_groups["host"].toolchains[TOOLCHAIN].imgtoolchaininfo
-    embedded_args, transformed_args = launcher.args_from_entrypoint(executable_file = img_toolchain_info.tool_exe)
+    deploy_tool_info = ctx.attr.deploy_tool[DeployToolInfo] if ctx.attr.deploy_tool != None else ctx.attr._deploy_tool[DeployToolInfo]
+    embedded_args, transformed_args = launcher.args_from_entrypoint(executable_file = deploy_tool_info.img_deploy_exe)
     embedded_args.extend(["deploy", "--runfiles-root-symlinks-prefix", root_symlinks_prefix, "--request-file"])
     embedded_args, transformed_args = launcher.append_runfile(
         file = deploy_metadata,
@@ -122,8 +123,7 @@ def _multi_deploy_impl(ctx):
         embedded_args = embedded_args,
         transformed_args = transformed_args,
         output_file = deployer,
-        cfg = "exec",
-        template_exec_group = "host",
+        template_file = deploy_tool_info.launcher_template,
     )
 
     # Collect all image providers for root symlinks
@@ -179,7 +179,7 @@ def _multi_deploy_impl(ctx):
             executable = deployer,
             runfiles = ctx.runfiles(
                 files = [
-                    img_toolchain_info.tool_exe,
+                    deploy_tool_info.img_deploy_exe,
                     deploy_metadata,
                 ],
                 root_symlinks = root_symlinks,
@@ -302,14 +302,28 @@ Available strategies:
             default = Label("//img/settings:docker_config_path"),
             providers = [BuildSettingInfo],
         ),
+        "tool_cfg": attr.string(
+            doc = """Configuration of the deployer executable platform.
+
+Available options:
+- **`host`** (default): Deployer executable matches the host platform.
+- **`target`**: Deployer executable matches the target platform(s) specified via `--platforms`.
+""",
+            default = "host",
+            values = ["host", "target"],
+        ),
+        "deploy_tool": attr.label(
+            doc = """Optional label of a deploy tool target providing `DeployToolInfo` (created with `img_deploy_tool` from `@rules_img//img:deploy_tool.bzl`). When set, overrides `tool_cfg`.""",
+            providers = [DeployToolInfo],
+        ),
+        "_deploy_tool": attr.label(
+            default = default_deploy_tool,
+            providers = [DeployToolInfo],
+        ),
     },
     executable = True,
     cfg = reset_platform_transition,
-    exec_groups = {
-        "host": exec_group(
-            exec_compatible_with = HOST_CONSTRAINTS,
-            toolchains = [launcher.template_exec_toolchain_type] + TOOLCHAINS,
-        ),
-    },
-    toolchains = [launcher.finalizer_toolchain_type] + TOOLCHAINS,
+    toolchains = [
+        launcher.finalizer_toolchain_type,
+    ] + TOOLCHAINS,
 )
