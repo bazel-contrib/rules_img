@@ -22,7 +22,7 @@ import (
 
 const (
 	defaultWorkers = 4
-	writeBufferSize = 16 * 1024 * 1024
+	writeBufferSize = 8 * 1024 * 1024
 )
 
 type Request struct {
