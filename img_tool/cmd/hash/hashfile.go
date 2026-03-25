@@ -187,11 +187,17 @@ func writeLayerMetadata(compressedHash []byte, meta *layerMetadata, req *hashReq
 		layerName = fmt.Sprintf("sha256:%x", compressedHash)
 	}
 
+	// Use override media type (e.g. for Helm charts) or infer from layer format
+	mediaType := req.mediaType
+	if mediaType == "" {
+		mediaType = string(meta.layerFormat)
+	}
+
 	// Create descriptor
 	descriptor := api.Descriptor{
 		Name:        layerName,
 		DiffID:      fmt.Sprintf("sha256:%x", meta.diffID),
-		MediaType:   string(meta.layerFormat),
+		MediaType:   mediaType,
 		Digest:      fmt.Sprintf("sha256:%x", compressedHash),
 		Size:        meta.compressedSize,
 		Annotations: req.annotations,
