@@ -452,6 +452,20 @@ image_manifest(
     layers = [":mixed_layer"],
 )
 
+# Helm-style config for config_media_type test
+write_file(
+    name = "helm_config",
+    out = "helm_config.json",
+    content = ['{"name":"e2e-helm","version":"1.0.0"}'],
+)
+
+image_manifest(
+    name = "manifest_with_config_media_type",
+    config_fragment = ":helm_config",
+    config_media_type = "application/vnd.cncf.helm.config.v1+json",
+    layers = [":mixed_layer"],
+)
+
 image_push(
     name = "push_with_created",
     image = ":manifest_with_created",
@@ -507,6 +521,7 @@ build_test(
         ":manifest_with_merged_annotations",
         ":complex_manifest",
         ":manifest_with_created",
+        ":manifest_with_config_media_type",
         ":manifest_extending_gcr_base",
     ],
 )

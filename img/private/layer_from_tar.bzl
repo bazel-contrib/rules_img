@@ -23,10 +23,13 @@ def _layer_from_tar_impl(ctx):
     needs_recompression = source_compression != target_compression
     needs_rewrite = needs_recompression or optimize
 
-    media_type = "application/vnd.oci.image.layer.v1.tar"
+    media_type = ctx.attr.media_type
+    if media_type == "":
+        media_type = "application/vnd.oci.image.layer.v1.tar"
+        if target_compression != "none":
+            media_type += "+{}".format(target_compression)
+
     metadata_file = ctx.actions.declare_file("{}_metadata.json".format(ctx.attr.name))
-    if target_compression != "none":
-        media_type += "+{}".format(target_compression)
     if target_compression == "gzip":
         output_name_extension = ".tgz"
     elif target_compression == "zstd":
@@ -149,6 +152,10 @@ When enabled, the layer will be optimized for lazy pulling and will be compatibl
         "annotations": attr.string_dict(
             default = {},
             doc = """Annotations to add to the layer metadata as key-value pairs.""",
+        ),
+        "media_type": attr.string(
+            default = "",
+            doc = """Override layer media type. Use e.g. \"application/vnd.cncf.helm.chart.content.v1.tar\" for Helm charts.""",
         ),
         "_default_compression": attr.label(
             default = Label("//img/settings:compress"),

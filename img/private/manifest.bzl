@@ -324,6 +324,10 @@ def _image_manifest_impl(ctx):
     if ctx.attr.config_fragment != None:
         inputs.append(ctx.file.config_fragment)
         args.add("--config-fragment", ctx.file.config_fragment.path)
+    if ctx.attr.config_media_type != None and ctx.attr.config_media_type != "":
+        if ctx.attr.config_fragment == None:
+            fail("config_media_type requires config_fragment (e.g. Helm config JSON)")
+        args.add("--config-media-type", ctx.attr.config_media_type)
     if ctx.attr.created != None:
         inputs.append(ctx.file.created)
         args.add("--created", ctx.file.created.path)
@@ -565,8 +569,11 @@ Each annotation is subject to [template expansion](/docs/templating.md).
             doc = "This field contains the system call signal that will be sent to the container to exit. The signal can be a signal name in the format SIGNAME, for instance SIGKILL or SIGRTMIN+3.",
         ),
         "config_fragment": attr.label(
-            doc = "Optional JSON file containing a partial image config, which will be used as a base for the final image config.",
+            doc = "Optional JSON file containing a partial image config, which will be used as a base for the final image config. When config_media_type is set to a non-OCI type (e.g. Helm), this file is used as the entire config blob as-is.",
             allow_single_file = True,
+        ),
+        "config_media_type": attr.string(
+            doc = """Override the config blob media type. Use e.g. \"application/vnd.cncf.helm.config.v1+json\" for Helm charts. When set, config_fragment is required and used verbatim as the config blob (no OCI image structure).""",
         ),
         "created": attr.label(
             doc = """Optional file containing a datetime string (RFC 3339 format) for when the image was created.

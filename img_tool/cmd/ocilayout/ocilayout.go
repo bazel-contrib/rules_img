@@ -208,17 +208,23 @@ func assembleOCILayout(manifestPath, configPath, outputPath, format string, laye
 	manifestDigest := hashBytes(manifestData)
 	blobs[manifestDigest.Hex] = manifestPath
 
+	indexDesc := v1.Descriptor{
+		MediaType:   manifest.MediaType,
+		Digest:      manifestDigest,
+		Size:        int64(len(manifestData)),
+		Annotations: manifest.Annotations,
+	}
+	// artifactType is for non-container-image config blobs (e.g. Helm); omit it for
+	// standard OCI/Docker image configs so index.json stays stable and matches
+	// typical single-manifest OCI layouts.
+	if manifest.Config.MediaType != "" && !manifest.Config.MediaType.IsConfig() {
+		indexDesc.ArtifactType = string(manifest.Config.MediaType)
+	}
+
 	index := v1.IndexManifest{
 		SchemaVersion: 2,
 		MediaType:     "application/vnd.oci.image.index.v1+json",
-		Manifests: []v1.Descriptor{
-			{
-				MediaType:   manifest.MediaType,
-				Digest:      manifestDigest,
-				Size:        int64(len(manifestData)),
-				Annotations: manifest.Annotations,
-			},
-		},
+		Manifests:     []v1.Descriptor{indexDesc},
 	}
 
 	if err := writeJSONWithSink(sink, "index.json", index); err != nil {
