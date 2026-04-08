@@ -268,7 +268,7 @@ func (f *fileManifest) exportInto(w randomAccessWriter, state api.CASStateSuppli
 	offset += copy(header[offset:], binary.BigEndian.AppendUint64(nil, uint64(sizeNodes)))
 	offset += copy(header[offset:], []byte{typeTree})
 	offset += copy(header[offset:], binary.BigEndian.AppendUint64(nil, uint64(offsetTrees)))
-	offset += copy(header[offset:], binary.BigEndian.AppendUint64(nil, uint64(sizeTrees)))
+	copy(header[offset:], binary.BigEndian.AppendUint64(nil, uint64(sizeTrees)))
 
 	_, err = w.Write(header)
 	return err

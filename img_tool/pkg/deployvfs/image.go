@@ -115,8 +115,8 @@ func (img *image) LayerByDigest(digest registryv1.Hash) (registryv1.Layer, error
 }
 
 func (img *image) LayerByDiffID(diffID registryv1.Hash) (registryv1.Layer, error) {
-	for i, diffID := range img.configFile.RootFS.DiffIDs {
-		if diffID == diffID {
+	for i, id := range img.configFile.RootFS.DiffIDs {
+		if id == diffID {
 			return img.vfs.Layer(img.manifest.Layers[i].Digest)
 		}
 	}

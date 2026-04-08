@@ -153,7 +153,7 @@ func downloadManifestByTag(registry, repository, tag, outputPath string, printDi
 	return downloadManifest(ref, outputPath, printDigest, resolvedDigest)
 }
 
-func downloadManifest(ref name.Reference, outputPath string, printDigest bool, resolvedDigest *string) error {
+func downloadManifest(ref name.Reference, outputPath string, printDigest bool, resolvedDigest *string) (retErr error) {
 	descriptor, err := remote.Get(ref, reg.WithAuthFromMultiKeychain())
 	if err != nil {
 		return fmt.Errorf("getting manifest: %w", err)
@@ -180,7 +180,11 @@ func downloadManifest(ref name.Reference, outputPath string, printDigest bool, r
 	if err != nil {
 		return fmt.Errorf("opening output file: %w", err)
 	}
-	defer outputFile.Close()
+	defer func() {
+		if err := outputFile.Close(); retErr == nil && err != nil {
+			retErr = fmt.Errorf("closing output file: %w", err)
+		}
+	}()
 
 	_, err = outputFile.Write(descriptor.Manifest)
 	if err != nil {

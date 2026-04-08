@@ -341,7 +341,7 @@ func copyFSWithSymlinks(destination, source string) error {
 		}
 
 		if _, err := io.Copy(w, r); err != nil {
-			w.Close()
+			_ = w.Close()
 			return &os.PathError{Op: "Copy", Path: newPath, Err: err}
 		}
 		return w.Close()

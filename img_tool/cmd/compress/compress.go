@@ -107,7 +107,12 @@ func CompressProcess(ctx context.Context, args []string) {
 		fmt.Fprintf(os.Stderr, "Error opening output file: %v\n", err)
 		os.Exit(1)
 	}
-	defer outputHandle.Close()
+	defer func() {
+		if err := outputHandle.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error closing output file: %v\n", err)
+			os.Exit(1)
+		}
+	}()
 
 	compressorState, mediaType, err := recompress(reader, outputHandle, outputFormat, estargzFlag, compressorJobsFlag, compressionLevelFlag)
 	if err != nil {
@@ -121,7 +126,12 @@ func CompressProcess(ctx context.Context, args []string) {
 			fmt.Fprintf(os.Stderr, "Error opening metadata output file: %v\n", err)
 			os.Exit(1)
 		}
-		defer metadataOutputHandle.Close()
+		defer func() {
+			if err := metadataOutputHandle.Close(); err != nil {
+				fmt.Fprintf(os.Stderr, "Error closing metadata output file: %v\n", err)
+				os.Exit(1)
+			}
+		}()
 		if err := writeMetadata(compressorState, annotations, mediaType, metadataOutputHandle); err != nil {
 			fmt.Fprintf(os.Stderr, "Writing metadata: %v\n", err)
 			os.Exit(1)

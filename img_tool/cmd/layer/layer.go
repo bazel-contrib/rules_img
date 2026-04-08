@@ -142,7 +142,12 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 		fmt.Fprintf(os.Stderr, "Error opening output file: %v\n", err)
 		os.Exit(1)
 	}
-	defer outputFile.Close()
+	defer func() {
+		if err := outputFile.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error closing output file: %v\n", err)
+			os.Exit(1)
+		}
+	}()
 
 	// Parse layer metadata
 	layerMetadata, err := ParseLayerMetadata(defaultMetadataFlag, fileMetadataFlags)
@@ -231,7 +236,12 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 			fmt.Fprintf(os.Stderr, "Error opening metadata output file: %v\n", err)
 			os.Exit(1)
 		}
-		defer metadataOutputFile.Close()
+		defer func() {
+			if err := metadataOutputFile.Close(); err != nil {
+				fmt.Fprintf(os.Stderr, "Error closing metadata output file: %v\n", err)
+				os.Exit(1)
+			}
+		}()
 
 		if err := writeMetadata(layerName, compressionAlgorithm, estargzFlag, annotations, compressorState, metadataOutputFile); err != nil {
 			fmt.Fprintf(os.Stderr, "Writing metadata: %v\n", err)
