@@ -119,7 +119,7 @@ func DownloadBlobProcess(ctx context.Context, args []string) {
 	os.Exit(1)
 }
 
-func downloadFromRegistry(registry, repository, digest, outputPath string) error {
+func downloadFromRegistry(registry, repository, digest, outputPath string) (retErr error) {
 	ref, err := name.NewDigest(fmt.Sprintf("%s/%s@%s", registry, repository, digest))
 	if err != nil {
 		return fmt.Errorf("creating blob reference: %w", err)
@@ -134,7 +134,11 @@ func downloadFromRegistry(registry, repository, digest, outputPath string) error
 	if err != nil {
 		return fmt.Errorf("opening output file: %w", err)
 	}
-	defer outputFile.Close()
+	defer func() {
+		if err := outputFile.Close(); retErr == nil && err != nil {
+			retErr = fmt.Errorf("closing output file: %w", err)
+		}
+	}()
 
 	rc, err := layer.Compressed()
 	if err != nil {

@@ -1,4 +1,3 @@
-import json
 import docker
 import requests
 import os
@@ -19,8 +18,6 @@ def _load_latest_tarball():
 
 def test_container_runs():
     image = _load_latest_tarball()
-
-    user = os.environ["USER"]
 
     with DockerContainer(
         image.id,

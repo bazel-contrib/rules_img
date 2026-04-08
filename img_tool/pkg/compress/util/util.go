@@ -77,6 +77,10 @@ func main() {
 	}
 
 	fileInfo, err := outputFile.Stat()
+	if err != nil {
+		fmt.Printf("Error getting output file info: %v\n", err)
+		os.Exit(1)
+	}
 	if appendOutput && stateIn != "" && state.CompressedSize != fileInfo.Size() {
 		fmt.Printf("Warning: The output file size %d does not match the state file size %d. The state file may be invalid.\n", fileInfo.Size(), state.CompressedSize)
 	}

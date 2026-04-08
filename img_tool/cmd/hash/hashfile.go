@@ -180,7 +180,7 @@ func writeHashOutput(hashBytes []byte, req *hashRequest, sandboxDir string, laye
 }
 
 // writeLayerMetadata writes layer metadata to a JSON file using precomputed data.
-func writeLayerMetadata(compressedHash []byte, meta *layerMetadata, req *hashRequest, outputPath string) error {
+func writeLayerMetadata(compressedHash []byte, meta *layerMetadata, req *hashRequest, outputPath string) (retErr error) {
 	// Build layer name
 	layerName := req.name
 	if layerName == "" {
@@ -202,7 +202,11 @@ func writeLayerMetadata(compressedHash []byte, meta *layerMetadata, req *hashReq
 	if err != nil {
 		return fmt.Errorf("failed to open output file %s: %w", outputPath, err)
 	}
-	defer outputFile.Close()
+	defer func() {
+		if err := outputFile.Close(); retErr == nil && err != nil {
+			retErr = fmt.Errorf("closing output file: %w", err)
+		}
+	}()
 
 	encoder := json.NewEncoder(outputFile)
 	encoder.SetIndent("", "  ")

@@ -210,15 +210,6 @@ func storeBlob(ctx context.Context, store containerd.Store, desc ocispec.Descrip
 	return nil
 }
 
-func contains(slice []string, item string) bool {
-	for _, s := range slice {
-		if s == item {
-			return true
-		}
-	}
-	return false
-}
-
 func NormalizeDockerReference(ref string) string {
 	if ref == "" {
 		return ""
