@@ -28,3 +28,10 @@ def rules_img_dependencies():
         ],
         sha256 = "29742e87275809b5e598dc2f04d86960cc7a55b3067d97221c9abbc9926bff0f",
     )
+
+    http_archive(
+        name = "package_metadata",
+        sha256 = "5bd0cc7594ea528fd28f98d82457f157827d48cc20e07bcfdbb56072f35c8f67",
+        strip_prefix = "supply-chain-0.0.6/metadata",
+        url = "https://github.com/bazel-contrib/supply-chain/releases/download/v0.0.6/supply-chain-v0.0.6.tar.gz",
+    )
