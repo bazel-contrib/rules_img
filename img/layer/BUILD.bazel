@@ -1,0 +1,11 @@
+load("//img/private:empty_layer.bzl", "empty_layer")
+
+package(default_visibility = ["//visibility:public"])
+
+empty_layer(name = "empty")
+
+filegroup(
+    name = "all_files",
+    srcs = glob(["**"]),
+    visibility = ["//img/private/release:__subpackages__"],
+)

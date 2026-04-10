@@ -26,6 +26,9 @@ const (
 	TarLayer     = "application/vnd.oci.image.layer.v1.tar"
 	TarGzipLayer = "application/vnd.oci.image.layer.v1.tar+gzip"
 	TarZstdLayer = "application/vnd.oci.image.layer.v1.tar+zstd"
+
+	// Config media types
+	MediaTypeEmptyJSON = "application/vnd.oci.empty.v1+json"
 )
 
 func (h HashAlgorithm) Len() int {
