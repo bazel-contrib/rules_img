@@ -57,7 +57,7 @@ func DeployMetadataProcess(ctx context.Context, args []string) {
 	flagSet.StringVar(&configurationPath, "configuration-file", "", `Path to the configuration file.`)
 	flagSet.StringVar(&strategy, "strategy", "eager", `Push strategy to use. One of "eager", "lazy", "cas_registry", or "bes".`)
 	flagSet.StringVar(&crossMountStrategy, "cross-mount-strategy", "", `Cross mount strategy.`)
-	flagSet.StringVar(&crossMountFromManifestPath, "cross-mount-from-manifest-path", "", `(Optional) deploy manifest if another push, from which layers of this push could be cross mounted.`)
+	flagSet.StringVar(&crossMountFromManifestPath, "cross-mount-from-manifest-path", "", `(Optional) deploy manifest of another push, from which layers for this push could be cross mounted.`)
 	flagSet.Func("original-registry", `(Optional) original registry that the base of this image was pulled from. Can be specified multiple times.`, func(value string) error {
 		originalRegistries = append(originalRegistries, value)
 		return nil
@@ -291,43 +291,9 @@ func WriteMetadata(ctx context.Context, outputPath string) error {
 			return err
 		}
 
-		if crossMountFromManifestPath != "" {
-			manifestData, err := os.ReadFile(crossMountFromManifestPath)
-			if err != nil {
-				return fmt.Errorf("reading manifest file %s: %w", crossMountFromManifestPath, err)
-			}
-
-			var deployManifest api.DeployManifest
-			if err := json.Unmarshal(manifestData, &deployManifest); err != nil {
-				return fmt.Errorf("parsing manifest file %s: %w", crossMountFromManifestPath, err)
-			}
-
-			pushOps, err := deployManifest.PushOperations()
-			if err != nil {
-				return fmt.Errorf("parsing manifest file %s: %w", crossMountFromManifestPath, err)
-			}
-
-			for _, sourceOperation := range pushOps {
-				if isCrossMountAllowed(operation.Registry, sourceOperation.Registry) {
-					operation.CrossMountHint = &api.CrossMountSource{
-						Registry:   sourceOperation.Registry,
-						Repository: sourceOperation.Repository,
-					}
-					break
-				}
-			}
-		}
-
-		if operation.CrossMountHint == nil {
-			for _, originalRegistry := range originalRegistries {
-				if isCrossMountAllowed(operation.Registry, originalRegistry) {
-					operation.CrossMountHint = &api.CrossMountSource{
-						Registry:   originalRegistry,
-						Repository: originalRepository,
-					}
-					break
-				}
-			}
+		operation.CrossMountHint, err = pickCrossMountSource(operation)
+		if err != nil {
+			return err
 		}
 
 		operationBytes, err = json.Marshal(operation)
@@ -361,6 +327,47 @@ func WriteMetadata(ctx context.Context, outputPath string) error {
 		return fmt.Errorf("writing metadata file: %w", err)
 	}
 	return nil
+}
+
+func pickCrossMountSource(operation api.PushDeployOperation) (*api.CrossMountSource, error) {
+	if crossMountFromManifestPath != "" {
+		manifestData, err := os.ReadFile(crossMountFromManifestPath)
+		if err != nil {
+			return nil, fmt.Errorf("reading manifest file %s: %w", crossMountFromManifestPath, err)
+		}
+
+		var deployManifest api.DeployManifest
+		if err := json.Unmarshal(manifestData, &deployManifest); err != nil {
+			return nil, fmt.Errorf("parsing manifest file %s: %w", crossMountFromManifestPath, err)
+		}
+
+		pushOps, err := deployManifest.PushOperations()
+		if err != nil {
+			return nil, fmt.Errorf("parsing manifest file %s: %w", crossMountFromManifestPath, err)
+		}
+
+		for _, sourceOperation := range pushOps {
+			if isCrossMountAllowed(operation.Registry, sourceOperation.Registry) {
+				return &api.CrossMountSource{
+					Registry:   sourceOperation.Registry,
+					Repository: sourceOperation.Repository,
+				}, nil
+			}
+		}
+	}
+
+	if operation.CrossMountHint == nil {
+		for _, originalRegistry := range originalRegistries {
+			if isCrossMountAllowed(operation.Registry, originalRegistry) {
+				return &api.CrossMountSource{
+					Registry:   originalRegistry,
+					Repository: originalRepository,
+				}, nil
+			}
+		}
+	}
+
+	return nil, nil
 }
 
 func pushOperation(baseCommand api.BaseCommandOperation, config map[string]any) (api.PushDeployOperation, error) {
