@@ -86,8 +86,7 @@ type BaseCommandOperation struct {
 	Root      Descriptor           `json:"root"`      // the descriptor of the index / single manifest to push
 	Manifests []ManifestDeployInfo `json:"manifests"` // for index push, the list of manifests to push. For single manifest push, this contains just one element.
 
-	CrossMountDisabled bool              `json:"cross_mount_disabled,omitempty"` // disables cross-repository blob mounting entirely
-	CrossMountSource   *CrossMountSource `json:"cross_mount_source,omitempty"`   // repository from which layers can be cross-mounted
+	CrossMountHint *CrossMountSource `json:"cross_mount_hint,omitempty"` // repository from which layers can be cross-mounted
 
 	PullInfo
 }

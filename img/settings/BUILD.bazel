@@ -148,9 +148,10 @@ string_flag(
 
 string_flag(
     name = "cross_mount",
-    build_setting_default = "enabled",
+    build_setting_default = "same_registry",
     values = [
-        "enabled",
+        "same_registry",
+        "cross_registry",
         "disabled",
     ],
     visibility = ["//img/private:__subpackages__"],

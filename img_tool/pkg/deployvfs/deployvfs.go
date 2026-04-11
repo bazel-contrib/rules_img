@@ -38,10 +38,11 @@ type Stats struct {
 // - undeclared local output files (via layer hints)
 // - Bazel remote cache
 type VFS struct {
-	dm        api.DeployManifest
-	blobs     map[string]blobEntry
-	manifests map[string]blobEntry
-	stats     *Stats
+	dm              api.DeployManifest
+	blobs           map[string]blobEntry
+	crossMountHints map[string]api.CrossMountSource
+	manifests       map[string]blobEntry
+	stats           *Stats
 }
 
 // Stats returns the current statistics for the VFS.
@@ -55,16 +56,18 @@ func (vfs *VFS) Layer(digest registryv1.Hash) (registryv1.Layer, error) {
 		return nil, fmt.Errorf("layer with digest %s not found in VFS", digest.String())
 	}
 
-	if entry.crossMountFrom != "" {
-		repo, err := registryname.NewRepository(entry.crossMountFrom)
+	if hint, found := vfs.crossMountHints[digest.String()]; found {
+		reg, err := registryname.NewRegistry(hint.Registry)
 		if err != nil {
-			return nil, fmt.Errorf("parsing cross-mount hint %q: %w", entry.crossMountFrom, err)
+			return nil, fmt.Errorf("parsing cross-mount registry %q: %w", hint.Registry, err)
 		}
+
 		return &remote.MountableLayer{
 			Layer:     entry,
-			Reference: repo.Digest(digest.String()),
+			Reference: reg.Repo(hint.Repository).Digest(digest.String()),
 		}, nil
 	}
+
 	return entry, nil
 }
 
@@ -301,15 +304,16 @@ func (b *vfsBuilder) Build() (*VFS, error) {
 		_ = err
 	}
 
-	blobs, manifests, err := b.ingest()
+	blobs, manifests, crossMountHints, err := b.ingest()
 	if err != nil {
 		return nil, err
 	}
 	return &VFS{
-		dm:        b.dm,
-		blobs:     blobs,
-		manifests: manifests,
-		stats:     b.stats,
+		dm:              b.dm,
+		blobs:           blobs,
+		crossMountHints: crossMountHints,
+		manifests:       manifests,
+		stats:           b.stats,
 	}, nil
 }
 
@@ -389,13 +393,14 @@ func parseLayerHints(hintsPath string, workspaceDir string) (map[string][]string
 	return hints, nil
 }
 
-func (b *vfsBuilder) ingest() (map[string]blobEntry, map[string]blobEntry, error) {
+func (b *vfsBuilder) ingest() (map[string]blobEntry, map[string]blobEntry, map[string]api.CrossMountSource, error) {
 	blobs := make(map[string]blobEntry)
 	manifests := make(map[string]blobEntry)
+	crossMountHints := make(map[string]api.CrossMountSource)
 
 	baseOps, err := b.dm.BaseOperations()
 	if err != nil {
-		return nil, nil, fmt.Errorf("getting base operations: %w", err)
+		return nil, nil, nil, fmt.Errorf("getting base operations: %w", err)
 	}
 	for i, op := range baseOps {
 		var strategy string
@@ -418,10 +423,14 @@ func (b *vfsBuilder) ingest() (map[string]blobEntry, map[string]blobEntry, error
 			manifests[manifest.Descriptor.Digest] = b.localManifest(i, manifestIndex, manifest.Descriptor)
 			blobs[manifest.Config.Digest] = b.localConfig(i, manifestIndex, manifest.Config)
 			for layerIndex, layer := range manifest.LayerBlobs {
-				blob, err := b.layerBlob(i, manifestIndex, layerIndex, strategy, op.PullInfo, op.CrossMountDisabled, op.CrossMountSource, manifest, layer)
+				blob, err := b.layerBlob(i, manifestIndex, layerIndex, strategy, op.PullInfo, manifest, layer)
 				if err != nil {
-					return nil, nil, fmt.Errorf("locating source for layer with digest %s with index %d in manifest %d of operation %d: %w", layer.Digest, layerIndex, manifestIndex, i, err)
+					return nil, nil, nil, fmt.Errorf("locating source for layer with digest %s with index %d in manifest %d of operation %d: %w", layer.Digest, layerIndex, manifestIndex, i, err)
 				}
+				if op.CrossMountHint != nil {
+					crossMountHints[layer.Digest] = *op.CrossMountHint
+				}
+
 				if existing, found := blobs[layer.Digest]; found {
 					// if we already have a blob with this digest, we need to decide which one to keep
 					// we try to "upgrade" the source of the blob in the following order:
@@ -445,27 +454,20 @@ func (b *vfsBuilder) ingest() (map[string]blobEntry, map[string]blobEntry, error
 		}
 	}
 
-	return blobs, manifests, nil
+	return blobs, manifests, crossMountHints, nil
 }
 
-func (b *vfsBuilder) layerBlob(operationIndex int, manifestIndex int, layerIndex int, strategy string, pullInfo api.PullInfo, crossMountDisabled bool, crossMountSource *api.CrossMountSource, manifestInfo api.ManifestDeployInfo, desc api.Descriptor) (blobEntry, error) {
+func (b *vfsBuilder) layerBlob(operationIndex int, manifestIndex int, layerIndex int, strategy string, pullInfo api.PullInfo, manifestInfo api.ManifestDeployInfo, desc api.Descriptor) (blobEntry, error) {
 	// we try the following sources, in order:
 	// 1. runfiles tree
 	// 2. registry of base image (if base image is shallow, blob was marked as "missing blob" (exists remotely) and strategy allows it)
 	// 3. bazel remote cache (lazy strategy)
 	// 4. stub blob (cas_registry stategy where all blobs are assumed to already be in the remote CAS)
 
-	var hint string
-	if !crossMountDisabled {
-		hint = crossMountHint(crossMountSource, pullInfo)
-	}
-
 	if entry, found := b.layerFromFile(operationIndex, manifestIndex, layerIndex, desc); found {
-		entry.crossMountFrom = hint
 		return entry, nil
 	}
 	if entry, found := b.layerFromRegistry(pullInfo, manifestInfo.MissingBlobs, desc); found {
-		entry.crossMountFrom = hint
 		return entry, nil
 	}
 	switch strategy {
@@ -473,7 +475,6 @@ func (b *vfsBuilder) layerBlob(operationIndex int, manifestIndex int, layerIndex
 		return blobEntry{}, fmt.Errorf("layer not found in runfiles (%s) or base image registry, cannot proceed with eager strategy", layerRunfilesPath(operationIndex, manifestIndex, layerIndex))
 	case "lazy":
 		if entry, found := b.layerFromCAS(desc); found {
-			entry.crossMountFrom = hint
 			return entry, nil
 		}
 		return blobEntry{}, fmt.Errorf("layer not found in runfiles (%s) or base image registry, and not found in remote cache, cannot proceed with lazy strategy", layerRunfilesPath(operationIndex, manifestIndex, layerIndex))
@@ -481,23 +482,9 @@ func (b *vfsBuilder) layerBlob(operationIndex int, manifestIndex int, layerIndex
 		// create a stub blob that cannot be read.
 		// The push code should never try to read it, since the remote CAS is assumed to already have it.
 		// For the bes strategy, we should never try to upload blobs from the client anyways, so this is fine.
-		entry := stubBlob(desc)
-		entry.crossMountFrom = hint
-		return entry, nil
+		return stubBlob(desc), nil
 	}
 	return blobEntry{}, fmt.Errorf("unknown push/load strategy: %s", strategy)
-}
-
-func crossMountHint(source *api.CrossMountSource, pullInfo api.PullInfo) string {
-	if source != nil {
-		return source.Registry + "/" + source.Repository
-	}
-
-	if len(pullInfo.OriginalBaseImageRegistries) > 0 && pullInfo.OriginalBaseImageRepository != "" {
-		return pullInfo.OriginalBaseImageRegistries[0] + "/" + pullInfo.OriginalBaseImageRepository
-	}
-
-	return ""
 }
 
 // layerFromFile tries to find the layer in the runfiles tree. If it exists, it returns the blobEntry and true.
@@ -629,8 +616,6 @@ type blobEntry struct {
 	Location string // "file", "registry", "remote_cache", "stub"
 	Opener   func() (io.ReadCloser, error)
 	stats    *Stats // reference to VFS stats for tracking
-
-	crossMountFrom string
 }
 
 func (b *vfsBuilder) localIndex(operationIndex int, desc api.Descriptor) blobEntry {
