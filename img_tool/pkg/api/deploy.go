@@ -128,7 +128,7 @@ type PullInfo struct {
 }
 
 type CrossMountSource struct {
-	Registry   string `json:"registry"`
+	Registry   string `json:"registry,omitempty"`
 	Repository string `json:"repository"`
 }
 

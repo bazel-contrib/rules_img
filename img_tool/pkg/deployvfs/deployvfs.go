@@ -57,7 +57,7 @@ func (vfs *VFS) Layer(digest registryv1.Hash) (registryv1.Layer, error) {
 	}
 
 	if hint, found := vfs.crossMountHints[digest.String()]; found {
-		reg, err := registryname.NewRegistry(hint.Registry)
+		reg, err := registryname.NewRegistry(hint.Registry, registryname.WithDefaultRegistry(""))
 		if err != nil {
 			return nil, fmt.Errorf("parsing cross-mount registry %q: %w", hint.Registry, err)
 		}

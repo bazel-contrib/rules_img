@@ -156,17 +156,6 @@ func DeployMetadataProcess(ctx context.Context, args []string) {
 	}
 }
 
-func isCrossMountAllowed(targetRegistry string, sourceRegistry string) bool {
-	switch crossMountStrategy {
-	case "same_registry":
-		return targetRegistry == sourceRegistry
-	case "cross_registry":
-		return true
-	default:
-		return false
-	}
-}
-
 func WriteMetadata(ctx context.Context, outputPath string) error {
 	rawConfig, err := os.ReadFile(configurationPath)
 	if err != nil {
@@ -329,6 +318,18 @@ func WriteMetadata(ctx context.Context, outputPath string) error {
 	return nil
 }
 
+func checkCrossMountSource(targetRegistry string, sourceRegistry string, sourceRepository string) *api.CrossMountSource {
+	if targetRegistry == sourceRegistry && (crossMountStrategy == "same_registry" || crossMountStrategy == "cross_registry") {
+		return &api.CrossMountSource{Repository: sourceRepository}
+	}
+
+	if crossMountStrategy == "cross_registry" {
+		return &api.CrossMountSource{Registry: sourceRegistry, Repository: sourceRepository}
+	}
+
+	return nil
+}
+
 func pickCrossMountSource(operation api.PushDeployOperation) (*api.CrossMountSource, error) {
 	if crossMountFromManifestPath != "" {
 		manifestData, err := os.ReadFile(crossMountFromManifestPath)
@@ -347,23 +348,15 @@ func pickCrossMountSource(operation api.PushDeployOperation) (*api.CrossMountSou
 		}
 
 		for _, sourceOperation := range pushOps {
-			if isCrossMountAllowed(operation.Registry, sourceOperation.Registry) {
-				return &api.CrossMountSource{
-					Registry:   sourceOperation.Registry,
-					Repository: sourceOperation.Repository,
-				}, nil
+			if source := checkCrossMountSource(operation.Registry, sourceOperation.Registry, sourceOperation.Repository); source != nil {
+				return source, nil
 			}
 		}
 	}
 
-	if operation.CrossMountHint == nil {
-		for _, originalRegistry := range originalRegistries {
-			if isCrossMountAllowed(operation.Registry, originalRegistry) {
-				return &api.CrossMountSource{
-					Registry:   originalRegistry,
-					Repository: originalRepository,
-				}, nil
-			}
+	for _, originalRegistry := range originalRegistries {
+		if source := checkCrossMountSource(operation.Registry, originalRegistry, originalRepository); source != nil {
+			return source, nil
 		}
 	}
 
