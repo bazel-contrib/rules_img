@@ -69,7 +69,7 @@ pull = use_repo_rule("@rules_img//img:pull.bzl", "pull")
 
 pull(
     name = "alpine",
-    digest = "sha256:51183f2cfa6320055da30872f211093f9ff1d3cf06f39a0bdb212314c5dc7375",
+    digest = "sha256:25109184c71bdad752c8312a8623239686a9a2071e8825f20acb8f2198c3f659",
     layer_handling = "lazy",
     registries = [
         "mirror.gcr.io",
@@ -93,18 +93,18 @@ pull(
 # image that contains a manifest without explicit mediaType field
 pull(
     name = "envoy",
-    digest = "sha256:d68fc27a15a17ae3b13df8c8631523a2fe1192b39ec867dffe870b666c55c2dd",
+    digest = "sha256:c5e8a68e52f4d4697a9adb280dbe415d77fedf1257e183dcb86205bd438f18bd",
     repository = "envoyproxy/envoy",
-    tag = "v1.36.3",
+    tag = "v1.37.2",
 )
 
 pull(
     name = "neo4j",
-    digest = "sha256:5bd040cfe84b953a893c943cf3be4e4dc3b2758c154c192a6196de9d1e31b11b",
+    digest = "sha256:760933d1ac01516cf5d919d4767dae7448fe3eeceba84dfa462da00c0aa5ab18",
     layer_handling = "lazy",
     registry = "index.docker.io",
     repository = "library/neo4j",
-    tag = "5.26.18-ubi9",
+    tag = "5.26.24-ubi9",
 )
 
 # Example of pulling from GCR by tag without digest
@@ -121,7 +121,7 @@ pull(
 
 pull(
     name = "distroless_static",
-    digest = "sha256:3f2b64ef97bd285e36132c684e6b2ae8f2723293d09aae046196cca64251acac",
+    digest = "sha256:47b2d72ff90843eb8a768b5c2f89b40741843b639d065b9b937b07cd59b479c6",
     layer_handling = "eager",
     registry = "gcr.io",
     repository = "distroless/static",
@@ -137,7 +137,7 @@ pull(
 images = use_extension("@rules_img//img:extensions.bzl", "images")
 images.pull(
     name = "nginx",
-    digest = "sha256:029d4461bd98f124e531380505ceea2072418fdf28752aa73b7b273ba3048903",
+    digest = "sha256:7f0adca1fc6c29c8dc49a2e90037a10ba20dc266baaed0988e9fb4d0d8b85ba0",
     registries = [
         "mirror.gcr.io",
         "index.docker.io",
