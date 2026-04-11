@@ -280,11 +280,6 @@ func WriteMetadata(ctx context.Context, outputPath string) error {
 			return err
 		}
 
-		operation.CrossMountHint, err = pickCrossMountSource(operation)
-		if err != nil {
-			return err
-		}
-
 		operationBytes, err = json.Marshal(operation)
 		if err != nil {
 			return fmt.Errorf("marshalling push operation: %w", err)
@@ -330,7 +325,7 @@ func checkCrossMountSource(targetRegistry string, sourceRegistry string, sourceR
 	return nil
 }
 
-func pickCrossMountSource(operation api.PushDeployOperation) (*api.CrossMountSource, error) {
+func pickCrossMountSource(targetRegistry string) (*api.CrossMountSource, error) {
 	if crossMountFromManifestPath != "" {
 		manifestData, err := os.ReadFile(crossMountFromManifestPath)
 		if err != nil {
@@ -348,14 +343,14 @@ func pickCrossMountSource(operation api.PushDeployOperation) (*api.CrossMountSou
 		}
 
 		for _, sourceOperation := range pushOps {
-			if source := checkCrossMountSource(operation.Registry, sourceOperation.Registry, sourceOperation.Repository); source != nil {
+			if source := checkCrossMountSource(targetRegistry, sourceOperation.Registry, sourceOperation.Repository); source != nil {
 				return source, nil
 			}
 		}
 	}
 
 	for _, originalRegistry := range originalRegistries {
-		if source := checkCrossMountSource(operation.Registry, originalRegistry, originalRepository); source != nil {
+		if source := checkCrossMountSource(targetRegistry, originalRegistry, originalRepository); source != nil {
 			return source, nil
 		}
 	}
@@ -385,6 +380,12 @@ func pushOperation(baseCommand api.BaseCommandOperation, config map[string]any) 
 		} else {
 			return api.PushDeployOperation{}, fmt.Errorf("tag at index %d is not a string", i)
 		}
+	}
+
+	var err error
+	baseCommand.CrossMountHint, err = pickCrossMountSource(registry)
+	if err != nil {
+		return api.PushDeployOperation{}, err
 	}
 
 	return api.PushDeployOperation{
