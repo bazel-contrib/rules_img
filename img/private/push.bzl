@@ -75,6 +75,13 @@ def _compute_push_metadata(*, ctx, configuration_json):
     if "original_digest" in target_info and target_info["original_digest"] != None:
         args.add("--original-digest", target_info["original_digest"])
 
+    args.add("--cross-mount-strategy={}".format(ctx.attr._push_settings[PushSettingsInfo].cross_mount))
+
+    if ctx.attr.cross_mount_from != None:
+        cross_mount_from = ctx.attr.cross_mount_from[DeployInfo]
+        inputs.append(cross_mount_from.deploy_manifest)
+        args.add("--cross-mount-from-manifest-path", cross_mount_from.deploy_manifest.path)
+
     if manifest_info != None:
         args.add("--root-path", manifest_info.manifest.path)
         args.add("--root-kind", "manifest")
@@ -368,6 +375,10 @@ Each tag is subject to [template expansion](/docs/templating.md).
         "image": attr.label(
             doc = "Image to push. Should provide ImageManifestInfo or ImageIndexInfo.",
             mandatory = True,
+        ),
+        "cross_mount_from": attr.label(
+            doc = "An image_push target whose layers may be cross-mounted during push.",
+            providers = [DeployInfo],
         ),
         "strategy": attr.string(
             doc = """Push strategy to use.

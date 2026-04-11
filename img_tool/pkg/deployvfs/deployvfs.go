@@ -38,10 +38,11 @@ type Stats struct {
 // - undeclared local output files (via layer hints)
 // - Bazel remote cache
 type VFS struct {
-	dm        api.DeployManifest
-	blobs     map[string]blobEntry
-	manifests map[string]blobEntry
-	stats     *Stats
+	dm              api.DeployManifest
+	blobs           map[string]blobEntry
+	crossMountHints map[string]api.CrossMountSource
+	manifests       map[string]blobEntry
+	stats           *Stats
 }
 
 // Stats returns the current statistics for the VFS.
@@ -54,6 +55,19 @@ func (vfs *VFS) Layer(digest registryv1.Hash) (registryv1.Layer, error) {
 	if !found {
 		return nil, fmt.Errorf("layer with digest %s not found in VFS", digest.String())
 	}
+
+	if hint, found := vfs.crossMountHints[digest.String()]; found {
+		reg, err := registryname.NewRegistry(hint.Registry, registryname.WithDefaultRegistry(""))
+		if err != nil {
+			return nil, fmt.Errorf("parsing cross-mount registry %q: %w", hint.Registry, err)
+		}
+
+		return &remote.MountableLayer{
+			Layer:     entry,
+			Reference: reg.Repo(hint.Repository).Digest(digest.String()),
+		}, nil
+	}
+
 	return entry, nil
 }
 
@@ -290,15 +304,16 @@ func (b *vfsBuilder) Build() (*VFS, error) {
 		_ = err
 	}
 
-	blobs, manifests, err := b.ingest()
+	blobs, manifests, crossMountHints, err := b.ingest()
 	if err != nil {
 		return nil, err
 	}
 	return &VFS{
-		dm:        b.dm,
-		blobs:     blobs,
-		manifests: manifests,
-		stats:     b.stats,
+		dm:              b.dm,
+		blobs:           blobs,
+		crossMountHints: crossMountHints,
+		manifests:       manifests,
+		stats:           b.stats,
 	}, nil
 }
 
@@ -378,13 +393,14 @@ func parseLayerHints(hintsPath string, workspaceDir string) (map[string][]string
 	return hints, nil
 }
 
-func (b *vfsBuilder) ingest() (map[string]blobEntry, map[string]blobEntry, error) {
+func (b *vfsBuilder) ingest() (map[string]blobEntry, map[string]blobEntry, map[string]api.CrossMountSource, error) {
 	blobs := make(map[string]blobEntry)
 	manifests := make(map[string]blobEntry)
+	crossMountHints := make(map[string]api.CrossMountSource)
 
 	baseOps, err := b.dm.BaseOperations()
 	if err != nil {
-		return nil, nil, fmt.Errorf("getting base operations: %w", err)
+		return nil, nil, nil, fmt.Errorf("getting base operations: %w", err)
 	}
 	for i, op := range baseOps {
 		var strategy string
@@ -409,8 +425,12 @@ func (b *vfsBuilder) ingest() (map[string]blobEntry, map[string]blobEntry, error
 			for layerIndex, layer := range manifest.LayerBlobs {
 				blob, err := b.layerBlob(i, manifestIndex, layerIndex, strategy, op.PullInfo, manifest, layer)
 				if err != nil {
-					return nil, nil, fmt.Errorf("locating source for layer with digest %s with index %d in manifest %d of operation %d: %w", layer.Digest, layerIndex, manifestIndex, i, err)
+					return nil, nil, nil, fmt.Errorf("locating source for layer with digest %s with index %d in manifest %d of operation %d: %w", layer.Digest, layerIndex, manifestIndex, i, err)
 				}
+				if op.CrossMountHint != nil {
+					crossMountHints[layer.Digest] = *op.CrossMountHint
+				}
+
 				if existing, found := blobs[layer.Digest]; found {
 					// if we already have a blob with this digest, we need to decide which one to keep
 					// we try to "upgrade" the source of the blob in the following order:
@@ -434,7 +454,7 @@ func (b *vfsBuilder) ingest() (map[string]blobEntry, map[string]blobEntry, error
 		}
 	}
 
-	return blobs, manifests, nil
+	return blobs, manifests, crossMountHints, nil
 }
 
 func (b *vfsBuilder) layerBlob(operationIndex int, manifestIndex int, layerIndex int, strategy string, pullInfo api.PullInfo, manifestInfo api.ManifestDeployInfo, desc api.Descriptor) (blobEntry, error) {

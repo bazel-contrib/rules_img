@@ -1,0 +1,57 @@
+load("@bazel_skylib//rules:build_test.bzl", "build_test")
+load("@rules_img//img:image.bzl", "image_manifest")
+load("@rules_img//img:layer.bzl", "image_layer")
+load("@rules_img//img:push.bzl", "image_push")
+
+image_layer(
+    name = "base_layer",
+    srcs = {
+        "/requirements.txt": ":requirements.txt",
+    },
+)
+
+image_layer(
+    name = "app_layer",
+    srcs = {
+        "/app.txt": ":app.txt",
+    },
+)
+
+image_manifest(
+    name = "base",
+    base = "@alpine",
+    layers = [
+        ":base_layer",
+    ],
+)
+
+image_push(
+    name = "push_base",
+    image = "@alpine",
+    registry = "ghcr.io",
+    repository = "malt3/rules_img/e2e-generic-cross-mount-base",
+)
+
+image_manifest(
+    name = "app",
+    base = ":base",
+    layers = [
+        ":app_layer",
+    ],
+)
+
+image_push(
+    name = "push_app",
+    cross_mount_from = ":push_base",
+    image = ":app",
+    registry = "ghcr.io",
+    repository = "malt3/rules_img/e2e-generic-cross-mount-app",
+)
+
+build_test(
+    name = "test",
+    targets = [
+        ":push_base",
+        ":push_app",
+    ],
+)
