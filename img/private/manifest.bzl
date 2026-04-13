@@ -328,6 +328,8 @@ def _image_manifest_impl(ctx):
         if ctx.attr.config_fragment == None and ctx.attr.config_media_type != "application/vnd.oci.empty.v1+json":
             fail("config_media_type requires config_fragment (e.g. Helm config JSON), unless set to application/vnd.oci.empty.v1+json")
         args.add("--config-media-type", ctx.attr.config_media_type)
+    if ctx.attr.artifact_type:
+        args.add("--artifact-type", ctx.attr.artifact_type)
     if ctx.attr.created != None:
         inputs.append(ctx.file.created)
         args.add("--created", ctx.file.created.path)
@@ -580,6 +582,15 @@ JSON config descriptor is produced automatically with the content inlined as dat
 
 For other non-OCI types (e.g. \"application/vnd.cncf.helm.config.v1+json\" for Helm charts),
 config_fragment is required and used verbatim as the config blob (no OCI image structure).""",
+        ),
+        "artifact_type": attr.string(
+            doc = """Optional IANA media type of the artifact when the manifest is used for an artifact.
+
+This sets the `artifactType` field in the OCI manifest, as defined in the
+[OCI Image Spec](https://github.com/opencontainers/image-spec/blob/main/manifest.md#image-manifest-property-descriptions).
+
+Common values include `application/vnd.cncf.helm.chart.v1` for Helm charts
+or `application/spdx+json` for SPDX SBOMs.""",
         ),
         "created": attr.label(
             doc = """Optional file containing a datetime string (RFC 3339 format) for when the image was created.
