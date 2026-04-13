@@ -3,7 +3,10 @@ package credential
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"os/exec"
@@ -138,3 +141,51 @@ type cacheEntry struct {
 }
 
 var _ http.RoundTripper = &AuthenticatingRoundTripper{}
+
+// ContainerRegistryHelper conforms to `go-containerregistry#authn.Helper`
+type containerRegistryHelper struct {
+	helper Helper
+}
+
+func ContainerRegistryHelper(helper Helper) *containerRegistryHelper {
+	return &containerRegistryHelper{
+		helper: helper,
+	}
+}
+
+func (c *containerRegistryHelper) Get(serverURL string) (string, string, error) {
+	headers, _, err := c.helper.Get(context.Background(), serverURL)
+	if err != nil {
+		return "", "", err
+	} else if headers == nil {
+		return "", "", errors.New("no HTTP headers found")
+	}
+
+	values, ok := headers["Authorization"]
+	if !ok {
+		return "", "", errors.New("no `Authorization` header")
+	}
+
+	for _, header := range values {
+		kind, value, found := strings.Cut(header, " ")
+		if !found {
+			return "", "", fmt.Errorf("no authorization scheme: %s", header)
+		} else if kind == "Basic" {
+			decoded, err := base64.StdEncoding.DecodeString(value)
+			if err != nil {
+				return "", "", fmt.Errorf("decode authorisation header: %s: %w", header, err)
+			}
+			username, password, found := strings.Cut(string(decoded), ":")
+			if !found {
+				return "", "", fmt.Errorf("no semi-colon in basic auth: %s", decoded)
+			}
+			return username, password, nil
+		} else if kind == "Bearer" {
+			return "<token>", value, nil
+		} else {
+			return "", "", fmt.Errorf("unknown authorization scheme: %s", header)
+		}
+	}
+
+	return "", "", fmt.Errorf("no `Authorization` headers")
+}
