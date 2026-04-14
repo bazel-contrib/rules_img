@@ -346,6 +346,7 @@ func parseLayerHints(hintsPath string, workspaceDir string) (map[string][]string
 
 	hints := make(map[string][]string)
 	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 1024*1024), 1024*1024) // default 64 KB is too small when many operations share a layer
 
 	for scanner.Scan() {
 		line := scanner.Text()
