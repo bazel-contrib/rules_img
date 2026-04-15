@@ -316,7 +316,7 @@ func prepareConfig(layers []api.Descriptor, templatesData *ConfigTemplates, crea
 			return config, fmt.Errorf("reading config fragment: %w", err)
 		}
 	}
-	if len(config.History) > 0 {
+	if len(history.History) > 0 {
 		config.History = append(config.History, history.History...)
 	}
 	if err := overlayNewConfigValues(&config, layers, templatesData); err != nil {
