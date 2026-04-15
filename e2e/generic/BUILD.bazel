@@ -466,6 +466,14 @@ image_manifest(
     layers = [":mixed_layer"],
 )
 
+image_manifest(
+    name = "manifest_with_artifact_type",
+    artifact_type = "application/vnd.cncf.helm.chart.v1",
+    config_fragment = ":helm_config",
+    config_media_type = "application/vnd.cncf.helm.config.v1+json",
+    layers = [":mixed_layer"],
+)
+
 # See https://github.com/opencontainers/image-spec/blob/main/manifest.md#guidance-for-an-empty-descriptor
 image_manifest(
     name = "manifest_with_empty_config_and_empty_layer",

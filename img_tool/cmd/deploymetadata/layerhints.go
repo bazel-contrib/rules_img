@@ -164,6 +164,7 @@ func readLayerHintsOutput(inputPath string, digestMap map[string][]string) error
 	defer inputFile.Close()
 
 	scanner := bufio.NewScanner(inputFile)
+	scanner.Buffer(make([]byte, 1024*1024), 1024*1024) // default 64 KB is too small when many operations share a layer
 	for scanner.Scan() {
 		line := scanner.Text()
 		if line == "" {

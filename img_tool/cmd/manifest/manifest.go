@@ -45,6 +45,7 @@ var (
 	annotations           stringMap
 	stopSignal            string
 	created               string
+	artifactType          string
 )
 
 type historyConfig struct {
@@ -90,6 +91,7 @@ func ManifestProcess(_ context.Context, args []string) {
 	flagSet.StringVar(&stopSignal, "stop-signal", "", `Signal to stop the container.`)
 	flagSet.StringVar(&created, "created", "", `A file containing a datetime string (RFC 3339 format) for when the image was created.`)
 	flagSet.StringVar(&historyFile, "history-file", "", `A file containing the history of all layers`)
+	flagSet.StringVar(&artifactType, "artifact-type", "", `Optional IANA media type of the artifact when the manifest is used for an artifact (e.g. application/vnd.cncf.helm.chart.v1, application/spdx+json).`)
 
 	if err := flagSet.Parse(args); err != nil {
 		flagSet.Usage()
@@ -212,9 +214,10 @@ func ManifestProcess(_ context.Context, args []string) {
 		Versioned: specs.Versioned{
 			SchemaVersion: 2,
 		},
-		MediaType: specv1.MediaTypeImageManifest,
-		Config:    configDescriptor,
-		Layers:    layerDescriptors,
+		MediaType:    specv1.MediaTypeImageManifest,
+		ArtifactType: artifactType,
+		Config:       configDescriptor,
+		Layers:       layerDescriptors,
 	}
 
 	// Apply annotations from config templates or command line
@@ -251,9 +254,10 @@ func ManifestProcess(_ context.Context, args []string) {
 
 	manifestSHA256 := sha256.Sum256(manifestRaw)
 	descriptor := specv1.Descriptor{
-		MediaType: specv1.MediaTypeImageManifest,
-		Digest:    digest.NewDigestFromBytes(digest.SHA256, manifestSHA256[:]),
-		Size:      int64(len(manifestRaw)),
+		MediaType:    specv1.MediaTypeImageManifest,
+		Digest:       digest.NewDigestFromBytes(digest.SHA256, manifestSHA256[:]),
+		Size:         int64(len(manifestRaw)),
+		ArtifactType: artifactType,
 		Platform: &specv1.Platform{
 			Architecture: architecture,
 			OS:           operatingSystem,
