@@ -30,6 +30,9 @@ var (
 	originalDigest          string
 	layerHintsInputPath     string
 	layerHintsOutputPath    string
+
+	crossMountStrategy         string
+	crossMountFromManifestPath string
 )
 
 func DeployMetadataProcess(ctx context.Context, args []string) {
@@ -53,6 +56,8 @@ func DeployMetadataProcess(ctx context.Context, args []string) {
 	flagSet.StringVar(&rootKind, "root-kind", "", `Kind of the root manifest ("manifest" or "index").`)
 	flagSet.StringVar(&configurationPath, "configuration-file", "", `Path to the configuration file.`)
 	flagSet.StringVar(&strategy, "strategy", "eager", `Push strategy to use. One of "eager", "lazy", "cas_registry", or "bes".`)
+	flagSet.StringVar(&crossMountStrategy, "cross-mount-strategy", "", `Cross mount strategy.`)
+	flagSet.StringVar(&crossMountFromManifestPath, "cross-mount-from-manifest-path", "", `(Optional) deploy manifest of another push, from which layers for this push could be cross mounted.`)
 	flagSet.Func("original-registry", `(Optional) original registry that the base of this image was pulled from. Can be specified multiple times.`, func(value string) error {
 		originalRegistries = append(originalRegistries, value)
 		return nil
@@ -274,6 +279,7 @@ func WriteMetadata(ctx context.Context, outputPath string) error {
 		if err != nil {
 			return err
 		}
+
 		operationBytes, err = json.Marshal(operation)
 		if err != nil {
 			return fmt.Errorf("marshalling push operation: %w", err)
@@ -307,6 +313,51 @@ func WriteMetadata(ctx context.Context, outputPath string) error {
 	return nil
 }
 
+func checkCrossMountSource(targetRegistry string, sourceRegistry string, sourceRepository string) *api.CrossMountSource {
+	if targetRegistry == sourceRegistry && (crossMountStrategy == "same_registry" || crossMountStrategy == "cross_registry") {
+		return &api.CrossMountSource{Repository: sourceRepository}
+	}
+
+	if crossMountStrategy == "cross_registry" {
+		return &api.CrossMountSource{Registry: sourceRegistry, Repository: sourceRepository}
+	}
+
+	return nil
+}
+
+func pickCrossMountSource(targetRegistry string) (*api.CrossMountSource, error) {
+	if crossMountFromManifestPath != "" {
+		manifestData, err := os.ReadFile(crossMountFromManifestPath)
+		if err != nil {
+			return nil, fmt.Errorf("reading manifest file %s: %w", crossMountFromManifestPath, err)
+		}
+
+		var deployManifest api.DeployManifest
+		if err := json.Unmarshal(manifestData, &deployManifest); err != nil {
+			return nil, fmt.Errorf("parsing manifest file %s: %w", crossMountFromManifestPath, err)
+		}
+
+		pushOps, err := deployManifest.PushOperations()
+		if err != nil {
+			return nil, fmt.Errorf("parsing manifest file %s: %w", crossMountFromManifestPath, err)
+		}
+
+		for _, sourceOperation := range pushOps {
+			if source := checkCrossMountSource(targetRegistry, sourceOperation.Registry, sourceOperation.Repository); source != nil {
+				return source, nil
+			}
+		}
+	}
+
+	for _, originalRegistry := range originalRegistries {
+		if source := checkCrossMountSource(targetRegistry, originalRegistry, originalRepository); source != nil {
+			return source, nil
+		}
+	}
+
+	return nil, nil
+}
+
 func pushOperation(baseCommand api.BaseCommandOperation, config map[string]any) (api.PushDeployOperation, error) {
 	registry, ok := config["registry"].(string)
 	if !ok || registry == "" {
@@ -329,6 +380,12 @@ func pushOperation(baseCommand api.BaseCommandOperation, config map[string]any) 
 		} else {
 			return api.PushDeployOperation{}, fmt.Errorf("tag at index %d is not a string", i)
 		}
+	}
+
+	var err error
+	baseCommand.CrossMountHint, err = pickCrossMountSource(registry)
+	if err != nil {
+		return api.PushDeployOperation{}, err
 	}
 
 	return api.PushDeployOperation{
