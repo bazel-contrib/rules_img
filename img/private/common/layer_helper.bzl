@@ -77,16 +77,20 @@ def compression_tuning_args(ctx, compression, estargz):
         tuned_args.extend(["--compression-level", level])
     return tuned_args
 
-def calculate_layer_info(*, ctx, media_type, tar_file, metadata_file, estargz, annotations = {}):
-    """Calculates the layer info for a tar file.
+def calculate_layer_info(*, ctx, media_type, tar_file, metadata_file, estargz, annotations = {}, digest_modes = ["digest", "diff_id"]):
+    """Calculates the layer info for a file.
 
     Args:
         ctx: Rule context.
         media_type: Media type of the layer.
-        tar_file: Input tar file.
+        tar_file: Input file (tar or arbitrary blob).
         metadata_file: Output metadata file.
         estargz: Boolean indicating whether the layer is an estargz layer.
         annotations: Dict of string annotations to add to the layer metadata.
+        digest_modes: List of digest modes to compute. Supported modes:
+            "digest" - sha256 of the file as-is (the blob digest).
+            "diff_id" - sha256 of the uncompressed content (the OCI diff ID).
+            "diff_id_annotation:<name>" - same as diff_id but stored as annotation <name>.
 
     Returns:
         LayerInfo provider with blob, metadata, and media type.
@@ -96,6 +100,8 @@ def calculate_layer_info(*, ctx, media_type, tar_file, metadata_file, estargz, a
     args.add("--encoding=layer-metadata")
     args.add("--name", ctx.label)
     args.add("--media-type", media_type)
+    for mode in digest_modes:
+        args.add("--digest-mode", mode)
     for key, value in annotations.items():
         args.add("--annotation", "{}={}".format(key, value))
     args.add(tar_file)

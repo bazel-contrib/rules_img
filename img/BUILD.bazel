@@ -52,7 +52,18 @@ bzl_library(
     deps = [
         "//img/private:file_metadata",
         "//img/private:layer",
+        "//img/private:layer_from_file",
         "//img/private:layer_from_tar",
+    ],
+)
+
+bzl_library(
+    name = "oras",
+    srcs = ["oras.bzl"],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//img/private:oras_file_layer",
+        "//img/private:oras_layer",
     ],
 )
 

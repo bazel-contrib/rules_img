@@ -95,11 +95,6 @@ image_manifest(
 image_layer(
     name = "src_dir_layer",
     srcs = {"deep": ":deep_structure"},
-    target_compatible_with = select({
-        # TODO: Inspect why Windows has issues with directory layers
-        "@platforms//os:windows": ["@platforms//:incompatible"],
-        "//conditions:default": [],
-    }),
 )
 
 # Edge case: Empty layer

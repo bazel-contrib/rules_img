@@ -153,14 +153,18 @@ func (ph *persistentHasher) HandleRequest(ctx context.Context, req persistentwor
 		var cachedSize int64
 		var formatCacheHit, sizeCacheHit bool
 
-		if hashReq.layerMeta && hashReq.digest == "sha256" {
-			ph.diffIDMutex.RLock()
-			cachedDiffID, diffIDCacheHit = ph.diffIDCache[inputDigest]
-			ph.diffIDMutex.RUnlock()
+		needsDiffID := digestModesNeedDiffID(hashReq.digestModes) && hashReq.layerMeta
 
-			ph.layerFormatMutex.RLock()
-			cachedFormat, formatCacheHit = ph.layerFormatCache[inputDigest]
-			ph.layerFormatMutex.RUnlock()
+		if hashReq.layerMeta && hashReq.digest == "sha256" {
+			if needsDiffID {
+				ph.diffIDMutex.RLock()
+				cachedDiffID, diffIDCacheHit = ph.diffIDCache[inputDigest]
+				ph.diffIDMutex.RUnlock()
+
+				ph.layerFormatMutex.RLock()
+				cachedFormat, formatCacheHit = ph.layerFormatCache[inputDigest]
+				ph.layerFormatMutex.RUnlock()
+			}
 
 			ph.compressedSizeMutex.RLock()
 			cachedSize, sizeCacheHit = ph.compressedSizeCache[inputDigest]
@@ -168,7 +172,7 @@ func (ph *persistentHasher) HandleRequest(ctx context.Context, req persistentwor
 		}
 
 		// Only use cache if we have all required data
-		canUseCache := cacheHit && (!hashReq.layerMeta || (diffIDCacheHit && formatCacheHit && sizeCacheHit))
+		canUseCache := cacheHit && (!hashReq.layerMeta || (!needsDiffID && sizeCacheHit) || (needsDiffID && diffIDCacheHit && formatCacheHit && sizeCacheHit))
 
 		if canUseCache {
 			if req.Verbosity > 1 {
@@ -178,11 +182,12 @@ func (ph *persistentHasher) HandleRequest(ctx context.Context, req persistentwor
 			// Reconstruct layer metadata from cached values (no file I/O!)
 			var layerMeta *layerMetadata
 			if hashReq.layerMeta {
-				layerMeta = &layerMetadata{
-					diffID:         cachedDiffID,
-					compressedSize: cachedSize,
-					layerFormat:    api.LayerFormat(cachedFormat),
+				if needsDiffID && cachedDiffID == nil {
+					resp.ExitCode = 1
+					resp.Output = "Expected diff_id but layer was not a valid tar file"
+					return resp
 				}
+				layerMeta = buildLayerMetadata(cachedDiffID, api.LayerFormat(cachedFormat), cachedSize, hashReq.digestModes)
 			}
 
 			// Use cached hash
@@ -209,7 +214,7 @@ func (ph *persistentHasher) HandleRequest(ctx context.Context, req persistentwor
 	if hashReq.layerMeta {
 		// Compute both hashes in a single pass for layer metadata
 		var err error
-		hashBytes, layerMeta, err = computeLayerHashes(hashReq.input, hashReq.digest, req.SandboxDir)
+		hashBytes, layerMeta, err = computeLayerHashes(hashReq.input, hashReq.digest, req.SandboxDir, hashReq.digestModes)
 		if err != nil {
 			resp.ExitCode = 1
 			resp.Output = fmt.Sprintf("Failed to compute layer hashes: %v", err)
@@ -218,9 +223,11 @@ func (ph *persistentHasher) HandleRequest(ctx context.Context, req persistentwor
 
 		// Cache the diffID, format, and size if we have a digest
 		if inputDigest != "" && hashReq.digest == "sha256" {
-			ph.diffIDMutex.Lock()
-			ph.diffIDCache[inputDigest] = layerMeta.diffID
-			ph.diffIDMutex.Unlock()
+			if layerMeta.diffID != nil {
+				ph.diffIDMutex.Lock()
+				ph.diffIDCache[inputDigest] = layerMeta.diffID
+				ph.diffIDMutex.Unlock()
+			}
 
 			ph.layerFormatMutex.Lock()
 			ph.layerFormatCache[inputDigest] = string(layerMeta.layerFormat)

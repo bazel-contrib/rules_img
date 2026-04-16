@@ -10,7 +10,7 @@ Public API for container image layer rules.
 load("@rules_img//img:layer.bzl", "image_layer")
 
 image_layer(<a href="#image_layer-name">name</a>, <a href="#image_layer-srcs">srcs</a>, <a href="#image_layer-annotations">annotations</a>, <a href="#image_layer-annotations_file">annotations_file</a>, <a href="#image_layer-compress">compress</a>, <a href="#image_layer-create_parent_directories">create_parent_directories</a>,
-            <a href="#image_layer-default_metadata">default_metadata</a>, <a href="#image_layer-estargz">estargz</a>, <a href="#image_layer-file_metadata">file_metadata</a>, <a href="#image_layer-include_runfiles">include_runfiles</a>, <a href="#image_layer-symlinks">symlinks</a>,
+            <a href="#image_layer-default_metadata">default_metadata</a>, <a href="#image_layer-estargz">estargz</a>, <a href="#image_layer-file_metadata">file_metadata</a>, <a href="#image_layer-include_runfiles">include_runfiles</a>, <a href="#image_layer-media_type">media_type</a>, <a href="#image_layer-symlinks">symlinks</a>,
             <a href="#image_layer-tree_artifact_handling">tree_artifact_handling</a>)
 </pre>
 
@@ -81,8 +81,61 @@ image_layer(
 | <a id="image_layer-estargz"></a>estargz |  Whether to use estargz format. If set to 'auto', uses the global default estargz setting. When enabled, the layer will be optimized for lazy pulling and will be compatible with the estargz format.   | String | optional |  `"auto"`  |
 | <a id="image_layer-file_metadata"></a>file_metadata |  Per-file metadata overrides as a dict mapping file paths to JSON-encoded metadata. The path should match the path in the image (the key in srcs attribute). Metadata specified here overrides any defaults from default_metadata.   | <a href="https://bazel.build/rules/lib/core/dict">Dictionary: String -> String</a> | optional |  `{}`  |
 | <a id="image_layer-include_runfiles"></a>include_runfiles |  Whether to include runfiles for executable targets. When True (default), executables in srcs will include their runfiles tree. When False, only the executable file itself is included, without runfiles.   | Boolean | optional |  `True`  |
+| <a id="image_layer-media_type"></a>media_type |  Override the layer media type. By default, the media type is auto-detected from the compression algorithm.   | String | optional |  `""`  |
 | <a id="image_layer-symlinks"></a>symlinks |  Symlinks to create in the layer. Keys are symlink paths in the image, values are the targets they point to.   | <a href="https://bazel.build/rules/lib/core/dict">Dictionary: String -> String</a> | optional |  `{}`  |
 | <a id="image_layer-tree_artifact_handling"></a>tree_artifact_handling |  How to handle duplicate tree artifacts (directories) in the layer. If set to 'full', each tree artifact is stored at its intended path (no deduplication). If set to 'deduplicate_symlink', duplicate tree artifacts are replaced with symlinks to the first occurrence. If set to 'auto', uses the global default from --@rules_img//img/settings:layer_tree_artifact_handling.   | String | optional |  `"auto"`  |
+
+
+<a id="layer_from_file"></a>
+
+## layer_from_file
+
+<pre>
+load("@rules_img//img:layer.bzl", "layer_from_file")
+
+layer_from_file(<a href="#layer_from_file-name">name</a>, <a href="#layer_from_file-src">src</a>, <a href="#layer_from_file-annotations">annotations</a>, <a href="#layer_from_file-base_name_annotations">base_name_annotations</a>, <a href="#layer_from_file-diff_id">diff_id</a>, <a href="#layer_from_file-diff_id_annotations">diff_id_annotations</a>,
+                <a href="#layer_from_file-media_type">media_type</a>)
+</pre>
+
+Creates a container image layer from an arbitrary file.
+
+This rule uses any file as a container image layer blob, computing the
+necessary metadata (digest, size) without any tar-specific processing
+like compression or optimization.
+
+This is useful for non-tar layer content such as Helm charts, WASM
+modules, or other OCI artifacts.
+
+If you want to use an existing tar file as a layer, use layer_from_tar instead.
+
+Example:
+
+```python
+load("@rules_img//img:layer.bzl", "layer_from_file")
+
+# Use an arbitrary artifact as a layer
+layer_from_file(
+    name = "artifact_layer",
+    src = ":artifact.bin",
+    media_type = "application/octet-stream",
+    annotations = {
+        "org.opencontainers.image.title": "artifact.bin",
+    },
+)
+```
+
+**ATTRIBUTES**
+
+
+| Name  | Description | Type | Mandatory | Default |
+| :------------- | :------------- | :------------- | :------------- | :------------- |
+| <a id="layer_from_file-name"></a>name |  A unique name for this target.   | <a href="https://bazel.build/concepts/labels#target-names">Name</a> | required |  |
+| <a id="layer_from_file-src"></a>src |  The file to use as a layer blob.   | <a href="https://bazel.build/concepts/labels">Label</a> | required |  |
+| <a id="layer_from_file-annotations"></a>annotations |  Annotations to add to the layer metadata as key-value pairs.   | <a href="https://bazel.build/rules/lib/core/dict">Dictionary: String -> String</a> | optional |  `{}`  |
+| <a id="layer_from_file-base_name_annotations"></a>base_name_annotations |  List of annotations that are set to the basename of the file.   | List of strings | optional |  `[]`  |
+| <a id="layer_from_file-diff_id"></a>diff_id |  If set, interprets the file as a (potentially compressed) tar file and calculates the diff_id. Warning: if you do this, you probably want to use layer_from_tar instead.   | Boolean | optional |  `False`  |
+| <a id="layer_from_file-diff_id_annotations"></a>diff_id_annotations |  List of annotations that are set to the diff_id of the file. Only works with tar files.   | List of strings | optional |  `[]`  |
+| <a id="layer_from_file-media_type"></a>media_type |  Layer media type. Defaults to "application/vnd.oci.image.layer.v1.tar" if not set.   | String | optional |  `"application/vnd.oci.image.layer.v1.tar"`  |
 
 
 <a id="layer_from_tar"></a>

@@ -1,0 +1,37 @@
+load("@rules_img//img:image.bzl", "image_manifest")
+load("@rules_img//img:push.bzl", "image_push")
+load(":maybe_macros.bzl", "maybe_layers", "oras_file_layer", "oras_layer")
+# Note: You should load these symbols from @rules_img//img:oras.bzl
+
+oras_file_layer(
+    name = "txt_artifact",
+    src = "artifact.txt",
+    media_type = "text/plain",
+)
+
+oras_layer(
+    name = "docs_artifact",
+    srcs = {
+        "docs": "docs",
+    },
+    media_type = "application/vnd.acme.rocket.docs.layer.v1+tar",
+    title = "docs",
+)
+
+image_manifest(
+    name = "oras_manifest",
+    artifact_type = "application/vnd.acme.rocket.config.v1",
+    config_fragment = "config.json",
+    config_media_type = "application/vnd.acme.rocket.config.v1+json",
+    layers = maybe_layers([
+        ":txt_artifact",
+        ":docs_artifact",
+    ]),
+)
+
+image_push(
+    name = "push",
+    image = ":oras_manifest",
+    registry = "ghcr.io",
+    repository = "malt3/rules_img/oras",
+)

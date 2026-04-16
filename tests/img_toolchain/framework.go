@@ -3,6 +3,7 @@ package img_toolchain
 import (
 	"archive/tar"
 	"bufio"
+	"bytes"
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
@@ -463,51 +464,13 @@ func (tf *TestFramework) RunCommand(ctx context.Context, cmd CommandSpec) (*Comm
 	return result, nil
 }
 
-func (tf *TestFramework) runCommand(cmd *exec.Cmd) (stdout, stderr []byte, err error) {
-	stdoutPipe, err := cmd.StdoutPipe()
-	if err != nil {
-		return nil, nil, err
-	}
-	stderrPipe, err := cmd.StderrPipe()
-	if err != nil {
-		return nil, nil, err
-	}
+func (tf *TestFramework) runCommand(cmd *exec.Cmd) ([]byte, []byte, error) {
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
 
-	if err := cmd.Start(); err != nil {
-		return nil, nil, err
-	}
-
-	stdout, readErr1 := tf.readAll(stdoutPipe)
-	stderr, readErr2 := tf.readAll(stderrPipe)
-
-	err = cmd.Wait()
-
-	if readErr1 != nil {
-		return nil, nil, readErr1
-	}
-	if readErr2 != nil {
-		return nil, nil, readErr2
-	}
-
-	return stdout, stderr, err
-}
-
-func (tf *TestFramework) readAll(r interface{ Read([]byte) (int, error) }) ([]byte, error) {
-	var result []byte
-	buf := make([]byte, 4096)
-	for {
-		n, err := r.Read(buf)
-		if n > 0 {
-			result = append(result, buf[:n]...)
-		}
-		if err != nil {
-			if err.Error() == "EOF" {
-				break
-			}
-			return nil, err
-		}
-	}
-	return result, nil
+	err := cmd.Run()
+	return stdout.Bytes(), stderr.Bytes(), err
 }
 
 func (tf *TestFramework) CheckAssertions(assertions []AssertionSpec, result *CommandResult) error {
@@ -1147,7 +1110,7 @@ func (tf *TestFramework) checkLayerInvariants(tarPath string) error {
 				continue // Same entry, skip
 			}
 			if strings.HasPrefix(entryPath, nonDirPath+"/") ||
-			   (header.Typeflag == tar.TypeDir && strings.HasPrefix(entryPath, nonDirPath)) {
+				(header.Typeflag == tar.TypeDir && strings.HasPrefix(entryPath, nonDirPath)) {
 				var typeStr string
 				switch nonDirType {
 				case tar.TypeReg:

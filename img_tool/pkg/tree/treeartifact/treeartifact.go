@@ -4,6 +4,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"time"
 )
 
@@ -13,38 +14,38 @@ func TreeArtifactFS(path string) treeartifactFS {
 	return treeartifactFS(path)
 }
 
+func (t treeartifactFS) Stat(name string) (fs.FileInfo, error) {
+	fullname := t.join(name)
+	info, err := os.Stat(fullname)
+	if err != nil {
+		return nil, &fs.PathError{Op: "stat", Path: name, Err: err}
+	}
+	return &treeartifactFileInfo{
+		name:     filepath.Base(fullname),
+		realStat: info,
+	}, nil
+}
+
 func (t treeartifactFS) Open(name string) (fs.File, error) {
 	fullname := t.join(name)
-	realpath, err := filepath.EvalSymlinks(fullname)
+	f, err := os.Open(fullname)
 	if err != nil {
 		return nil, &fs.PathError{Op: "open", Path: name, Err: err}
 	}
-	f, err := os.Open(realpath)
-	if err != nil {
-		return nil, &fs.PathError{Op: "open", Path: name, Err: err}
-	}
+
 	return &treeartifactFile{
 		File: f,
-		name: name,
+		name: filepath.Base(fullname),
 	}, nil
 }
 
 func (t treeartifactFS) ReadFile(name string) ([]byte, error) {
-	fullname := t.join(name)
-	realpath, err := filepath.EvalSymlinks(fullname)
-	if err != nil {
-		return nil, &fs.PathError{Op: "readfile", Path: name, Err: err}
-	}
-	return os.ReadFile(realpath)
+	return os.ReadFile(t.join(name))
 }
 
 func (t treeartifactFS) ReadDir(name string) ([]fs.DirEntry, error) {
 	fullname := t.join(name)
-	realpath, err := filepath.EvalSymlinks(fullname)
-	if err != nil {
-		return nil, &fs.PathError{Op: "readdir", Path: name, Err: err}
-	}
-	dirents, err := os.ReadDir(realpath)
+	dirents, err := os.ReadDir(fullname)
 	if err != nil {
 		return nil, err
 	}
@@ -52,8 +53,26 @@ func (t treeartifactFS) ReadDir(name string) ([]fs.DirEntry, error) {
 		if entry.Type()&fs.ModeSymlink != 0 {
 			// If the entry is a symlink, we need to
 			// resolve it to the real path.
-			realpath, err := filepath.EvalSymlinks(filepath.Join(realpath, entry.Name()))
+			direntFullPath := filepath.Join(fullname, entry.Name())
+			realpath, err := filepath.EvalSymlinks(direntFullPath)
 			if err != nil {
+				if runtime.GOOS == "windows" {
+					// Exception: on Windows, we sometimes encounter nodes (Junctions? Symlinks? Who really knows?)
+					// that report as fs.ModeSymlink, but on which filepath.EvalSymlinks fails.
+					// We need to lie about the file type and report this as either a regular file or a directory.
+					_, readDirErr := os.ReadDir(direntFullPath)
+					behavesLikeADir := readDirErr == nil
+					fInfo, err := os.Stat(direntFullPath)
+					if err != nil {
+						return nil, &fs.PathError{Op: "readdir", Path: name, Err: err}
+					}
+					dirents[i] = &windowsBrokenSymlinkDirEntry{
+						name:            entry.Name(),
+						behavesLikeADir: behavesLikeADir,
+						DirEntry:        fs.FileInfoToDirEntry(fInfo),
+					}
+					continue
+				}
 				return nil, &fs.PathError{Op: "readdir", Path: name, Err: err}
 			}
 			fInfo, err := os.Stat(realpath)
@@ -132,4 +151,27 @@ type treeArtifactDirEntry struct {
 
 func (d *treeArtifactDirEntry) Name() string {
 	return d.name
+}
+
+type windowsBrokenSymlinkDirEntry struct {
+	name            string
+	behavesLikeADir bool
+	fs.DirEntry
+}
+
+func (d *windowsBrokenSymlinkDirEntry) Name() string {
+	return d.name
+}
+
+func (d *windowsBrokenSymlinkDirEntry) IsDir() bool {
+	// If it quacks like a duck...
+	return d.behavesLikeADir
+}
+
+func (d *windowsBrokenSymlinkDirEntry) Type() fs.FileMode {
+	if d.behavesLikeADir {
+		return fs.ModeDir
+	}
+	// Quacks like a regular file
+	return 0
 }

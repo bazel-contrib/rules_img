@@ -55,7 +55,7 @@ func oneShot(args []string) error {
 
 	if req.layerMeta {
 		// Compute both hashes in a single pass for layer metadata
-		hashBytes, layerMeta, err = computeLayerHashes(req.input, req.digest, "")
+		hashBytes, layerMeta, err = computeLayerHashes(req.input, req.digest, "", req.digestModes)
 		if err != nil {
 			return err
 		}
@@ -80,7 +80,18 @@ type hashRequest struct {
 	layerMeta   bool
 	name        string
 	mediaType   string
+	digestModes []string
 	annotations map[string]string
+}
+
+// stringSliceFlag implements flag.Value for repeated string flags.
+type stringSliceFlag []string
+
+func (s *stringSliceFlag) String() string { return "" }
+
+func (s *stringSliceFlag) Set(value string) error {
+	*s = append(*s, value)
+	return nil
 }
 
 // annotationsFlag implements flag.Value for key-value pairs
@@ -121,6 +132,8 @@ func parseHashRequest(args []string) (*hashRequest, error) {
 	encoding := flags.String("encoding", "raw", "Output encoding (raw, hex, sri, oci-digest, layer-metadata)")
 	name := flags.String("name", "", "Layer name (only used with layer-metadata encoding)")
 	mediaType := flags.String("media-type", "", "Override layer media type (only used with layer-metadata encoding; e.g. application/vnd.cncf.helm.chart.content.v1.tar for Helm charts)")
+	digestModes := &stringSliceFlag{}
+	flags.Var(digestModes, "digest-mode", "Digest mode to compute (digest, diff_id, diff_id_annotation:<name>). Can be repeated. Defaults to digest+diff_id.")
 	annotations := make(annotationsFlag)
 	flags.Var(&annotations, "annotation", "Add an annotation as key=value (only used with layer-metadata encoding)")
 
@@ -147,6 +160,12 @@ func parseHashRequest(args []string) (*hashRequest, error) {
 		return nil, fmt.Errorf("expected 2 positional arguments (input, output), got %d", len(positionalArgs))
 	}
 
+	// Default digest modes if none specified
+	modes := []string(*digestModes)
+	if len(modes) == 0 {
+		modes = []string{"digest", "diff_id"}
+	}
+
 	return &hashRequest{
 		digest:      *digest,
 		encoding:    *encoding,
@@ -155,6 +174,7 @@ func parseHashRequest(args []string) (*hashRequest, error) {
 		layerMeta:   layerMeta,
 		name:        *name,
 		mediaType:   *mediaType,
+		digestModes: modes,
 		annotations: annotations,
 	}, nil
 }
