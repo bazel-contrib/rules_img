@@ -123,37 +123,66 @@ def _compute_load_metadata(*, ctx, configuration_json):
     )
     return metadata_out, layer_hints_file
 
-def _build_docker_tarball(ctx, configuration_json, manifest_info):
+def _build_docker_tarball(ctx, configuration_json, manifest_info = None, index_info = None):
     """Build the Docker save tarball for the image.
+
+    The tarball is compatible with both Docker save format (manifest.json)
+    and OCI layout (index.json + oci-layout), following the containerd c8d format.
 
     Args:
         ctx: Rule context.
         configuration_json: The configuration file with expanded templates.
-        manifest_info: The ImageManifestInfo provider.
+        manifest_info: The ImageManifestInfo provider (for single-platform).
+        index_info: The ImageIndexInfo provider (for multi-platform).
 
     Returns:
         The Docker save tarball file.
     """
+    if manifest_info == None and index_info == None:
+        fail("_build_docker_tarball requires manifest_info or index_info")
+    if manifest_info != None and index_info != None:
+        fail("_build_docker_tarball: provide manifest_info or index_info, not both")
+
     tarball_output = ctx.actions.declare_file(ctx.label.name + "_docker.tar")
 
     args = ctx.actions.args()
     args.add("docker-save")
-    args.add("--manifest", manifest_info.manifest.path)
-    args.add("--config", manifest_info.config.path)
     args.add("--output", tarball_output.path)
     args.add("--format", "tar")
     args.add("--configuration-file", configuration_json.path)
     if ctx.attr._oci_layout_settings[OCILayoutSettingsInfo].allow_shallow_oci_layout:
         args.add("--allow-missing-blobs")
 
-    inputs = [manifest_info.manifest, manifest_info.config, configuration_json]
+    inputs = [configuration_json]
 
-    # Add layers with metadata=blob mapping
-    for layer in manifest_info.layers:
-        if layer.blob != None:
-            args.add("--layer", "{}={}".format(layer.metadata.path, layer.blob.path))
-            inputs.append(layer.metadata)
-            inputs.append(layer.blob)
+    if manifest_info != None:
+        args.add("--manifest", manifest_info.manifest.path)
+        args.add("--config", manifest_info.config.path)
+        inputs.append(manifest_info.manifest)
+        inputs.append(manifest_info.config)
+
+        # Add layers with metadata=blob mapping
+        for layer in manifest_info.layers:
+            if layer.blob != None:
+                args.add("--layer", "{}={}".format(layer.metadata.path, layer.blob.path))
+                inputs.append(layer.metadata)
+                inputs.append(layer.blob)
+
+    if index_info != None:
+        args.add("--index", index_info.index.path)
+        inputs.append(index_info.index)
+
+        for manifest in index_info.manifests:
+            args.add("--manifest-path", manifest.manifest.path)
+            args.add("--config-path", manifest.config.path)
+            inputs.append(manifest.manifest)
+            inputs.append(manifest.config)
+
+            for layer in manifest.layers:
+                if layer.blob != None:
+                    args.add("--layer", "{}={}".format(layer.metadata.path, layer.blob.path))
+                    inputs.append(layer.metadata)
+                    inputs.append(layer.blob)
 
     img_toolchain_info = ctx.toolchains[TOOLCHAIN].imgtoolchaininfo
     ctx.actions.run(
@@ -247,10 +276,11 @@ def _image_load_impl(ctx):
         deploy_manifest = depset([deploy_metadata]),
     )
 
-    # Add tarball output group only for single-platform images (manifest_info)
-    # Index info (multi-platform) is not supported by docker-save command
     if manifest_info != None:
-        tarball = _build_docker_tarball(ctx, configuration_json, manifest_info)
+        tarball = _build_docker_tarball(ctx, configuration_json, manifest_info = manifest_info)
+        output_groups["tarball"] = depset([tarball])
+    elif index_info != None:
+        tarball = _build_docker_tarball(ctx, configuration_json, index_info = index_info)
         output_groups["tarball"] = depset([tarball])
 
     return [
@@ -294,7 +324,9 @@ Key features:
 The rule produces an executable that can be run with `bazel run`.
 
 Output groups:
-- `tarball`: Docker save compatible tarball (only available for single-platform images)
+- `tarball`: "docker save" compatible tarball with OCI layout (available for both single and multi-platform images).
+  For multi-platform images, the first manifest is used as the default in `manifest.json`,
+  and all manifests are included in `index.json`.
 
 Example:
 
