@@ -757,6 +757,7 @@ image_push(
 **Key Changes**:
 - `oci_push` → `image_push`
 - `repository` parameter splits into `registry` and `repository`
+- `repository_file` in rules_oci → `destination_file` in rules_img (works the same way: file contains `{registry}/{repository}`)
 - `remote_tags` in rules_oci takes a list of strings or a label (file) → in rules_img, there are separate attributes:
     - `tag` (string) and `tag_list` (list of string) allow setting tags in the build file
     - `tag_file` takes a file with newline-separated tags.

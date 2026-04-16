@@ -505,6 +505,22 @@ image_push(
     visibility = ["//visibility:public"],
 )
 
+# File containing push destination (registry/repository)
+write_file(
+    name = "push_destination_file",
+    out = "push_destination.txt",
+    content = ["ghcr.io/malt3/rules_img/e2e-generic-destination-file"],
+)
+
+# Test push with destination_file
+image_push(
+    name = "push_destination",
+    destination_file = ":push_destination_file",
+    image = ":single_layer_manifest",
+    tag = "latest",
+    visibility = ["//visibility:public"],
+)
+
 # Build tests to ensure all targets can be built
 build_test(
     name = "layer_tests",
@@ -555,6 +571,7 @@ build_test(
         ":push_complex",
         ":push_with_created",
         ":push_tag_file",
+        ":push_destination",
         ":push_gcr_based",
     ],
 )

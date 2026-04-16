@@ -9,8 +9,8 @@ Public API for container image push rules.
 <pre>
 load("@rules_img//img:push.bzl", "image_push")
 
-image_push(<a href="#image_push-name">name</a>, <a href="#image_push-build_settings">build_settings</a>, <a href="#image_push-cross_mount_from">cross_mount_from</a>, <a href="#image_push-deploy_tool">deploy_tool</a>, <a href="#image_push-image">image</a>, <a href="#image_push-registry">registry</a>, <a href="#image_push-repository">repository</a>, <a href="#image_push-stamp">stamp</a>,
-           <a href="#image_push-strategy">strategy</a>, <a href="#image_push-tag">tag</a>, <a href="#image_push-tag_file">tag_file</a>, <a href="#image_push-tag_list">tag_list</a>, <a href="#image_push-tool_cfg">tool_cfg</a>)
+image_push(<a href="#image_push-name">name</a>, <a href="#image_push-build_settings">build_settings</a>, <a href="#image_push-cross_mount_from">cross_mount_from</a>, <a href="#image_push-deploy_tool">deploy_tool</a>, <a href="#image_push-destination_file">destination_file</a>, <a href="#image_push-image">image</a>, <a href="#image_push-registry">registry</a>,
+           <a href="#image_push-repository">repository</a>, <a href="#image_push-stamp">stamp</a>, <a href="#image_push-strategy">strategy</a>, <a href="#image_push-tag">tag</a>, <a href="#image_push-tag_file">tag_file</a>, <a href="#image_push-tag_list">tag_list</a>, <a href="#image_push-tool_cfg">tool_cfg</a>)
 </pre>
 
 Pushes container images to a registry.
@@ -82,6 +82,14 @@ image_push(
     repository = "my-project/my-app",
     # No tag specified - will push by digest only
 )
+
+# Push using a destination file (instead of registry/repository attributes)
+image_push(
+    name = "push_from_file",
+    image = ":my_app",
+    destination_file = ":push_destination.txt",
+    tag = "latest",
+)
 ```
 
 Push strategies:
@@ -111,6 +119,7 @@ bazel run //path/to:push_app
 | <a id="image_push-build_settings"></a>build_settings |  Build settings for template expansion.<br><br>Maps template variable names to string_flag targets. These values can be used in registry, repository, and tag attributes using `{{.VARIABLE_NAME}}` syntax (Go template).<br><br>Example: <pre><code class="language-python">build_settings = {&#10;    "REGISTRY": "//settings:docker_registry",&#10;    "VERSION": "//settings:app_version",&#10;}</code></pre><br><br>See [template expansion](/docs/templating.md) for more details.   | Dictionary: String -> Label | optional |  `{}`  |
 | <a id="image_push-cross_mount_from"></a>cross_mount_from |  An image_push target whose layers may be cross-mounted during push.   | <a href="https://bazel.build/concepts/labels">Label</a> | optional |  `None`  |
 | <a id="image_push-deploy_tool"></a>deploy_tool |  Optional label of a deploy tool target providing `DeployToolInfo` (created with `img_deploy_tool` from `@rules_img//img:deploy_tool.bzl`). When set, overrides `tool_cfg`.   | <a href="https://bazel.build/concepts/labels">Label</a> | optional |  `None`  |
+| <a id="image_push-destination_file"></a>destination_file |  File containing the push destination as `{registry}/{repository}`.<br><br>The file should contain a single line with the registry and repository separated by the first `/`. For example: `gcr.io/my-project/my-app`.<br><br>The content is read as a literal string without Go template expansion. Trailing newlines and whitespace are stripped.<br><br>Cannot be used together with `registry` or `repository` attributes.   | <a href="https://bazel.build/concepts/labels">Label</a> | optional |  `None`  |
 | <a id="image_push-image"></a>image |  Image to push. Should provide ImageManifestInfo or ImageIndexInfo.   | <a href="https://bazel.build/concepts/labels">Label</a> | required |  |
 | <a id="image_push-registry"></a>registry |  Registry URL to push the image to.<br><br>Common registries: - Docker Hub: `index.docker.io` - Google Container Registry: `gcr.io` or `us.gcr.io` - GitHub Container Registry: `ghcr.io` - Amazon ECR: `123456789.dkr.ecr.us-east-1.amazonaws.com`<br><br>Subject to [template expansion](/docs/templating.md).   | String | optional |  `""`  |
 | <a id="image_push-repository"></a>repository |  Repository path within the registry.<br><br>Subject to [template expansion](/docs/templating.md).   | String | optional |  `""`  |

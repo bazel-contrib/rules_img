@@ -33,6 +33,8 @@ var (
 
 	crossMountStrategy         string
 	crossMountFromManifestPath string
+
+	destinationFilePath string
 )
 
 func DeployMetadataProcess(ctx context.Context, args []string) {
@@ -65,6 +67,7 @@ func DeployMetadataProcess(ctx context.Context, args []string) {
 	flagSet.StringVar(&originalRepository, "original-repository", "", `(Optional) original repository that the base of this image was pulled from.`)
 	flagSet.StringVar(&orginalTag, "original-tag", "", `(Optional) original tag that the base of this image was pulled from.`)
 	flagSet.StringVar(&originalDigest, "original-digest", "", `(Optional) original digest that the base of this image was pulled from.`)
+	flagSet.StringVar(&destinationFilePath, "destination-file", "", `(Optional) path to a file containing the push destination as "registry/repository". Mutually exclusive with registry/repository in the configuration file.`)
 	flagSet.StringVar(&layerHintsInputPath, "layer-hints-paths-file-input", "", `(Optional) path to file containing layer path hints (null-separated blob/metadata pairs).`)
 	flagSet.StringVar(&layerHintsOutputPath, "layer-hints-paths-output", "", `(Optional) path to write resolved layer hints output.`)
 	flagSet.Func("manifest-path", `Path to a manifest file. Format: index=path (e.g., 0=foo.json). Can be specified multiple times.`, func(value string) error {
@@ -358,15 +361,62 @@ func pickCrossMountSource(targetRegistry string) (*api.CrossMountSource, error) 
 	return nil, nil
 }
 
+func parseDestinationFile(path string) (registry string, repository string, err error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", "", fmt.Errorf("reading destination file: %w", err)
+	}
+
+	destination := strings.TrimSpace(string(data))
+
+	if destination == "" {
+		return "", "", fmt.Errorf("destination file %q is empty", path)
+	}
+
+	if strings.ContainsAny(destination, "\n\r") {
+		return "", "", fmt.Errorf("destination file %q must contain exactly one line", path)
+	}
+
+	slashIndex := strings.Index(destination, "/")
+	if slashIndex < 0 {
+		return "", "", fmt.Errorf("destination file %q must contain a '/' separating registry from repository, got %q", path, destination)
+	}
+
+	registry = destination[:slashIndex]
+	repository = destination[slashIndex+1:]
+
+	if registry == "" {
+		return "", "", fmt.Errorf("destination file %q has an empty registry (content: %q)", path, destination)
+	}
+	if repository == "" {
+		return "", "", fmt.Errorf("destination file %q has an empty repository (content: %q)", path, destination)
+	}
+
+	return registry, repository, nil
+}
+
 func pushOperation(baseCommand api.BaseCommandOperation, config map[string]any) (api.PushDeployOperation, error) {
-	registry, ok := config["registry"].(string)
-	if !ok || registry == "" {
-		return api.PushDeployOperation{}, fmt.Errorf("configuration file must contain a non-empty 'registry' field")
+	var registry, repository string
+
+	if destinationFilePath != "" {
+		reg, repo, err := parseDestinationFile(destinationFilePath)
+		if err != nil {
+			return api.PushDeployOperation{}, err
+		}
+		registry = reg
+		repository = repo
+	} else {
+		var ok bool
+		registry, ok = config["registry"].(string)
+		if !ok || registry == "" {
+			return api.PushDeployOperation{}, fmt.Errorf("configuration file must contain a non-empty 'registry' field")
+		}
+		repository, ok = config["repository"].(string)
+		if !ok || repository == "" {
+			return api.PushDeployOperation{}, fmt.Errorf("configuration file must contain a non-empty 'repository' field")
+		}
 	}
-	repository, ok := config["repository"].(string)
-	if !ok || repository == "" {
-		return api.PushDeployOperation{}, fmt.Errorf("configuration file must contain a non-empty 'repository' field")
-	}
+
 	tagsInterface, ok := config["tags"].([]interface{})
 	if !ok {
 		tagsInterface = []interface{}{}
