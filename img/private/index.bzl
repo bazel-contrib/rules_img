@@ -97,7 +97,7 @@ def _image_index_impl(ctx):
             continue
         other = manifest[PullInfo]
         other_manifest_info = manifest[ImageManifestInfo]
-        if pull_info != None and other != pull_info:
+        if pull_info != None and (other.registries != pull_info.registries or other.repository != pull_info.repository):
             # Only fail if other has missing blobs not covered by known_missing_blobs
             unknown_blobs = ["sha256:" + b for b in other_manifest_info.missing_blobs if b not in known_missing_blobs]
             if len(unknown_blobs) > 0:
