@@ -87,7 +87,9 @@ Key features:
 The rule produces an executable that can be run with `bazel run`.
 
 Output groups:
-- `tarball`: Docker save compatible tarball (only available for single-platform images)
+- `tarball`: "docker save" compatible tarball with OCI layout (available for both single and multi-platform images).
+  For multi-platform images, the first manifest is used as the default in `manifest.json`,
+  and all manifests are included in `index.json`.
 
 Example:
 
