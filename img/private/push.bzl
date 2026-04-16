@@ -51,7 +51,7 @@ def _get_tags(ctx):
     # Empty list is allowed for digest-only push
     return tags
 
-def _compute_push_metadata(*, ctx, configuration_json):
+def _compute_push_metadata(*, ctx, configuration_json, destination_file = None):
     inputs = [configuration_json]
     args = ctx.actions.args()
     push_metadata_args = [args]
@@ -65,6 +65,9 @@ def _compute_push_metadata(*, ctx, configuration_json):
         fail("image must provide either ImageManifestInfo or ImageIndexInfo, not both")
     args.add("--strategy", _push_strategy(ctx))
     args.add("--configuration-file", configuration_json.path)
+    if destination_file != None:
+        inputs.append(destination_file)
+        args.add("--destination-file", destination_file.path)
     target_info = _target_info(ctx)
     if "original_registries" in target_info:
         args.add_all(target_info["original_registries"], before_each = "--original-registry")
@@ -132,6 +135,18 @@ def _image_push_impl(ctx):
         fail("image must provide either ImageManifestInfo or ImageIndexInfo, not both")
     image_provider = manifest_info if manifest_info != None else index_info
 
+    # Validate mutual exclusivity of destination_file vs registry/repository
+    if ctx.attr.destination_file:
+        if ctx.attr.registry:
+            fail("Cannot specify both 'destination_file' and 'registry' attributes")
+        if ctx.attr.repository:
+            fail("Cannot specify both 'destination_file' and 'repository' attributes")
+    else:
+        if not ctx.attr.registry:
+            fail("'registry' is required when 'destination_file' is not set")
+        if not ctx.attr.repository:
+            fail("'repository' is required when 'destination_file' is not set")
+
     templates = dict(
         registry = ctx.attr.registry,
         repository = ctx.attr.repository,
@@ -155,6 +170,7 @@ def _image_push_impl(ctx):
     deploy_metadata, layer_hints = _compute_push_metadata(
         ctx = ctx,
         configuration_json = configuration_json,
+        destination_file = ctx.file.destination_file,
     )
     root_symlinks_prefix = symlink_name_prefix(ctx)
     root_symlinks = calculate_root_symlinks(
@@ -294,6 +310,14 @@ image_push(
     repository = "my-project/my-app",
     # No tag specified - will push by digest only
 )
+
+# Push using a destination file (instead of registry/repository attributes)
+image_push(
+    name = "push_from_file",
+    image = ":my_app",
+    destination_file = ":push_destination.txt",
+    tag = "latest",
+)
 ```
 
 Push strategies:
@@ -369,6 +393,19 @@ stable
 
 Can be combined with `tag` or `tag_list` to merge tags from multiple sources.
 Each tag is subject to [template expansion](/docs/templating.md).
+""",
+            allow_single_file = True,
+        ),
+        "destination_file": attr.label(
+            doc = """File containing the push destination as `{registry}/{repository}`.
+
+The file should contain a single line with the registry and repository separated by
+the first `/`. For example: `gcr.io/my-project/my-app`.
+
+The content is read as a literal string without Go template expansion. Trailing
+newlines and whitespace are stripped.
+
+Cannot be used together with `registry` or `repository` attributes.
 """,
             allow_single_file = True,
         ),
