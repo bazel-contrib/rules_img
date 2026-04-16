@@ -98,9 +98,14 @@ def _image_layer_impl(ctx):
     else:
         fail("Unsupported compression: {}".format(compression))
 
+    if ctx.attr.media_type:
+        media_type = ctx.attr.media_type
+
     out = ctx.actions.declare_file(ctx.attr.name + out_ext)
     metadata_out = ctx.actions.declare_file(ctx.attr.name + "_metadata.json")
     args = ["layer", "--name", str(ctx.label), "--metadata", metadata_out.path, "--format", compression]
+    if ctx.attr.media_type:
+        args.extend(["--media-type", ctx.attr.media_type])
 
     # Set compressor defaults based on compilation mode for gzip
     args.extend(compression_tuning_args(ctx, compression, estargz_enabled))
@@ -295,6 +300,10 @@ When False, only the executable file itself is included, without runfiles.""",
         "annotations": attr.string_dict(
             default = {},
             doc = """Annotations to add to the layer metadata as key-value pairs.""",
+        ),
+        "media_type": attr.string(
+            default = "",
+            doc = """Override the layer media type. By default, the media type is auto-detected from the compression algorithm.""",
         ),
         "annotations_file": attr.label(
             doc = """File containing newline-delimited KEY=VALUE annotations for the layer.

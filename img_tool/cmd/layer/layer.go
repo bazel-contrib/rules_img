@@ -36,6 +36,7 @@ func LayerProcess(ctx context.Context, args []string) {
 	var contentManifestCollection string
 	var formatFlag string
 	var estargzFlag bool
+	var mediaTypeFlag string
 	var metadataOutputFlag string
 	var contentManifestOutputFlag string
 	var defaultMetadataFlag string
@@ -75,6 +76,7 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 	flagSet.StringVar(&contentManifestCollection, "deduplicate-collection", "", `Path of a content manifest collection file that can be used for deduplication.`)
 	flagSet.StringVar(&formatFlag, "format", "", `The compression format of the output layer. Can be "gzip", "zstd", or "none". Default is to guess the algorithm based on the filename, but fall back to "gzip".`)
 	flagSet.BoolVar(&estargzFlag, "estargz", false, `Use estargz format for compression. This creates seekable gzip streams optimized for lazy pulling.`)
+	flagSet.StringVar(&mediaTypeFlag, "media-type", "", `Override the layer media type in the metadata output. If empty, auto-detected from the compression format.`)
 	flagSet.StringVar(&compressorJobsFlag, "compressor-jobs", "1", `Number of compressor jobs. 1 uses single-threaded stdlib gzip. n>1 uses pgzip. "nproc" uses NumCPU.`)
 	flagSet.IntVar(&compressionLevelFlag, "compression-level", -1, `Compression level. For gzip: 0-9. If unset, use library default.`)
 	flagSet.Var(&annotations, "annotation", `Add an annotation as key=value. Can be specified multiple times.`)
@@ -243,7 +245,7 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 			}
 		}()
 
-		if err := writeMetadata(layerName, compressionAlgorithm, estargzFlag, annotations, compressorState, metadataOutputFile); err != nil {
+		if err := writeMetadata(layerName, compressionAlgorithm, estargzFlag, mediaTypeFlag, annotations, compressorState, metadataOutputFile); err != nil {
 			fmt.Fprintf(os.Stderr, "Writing metadata: %v\n", err)
 			os.Exit(1)
 		}
@@ -379,24 +381,36 @@ func writeLayer(recorder tree.Recorder, addFiles addFiles, importTars importTars
 	return nil
 }
 
-func writeMetadata(name string, compressionAlgorithm api.CompressionAlgorithm, useEstargz bool, annotations map[string]string, compressorState api.AppenderState, outputFile io.Writer) error {
+func writeMetadata(name string, compressionAlgorithm api.CompressionAlgorithm, useEstargz bool, mediaTypeOverride string, annotations map[string]string, compressorState api.AppenderState, outputFile io.Writer) error {
 	if len(name) == 0 {
 		name = fmt.Sprintf("sha256:%x", compressorState.OuterHash)
 	}
 	var mediaType string
-	switch compressionAlgorithm {
-	case api.Uncompressed:
-		mediaType = "application/vnd.oci.image.layer.v1.tar"
-	case api.Gzip:
-		mediaType = "application/vnd.oci.image.layer.v1.tar+gzip"
-	case api.Zstd:
-		mediaType = "application/vnd.oci.image.layer.v1.tar+zstd"
-	default:
-		return fmt.Errorf("unsupported compression algorithm: %s", compressionAlgorithm)
+	if mediaTypeOverride != "" {
+		mediaType = mediaTypeOverride
+	} else {
+		switch compressionAlgorithm {
+		case api.Uncompressed:
+			mediaType = "application/vnd.oci.image.layer.v1.tar"
+		case api.Gzip:
+			mediaType = "application/vnd.oci.image.layer.v1.tar+gzip"
+		case api.Zstd:
+			mediaType = "application/vnd.oci.image.layer.v1.tar+zstd"
+		default:
+			return fmt.Errorf("unsupported compression algorithm: %s", compressionAlgorithm)
+		}
 	}
 
 	// Merge user annotations with layer annotations from the appender state
 	mergedAnnotations := metadata.MergeAnnotations(annotations, compressorState.LayerAnnotations)
+
+	// Replace sentinel annotation values with computed diff ID
+	diffID := fmt.Sprintf("sha256:%x", compressorState.ContentHash)
+	for _, key := range annotationKeysWithDerivableDiffID {
+		if v, ok := mergedAnnotations[key]; ok && v == "DERIVE_FROM_DIFF_ID" {
+			mergedAnnotations[key] = diffID
+		}
+	}
 
 	return metadata.WriteLayerMetadata(
 		name,
@@ -469,4 +483,10 @@ func readAnnotationsFile(path string) (map[string]string, error) {
 	}
 
 	return annotations, nil
+}
+
+// any annotation keys in this list can be set to the magic sentinel
+// "DERIVE_FROM_DIFF_ID" to inject the diff_id as a layer annotation.
+var annotationKeysWithDerivableDiffID = []string{
+	"io.deis.oras.content.digest",
 }

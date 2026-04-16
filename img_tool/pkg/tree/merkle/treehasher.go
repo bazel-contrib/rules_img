@@ -163,7 +163,7 @@ func (t *treeHasher) walkdDirCollector(p string, d fs.DirEntry, err error) error
 		// If the path is the root directory, we simply record it in a special field.
 		children, err := dirFS.ReadDir(p)
 		if err != nil {
-			return fmt.Errorf("collecting directory %s: %w", p, err)
+			return fmt.Errorf("collecting root directory (\".\") of tree: %w", err)
 		}
 		t.rootChildren = children
 		return nil

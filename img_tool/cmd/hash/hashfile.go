@@ -18,9 +18,43 @@ import (
 
 // layerMetadata holds precomputed layer information.
 type layerMetadata struct {
-	diffID         []byte
-	compressedSize int64
-	layerFormat    api.LayerFormat
+	diffID            []byte            // set when "diff_id" mode is active
+	diffIDAnnotations map[string][]byte // set when "diff_id_annotation:<name>" modes are active
+	compressedSize    int64
+	layerFormat       api.LayerFormat
+}
+
+const diffIDAnnotationPrefix = "diff_id_annotation:"
+
+// digestModesNeedDiffID returns true if any of the modes require computing the diff ID.
+func digestModesNeedDiffID(modes []string) bool {
+	for _, mode := range modes {
+		if mode == "diff_id" || len(mode) > len(diffIDAnnotationPrefix) && mode[:len(diffIDAnnotationPrefix)] == diffIDAnnotationPrefix {
+			return true
+		}
+	}
+	return false
+}
+
+// buildLayerMetadata constructs a layerMetadata from raw cached values and digest modes.
+func buildLayerMetadata(diffID []byte, layerFormat api.LayerFormat, compressedSize int64, digestModes []string) *layerMetadata {
+	meta := &layerMetadata{
+		compressedSize: compressedSize,
+		layerFormat:    layerFormat,
+	}
+	for _, mode := range digestModes {
+		switch {
+		case mode == "diff_id":
+			meta.diffID = diffID
+		case len(mode) > len(diffIDAnnotationPrefix) && mode[:len(diffIDAnnotationPrefix)] == diffIDAnnotationPrefix:
+			name := mode[len(diffIDAnnotationPrefix):]
+			if meta.diffIDAnnotations == nil {
+				meta.diffIDAnnotations = make(map[string][]byte)
+			}
+			meta.diffIDAnnotations[name] = diffID
+		}
+	}
+	return meta
 }
 
 // computeHash computes the hash of the input file.
@@ -55,11 +89,31 @@ func computeHash(inputPath, digestAlg, sandboxDir string) ([]byte, error) {
 	return h.Sum(nil), nil
 }
 
-// computeLayerHashes computes both compressed and uncompressed hashes in a single pass.
+// computeLayerHashes computes hashes according to the requested digest modes.
+// Supported modes:
+//   - "digest": sha256 of the file as-is (the blob/compressed digest).
+//   - "diff_id": sha256 of the uncompressed content (the OCI diff ID), stored in DiffID.
+//   - "diff_id_annotation:<name>": same as diff_id but stored as annotation <name>.
+//
 // Returns (compressedHash, layerMetadata, error).
-func computeLayerHashes(inputPath, digestAlg, sandboxDir string) ([]byte, *layerMetadata, error) {
+func computeLayerHashes(inputPath, digestAlg, sandboxDir string, digestModes []string) ([]byte, *layerMetadata, error) {
 	if digestAlg != "sha256" {
 		return nil, nil, fmt.Errorf("layer metadata only supports sha256, got: %s", digestAlg)
+	}
+
+	// Parse modes
+	needsDiffID := digestModesNeedDiffID(digestModes)
+	for _, mode := range digestModes {
+		switch {
+		case mode == "digest":
+			// always computed
+		case mode == "diff_id":
+			// handled below
+		case len(mode) > len(diffIDAnnotationPrefix) && mode[:len(diffIDAnnotationPrefix)] == diffIDAnnotationPrefix:
+			// handled below
+		default:
+			return nil, nil, fmt.Errorf("unsupported digest mode: %s", mode)
+		}
 	}
 
 	// Apply sandbox prefix if provided
@@ -81,7 +135,17 @@ func computeLayerHashes(inputPath, digestAlg, sandboxDir string) ([]byte, *layer
 	}
 	compressedSize := fileInfo.Size()
 
-	// Learn the layer format
+	if !needsDiffID {
+		// Only need the blob digest — no format detection or decompression required.
+		h := sha256.New()
+		if _, err := io.Copy(h, file); err != nil {
+			return nil, nil, fmt.Errorf("failed to hash input file: %w", err)
+		}
+		blobHash := h.Sum(nil)
+		return blobHash, buildLayerMetadata(nil, "", compressedSize, digestModes), nil
+	}
+
+	// Need diff ID — detect layer format to decompress.
 	layerFormat, err := fileopener.LearnLayerFormat(file)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to determine layer format: %w", err)
@@ -107,7 +171,6 @@ func computeLayerHashes(inputPath, digestAlg, sandboxDir string) ([]byte, *layer
 		uncompressedHash = compressedHash
 	} else {
 		// For compressed layers, hash both compressed and uncompressed content
-		// Use TeeReader to hash both the compressed stream and uncompressed stream
 		teeReader := io.TeeReader(file, compressedHasher)
 		decompressReader, err := fileopener.CompressionReaderWithFormat(teeReader, layerFormat.CompressionAlgorithm())
 		if err != nil {
@@ -122,13 +185,7 @@ func computeLayerHashes(inputPath, digestAlg, sandboxDir string) ([]byte, *layer
 		uncompressedHash = uncompressedHasher.Sum(nil)
 	}
 
-	meta := &layerMetadata{
-		diffID:         uncompressedHash,
-		compressedSize: compressedSize,
-		layerFormat:    layerFormat,
-	}
-
-	return compressedHash, meta, nil
+	return compressedHash, buildLayerMetadata(uncompressedHash, layerFormat, compressedSize, digestModes), nil
 }
 
 // encodeHash encodes the hash bytes according to the specified encoding.
@@ -193,14 +250,31 @@ func writeLayerMetadata(compressedHash []byte, meta *layerMetadata, req *hashReq
 		mediaType = string(meta.layerFormat)
 	}
 
+	// Build DiffID — only set when "diff_id" mode was requested
+	diffID := ""
+	if meta.diffID != nil {
+		diffID = fmt.Sprintf("sha256:%x", meta.diffID)
+	}
+
+	// Merge diff_id_annotation values into annotations
+	mergedAnnotations := req.annotations
+	if len(meta.diffIDAnnotations) > 0 {
+		if mergedAnnotations == nil {
+			mergedAnnotations = make(map[string]string, len(meta.diffIDAnnotations))
+		}
+		for name, hash := range meta.diffIDAnnotations {
+			mergedAnnotations[name] = fmt.Sprintf("sha256:%x", hash)
+		}
+	}
+
 	// Create descriptor
 	descriptor := api.Descriptor{
 		Name:        layerName,
-		DiffID:      fmt.Sprintf("sha256:%x", meta.diffID),
+		DiffID:      diffID,
 		MediaType:   mediaType,
 		Digest:      fmt.Sprintf("sha256:%x", compressedHash),
 		Size:        meta.compressedSize,
-		Annotations: req.annotations,
+		Annotations: mergedAnnotations,
 	}
 
 	// Write JSON output
