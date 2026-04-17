@@ -18,9 +18,10 @@ import (
 )
 
 var (
-	srcDir            string
-	indexOutput       string
-	digestOutput      string
+	srcDir               string
+	indexOutput          string
+	digestOutput         string
+	indexDescriptorOutput string
 	manifestPaths     *indexedStringFlag
 	configPaths       *indexedStringFlag
 	descriptorPaths   *indexedStringFlag
@@ -53,6 +54,7 @@ func IndexFromOCILayoutProcess(_ context.Context, args []string) {
 	flagSet.StringVar(&srcDir, "src", "", "Path to the OCI layout directory (required)")
 	flagSet.StringVar(&indexOutput, "index", "", "Output path for the image index (required)")
 	flagSet.StringVar(&digestOutput, "digest", "", "Output path for the index digest (required)")
+	flagSet.StringVar(&indexDescriptorOutput, "index-descriptor", "", "Output path for the index descriptor JSON")
 	flagSet.Var(manifestPaths, "manifest", "Output path for manifest in format index=path")
 	flagSet.Var(configPaths, "config", "Output path for config in format index=path")
 	flagSet.Var(descriptorPaths, "descriptor", "Output path for descriptor in format index=path")
@@ -244,6 +246,22 @@ func processOCILayoutIndex() error {
 	indexDigest := digest.NewDigestFromBytes(digest.SHA256, indexSHA256[:])
 	if err := os.WriteFile(digestOutput, []byte(indexDigest.String()), 0o644); err != nil {
 		return fmt.Errorf("writing digest: %w", err)
+	}
+
+	// Write index descriptor
+	if indexDescriptorOutput != "" {
+		descriptor := specv1.Descriptor{
+			MediaType: specv1.MediaTypeImageIndex,
+			Digest:    indexDigest,
+			Size:      int64(len(indexJSON)),
+		}
+		descriptorJSON, err := json.Marshal(descriptor)
+		if err != nil {
+			return fmt.Errorf("marshaling index descriptor: %w", err)
+		}
+		if err := os.WriteFile(indexDescriptorOutput, descriptorJSON, 0o644); err != nil {
+			return fmt.Errorf("writing index descriptor: %w", err)
+		}
 	}
 
 	return nil

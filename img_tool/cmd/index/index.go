@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/opencontainers/go-digest"
 	specs "github.com/opencontainers/image-spec/specs-go"
 	specsv1 "github.com/opencontainers/image-spec/specs-go/v1"
 )
@@ -17,6 +18,8 @@ var (
 	annotationArgs         annotations
 	configTemplates        string
 	digestOutput           string
+	descriptorOutput       string
+	subjectDescriptorInput string
 )
 
 func IndexProcess(ctx context.Context, args []string) {
@@ -38,6 +41,8 @@ func IndexProcess(ctx context.Context, args []string) {
 	flagSet.Var(&annotationArgs, "annotation", `Key-value pair to add as an annotation`)
 	flagSet.StringVar(&configTemplates, "config-templates", "", `A JSON file containing template-expanded annotations values.`)
 	flagSet.StringVar(&digestOutput, "digest", "", `The (optional) output file for the digest of the manifest. This is useful for postprocessing.`)
+	flagSet.StringVar(&descriptorOutput, "descriptor", "", `The output file for the descriptor of the index.`)
+	flagSet.StringVar(&subjectDescriptorInput, "subject-descriptor", "", `A JSON file containing the descriptor of the subject manifest or index.`)
 
 	if err := flagSet.Parse(args); err != nil {
 		flagSet.Usage()
@@ -77,6 +82,21 @@ func IndexProcess(ctx context.Context, args []string) {
 		Annotations: annotations,
 	}
 
+	// Set subject descriptor if provided
+	if subjectDescriptorInput != "" {
+		subjectData, err := os.ReadFile(subjectDescriptorInput)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to read subject descriptor file %s: %v\n", subjectDescriptorInput, err)
+			os.Exit(1)
+		}
+		var subjectDesc specsv1.Descriptor
+		if err := json.Unmarshal(subjectData, &subjectDesc); err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to decode subject descriptor: %v\n", err)
+			os.Exit(1)
+		}
+		index.Subject = &subjectDesc
+	}
+
 	rawIndex, err := json.Marshal(index)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to marshal image index: %v\n", err)
@@ -88,11 +108,28 @@ func IndexProcess(ctx context.Context, args []string) {
 		os.Exit(1)
 	}
 
-	if digestOutput != "" {
-		digest := sha256.Sum256(rawIndex)
+	indexSHA256 := sha256.Sum256(rawIndex)
 
-		if err := os.WriteFile(digestOutput, []byte(fmt.Sprintf("sha256:%x", digest[:])), 0o644); err != nil {
+	if digestOutput != "" {
+		if err := os.WriteFile(digestOutput, []byte(fmt.Sprintf("sha256:%x", indexSHA256[:])), 0o644); err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to write digest to %s: %v\n", digestOutput, err)
+			os.Exit(1)
+		}
+	}
+
+	if descriptorOutput != "" {
+		descriptor := specsv1.Descriptor{
+			MediaType: specsv1.MediaTypeImageIndex,
+			Digest:    digest.NewDigestFromBytes(digest.SHA256, indexSHA256[:]),
+			Size:      int64(len(rawIndex)),
+		}
+		descriptorRaw, err := json.Marshal(descriptor)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to marshal index descriptor: %v\n", err)
+			os.Exit(1)
+		}
+		if err := os.WriteFile(descriptorOutput, descriptorRaw, 0o644); err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to write index descriptor to %s: %v\n", descriptorOutput, err)
 			os.Exit(1)
 		}
 	}

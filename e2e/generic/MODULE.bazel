@@ -24,17 +24,36 @@ register_toolchains("@rules_img_tool//toolchain:all")
 
 bazel_dep(name = "bazel_skylib", version = "1.7.1")
 bazel_dep(name = "container_structure_test", version = "1.22.1")
+bazel_dep(name = "package_metadata", version = "0.0.6")
 bazel_dep(name = "platforms", version = "0.0.11")
 bazel_dep(name = "rules_distroless", version = "0.6.2")
 bazel_dep(name = "rules_pkg", version = "1.2.0")
 bazel_dep(name = "rules_python", version = "1.8.3")
 bazel_dep(name = "rules_shell", version = "0.6.1")
+bazel_dep(name = "supply_chain_tools", version = "0.0.1")
 bazel_dep(name = "tar.bzl", version = "0.7.0")
 
 single_version_override(
     module_name = "rules_distroless",
     patch_strip = 1,
     patches = ["//custom_distroless_base_image:rules_distroless.patch"],
+)
+
+# FIXME: drop git_override after https://github.com/bazel-contrib/supply-chain/pull/158 is merged and released
+git_override(
+    module_name = "supply_chain_tools",
+    commit = "19778b53bab50d308dea6dd46ee9f6cc7b5a4da2",
+    patch_strip = 2,
+    remote = "https://github.com/bazel-contrib/supply-chain.git",
+    strip_prefix = "tools",
+)
+
+# FIXME: drop git_override after https://github.com/bazel-contrib/supply-chain/pull/158 is merged and released
+git_override(
+    module_name = "supply-chain-go",
+    commit = "19778b53bab50d308dea6dd46ee9f6cc7b5a4da2",
+    remote = "https://github.com/bazel-contrib/supply-chain.git",
+    strip_prefix = "lib/supplychain-go",
 )
 
 # Configure apt for Debian packages

@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -191,7 +192,24 @@ func bazelCommand(name string, command []string, startupFlags []string) commandL
 	return commandLine{name: name, args: args}
 }
 
-func bazelCommands(bazel string, startupFlags []string, moduleName string) (setup []commandLine, tests []commandLine, shutdown []commandLine) {
+func parseBazelMajorVersion(bazelInfoOutput string) (int, error) {
+	for _, line := range strings.Split(bazelInfoOutput, "\n") {
+		if strings.HasPrefix(line, "release: release ") {
+			version := strings.TrimPrefix(line, "release: release ")
+			parts := strings.Split(version, ".")
+			if len(parts) > 0 {
+				major, err := strconv.Atoi(parts[0])
+				if err != nil {
+					return 0, fmt.Errorf("failed to parse bazel major version %q: %v", parts[0], err)
+				}
+				return major, nil
+			}
+		}
+	}
+	return 0, fmt.Errorf("failed to parse bazel version from bazel info output")
+}
+
+func bazelCommands(bazel string, startupFlags []string, moduleName string, bazelMajor int) (setup []commandLine, tests []commandLine, shutdown []commandLine) {
 	var setupCommands []commandLine
 
 	// Build metadata flag to tag the module being tested
@@ -200,17 +218,26 @@ func bazelCommands(bazel string, startupFlags []string, moduleName string) (setu
 		metadataFlag = fmt.Sprintf("--build_metadata=TAG_MODULE_NAME=%s", moduleName)
 	}
 
-	buildCmd := []string{"build", "//..."}
+	buildCmd := []string{"build"}
 	if metadataFlag != "" {
 		buildCmd = append(buildCmd, metadataFlag)
 	}
+	if moduleName == "generic" && bazelMajor < 8 {
+		buildCmd = append(buildCmd, "--", "//...", "-//supply_chain/...")
+	} else {
+		buildCmd = append(buildCmd, "//...")
+	}
 
-	setupCommands = append(setupCommands, bazelCommand(bazel, []string{"info"}, startupFlags))
 	setupCommands = append(setupCommands, bazelCommand(bazel, buildCmd, startupFlags))
 
-	testCmd := []string{"test", "//..."}
+	testCmd := []string{"test"}
 	if metadataFlag != "" {
 		testCmd = append(testCmd, metadataFlag)
+	}
+	if moduleName == "generic" && bazelMajor < 8 {
+		testCmd = append(testCmd, "--", "//...", "-//supply_chain/...")
+	} else {
+		testCmd = append(testCmd, "//...")
 	}
 
 	return setupCommands, []commandLine{
@@ -241,7 +268,24 @@ func runBazelCommands(bazel, workspaceDir string) error {
 		moduleName = filepath.Base(workspaceDirEnv)
 	}
 
-	setupCommands, testCommands, shutdownCommands := bazelCommands(bazel, startupFlags, moduleName)
+	// Run bazel info first to detect version and display workspace info
+	infoCmd := bazelCommand(bazel, []string{"info"}, startupFlags)
+	fmt.Printf("\nrunning setup command $ bazel %s\n", strings.Join(infoCmd.args, " "))
+	var infoBuf bytes.Buffer
+	infoCmdExec := exec.Command(infoCmd.name, infoCmd.args...)
+	infoCmdExec.Dir = workspaceDir
+	infoCmdExec.Stdout = io.MultiWriter(os.Stdout, &infoBuf)
+	infoCmdExec.Stderr = os.Stderr
+	if err := infoCmdExec.Run(); err != nil {
+		return fmt.Errorf("bazel integration test setup step failed for command %v: %v", infoCmd, err)
+	}
+
+	bazelMajor, err := parseBazelMajorVersion(infoBuf.String())
+	if err != nil {
+		return fmt.Errorf("failed to detect bazel version: %v", err)
+	}
+
+	setupCommands, testCommands, shutdownCommands := bazelCommands(bazel, startupFlags, moduleName, bazelMajor)
 
 	defer func() {
 		// shut down Bazel after all tests to conserve memory

@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -35,9 +36,19 @@ var (
 	crossMountFromManifestPath string
 
 	destinationFilePath string
+
+	referrerRootPaths            *indexedStringFlag
+	referrerRootKinds            *indexedStringFlag
+	referrerManifestPaths        *doubleIndexedStringFlag
+	referrerMissingBlobsForManifest *doubleIndexedStringListFlag
 )
 
 func DeployMetadataProcess(ctx context.Context, args []string) {
+	referrerRootPaths = newIndexedStringFlag()
+	referrerRootKinds = newIndexedStringFlag()
+	referrerManifestPaths = newDoubleIndexedStringFlag()
+	referrerMissingBlobsForManifest = newDoubleIndexedStringListFlag()
+
 	flagSet := flag.NewFlagSet("deploy-metadata", flag.ExitOnError)
 	flagSet.Usage = func() {
 		fmt.Fprintf(flagSet.Output(), "Writes metadata about a push/load operation.\n\n")
@@ -107,6 +118,10 @@ func DeployMetadataProcess(ctx context.Context, args []string) {
 		missingBlobsForManifest[index] = blobs
 		return nil
 	})
+	flagSet.Var(referrerRootPaths, "referrer-root-path", `Path to a referrer root manifest or index file. Format: index=path (e.g., 0=referrer.json). Can be specified multiple times.`)
+	flagSet.Var(referrerRootKinds, "referrer-root-kind", `Kind of a referrer root. Format: index=kind (e.g., 0=manifest). Can be specified multiple times.`)
+	flagSet.Var(referrerManifestPaths, "referrer-manifest-path", `Path to a referrer child manifest file. Format: referrer_idx,manifest_idx=path (e.g., 0,0=manifest.json). Can be specified multiple times.`)
+	flagSet.Var(referrerMissingBlobsForManifest, "referrer-missing-blobs-for-manifest", `Missing blobs for a referrer manifest. Format: referrer_idx,manifest_idx=blob1,blob2,... Can be specified multiple times.`)
 
 	if err := flagSet.Parse(args); err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())
@@ -306,6 +321,18 @@ func WriteMetadata(ctx context.Context, outputPath string) error {
 		Settings:   deploySettings,
 	}
 
+	// Process referrers (only for push operations)
+	if command == "push" && len(referrerRootPaths.values) > 0 {
+		// Collect all known digests from the main image for subject validation
+		knownDigests := collectKnownDigests(rootDescriptor, manifests)
+
+		referrerOps, err := processReferrers(knownDigests, config)
+		if err != nil {
+			return fmt.Errorf("processing referrers: %w", err)
+		}
+		deployManifest.Operations = append(deployManifest.Operations, referrerOps...)
+	}
+
 	manifestBytes, err := json.Marshal(deployManifest)
 	if err != nil {
 		return fmt.Errorf("marshalling metadata: %w", err)
@@ -314,6 +341,216 @@ func WriteMetadata(ctx context.Context, outputPath string) error {
 		return fmt.Errorf("writing metadata file: %w", err)
 	}
 	return nil
+}
+
+// collectKnownDigests gathers all content-addressed digests from the main image.
+// This includes the root descriptor, all manifest descriptors, config descriptors,
+// and layer blob descriptors.
+func collectKnownDigests(root api.Descriptor, manifests []api.ManifestDeployInfo) map[string]bool {
+	digests := map[string]bool{root.Digest: true}
+	for _, m := range manifests {
+		digests[m.Descriptor.Digest] = true
+		digests[m.Config.Digest] = true
+		for _, layer := range m.LayerBlobs {
+			digests[layer.Digest] = true
+		}
+	}
+	return digests
+}
+
+// processReferrers creates push operations for each referrer.
+// Each referrer is validated to have a subject whose digest matches a known digest
+// of the main image.
+func processReferrers(knownDigests map[string]bool, config map[string]any) ([]json.RawMessage, error) {
+	// Sort referrer indices for deterministic output
+	indices := make([]int, 0, len(referrerRootPaths.values))
+	for idx := range referrerRootPaths.values {
+		indices = append(indices, idx)
+	}
+	sort.Ints(indices)
+
+	var ops []json.RawMessage
+	for _, refIdx := range indices {
+		refRootPath := referrerRootPaths.values[refIdx]
+		refRootKind, ok := referrerRootKinds.values[refIdx]
+		if !ok {
+			return nil, fmt.Errorf("referrer %d: --referrer-root-kind is required", refIdx)
+		}
+		if refRootKind != "manifest" && refRootKind != "index" {
+			return nil, fmt.Errorf("referrer %d: --referrer-root-kind must be 'manifest' or 'index', got %q", refIdx, refRootKind)
+		}
+
+		refRootData, err := os.ReadFile(refRootPath)
+		if err != nil {
+			return nil, fmt.Errorf("referrer %d: reading root file %s: %w", refIdx, refRootPath, err)
+		}
+
+		// Validate subject field
+		if err := validateSubject(refIdx, refRootData, knownDigests); err != nil {
+			return nil, err
+		}
+
+		// Compute root descriptor
+		refRootDigest := sha256.Sum256(refRootData)
+		refRootSize := int64(len(refRootData))
+
+		var refMediaType string
+		if refRootKind == "index" {
+			idx, err := registryv1.ParseIndexManifest(bytes.NewReader(refRootData))
+			if err != nil {
+				return nil, fmt.Errorf("referrer %d: parsing root as index: %w", refIdx, err)
+			}
+			refMediaType = string(idx.MediaType)
+		} else {
+			manifest, err := registryv1.ParseManifest(bytes.NewReader(refRootData))
+			if err != nil {
+				return nil, fmt.Errorf("referrer %d: parsing root as manifest: %w", refIdx, err)
+			}
+			refMediaType = string(manifest.MediaType)
+		}
+
+		refRootDescriptor := api.Descriptor{
+			MediaType: refMediaType,
+			Digest:    fmt.Sprintf("sha256:%x", refRootDigest),
+			Size:      refRootSize,
+		}
+
+		// Process referrer manifests
+		refManifestPathsForIdx := referrerManifestPaths.values[refIdx]
+		refManifestIndices := make([]int, 0, len(refManifestPathsForIdx))
+		for mIdx := range refManifestPathsForIdx {
+			refManifestIndices = append(refManifestIndices, mIdx)
+		}
+		sort.Ints(refManifestIndices)
+
+		refManifests := make([]api.ManifestDeployInfo, len(refManifestIndices))
+		for i, mIdx := range refManifestIndices {
+			manifestPath := refManifestPathsForIdx[mIdx]
+			manifestData, err := os.ReadFile(manifestPath)
+			if err != nil {
+				return nil, fmt.Errorf("referrer %d: reading manifest %d from %s: %w", refIdx, mIdx, manifestPath, err)
+			}
+
+			manifestDigest := sha256.Sum256(manifestData)
+			manifestSize := int64(len(manifestData))
+
+			manifest, err := registryv1.ParseManifest(bytes.NewReader(manifestData))
+			if err != nil {
+				return nil, fmt.Errorf("referrer %d: parsing manifest %d from %s: %w", refIdx, mIdx, manifestPath, err)
+			}
+
+			manifestDescriptor := api.Descriptor{
+				MediaType: string(manifest.MediaType),
+				Digest:    fmt.Sprintf("sha256:%x", manifestDigest),
+				Size:      manifestSize,
+			}
+
+			configDescriptor := api.Descriptor{
+				MediaType: string(manifest.Config.MediaType),
+				Digest:    manifest.Config.Digest.String(),
+				Size:      manifest.Config.Size,
+			}
+
+			layerBlobs := make([]api.Descriptor, len(manifest.Layers))
+			for j, layer := range manifest.Layers {
+				layerBlobs[j] = api.Descriptor{
+					MediaType: string(layer.MediaType),
+					Digest:    layer.Digest.String(),
+					Size:      layer.Size,
+				}
+			}
+
+			var missingBlobs []string
+			if referrerMissingBlobsForManifest.values[refIdx] != nil {
+				missingBlobs = referrerMissingBlobsForManifest.values[refIdx][mIdx]
+			}
+
+			refManifests[i] = api.ManifestDeployInfo{
+				Descriptor:   manifestDescriptor,
+				Config:       configDescriptor,
+				LayerBlobs:   layerBlobs,
+				MissingBlobs: missingBlobs,
+			}
+		}
+
+		refBaseCommand := api.BaseCommandOperation{
+			Command:   "push",
+			RootKind:  refRootKind,
+			Root:      refRootDescriptor,
+			Manifests: refManifests,
+		}
+
+		// Create push operation with same registry/repository but no tags
+		refOp, err := referrerPushOperation(refBaseCommand, config)
+		if err != nil {
+			return nil, fmt.Errorf("referrer %d: creating push operation: %w", refIdx, err)
+		}
+
+		opBytes, err := json.Marshal(refOp)
+		if err != nil {
+			return nil, fmt.Errorf("referrer %d: marshalling push operation: %w", refIdx, err)
+		}
+		ops = append(ops, opBytes)
+	}
+	return ops, nil
+}
+
+// validateSubject checks that a referrer's root manifest/index has a subject field
+// whose digest matches a known digest of the main image.
+func validateSubject(refIdx int, rootData []byte, knownDigests map[string]bool) error {
+	// Parse as generic JSON to extract the subject field
+	var root struct {
+		Subject *struct {
+			Digest string `json:"digest"`
+		} `json:"subject"`
+	}
+	if err := json.Unmarshal(rootData, &root); err != nil {
+		return fmt.Errorf("referrer %d: parsing root JSON for subject validation: %w", refIdx, err)
+	}
+	if root.Subject == nil {
+		return fmt.Errorf("referrer %d: manifest/index does not contain a 'subject' field", refIdx)
+	}
+	if root.Subject.Digest == "" {
+		return fmt.Errorf("referrer %d: subject descriptor has no digest", refIdx)
+	}
+	if !knownDigests[root.Subject.Digest] {
+		return fmt.Errorf("referrer %d: subject digest %s does not match any blob of the main image", refIdx, root.Subject.Digest)
+	}
+	return nil
+}
+
+// referrerPushOperation creates a push operation for a referrer using the same
+// registry and repository as the main image, but with no tags.
+func referrerPushOperation(baseCommand api.BaseCommandOperation, config map[string]any) (api.PushDeployOperation, error) {
+	var registry, repository string
+
+	if destinationFilePath != "" {
+		reg, repo, err := parseDestinationFile(destinationFilePath)
+		if err != nil {
+			return api.PushDeployOperation{}, err
+		}
+		registry = reg
+		repository = repo
+	} else {
+		var ok bool
+		registry, ok = config["registry"].(string)
+		if !ok || registry == "" {
+			return api.PushDeployOperation{}, fmt.Errorf("configuration file must contain a non-empty 'registry' field")
+		}
+		repository, ok = config["repository"].(string)
+		if !ok || repository == "" {
+			return api.PushDeployOperation{}, fmt.Errorf("configuration file must contain a non-empty 'repository' field")
+		}
+	}
+
+	return api.PushDeployOperation{
+		BaseCommandOperation: baseCommand,
+		PushTarget: api.PushTarget{
+			Registry:   registry,
+			Repository: repository,
+			// No tags for referrers — they are discovered via the referrers API
+		},
+	}, nil
 }
 
 func checkCrossMountSource(targetRegistry string, sourceRegistry string, sourceRepository string) *api.CrossMountSource {

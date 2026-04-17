@@ -37,7 +37,7 @@ jobs:
       matrix:
         runner: [macos-15-intel, macos-15, ubuntu-22.04, windows-2025]
     runs-on: ${{ matrix.runner }}
-    if: ${{ github.event_name == 'merge_group' }}
+    if: ${{ github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch' }}
     steps:
     - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
     - name: Generate BuildBuddy bazelrc
@@ -62,7 +62,7 @@ jobs:
       matrix:
         runner: [macos-15-intel, macos-15, ubuntu-22.04, windows-2025]
     runs-on: ${{ matrix.runner }}
-    if: ${{ github.event_name == 'merge_group' }}
+    if: ${{ github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch' }}
     permissions:
       id-token: write
       contents: read

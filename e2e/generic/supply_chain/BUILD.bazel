@@ -1,0 +1,70 @@
+load("@rules_img//img:image.bzl", "image_index", "image_manifest")
+load("@rules_img//img:layer.bzl", "image_layer")
+load("@rules_img//img:oras.bzl", "oras_file_layer")
+load("@rules_img//img:push.bzl", "image_push")
+load("@supply_chain_tools//sbom:cyclonedx.bzl", "cyclonedx")
+load("@supply_chain_tools//sbom:sbom.bzl", "sbom")
+
+image_layer(
+    name = "layer",
+    srcs = {"bin/app": "//supply_chain/app"},
+)
+
+image_manifest(
+    name = "image",
+    base = "@alpine",
+    layers = [":layer"],
+)
+
+image_index(
+    name = "index",
+    manifests = [":image"],
+    platforms = [
+        "//platform:linux_amd64",
+        "//platform:linux_arm64",
+    ],
+)
+
+sbom(
+    name = "image_sbom",
+    target = ":index",
+)
+
+cyclonedx(
+    name = "image_sbom_cdx",
+    sbom = ":image_sbom",
+)
+
+oras_file_layer(
+    name = "sbom_layer",
+    src = ":image_sbom_cdx",
+    media_type = "application/vnd.cyclonedx+json",
+    title = "sbom",
+)
+
+image_manifest(
+    name = "sbom_manifest",
+    artifact_type = "application/vnd.cyclonedx+json",
+    config_media_type = "application/vnd.oci.empty.v1+json",
+    layers = [":sbom_layer"],
+    subject = ":index",
+)
+
+image_push(
+    name = "push",
+    image = ":index",
+    referrers = [":sbom_manifest"],
+    registry = "ghcr.io",
+    repository = "malt3/supply-chain-example",
+    tag = "latest",
+)
+
+# Note:
+#
+# You can check the SBOM using common tools:
+# > trivy image --sbom-sources oci ghcr.io/malt3/supply-chain-example:latest
+#
+# You can also use standard tooling to inspect referrers:
+# > regctl artifact tree ghcr.io/malt3/supply-chain-example:latest
+# > oras discover ghcr.io/malt3/supply-chain-example:latest
+# > regctl artifact get --subject ghcr.io/malt3/supply-chain-example:latest --filter-artifact-type application/vnd.cyclonedx+json | jq

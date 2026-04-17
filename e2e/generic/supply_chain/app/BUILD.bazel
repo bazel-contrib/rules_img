@@ -1,0 +1,40 @@
+load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
+load("@package_metadata//rules:package_metadata.bzl", "package_metadata")
+load("@supply_chain_tools//sbom:cyclonedx.bzl", "cyclonedx")
+load("@supply_chain_tools//sbom:sbom.bzl", "sbom")
+
+package(
+    default_package_metadata = [":package_metadata"],
+)
+
+package_metadata(
+    name = "package_metadata",
+    purl = "pkg:generic/my_awesome_app",
+    visibility = [":__subpackages__"],
+)
+
+filegroup(
+    name = "img",
+    srcs = ["@rules_img//img/deploy_tool"],
+    output_group = "img_deploy_exe",
+)
+
+copy_file(
+    name = "app",
+    src = ":img",
+    out = "bin/app",
+    allow_symlink = True,
+    is_executable = True,
+    package_metadata = ["package_metadata"],
+    visibility = ["//visibility:public"],
+)
+
+sbom(
+    name = "sbom",
+    target = ":app",
+)
+
+cyclonedx(
+    name = "sbomx_cdx",
+    sbom = ":sbom",
+)
