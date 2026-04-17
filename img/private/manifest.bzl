@@ -268,7 +268,7 @@ def _image_manifest_impl(ctx):
     pull_info = None
     computed_annotations = {}
     if base != None:
-        history = base.structured_config.get("history", [])
+        history.extend(base.structured_config.get("history", []))
         layers.extend(base.layers)
         inputs.append(base.manifest)
         inputs.append(base.config)
@@ -284,6 +284,9 @@ def _image_manifest_impl(ctx):
         if LayerInfo in layer:
             # Use pre-built layer metadata
             layers.append(layer[LayerInfo])
+            history.append({
+                "created_by": "%s" % layer.label,
+            })
             continue
         elif DefaultInfo not in layer:
             fail("layer {} needs to provide LayerInfo or DefaultInfo: {}".format(layer_idx, layer))
@@ -316,6 +319,14 @@ def _image_manifest_impl(ctx):
 
     args.add("--os", os)
     args.add("--architecture", arch)
+    if history != []:
+        history_file = ctx.actions.declare_file(ctx.label.name + "_history.json")
+        ctx.actions.write(
+            history_file,
+            json.encode({"history": history}),
+        )
+        args.add("--history-file", history_file.path)
+        inputs.append(history_file)
     if variant != "":
         args.add("--variant", variant)
     for layer in layers:
