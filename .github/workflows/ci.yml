@@ -16,7 +16,7 @@ jobs:
   buildifier_check:
     runs-on: ubuntu-24.04
     steps:
-    - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
+    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
     - name: Generate BuildBuddy bazelrc
       uses: ./.github/actions/generate-buildbuddy-bazelrc
       with:
@@ -39,7 +39,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     if: ${{ github.event_name == 'merge_group' }}
     steps:
-    - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
+    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
     - name: Generate BuildBuddy bazelrc
       uses: ./.github/actions/generate-buildbuddy-bazelrc
       with:
@@ -68,7 +68,7 @@ jobs:
       contents: read
       packages: read
     steps:
-    - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
+    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
     - name: Generate BuildBuddy bazelrc
       uses: ./.github/actions/generate-buildbuddy-bazelrc
       with:
