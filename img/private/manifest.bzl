@@ -334,6 +334,18 @@ def _image_manifest_impl(ctx):
         inputs.append(ctx.file.created)
         args.add("--created", ctx.file.created.path)
 
+    # Resolve subject descriptor if provided
+    if ctx.attr.subject != None:
+        if ImageManifestInfo in ctx.attr.subject:
+            subject_descriptor_file = ctx.attr.subject[ImageManifestInfo].descriptor
+        elif ImageIndexInfo in ctx.attr.subject:
+            subject_info = ctx.attr.subject[ImageIndexInfo]
+            subject_descriptor_file = subject_info.descriptor
+        else:
+            fail("subject must provide ImageManifestInfo or ImageIndexInfo")
+        inputs.append(subject_descriptor_file)
+        args.add("--subject-descriptor", subject_descriptor_file.path)
+
     # Prepare newline_delimited_lists_files if annotations_file is provided
     newline_delimited_lists_files = None
     if ctx.attr.annotations_file != None:
@@ -591,6 +603,17 @@ This sets the `artifactType` field in the OCI manifest, as defined in the
 
 Common values include `application/vnd.cncf.helm.chart.v1` for Helm charts
 or `application/spdx+json` for SPDX SBOMs.""",
+        ),
+        "subject": attr.label(
+            doc = """Optional subject for the manifest.
+
+Sets the `subject` field in the OCI manifest, which is a descriptor pointing to
+another manifest or index. This is used for establishing referrer relationships,
+such as attaching SBOMs, signatures, or attestations to an existing image.
+
+The target must provide either ImageManifestInfo or ImageIndexInfo.
+""",
+            providers = [[ImageManifestInfo], [ImageIndexInfo]],
         ),
         "created": attr.label(
             doc = """Optional file containing a datetime string (RFC 3339 format) for when the image was created.

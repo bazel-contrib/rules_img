@@ -154,7 +154,15 @@ def _image_import_impl(ctx):
             _build_manifest_info(ctx, manifest["digest"], descriptor = manifest, index_position = position, platform = manifest.get("platform"))
             for (position, manifest) in enumerate(root_blob.get("manifests", []))
         ]
+        index_descriptor_file = ctx.actions.declare_file(ctx.attr.name + "_index_descriptor.json")
+        index_descriptor = dict(
+            mediaType = media_type,
+            size = len(ctx.attr.data[ctx.attr.digest]),
+            digest = ctx.attr.digest,
+        )
+        ctx.actions.write(index_descriptor_file, json.encode(index_descriptor))
         providers.append(ImageIndexInfo(
+            descriptor = index_descriptor_file,
             index = _digest_to_file(ctx, ctx.attr.digest),
             manifests = manifests,
         ))

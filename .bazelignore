@@ -20,6 +20,10 @@ e2e/python/bazel-bin
 e2e/python/bazel-out
 e2e/python/bazel-python
 e2e/python/bazel-testlogs
+e2e/sbom/bazel-bin
+e2e/sbom/bazel-out
+e2e/sbom/bazel-sbom
+e2e/sbom/bazel-testlogs
 e2e/workspace/bazel-bin
 e2e/workspace/bazel-out
 e2e/workspace/bazel-testlogs

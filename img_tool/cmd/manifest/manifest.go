@@ -45,6 +45,7 @@ var (
 	stopSignal            string
 	created               string
 	artifactType          string
+	subjectDescriptor     string
 )
 
 func ManifestProcess(_ context.Context, args []string) {
@@ -86,6 +87,7 @@ func ManifestProcess(_ context.Context, args []string) {
 	flagSet.StringVar(&stopSignal, "stop-signal", "", `Signal to stop the container.`)
 	flagSet.StringVar(&created, "created", "", `A file containing a datetime string (RFC 3339 format) for when the image was created.`)
 	flagSet.StringVar(&artifactType, "artifact-type", "", `Optional IANA media type of the artifact when the manifest is used for an artifact (e.g. application/vnd.cncf.helm.chart.v1, application/spdx+json).`)
+	flagSet.StringVar(&subjectDescriptor, "subject-descriptor", "", `A JSON file containing the descriptor of the subject manifest or index.`)
 
 	if err := flagSet.Parse(args); err != nil {
 		flagSet.Usage()
@@ -200,6 +202,21 @@ func ManifestProcess(_ context.Context, args []string) {
 		ArtifactType: artifactType,
 		Config:       configDescriptor,
 		Layers:       layerDescriptors,
+	}
+
+	// Set subject descriptor if provided
+	if subjectDescriptor != "" {
+		subjectData, err := os.ReadFile(subjectDescriptor)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to read subject descriptor file %s: %v\n", subjectDescriptor, err)
+			os.Exit(1)
+		}
+		var subjectDesc specv1.Descriptor
+		if err := json.Unmarshal(subjectData, &subjectDesc); err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to decode subject descriptor: %v\n", err)
+			os.Exit(1)
+		}
+		manifest.Subject = &subjectDesc
 	}
 
 	// Apply annotations from config templates or command line
