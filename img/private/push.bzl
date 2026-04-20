@@ -100,6 +100,25 @@ def _compute_push_metadata(*, ctx, configuration_json, destination_file = None):
         inputs.append(index_info.index)
         inputs.extend([manifest.manifest for manifest in index_info.manifests])
 
+    # Add referrer arguments
+    for ref_idx, referrer in enumerate(ctx.attr.referrers):
+        ref_manifest_info = referrer[ImageManifestInfo] if ImageManifestInfo in referrer else None
+        ref_index_info = referrer[ImageIndexInfo] if ImageIndexInfo in referrer else None
+        if ref_manifest_info != None:
+            args.add("--referrer-root-path", "{}={}".format(ref_idx, ref_manifest_info.manifest.path))
+            args.add("--referrer-root-kind", "{}=manifest".format(ref_idx))
+            args.add("--referrer-manifest-path", "{},0={}".format(ref_idx, ref_manifest_info.manifest.path))
+            args.add("--referrer-missing-blobs-for-manifest", "{},0={}".format(ref_idx, ",".join(ref_manifest_info.missing_blobs)))
+            inputs.append(ref_manifest_info.manifest)
+        elif ref_index_info != None:
+            args.add("--referrer-root-path", "{}={}".format(ref_idx, ref_index_info.index.path))
+            args.add("--referrer-root-kind", "{}=index".format(ref_idx))
+            for i, manifest in enumerate(ref_index_info.manifests):
+                args.add("--referrer-manifest-path", "{},{}={}".format(ref_idx, i, manifest.manifest.path))
+                args.add("--referrer-missing-blobs-for-manifest", "{},{}={}".format(ref_idx, i, ",".join(manifest.missing_blobs)))
+            inputs.append(ref_index_info.index)
+            inputs.extend([manifest.manifest for manifest in ref_index_info.manifests])
+
     outputs = []
     layer_hints_file = layer_hints_for_deploy_metadata(
         ctx,
@@ -179,6 +198,18 @@ def _image_push_impl(ctx):
         include_layers = _push_strategy(ctx) == "eager",
         symlink_name_prefix = root_symlinks_prefix,
     )
+
+    # Add referrer root symlinks (operation_index starts at 1; main image is 0)
+    for ref_idx, referrer in enumerate(ctx.attr.referrers):
+        ref_manifest_info = referrer[ImageManifestInfo] if ImageManifestInfo in referrer else None
+        ref_index_info = referrer[ImageIndexInfo] if ImageIndexInfo in referrer else None
+        root_symlinks.update(calculate_root_symlinks(
+            ref_index_info,
+            ref_manifest_info,
+            include_layers = _push_strategy(ctx) == "eager",
+            symlink_name_prefix = root_symlinks_prefix,
+            operation_index = ref_idx + 1,
+        ))
     if layer_hints != None:
         root_symlinks["{}layer_hints".format(root_symlinks_prefix)] = layer_hints
 
@@ -412,6 +443,32 @@ Cannot be used together with `registry` or `repository` attributes.
         "image": attr.label(
             doc = "Image to push. Should provide ImageManifestInfo or ImageIndexInfo.",
             mandatory = True,
+        ),
+        "referrers": attr.label_list(
+            doc = """Additional manifests or indexes to push as referrers to the main image.
+
+Each referrer is pushed to the same registry and repository as the main image,
+but without tags (referrers are discovered via the OCI referrers API by digest).
+
+Each target must provide ImageManifestInfo or ImageIndexInfo and must have its
+`subject` field set to reference the main image being pushed.
+
+Example:
+```python
+image_push(
+    name = "push",
+    image = ":my_app",
+    referrers = [
+        ":sbom_manifest",
+        ":signature_manifest",
+    ],
+    registry = "ghcr.io",
+    repository = "myorg/myapp",
+    tag = "latest",
+)
+```
+""",
+            providers = [[ImageManifestInfo], [ImageIndexInfo]],
         ),
         "cross_mount_from": attr.label(
             doc = "An image_push target whose layers may be cross-mounted during push.",

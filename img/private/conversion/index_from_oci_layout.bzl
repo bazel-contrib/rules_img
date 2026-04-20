@@ -46,7 +46,8 @@ def _image_index_from_oci_layout(ctx):
 
     output_index = ctx.actions.declare_file("{}_index.json".format(ctx.attr.name))
     output_digest = ctx.actions.declare_file("{}_digest".format(ctx.attr.name))
-    outputs = [output_index, output_digest]
+    output_descriptor = ctx.actions.declare_file("{}_descriptor.json".format(ctx.attr.name))
+    outputs = [output_index, output_digest, output_descriptor]
 
     # For each manifest, we need to output:
     # - manifest JSON
@@ -118,6 +119,8 @@ def _image_index_from_oci_layout(ctx):
         output_index.path,
         "--digest",
         output_digest.path,
+        "--index-descriptor",
+        output_descriptor.path,
     ]
 
     for idx_str in sorted(manifest_platforms.keys()):
@@ -172,6 +175,7 @@ def _image_index_from_oci_layout(ctx):
             oci_layout = depset([src_dir]),
         ),
         ImageIndexInfo(
+            descriptor = output_descriptor,
             index = output_index,
             manifests = manifest_infos,
         ),

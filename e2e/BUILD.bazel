@@ -95,6 +95,20 @@ bazel_integration_tests(
 )
 
 bazel_integration_tests(
+    name = "sbom",
+    # Supply chain security tooling is still WIP.
+    # It doesn't make sense to target older
+    # Bazel versions.
+    bazel_versions = ["9.0.1"],
+    tags = TAGS,
+    test_runner = "//img/private/integration_test_runner",
+    workspace_files = integration_test_utils.glob_workspace_files("sbom") + [
+        "//img/private/release/source_files:release_src_files",
+    ],
+    workspace_path = "sbom",
+)
+
+bazel_integration_tests(
     name = "workspace",
     # bazel 9 drops WORKSPACE support.
     bazel_versions = [
@@ -126,6 +140,11 @@ test_suite(
     ) + integration_test_utils.bazel_integration_test_names(
         "python",
         bazel_binaries.versions.all,
+    ) + integration_test_utils.bazel_integration_test_names(
+        "sbom",
+        [
+            "9.0.1",
+        ],
     ) + integration_test_utils.bazel_integration_test_names(
         "workspace",
         [

@@ -131,22 +131,39 @@ def _image_index_impl(ctx):
         )
 
     index_out = ctx.actions.declare_file(ctx.attr.name + "_index.json")
+    descriptor_out = ctx.actions.declare_file(ctx.label.name + "_descriptor.json")
     digest_out = ctx.actions.declare_file(ctx.label.name + "_digest")
+
+    # Resolve subject descriptor if provided
+    subject_descriptor_file = None
+    if ctx.attr.subject != None:
+        if ImageManifestInfo in ctx.attr.subject:
+            subject_descriptor_file = ctx.attr.subject[ImageManifestInfo].descriptor
+        elif ImageIndexInfo in ctx.attr.subject:
+            subject_info = ctx.attr.subject[ImageIndexInfo]
+            subject_descriptor_file = subject_info.descriptor
+        else:
+            fail("subject must provide ImageManifestInfo or ImageIndexInfo")
+
     write_index_json(
         ctx,
         output = index_out,
+        descriptor = descriptor_out,
         digest = digest_out,
         manifests = manifest_infos,
         config_json = config_json,
+        subject_descriptor = subject_descriptor_file,
     )
     providers = [
         DefaultInfo(files = depset([index_out])),
         OutputGroupInfo(
+            descriptor = depset([descriptor_out]),
             digest = depset([digest_out]),
             oci_layout = depset([_build_oci_layout(ctx, "directory", index_out, manifest_infos)]),
             oci_tarball = depset([_build_oci_layout(ctx, "tar", index_out, manifest_infos)]),
         ),
         ImageIndexInfo(
+            descriptor = descriptor_out,
             index = index_out,
             manifests = manifest_infos,
         ),
@@ -211,6 +228,17 @@ Output groups:
         "platforms": attr.label_list(
             providers = [platform_common.PlatformInfo],
             doc = "(Optional) list of target platforms to build the manifest for. Uses a split transition. If specified, the 'manifests' attribute should contain exactly one manifest.",
+        ),
+        "subject": attr.label(
+            doc = """Optional subject for the index.
+
+Sets the `subject` field in the OCI index, which is a descriptor pointing to
+another manifest or index. This is used for establishing referrer relationships,
+such as attaching SBOMs, signatures, or attestations to an existing image.
+
+The target must provide either ImageManifestInfo or ImageIndexInfo.
+""",
+            providers = [[ImageManifestInfo], [ImageIndexInfo]],
         ),
         "annotations": attr.string_dict(
             doc = """Arbitrary metadata for the image index.

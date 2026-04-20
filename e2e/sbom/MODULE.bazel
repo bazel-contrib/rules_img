@@ -1,0 +1,54 @@
+module(name = "sbom_e2e")
+
+# BEGIN BAZEL_DEP
+bazel_dep(name = "rules_img")
+local_path_override(
+    module_name = "rules_img",
+    path = "../..",
+)
+
+bazel_dep(name = "rules_img_tool")
+local_path_override(
+    module_name = "rules_img_tool",
+    path = "../../img_tool",
+)
+
+bazel_dep(name = "rules_img_pull_tool")
+local_path_override(
+    module_name = "rules_img_pull_tool",
+    path = "../../pull_tool",
+)
+
+register_toolchains("@rules_img_tool//toolchain:all")
+# END BAZEL_DEP
+
+bazel_dep(name = "bazel_skylib", version = "1.7.1")
+bazel_dep(name = "package_metadata", version = "0.0.6")
+bazel_dep(name = "platforms", version = "0.0.11")
+bazel_dep(name = "supply_chain_tools", version = "0.0.1")
+
+# FIXME: drop archive_override after https://github.com/bazel-contrib/supply-chain/pull/158 is merged and released
+archive_override(
+    module_name = "supply_chain_tools",
+    integrity = "sha256-n934H5t5lmrAN/Dhq6jf59B02FpEJIYyC4YmVEf9obU=",
+    strip_prefix = "supply-chain-19778b53bab50d308dea6dd46ee9f6cc7b5a4da2/tools",
+    urls = ["https://github.com/bazel-contrib/supply-chain/archive/19778b53bab50d308dea6dd46ee9f6cc7b5a4da2.tar.gz"],
+)
+
+# FIXME: drop archive_override after https://github.com/bazel-contrib/supply-chain/pull/158 is merged and released
+archive_override(
+    module_name = "supply-chain-go",
+    integrity = "sha256-n934H5t5lmrAN/Dhq6jf59B02FpEJIYyC4YmVEf9obU=",
+    strip_prefix = "supply-chain-19778b53bab50d308dea6dd46ee9f6cc7b5a4da2/lib/supplychain-go",
+    urls = ["https://github.com/bazel-contrib/supply-chain/archive/19778b53bab50d308dea6dd46ee9f6cc7b5a4da2.tar.gz"],
+)
+
+pull = use_repo_rule("@rules_img//img:pull.bzl", "pull")
+
+pull(
+    name = "alpine",
+    digest = "sha256:51183f2cfa6320055da30872f211093f9ff1d3cf06f39a0bdb212314c5dc7375",
+    registry = "mirror.gcr.io",
+    repository = "library/alpine",
+    tag = "3.23",
+)
