@@ -1,6 +1,5 @@
 import docker
 import requests
-import os
 from testcontainers.core.container import DockerContainer
 from testcontainers.core.wait_strategies import LogMessageWaitStrategy
 from python.runfiles import Runfiles
