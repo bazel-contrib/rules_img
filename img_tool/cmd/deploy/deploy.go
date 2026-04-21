@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"sort"
 	"strings"
 	"text/template"
 
@@ -248,8 +249,12 @@ func DeployWithExtras(ctx context.Context, rawRequest []byte, additionalTags []s
 			return fmt.Errorf("reading index manifest for manifest_tags on %s: %w", baseRef, err)
 		}
 
-		platformTodo := make(map[name.Reference]remote.Taggable)
-		var platformTagNames []string
+		type assignment struct {
+			img      registryv1.Image
+			platform registryv1.Platform
+			tmpl     string
+		}
+		assignments := make(map[name.Reference]assignment)
 		for _, m := range idxManifest.Manifests {
 			if m.Platform == nil {
 				continue
@@ -262,28 +267,63 @@ func DeployWithExtras(ctx context.Context, rawRequest []byte, additionalTags []s
 			for _, tmplStr := range op.ManifestTags {
 				expanded, err := expandManifestTagTemplate(tmplStr, data)
 				if err != nil {
-					return fmt.Errorf("expanding manifest_tag %q for %s/%s: %w", tmplStr, m.Platform.OS, m.Platform.Architecture, err)
+					return fmt.Errorf("expanding manifest_tag %q for %s: %w", tmplStr, platformLabel(*m.Platform), err)
 				}
 				ref, err := name.NewTag(baseRef + ":" + expanded)
 				if err != nil {
 					return fmt.Errorf("creating per-platform tag ref %q: %w", expanded, err)
 				}
-				platformTodo[ref] = img
-				platformTagNames = append(platformTagNames, ref.String())
+				if existing, ok := assignments[ref]; ok {
+					existingDigest, _ := existing.img.Digest()
+					newDigest, _ := img.Digest()
+					if existingDigest != newDigest {
+						return fmt.Errorf(
+							"manifest_tag %q collides at %s for distinct child manifests (%s vs %s); "+
+								"template must discriminate between all child platforms (consider including {{.variant}} or {{.os_version}})",
+							tmplStr, ref, platformLabel(existing.platform), platformLabel(*m.Platform),
+						)
+					}
+					// Same digest — e.g. an index listing the same manifest
+					// under two equivalent platform entries. Safe to skip.
+					continue
+				}
+				assignments[ref] = assignment{img: img, platform: *m.Platform, tmpl: tmplStr}
 			}
 		}
-		if len(platformTodo) > 0 {
-			opts := []remote.Option{registry.WithAuthFromMultiKeychain()}
-			if err := remote.MultiWrite(platformTodo, opts...); err != nil {
-				return fmt.Errorf("pushing per-platform manifest_tags to %s: %w", baseRef, err)
-			}
-			for _, t := range platformTagNames {
-				fmt.Println(t)
-			}
+		if len(assignments) == 0 {
+			continue
+		}
+
+		platformTodo := make(map[name.Reference]remote.Taggable, len(assignments))
+		platformTagNames := make([]string, 0, len(assignments))
+		for ref, a := range assignments {
+			platformTodo[ref] = a.img
+			platformTagNames = append(platformTagNames, ref.String())
+		}
+		sort.Strings(platformTagNames)
+
+		opts := []remote.Option{registry.WithAuthFromMultiKeychain()}
+		if err := remote.MultiWrite(platformTodo, opts...); err != nil {
+			return fmt.Errorf("pushing per-platform manifest_tags to %s: %w", baseRef, err)
+		}
+		for _, t := range platformTagNames {
+			fmt.Println(t)
 		}
 	}
 
 	return nil
+}
+
+// platformLabel formats a platform descriptor for human-readable error messages.
+func platformLabel(p registryv1.Platform) string {
+	label := p.OS + "/" + p.Architecture
+	if p.Variant != "" {
+		label += "/" + p.Variant
+	}
+	if p.OSVersion != "" {
+		label += "@" + p.OSVersion
+	}
+	return label
 }
 
 func platformTemplateData(p *registryv1.Platform) map[string]any {

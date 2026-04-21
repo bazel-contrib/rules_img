@@ -45,7 +45,7 @@ image_push(
     name = "push_with_manifest_tags",
     image = ":multiarch_image",
     manifest_tags = [
-        "multiarch-{{.os}}-{{.architecture}}",
+        "multiarch-{{.os}}-{{.architecture}}-{{.variant}}",
     ],
     registry = "ghcr.io",
     repository = "malt3/rules_img/go",
