@@ -118,6 +118,7 @@ type PushTarget struct {
 	Registry   string   `json:"registry"`
 	Repository string   `json:"repository"`
 	Tags       []string `json:"tags,omitempty"`
+	ManifestTags []string `json:"manifest_tags,omitempty"`
 }
 
 type PullInfo struct {

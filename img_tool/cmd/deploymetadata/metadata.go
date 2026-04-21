@@ -37,6 +37,8 @@ var (
 
 	destinationFilePath string
 
+	manifestTags []string
+
 	referrerRootPaths            *indexedStringFlag
 	referrerRootKinds            *indexedStringFlag
 	referrerManifestPaths        *doubleIndexedStringFlag
@@ -48,6 +50,7 @@ func DeployMetadataProcess(ctx context.Context, args []string) {
 	referrerRootKinds = newIndexedStringFlag()
 	referrerManifestPaths = newDoubleIndexedStringFlag()
 	referrerMissingBlobsForManifest = newDoubleIndexedStringListFlag()
+	manifestTags = nil
 
 	flagSet := flag.NewFlagSet("deploy-metadata", flag.ExitOnError)
 	flagSet.Usage = func() {
@@ -118,6 +121,10 @@ func DeployMetadataProcess(ctx context.Context, args []string) {
 		missingBlobsForManifest[index] = blobs
 		return nil
 	})
+	flagSet.Func("manifest-tag", `(Optional) per-platform tag template for index pushes. Each value may contain Go template placeholders (e.g. {{.os}}, {{.architecture}}) that are expanded at deploy time against the platform descriptor of each child manifest. Can be specified multiple times. Only valid when --root-kind=index.`, func(value string) error {
+		manifestTags = append(manifestTags, value)
+		return nil
+	})
 	flagSet.Var(referrerRootPaths, "referrer-root-path", `Path to a referrer root manifest or index file. Format: index=path (e.g., 0=referrer.json). Can be specified multiple times.`)
 	flagSet.Var(referrerRootKinds, "referrer-root-kind", `Kind of a referrer root. Format: index=kind (e.g., 0=manifest). Can be specified multiple times.`)
 	flagSet.Var(referrerManifestPaths, "referrer-manifest-path", `Path to a referrer child manifest file. Format: referrer_idx,manifest_idx=path (e.g., 0,0=manifest.json). Can be specified multiple times.`)
@@ -141,6 +148,11 @@ func DeployMetadataProcess(ctx context.Context, args []string) {
 	}
 	if rootKind != "manifest" && rootKind != "index" {
 		fmt.Fprintln(os.Stderr, "Error: --root-kind must be either 'manifest' or 'index'")
+		flagSet.Usage()
+		os.Exit(1)
+	}
+	if len(manifestTags) > 0 && rootKind != "index" {
+		fmt.Fprintln(os.Stderr, "Error: --manifest-tag can only be used with --root-kind=index")
 		flagSet.Usage()
 		os.Exit(1)
 	}
@@ -678,9 +690,10 @@ func pushOperation(baseCommand api.BaseCommandOperation, config map[string]any) 
 	return api.PushDeployOperation{
 		BaseCommandOperation: baseCommand,
 		PushTarget: api.PushTarget{
-			Registry:   registry,
-			Repository: repository,
-			Tags:       tags,
+			Registry:     registry,
+			Repository:   repository,
+			Tags:         tags,
+			ManifestTags: manifestTags,
 		},
 	}, nil
 }

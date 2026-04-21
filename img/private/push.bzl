@@ -97,6 +97,8 @@ def _compute_push_metadata(*, ctx, configuration_json, destination_file = None):
         for i, manifest in enumerate(index_info.manifests):
             args.add("--manifest-path", "{}={}".format(i, manifest.manifest.path))
             args.add("--missing-blobs-for-manifest", "{}={}".format(i, ",".join(manifest.missing_blobs)))
+        for manifest_tag in ctx.attr.manifest_tags:
+            args.add("--manifest-tag", manifest_tag)
         inputs.append(index_info.index)
         inputs.extend([manifest.manifest for manifest in index_info.manifests])
 
@@ -153,6 +155,9 @@ def _image_push_impl(ctx):
     if manifest_info != None and index_info != None:
         fail("image must provide either ImageManifestInfo or ImageIndexInfo, not both")
     image_provider = manifest_info if manifest_info != None else index_info
+
+    if ctx.attr.manifest_tags and index_info == None:
+        fail("'manifest_tags' can only be used when 'image' is an image_index")
 
     # Validate mutual exclusivity of destination_file vs registry/repository
     if ctx.attr.destination_file:
@@ -407,6 +412,44 @@ tag_list = ["latest", "v1.0.0", "stable"]
 
 Cannot be used together with `tag`. Can be combined with `tag_file` to merge tags from both sources.
 Each tag is subject to [template expansion](/docs/templating.md).
+""",
+        ),
+        "manifest_tags": attr.string_list(
+            doc = """Per-platform tag templates for multi-platform (`image_index`) pushes.
+
+Only valid when `image` provides `ImageIndexInfo`. For each entry in this list, the
+deploy command produces one tag per child manifest in the index by expanding the
+entry against the platform descriptor of that manifest.
+
+Available template variables (lowercase):
+
+- `{{.os}}` — platform OS (e.g. `linux`)
+- `{{.architecture}}`, `{{.arch}}`, `{{.cpu}}` — architecture (e.g. `amd64`, `arm64`)
+- `{{.variant}}` — architecture variant (e.g. `v8`), if set
+- `{{.os_version}}` — OS version, if set (used for Windows images)
+
+The tags in `tag` / `tag_list` / `tag_file` continue to point at the index as a
+whole; `manifest_tags` complement those by publishing additional tags that each
+resolve to a single child manifest.
+
+Example:
+
+```python
+image_push(
+    name = "push_multiarch",
+    image = ":my_app_index",
+    registry = "gcr.io",
+    repository = "my-project/my-app",
+    tag_list = ["latest", "v1.0.0"],
+    manifest_tags = [
+        "latest-{{.os}}-{{.architecture}}",
+        "v1.0.0-{{.os}}-{{.architecture}}",
+    ],
+)
+```
+
+Templates are preserved verbatim through the build and expanded at deploy time;
+they are not subject to Bazel stamping or `build_settings` expansion.
 """,
         ),
         "tag_file": attr.label(
