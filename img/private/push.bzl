@@ -51,6 +51,22 @@ def _get_tags(ctx):
     # Empty list is allowed for digest-only push
     return tags
 
+def _per_child_manifest_tag_file(*, ctx, child_index, child_info):
+    platform_vars = {
+        "os": child_info.os or "",
+        "architecture": child_info.architecture or "",
+        "arch": child_info.architecture or "",
+        "cpu": child_info.architecture or "",
+        "variant": child_info.variant or "",
+    }
+    templates = dict(manifest_tags = ctx.attr.manifest_tags)
+    return expand_or_write(
+        ctx = ctx,
+        templates = templates,
+        output_name = "{}.manifest_tags.{}.json".format(ctx.label.name, child_index),
+        extra_build_settings = platform_vars,
+    )
+
 def _compute_push_metadata(*, ctx, configuration_json, destination_file = None):
     inputs = [configuration_json]
     args = ctx.actions.args()
@@ -97,8 +113,12 @@ def _compute_push_metadata(*, ctx, configuration_json, destination_file = None):
         for i, manifest in enumerate(index_info.manifests):
             args.add("--manifest-path", "{}={}".format(i, manifest.manifest.path))
             args.add("--missing-blobs-for-manifest", "{}={}".format(i, ",".join(manifest.missing_blobs)))
-        for manifest_tag in ctx.attr.manifest_tags:
-            args.add("--manifest-tag", manifest_tag)
+        if ctx.attr.manifest_tags:
+            for i, manifest in enumerate(index_info.manifests):
+                tag_file = _per_child_manifest_tag_file(ctx = ctx, child_index = i, child_info = manifest)
+                if tag_file != None:
+                    args.add("--manifest-tag-file", "{}={}".format(i, tag_file.path))
+                    inputs.append(tag_file)
         inputs.append(index_info.index)
         inputs.extend([manifest.manifest for manifest in index_info.manifests])
 
@@ -426,7 +446,6 @@ Available template variables (lowercase):
 - `{{.os}}` — platform OS (e.g. `linux`)
 - `{{.architecture}}`, `{{.arch}}`, `{{.cpu}}` — architecture (e.g. `amd64`, `arm64`)
 - `{{.variant}}` — architecture variant (e.g. `v8`), if set
-- `{{.os_version}}` — OS version, if set (used for Windows images)
 
 The tags in `tag` / `tag_list` / `tag_file` continue to point at the index as a
 whole; `manifest_tags` complement those by publishing additional tags that each
@@ -448,8 +467,10 @@ image_push(
 )
 ```
 
-Templates are preserved verbatim through the build and expanded at deploy time;
-they are not subject to Bazel stamping or `build_settings` expansion.
+Templates are expanded at build time per child manifest, so `build_settings`
+and stamping variables are available (and override any platform variable of
+the same name). The expanded tags are emitted as `registry_tag` operations
+in the deploy manifest, so non-CLI strategies like `bes` can honor them.
 """,
         ),
         "tag_file": attr.label(

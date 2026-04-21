@@ -405,10 +405,16 @@ func (b *vfsBuilder) ingest() (map[string]blobEntry, map[string]blobEntry, map[s
 	}
 	for i, op := range baseOps {
 		var strategy string
-		if op.Command == "push" {
+		switch op.Command {
+		case "push":
 			strategy = b.dm.Settings.PushStrategy
-		} else {
+		case "load":
 			strategy = b.dm.Settings.LoadStrategy
+		case "registry_tag":
+			// No new blobs; the referenced manifest was ingested by the sibling push op.
+			continue
+		default:
+			continue
 		}
 		if strategy == "bes" {
 			// When pushing via the build event stream,

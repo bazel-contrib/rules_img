@@ -12,7 +12,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"text/template"
 
 	"golang.org/x/sync/errgroup"
 
@@ -112,8 +111,12 @@ func DeployWithExtras(ctx context.Context, rawRequest []byte, additionalTags []s
 	if err != nil {
 		return err
 	}
-	if len(pushOperations) == 0 && len(loadOperations) == 0 {
-		return fmt.Errorf("no push or load operations found in deploy manifest")
+	registryTagOperations, err := req.RegistryTagOperations()
+	if err != nil {
+		return err
+	}
+	if len(pushOperations) == 0 && len(loadOperations) == 0 && len(registryTagOperations) == 0 {
+		return fmt.Errorf("no push, load, or registry_tag operations found in deploy manifest")
 	}
 
 	// check if any operation requires a reapi endpoint
@@ -159,7 +162,8 @@ func DeployWithExtras(ctx context.Context, rawRequest []byte, additionalTags []s
 	}
 
 	var pushedTags []string
-	g, ctx := errgroup.WithContext(ctx)
+	// groupCtx is cancelled once g.Wait returns; keep the outer ctx for work after it (registry_tag ops).
+	g, groupCtx := errgroup.WithContext(ctx)
 
 	if len(pushOperations) > 0 {
 		uploadBuilder := push.NewBuilder(vfs)
@@ -179,7 +183,7 @@ func DeployWithExtras(ctx context.Context, rawRequest []byte, additionalTags []s
 		uploader := uploadBuilder.Build()
 
 		g.Go(func() error {
-			tags, err := uploader.PushAll(ctx, pushOperations, req.Settings.PushStrategy)
+			tags, err := uploader.PushAll(groupCtx, pushOperations, req.Settings.PushStrategy)
 			if err != nil {
 				return err
 			}
@@ -197,7 +201,7 @@ func DeployWithExtras(ctx context.Context, rawRequest []byte, additionalTags []s
 				builder = builder.WithExtraTags(additionalTags)
 			}
 			// LoadAll prints the loaded tags itself, so we discard the return value
-			_, err := builder.Build().LoadAll(ctx, loadOperations)
+			_, err := builder.Build().LoadAll(groupCtx, loadOperations)
 			return err
 		})
 	}
@@ -216,16 +220,30 @@ func DeployWithExtras(ctx context.Context, rawRequest []byte, additionalTags []s
 	}
 	// Note: loadedTags are already printed by the loader itself
 
-	// Per-platform manifest tagging: for index pushes that declared
-	// manifest_tags, tag each platform manifest individually.
-	for _, op := range pushOperations {
-		if len(op.ManifestTags) == 0 {
-			continue
+	if len(registryTagOperations) > 0 {
+		extraTagNames, err := applyRegistryTagOperations(ctx, vfs, registryTagOperations, req.Settings.PushStrategy, overrideRegistry, overrideRepository)
+		if err != nil {
+			return err
 		}
-		if op.RootKind != "index" {
-			return fmt.Errorf("manifest_tags set on non-index push to %s/%s; this should have been caught at build time", op.Registry, op.Repository)
+		for _, t := range extraTagNames {
+			fmt.Println(t)
 		}
+	}
 
+	return nil
+}
+
+// applyRegistryTagOperations writes the pre-expanded tags from registry_tag
+// ops onto manifests already pushed by a preceding push op. Under the `bes`
+// strategy the BES syncer is responsible for this, so we no-op.
+func applyRegistryTagOperations(ctx context.Context, vfs *deployvfs.VFS, ops []api.IndexedRegistryTagDeployOperation, strategy, overrideRegistry, overrideRepository string) ([]string, error) {
+	if strategy == "bes" {
+		return nil, nil
+	}
+
+	todo := make(map[name.Reference]remote.Taggable)
+	var tagNames []string
+	for _, op := range ops {
 		opRegistry := op.Registry
 		if overrideRegistry != "" {
 			opRegistry = overrideRegistry
@@ -238,115 +256,31 @@ func DeployWithExtras(ctx context.Context, rawRequest []byte, additionalTags []s
 
 		rootHash, err := registryv1.NewHash(op.Root.Digest)
 		if err != nil {
-			return fmt.Errorf("parsing root digest for manifest_tags on %s: %w", baseRef, err)
+			return nil, fmt.Errorf("parsing root digest for registry_tag on %s: %w", baseRef, err)
 		}
-		idx, err := vfs.ImageIndex(rootHash)
+		taggable, err := vfs.Taggable(rootHash)
 		if err != nil {
-			return fmt.Errorf("reading index for manifest_tags on %s: %w", baseRef, err)
+			return nil, fmt.Errorf("locating manifest %s for registry_tag on %s: %w", op.Root.Digest, baseRef, err)
 		}
-		idxManifest, err := idx.IndexManifest()
-		if err != nil {
-			return fmt.Errorf("reading index manifest for manifest_tags on %s: %w", baseRef, err)
-		}
-
-		type assignment struct {
-			img      registryv1.Image
-			platform registryv1.Platform
-			tmpl     string
-		}
-		assignments := make(map[name.Reference]assignment)
-		for _, m := range idxManifest.Manifests {
-			if m.Platform == nil {
-				continue
-			}
-			img, err := idx.Image(m.Digest)
+		for _, tag := range op.Tags {
+			ref, err := name.NewTag(baseRef + ":" + tag)
 			if err != nil {
-				return fmt.Errorf("reading platform image %s: %w", m.Digest, err)
+				return nil, fmt.Errorf("creating registry_tag ref %q: %w", tag, err)
 			}
-			data := platformTemplateData(m.Platform)
-			for _, tmplStr := range op.ManifestTags {
-				expanded, err := expandManifestTagTemplate(tmplStr, data)
-				if err != nil {
-					return fmt.Errorf("expanding manifest_tag %q for %s: %w", tmplStr, platformLabel(*m.Platform), err)
-				}
-				ref, err := name.NewTag(baseRef + ":" + expanded)
-				if err != nil {
-					return fmt.Errorf("creating per-platform tag ref %q: %w", expanded, err)
-				}
-				if existing, ok := assignments[ref]; ok {
-					existingDigest, _ := existing.img.Digest()
-					newDigest, _ := img.Digest()
-					if existingDigest != newDigest {
-						return fmt.Errorf(
-							"manifest_tag %q collides at %s for distinct child manifests (%s vs %s); "+
-								"template must discriminate between all child platforms (consider including {{.variant}} or {{.os_version}})",
-							tmplStr, ref, platformLabel(existing.platform), platformLabel(*m.Platform),
-						)
-					}
-					// Same digest — e.g. an index listing the same manifest
-					// under two equivalent platform entries. Safe to skip.
-					continue
-				}
-				assignments[ref] = assignment{img: img, platform: *m.Platform, tmpl: tmplStr}
-			}
-		}
-		if len(assignments) == 0 {
-			continue
-		}
-
-		platformTodo := make(map[name.Reference]remote.Taggable, len(assignments))
-		platformTagNames := make([]string, 0, len(assignments))
-		for ref, a := range assignments {
-			platformTodo[ref] = a.img
-			platformTagNames = append(platformTagNames, ref.String())
-		}
-		sort.Strings(platformTagNames)
-
-		opts := []remote.Option{registry.WithAuthFromMultiKeychain()}
-		if err := remote.MultiWrite(platformTodo, opts...); err != nil {
-			return fmt.Errorf("pushing per-platform manifest_tags to %s: %w", baseRef, err)
-		}
-		for _, t := range platformTagNames {
-			fmt.Println(t)
+			todo[ref] = taggable
+			tagNames = append(tagNames, ref.String())
 		}
 	}
+	if len(todo) == 0 {
+		return nil, nil
+	}
 
-	return nil
-}
-
-// platformLabel formats a platform descriptor for human-readable error messages.
-func platformLabel(p registryv1.Platform) string {
-	label := p.OS + "/" + p.Architecture
-	if p.Variant != "" {
-		label += "/" + p.Variant
+	opts := []remote.Option{remote.WithContext(ctx), registry.WithAuthFromMultiKeychain()}
+	if err := remote.MultiWrite(todo, opts...); err != nil {
+		return nil, fmt.Errorf("applying registry_tag operations: %w", err)
 	}
-	if p.OSVersion != "" {
-		label += "@" + p.OSVersion
-	}
-	return label
-}
-
-func platformTemplateData(p *registryv1.Platform) map[string]any {
-	return map[string]any{
-		"os":           p.OS,
-		"architecture": p.Architecture,
-		"arch":         p.Architecture,
-		"cpu":          p.Architecture,
-		"variant":      p.Variant,
-		"os_version":   p.OSVersion,
-	}
-}
-
-func expandManifestTagTemplate(tmplStr string, data map[string]any) (string, error) {
-	tmpl, err := template.New("manifest_tag").Option("missingkey=error").Parse(tmplStr)
-	if err != nil {
-		return "", fmt.Errorf("parsing template: %w", err)
-	}
-	var buf bytes.Buffer
-	if err := tmpl.Execute(&buf, data); err != nil {
-		return "", fmt.Errorf("executing template: %w", err)
-	}
-	return buf.String(), nil
+	sort.Strings(tagNames)
+	return tagNames, nil
 }
 
 // stringSliceFlag implements flag.Value for collecting multiple string values

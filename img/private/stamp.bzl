@@ -57,7 +57,7 @@ def should_stamp(*, ctx, template_strings):
         want_stamp = want_stamp,
     )
 
-def expand_or_write(*, ctx, templates, output_name, only_if_stamping = False, newline_delimited_lists_files = None, json_vars = None, json_path_to_root = None, expose_kvs = None):
+def expand_or_write(*, ctx, templates, output_name, only_if_stamping = False, newline_delimited_lists_files = None, json_vars = None, json_path_to_root = None, expose_kvs = None, extra_build_settings = None):
     """Either expand templates or write JSON directly based on build_settings.
 
     Args:
@@ -69,11 +69,16 @@ def expand_or_write(*, ctx, templates, output_name, only_if_stamping = False, ne
         json_vars: Optional dict mapping variable paths (e.g., "parent.config") to File objects containing JSON
         json_path_to_root: Optional dict mapping json-var names to dot-separated paths selecting a sub-object as root
         expose_kvs: Optional list of template keys whose values are OCI-style key-value pair arrays to expose as template variables
+        extra_build_settings: Optional dict of additional template variables (lowest precedence; overridden by `build_settings`)
 
     Returns:
         The File object for the final JSON, or None if only_if_stamping=True and no stamping needed
     """
     build_settings = get_build_settings(ctx)
+    if extra_build_settings:
+        merged = dict(extra_build_settings)
+        merged.update(build_settings)
+        build_settings = merged
     stamp_settings = should_stamp(ctx = ctx, template_strings = [json.encode(v) for v in templates.values()])
 
     # If only_if_stamping is True and no stamping is needed and no newline-delimited files or json_vars provided, return None
