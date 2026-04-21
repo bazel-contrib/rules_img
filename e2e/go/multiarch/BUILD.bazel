@@ -41,6 +41,17 @@ image_push(
     visibility = ["//:__pkg__"],
 )
 
+image_push(
+    name = "push_with_manifest_tags",
+    image = ":multiarch_image",
+    manifest_tags = [
+        "multiarch-{{.os}}-{{.architecture}}",
+    ],
+    registry = "ghcr.io",
+    repository = "malt3/rules_img/go",
+    tag = "multiarch",
+)
+
 image_load(
     name = "load",
     image = ":multiarch_image",
@@ -54,5 +65,6 @@ build_test(
         ":go_image",
         ":multiarch_image",
         ":push",
+        ":push_with_manifest_tags",
     ],
 )

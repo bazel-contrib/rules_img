@@ -15,6 +15,9 @@ go_library(
         "//pkg/load",
         "//pkg/proto/blobcache",
         "//pkg/push",
+        "@com_github_malt3_go_containerregistry//pkg/name",
+        "@com_github_malt3_go_containerregistry//pkg/v1:pkg",
+        "@com_github_malt3_go_containerregistry//pkg/v1/remote",
         "@org_golang_x_sync//errgroup",
     ],
 )
