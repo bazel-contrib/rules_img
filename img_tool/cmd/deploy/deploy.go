@@ -10,9 +10,14 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"golang.org/x/sync/errgroup"
+
+	"github.com/malt3/go-containerregistry/pkg/name"
+	registryv1 "github.com/malt3/go-containerregistry/pkg/v1"
+	"github.com/malt3/go-containerregistry/pkg/v1/remote"
 
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/api"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/auth/credential"
@@ -106,8 +111,12 @@ func DeployWithExtras(ctx context.Context, rawRequest []byte, additionalTags []s
 	if err != nil {
 		return err
 	}
-	if len(pushOperations) == 0 && len(loadOperations) == 0 {
-		return fmt.Errorf("no push or load operations found in deploy manifest")
+	registryTagOperations, err := req.RegistryTagOperations()
+	if err != nil {
+		return err
+	}
+	if len(pushOperations) == 0 && len(loadOperations) == 0 && len(registryTagOperations) == 0 {
+		return fmt.Errorf("no push, load, or registry_tag operations found in deploy manifest")
 	}
 
 	// check if any operation requires a reapi endpoint
@@ -153,7 +162,8 @@ func DeployWithExtras(ctx context.Context, rawRequest []byte, additionalTags []s
 	}
 
 	var pushedTags []string
-	g, ctx := errgroup.WithContext(ctx)
+	// groupCtx is cancelled once g.Wait returns; keep the outer ctx for work after it (registry_tag ops).
+	g, groupCtx := errgroup.WithContext(ctx)
 
 	if len(pushOperations) > 0 {
 		uploadBuilder := push.NewBuilder(vfs)
@@ -173,7 +183,7 @@ func DeployWithExtras(ctx context.Context, rawRequest []byte, additionalTags []s
 		uploader := uploadBuilder.Build()
 
 		g.Go(func() error {
-			tags, err := uploader.PushAll(ctx, pushOperations, req.Settings.PushStrategy)
+			tags, err := uploader.PushAll(groupCtx, pushOperations, req.Settings.PushStrategy)
 			if err != nil {
 				return err
 			}
@@ -191,7 +201,7 @@ func DeployWithExtras(ctx context.Context, rawRequest []byte, additionalTags []s
 				builder = builder.WithExtraTags(additionalTags)
 			}
 			// LoadAll prints the loaded tags itself, so we discard the return value
-			_, err := builder.Build().LoadAll(ctx, loadOperations)
+			_, err := builder.Build().LoadAll(groupCtx, loadOperations)
 			return err
 		})
 	}
@@ -210,7 +220,67 @@ func DeployWithExtras(ctx context.Context, rawRequest []byte, additionalTags []s
 	}
 	// Note: loadedTags are already printed by the loader itself
 
+	if len(registryTagOperations) > 0 {
+		extraTagNames, err := applyRegistryTagOperations(ctx, vfs, registryTagOperations, req.Settings.PushStrategy, overrideRegistry, overrideRepository)
+		if err != nil {
+			return err
+		}
+		for _, t := range extraTagNames {
+			fmt.Println(t)
+		}
+	}
+
 	return nil
+}
+
+// applyRegistryTagOperations writes the pre-expanded tags from registry_tag
+// ops onto manifests already pushed by a preceding push op. Under the `bes`
+// strategy the BES syncer is responsible for this, so we no-op.
+func applyRegistryTagOperations(ctx context.Context, vfs *deployvfs.VFS, ops []api.IndexedRegistryTagDeployOperation, strategy, overrideRegistry, overrideRepository string) ([]string, error) {
+	if strategy == "bes" {
+		return nil, nil
+	}
+
+	todo := make(map[name.Reference]remote.Taggable)
+	var tagNames []string
+	for _, op := range ops {
+		opRegistry := op.Registry
+		if overrideRegistry != "" {
+			opRegistry = overrideRegistry
+		}
+		opRepository := op.Repository
+		if overrideRepository != "" {
+			opRepository = overrideRepository
+		}
+		baseRef := opRegistry + "/" + opRepository
+
+		rootHash, err := registryv1.NewHash(op.Root.Digest)
+		if err != nil {
+			return nil, fmt.Errorf("parsing root digest for registry_tag on %s: %w", baseRef, err)
+		}
+		taggable, err := vfs.Taggable(rootHash)
+		if err != nil {
+			return nil, fmt.Errorf("locating manifest %s for registry_tag on %s: %w", op.Root.Digest, baseRef, err)
+		}
+		for _, tag := range op.Tags {
+			ref, err := name.NewTag(baseRef + ":" + tag)
+			if err != nil {
+				return nil, fmt.Errorf("creating registry_tag ref %q: %w", tag, err)
+			}
+			todo[ref] = taggable
+			tagNames = append(tagNames, ref.String())
+		}
+	}
+	if len(todo) == 0 {
+		return nil, nil
+	}
+
+	opts := []remote.Option{remote.WithContext(ctx), registry.WithAuthFromMultiKeychain()}
+	if err := remote.MultiWrite(todo, opts...); err != nil {
+		return nil, fmt.Errorf("applying registry_tag operations: %w", err)
+	}
+	sort.Strings(tagNames)
+	return tagNames, nil
 }
 
 // stringSliceFlag implements flag.Value for collecting multiple string values

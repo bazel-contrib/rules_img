@@ -181,6 +181,10 @@ func (s *Syncer) Commit(ctx context.Context, digest string, sizeBytes int64) err
 	if err != nil {
 		return fmt.Errorf("failed to get push operations from metadata: %w", err)
 	}
+	tagOps, err := metadata.RegistryTagOperations()
+	if err != nil {
+		return fmt.Errorf("failed to get registry_tag operations from metadata: %w", err)
+	}
 	if len(metadata.Operations) == 0 {
 		// don't check for len of pushOps, since this may still contain load operations
 		return errors.New("no push operations found in metadata")
@@ -192,6 +196,63 @@ func (s *Syncer) Commit(ctx context.Context, digest string, sizeBytes int64) err
 		}
 	}
 
+	// registry_tag ops run after all pushes so the target manifests are
+	// guaranteed to exist on the registry.
+	for _, op := range tagOps {
+		if err := s.commitRegistryTag(ctx, op); err != nil {
+			return fmt.Errorf("failed to apply registry_tag for %s: %w", op.Root.Digest, err)
+		}
+	}
+
+	return nil
+}
+
+func (s *Syncer) commitRegistryTag(ctx context.Context, op api.IndexedRegistryTagDeployOperation) error {
+	if len(op.Tags) == 0 {
+		return nil
+	}
+
+	baseReference := fmt.Sprintf("%s/%s", op.Registry, op.Repository)
+	ref, err := name.NewRepository(baseReference)
+	if err != nil {
+		return fmt.Errorf("invalid repository %s: %w", baseReference, err)
+	}
+	remoteOpts := []remote.Option{
+		remote.WithContext(ctx),
+		registry.WithAuthFromMultiKeychain(),
+	}
+
+	digestRef, err := name.ParseReference(ref.String() + "@" + op.Root.Digest)
+	if err != nil {
+		return fmt.Errorf("failed to parse digest reference: %w", err)
+	}
+	desc, err := remote.Get(digestRef, remoteOpts...)
+	if err != nil {
+		return fmt.Errorf("failed to get descriptor for digest %s: %w", op.Root.Digest, err)
+	}
+
+	for _, tag := range op.Tags {
+		tagKey := makeTagKey(ref, tag)
+
+		s.tagMutex.RLock()
+		cachedDigest, exists := s.uploadedTags[tagKey]
+		s.tagMutex.RUnlock()
+		if exists && cachedDigest == op.Root.Digest {
+			log.Printf("Tag %s already points to %s@%s, skipping", tag, ref.Name(), op.Root.Digest)
+			continue
+		}
+
+		tagRef := ref.Tag(tag)
+		if err := remote.Tag(tagRef, desc, remoteOpts...); err != nil {
+			return fmt.Errorf("failed to tag %s as %s: %w", op.Root.Digest, tag, err)
+		}
+
+		s.tagMutex.Lock()
+		s.uploadedTags[tagKey] = op.Root.Digest
+		s.tagMutex.Unlock()
+
+		log.Printf("Tagged %s as %s", op.Root.Digest, tagRef.String())
+	}
 	return nil
 }
 

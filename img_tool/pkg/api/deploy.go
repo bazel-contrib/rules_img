@@ -49,6 +49,31 @@ func (dm *DeployManifest) PushOperations() ([]IndexedPushDeployOperation, error)
 	return ops, nil
 }
 
+func (dm *DeployManifest) RegistryTagOperations() ([]IndexedRegistryTagDeployOperation, error) {
+	var ops []IndexedRegistryTagDeployOperation
+	for i, rawOp := range dm.Operations {
+		var baseOp BaseCommandOperation
+		if err := json.Unmarshal(rawOp, &baseOp); err != nil {
+			return nil, err
+		}
+		if baseOp.Command != "registry_tag" {
+			continue
+		}
+		var tagOp RegistryTagDeployOperation
+		decoder := json.NewDecoder(bytes.NewReader(rawOp))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&tagOp); err != nil {
+			return nil, err
+		}
+		ops = append(ops, IndexedRegistryTagDeployOperation{
+			I:                          i,
+			Strategy:                   dm.Settings.PushStrategy,
+			RegistryTagDeployOperation: tagOp,
+		})
+	}
+	return ops, nil
+}
+
 func (dm *DeployManifest) LoadOperations() ([]IndexedLoadDeployOperation, error) {
 	var ops []IndexedLoadDeployOperation
 	// for each raw operation, check if the command is "load" and unmarshal accordingly
@@ -100,6 +125,19 @@ type IndexedPushDeployOperation struct {
 	I        int
 	Strategy string
 	PushDeployOperation
+}
+
+// RegistryTagDeployOperation attaches extra tags to a manifest already pushed
+// by a preceding push operation. Tags are pre-expanded at build time.
+type RegistryTagDeployOperation struct {
+	BaseCommandOperation
+	PushTarget
+}
+
+type IndexedRegistryTagDeployOperation struct {
+	I        int
+	Strategy string
+	RegistryTagDeployOperation
 }
 
 type LoadDeployOperation struct {

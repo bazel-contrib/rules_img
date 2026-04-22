@@ -37,6 +37,8 @@ var (
 
 	destinationFilePath string
 
+	manifestTagFiles map[int]string
+
 	referrerRootPaths            *indexedStringFlag
 	referrerRootKinds            *indexedStringFlag
 	referrerManifestPaths        *doubleIndexedStringFlag
@@ -48,6 +50,7 @@ func DeployMetadataProcess(ctx context.Context, args []string) {
 	referrerRootKinds = newIndexedStringFlag()
 	referrerManifestPaths = newDoubleIndexedStringFlag()
 	referrerMissingBlobsForManifest = newDoubleIndexedStringListFlag()
+	manifestTagFiles = nil
 
 	flagSet := flag.NewFlagSet("deploy-metadata", flag.ExitOnError)
 	flagSet.Usage = func() {
@@ -118,6 +121,21 @@ func DeployMetadataProcess(ctx context.Context, args []string) {
 		missingBlobsForManifest[index] = blobs
 		return nil
 	})
+	flagSet.Func("manifest-tag-file", `(Optional) pre-expanded per-platform tags for a child of an image index. Format: manifest_index=path (e.g., 0=tags.json). The file must be a JSON object of the form {"manifest_tags": ["tag1", ...]} and is produced by Bazel's expand_or_write helper, so Go templates are already expanded. Can be specified multiple times. Only valid when --root-kind=index.`, func(value string) error {
+		parts := strings.SplitN(value, "=", 2)
+		if len(parts) != 2 {
+			return fmt.Errorf("manifest-tag-file must be in format manifest_index=path")
+		}
+		index, err := strconv.Atoi(parts[0])
+		if err != nil {
+			return fmt.Errorf("invalid manifest index in manifest-tag-file: %w", err)
+		}
+		if manifestTagFiles == nil {
+			manifestTagFiles = make(map[int]string)
+		}
+		manifestTagFiles[index] = parts[1]
+		return nil
+	})
 	flagSet.Var(referrerRootPaths, "referrer-root-path", `Path to a referrer root manifest or index file. Format: index=path (e.g., 0=referrer.json). Can be specified multiple times.`)
 	flagSet.Var(referrerRootKinds, "referrer-root-kind", `Kind of a referrer root. Format: index=kind (e.g., 0=manifest). Can be specified multiple times.`)
 	flagSet.Var(referrerManifestPaths, "referrer-manifest-path", `Path to a referrer child manifest file. Format: referrer_idx,manifest_idx=path (e.g., 0,0=manifest.json). Can be specified multiple times.`)
@@ -141,6 +159,11 @@ func DeployMetadataProcess(ctx context.Context, args []string) {
 	}
 	if rootKind != "manifest" && rootKind != "index" {
 		fmt.Fprintln(os.Stderr, "Error: --root-kind must be either 'manifest' or 'index'")
+		flagSet.Usage()
+		os.Exit(1)
+	}
+	if len(manifestTagFiles) > 0 && rootKind != "index" {
+		fmt.Fprintln(os.Stderr, "Error: --manifest-tag-file can only be used with --root-kind=index")
 		flagSet.Usage()
 		os.Exit(1)
 	}
@@ -291,6 +314,7 @@ func WriteMetadata(ctx context.Context, outputPath string) error {
 	var operationBytes []byte
 	var deploySettings api.DeploySettings
 
+	var registryTagOps []json.RawMessage
 	if command == "push" {
 		deploySettings.PushStrategy = strategy
 		operation, err := pushOperation(baseCommand, config)
@@ -301,6 +325,11 @@ func WriteMetadata(ctx context.Context, outputPath string) error {
 		operationBytes, err = json.Marshal(operation)
 		if err != nil {
 			return fmt.Errorf("marshalling push operation: %w", err)
+		}
+
+		registryTagOps, err = registryTagOperations(operation.PushTarget, manifests)
+		if err != nil {
+			return err
 		}
 	} else if command == "load" {
 		deploySettings.LoadStrategy = strategy
@@ -313,12 +342,16 @@ func WriteMetadata(ctx context.Context, outputPath string) error {
 			return fmt.Errorf("marshalling load operation: %w", err)
 		}
 	} else {
-		return fmt.Errorf("invalid command " + command)
+		return fmt.Errorf("invalid command %q", command)
 	}
 
 	deployManifest := api.DeployManifest{
 		Operations: []json.RawMessage{operationBytes},
 		Settings:   deploySettings,
+	}
+
+	if len(registryTagOps) > 0 {
+		deployManifest.Operations = append(deployManifest.Operations, registryTagOps...)
 	}
 
 	// Process referrers (only for push operations)
@@ -683,6 +716,98 @@ func pushOperation(baseCommand api.BaseCommandOperation, config map[string]any) 
 			Tags:       tags,
 		},
 	}, nil
+}
+
+func registryTagOperations(pushTarget api.PushTarget, manifests []api.ManifestDeployInfo) ([]json.RawMessage, error) {
+	if len(manifestTagFiles) == 0 {
+		return nil, nil
+	}
+	indices := make([]int, 0, len(manifestTagFiles))
+	for idx := range manifestTagFiles {
+		indices = append(indices, idx)
+	}
+	sort.Ints(indices)
+
+	// tag -> child digest; collisions across distinct children are a build error.
+	tagOwner := make(map[string]string)
+
+	var ops []json.RawMessage
+	for _, manifestIdx := range indices {
+		filePath := manifestTagFiles[manifestIdx]
+		if manifestIdx < 0 || manifestIdx >= len(manifests) {
+			return nil, fmt.Errorf("--manifest-tag-file references manifest index %d, but only %d manifests are present", manifestIdx, len(manifests))
+		}
+		child := manifests[manifestIdx]
+		if child.Descriptor.Digest == "" {
+			return nil, fmt.Errorf("--manifest-tag-file references manifest index %d, but that manifest has no descriptor (empty manifest-path?)", manifestIdx)
+		}
+
+		raw, err := os.ReadFile(filePath)
+		if err != nil {
+			return nil, fmt.Errorf("reading manifest-tag-file for manifest index %d: %w", manifestIdx, err)
+		}
+		var payload struct {
+			ManifestTags []string `json:"manifest_tags"`
+		}
+		if err := json.Unmarshal(raw, &payload); err != nil {
+			return nil, fmt.Errorf("parsing manifest-tag-file for manifest index %d (%s): %w", manifestIdx, filePath, err)
+		}
+
+		tags := dedupeNonEmpty(payload.ManifestTags)
+		if len(tags) == 0 {
+			continue
+		}
+
+		for _, t := range tags {
+			if existingDigest, ok := tagOwner[t]; ok && existingDigest != child.Descriptor.Digest {
+				return nil, fmt.Errorf(
+					"manifest_tag %q would be written to two different child manifests (%s and %s); "+
+						"template must discriminate between all child platforms (e.g. by including {{.variant}})",
+					t, existingDigest, child.Descriptor.Digest,
+				)
+			}
+			tagOwner[t] = child.Descriptor.Digest
+		}
+
+		op := api.RegistryTagDeployOperation{
+			BaseCommandOperation: api.BaseCommandOperation{
+				Command:  "registry_tag",
+				RootKind: "manifest",
+				Root:     child.Descriptor,
+			},
+			PushTarget: api.PushTarget{
+				Registry:   pushTarget.Registry,
+				Repository: pushTarget.Repository,
+				Tags:       tags,
+			},
+		}
+		encoded, err := json.Marshal(op)
+		if err != nil {
+			return nil, fmt.Errorf("marshalling registry_tag operation for manifest index %d: %w", manifestIdx, err)
+		}
+		ops = append(ops, encoded)
+	}
+	return ops, nil
+}
+
+func dedupeNonEmpty(in []string) []string {
+	if len(in) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(in))
+	out := make([]string, 0, len(in))
+	for _, s := range in {
+		if s == "" {
+			continue
+		}
+		if _, ok := seen[s]; ok {
+			continue
+		}
+		seen[s] = struct{}{}
+		out = append(out, s)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func loadOperation(baseCommand api.BaseCommandOperation, config map[string]any) (api.LoadDeployOperation, error) {
