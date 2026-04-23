@@ -22,9 +22,10 @@ string_flag(
 
 string_flag(
     name = "stamp",
-    build_setting_default = "enabled",
+    build_setting_default = "auto",
     values = [
-        "enabled",
+        "auto",
+        "force",
         "disabled",
     ],
     visibility = ["//visibility:public"],

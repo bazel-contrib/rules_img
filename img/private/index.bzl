@@ -282,13 +282,12 @@ See [template expansion](/docs/templating.md) for more details.
         ),
         "stamp": attr.string(
             default = "auto",
-            values = ["auto", "enabled", "disabled"],
-            doc = """Enable build stamping for template expansion.
+            values = ["auto", "force", "disabled"],
+            doc = """Controls build stamping for template expansion.
 
-Controls whether to include volatile build information:
-- **`auto`** (default): Uses the global stamping configuration
-- **`enabled`**: Always include stamp information (BUILD_TIMESTAMP, BUILD_USER, etc.) if Bazel's "--stamp" flag is set
-- **`disabled`**: Never include stamp information
+- **`auto`** (default): Defers to the global `--@rules_img//img/settings:stamp` setting.
+- **`force`**: Always stamp if templates contain `{{}}` placeholders, ignoring Bazel's `--stamp` flag.
+- **`disabled`**: Never include stamp information.
 
 See [template expansion](/docs/templating.md) for available stamp variables.
 """,

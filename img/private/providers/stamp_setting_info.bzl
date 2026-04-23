@@ -6,7 +6,7 @@ Information on stamping configuration.
 
 FIELDS = dict(
     bazel_setting = "bool: Whether or not the `--stamp` flag was enabled",
-    user_preference = "bool: Whether volatile-status.txt and version.txt should be used if present",
+    user_preference = "string: Global stamp preference ('auto', 'force', or 'disabled')",
 )
 
 StampSettingInfo = provider(

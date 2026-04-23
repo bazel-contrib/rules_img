@@ -66,7 +66,7 @@ image_manifest(
     layers = [
         ":go_layer",
     ],
-    stamp = "enabled",
+    stamp = "force",
 )
 
 image_index(
@@ -86,7 +86,7 @@ image_index(
         "is_production": ":is_production",
     },
     manifests = [":go_image_with_stamping"],
-    stamp = "enabled",
+    stamp = "force",
 )
 
 image_push(
@@ -101,7 +101,7 @@ image_push(
     image = ":go_image",
     registry = "{{.registry}}",
     repository = "{{.repo}}",
-    stamp = "enabled",
+    stamp = "force",
     tag_list = [
         "{{.tag}}",
         "{{if .STABLE_CONTAINER_VERSION_TAG}}{{.STABLE_CONTAINER_VERSION_TAG}}{{else}}dev{{end}}",

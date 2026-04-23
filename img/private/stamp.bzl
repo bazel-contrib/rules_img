@@ -29,14 +29,12 @@ def should_stamp(*, ctx, template_strings):
         A struct containing stamp, can_stamp, and want_stamp boolean fields
     """
     stamp_settings = ctx.attr._stamp_settings[StampSettingInfo]
-    can_stamp = stamp_settings.bazel_setting
-    global_user_preference = stamp_settings.user_preference
+    bazel_stamp = stamp_settings.bazel_setting
+    global_preference = stamp_settings.user_preference
     target_stamp = ctx.attr.stamp
 
     contains_template_placeholders = False
     for template in template_strings:
-        # search for "{{" followed by "}}" (Go template syntax)
-        # ensure {{ comes before }} in the string
         open_pos = template.find("{{")
         if open_pos >= 0:
             close_pos = template.find("}}", open_pos + 2)
@@ -44,16 +42,21 @@ def should_stamp(*, ctx, template_strings):
                 contains_template_placeholders = True
                 break
 
+    if target_stamp != "auto":
+        effective = target_stamp
+    else:
+        effective = global_preference
+
     want_stamp = False
-    if target_stamp == "disabled":
+    if effective == "disabled":
         want_stamp = False
-    elif target_stamp == "enabled":
+    elif effective == "force":
         want_stamp = contains_template_placeholders
-    elif target_stamp == "auto":
-        want_stamp = global_user_preference and contains_template_placeholders
+    elif effective == "auto":
+        want_stamp = bazel_stamp and contains_template_placeholders
     return struct(
-        stamp = can_stamp and want_stamp,
-        can_stamp = can_stamp,
+        stamp = want_stamp,
+        can_stamp = bazel_stamp,
         want_stamp = want_stamp,
     )
 
@@ -122,7 +125,7 @@ def expand_or_write(*, ctx, templates, output_name, only_if_stamping = False, ne
         if newline_delimited_lists_files:
             inputs.extend(newline_delimited_lists_files.values())
 
-        # Add stamp files if stamping is enabled
+        # Add stamp files if stamping is active
         if stamp_settings.stamp:
             if ctx.version_file:
                 args.extend(["--stamp", ctx.version_file.path])
