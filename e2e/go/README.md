@@ -4,7 +4,11 @@ This directory contains examples demonstrating different ways of building contai
 
 ## Examples
 
-### 1. [image/](./image/BUILD.bazel) - Basic Single-Platform Image
+### 1. [image_from_binary_example/](./image_from_binary_example/BUILD.bazel) - Quick Start with `image_from_binary`
+
+The fastest way to package a Go binary: just point `image_from_binary` at your `go_binary` target. The entrypoint, args, env, and working directory are configured automatically.
+
+### 2. [image/](./image/BUILD.bazel) - Basic Single-Platform Image
 
 The simplest example showing how to build a container image for a Go application:
 - Creates a single-platform container image with a Go binary

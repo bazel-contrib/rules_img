@@ -43,3 +43,22 @@ bzl_library(
     srcs = ["default_deploy_tool.bzl"],
     visibility = ["//img:__subpackages__"],
 )
+
+bzl_library(
+    name = "layer_attrs",
+    srcs = ["layer_attrs.bzl"],
+    visibility = ["//img:__subpackages__"],
+    deps = ["@bazel_skylib//rules:common_settings"],
+)
+
+bzl_library(
+    name = "tar_layer",
+    srcs = ["tar_layer.bzl"],
+    visibility = ["//img:__subpackages__"],
+    deps = [
+        ":build",
+        ":layer_helper",
+        "//img/private/providers:layer_info",
+        "@bazel_skylib//rules:common_settings",
+    ],
+)

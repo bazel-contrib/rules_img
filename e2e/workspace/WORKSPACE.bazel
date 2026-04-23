@@ -14,6 +14,11 @@ load("@rules_img//img:repositories.bzl", "img_register_prebuilt_toolchains", "pu
 
 rules_img_dependencies()
 
+# Initialize Bazel Features
+load("@bazel_features//:deps.bzl", "bazel_features_deps")
+
+bazel_features_deps()
+
 # Register prebuilt img toolchains for WORKSPACE mode
 img_register_prebuilt_toolchains()
 

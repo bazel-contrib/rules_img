@@ -8,6 +8,7 @@ load("//img/private/common:layer_helper.bzl", "allow_tar_files", "calculate_laye
 load("//img/private/common:transitions.bzl", "normalize_layer_transition", "single_platform_transition")
 load("//img/private/config:defs.bzl", "TargetPlatformInfo")
 load("//img/private/providers:index_info.bzl", "ImageIndexInfo")
+load("//img/private/providers:layer_config_info.bzl", "ImageLayerConfigInfo")
 load("//img/private/providers:layer_info.bzl", "LayerInfo")
 load("//img/private/providers:manifest_info.bzl", "ImageManifestInfo")
 load("//img/private/providers:oci_layout_settings_info.bzl", "OCILayoutSettingsInfo")
@@ -314,6 +315,31 @@ def _image_manifest_impl(ctx):
             )
             layers.append(layer_info)
 
+    # Merge ImageLayerConfigInfo from layers (Dockerfile-like semantics).
+    # Later layers override earlier layers for entrypoint, cmd, and working_dir.
+    # Env is merged across all layers. Rule attrs always win over layer config.
+    layer_entrypoint = None
+    layer_cmd = None
+    layer_working_dir = None
+    layer_env = {}
+    for layer in ctx.attr.layers:
+        if ImageLayerConfigInfo in layer:
+            config_info = layer[ImageLayerConfigInfo]
+            if config_info.entrypoint != None:
+                layer_entrypoint = config_info.entrypoint
+            if config_info.cmd != None:
+                layer_cmd = config_info.cmd
+            if config_info.working_dir != None:
+                layer_working_dir = config_info.working_dir
+            if config_info.env != None:
+                layer_env.update(config_info.env)
+
+    merged_env = dict(layer_env)
+    merged_env.update(ctx.attr.env)
+    effective_entrypoint = ctx.attr.entrypoint if len(ctx.attr.entrypoint) > 0 else (layer_entrypoint if layer_entrypoint != None else [])
+    effective_cmd = ctx.attr.cmd if len(ctx.attr.cmd) > 0 else (layer_cmd if layer_cmd != None else [])
+    effective_working_dir = ctx.attr.working_dir if ctx.attr.working_dir else (layer_working_dir if layer_working_dir != None else "")
+
     args.add("--os", os)
     args.add("--architecture", arch)
     if variant != "":
@@ -372,7 +398,7 @@ def _image_manifest_impl(ctx):
 
     # Handle template expansion for labels, env, and annotations
     templates = {
-        "env": ctx.attr.env,
+        "env": merged_env,
         "labels": ctx.attr.labels,
         "annotations": computed_annotations,
     }
@@ -395,7 +421,7 @@ def _image_manifest_impl(ctx):
         args.add("--config-templates", config_json.path)
     else:
         # No templates to expand, use direct values
-        for key, value in ctx.attr.env.items():
+        for key, value in merged_env.items():
             args.add("--env", "%s=%s" % (key, value))
         for key, value in ctx.attr.labels.items():
             args.add("--label", "%s=%s" % (key, value))
@@ -405,12 +431,12 @@ def _image_manifest_impl(ctx):
     # Add other image config attributes
     if ctx.attr.user:
         args.add("--user", ctx.attr.user)
-    for entry in ctx.attr.entrypoint:
+    for entry in effective_entrypoint:
         args.add("--entrypoint", entry)
-    for entry in ctx.attr.cmd:
+    for entry in effective_cmd:
         args.add("--cmd", entry)
-    if ctx.attr.working_dir:
-        args.add("--working-dir", ctx.attr.working_dir)
+    if effective_working_dir:
+        args.add("--working-dir", effective_working_dir)
     if ctx.attr.stop_signal:
         args.add("--stop-signal", ctx.attr.stop_signal)
 

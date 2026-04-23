@@ -1,0 +1,29 @@
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("@rules_img//img:image.bzl", "image_from_binary")
+load("@rules_img//img:push.bzl", "image_push")
+
+cc_binary(
+    name = "app",
+    srcs = ["main.cc"],
+    data = ["greeting.txt"],
+    deps = ["@rules_cc//cc/runfiles"],
+)
+
+image_from_binary(
+    name = "image",
+    base = "@distroless_cc",
+    binary = ":app",
+    platforms = [
+        "//platform:linux_amd64_libstdc++",
+        "//platform:linux_arm64_libstdc++",
+    ],
+)
+
+image_push(
+    name = "push",
+    image = ":image",
+    registry = "ghcr.io",
+    repository = "malt3/rules_img/cc",
+    tag = "image_from_binary_example",
+    visibility = ["//:__pkg__"],
+)

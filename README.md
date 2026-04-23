@@ -103,9 +103,9 @@ common --@rules_img//img/settings:docker_config_path=/home/user/.docker/config.j
 
 ## Quick Start
 
-### Building a Simple Image
+### 1. Pull a Base Image
 
-Add base image to `MODULE.bazel`:
+Add a base image to `MODULE.bazel`:
 
 ```starlark
 pull = use_repo_rule("@rules_img//img:pull.bzl", "pull")
@@ -117,17 +117,71 @@ pull(
     repository = "library/ubuntu",
     tag = "24.04",
 )
+```
 
-pull(
-    name = "cuda",
-    digest = "sha256:f353ffca86e0cd93ab2470fe274ecf766519c24c37ed58cc2f91d915f7ebe53c",
-    registry = "index.docker.io",
-    repository = "nvidia/cuda",
-    tag = "12.8.1-cudnn-devel-ubuntu20.04",
+### 2. Package Your App
+
+If you have any `*_binary` target in Bazel (`cc_binary`, `go_binary`, `py_binary`, `java_binary`, `rust_binary`, ...), you can package it into a container image with `image_from_binary`:
+
+```starlark
+load("@rules_img//img:image.bzl", "image_from_binary")
+
+cc_binary(
+    name = "server",
+    srcs = ["main.cc"],
+    deps = [":server_lib"],
+)
+
+image_from_binary(
+    name = "image",
+    binary = ":server",
+    base = "@ubuntu",
 )
 ```
 
-Compose images in `BUILD.bazel`:
+That's it. The image's entrypoint, cmd, env, and working directory are automatically configured from the binary target:
+
+- **entrypoint** is set to the binary's path inside the image
+- **cmd** is populated from the binary's `args` attribute
+- **env** is populated from the binary's `env` attribute (or `RunEnvironmentInfo` provider)
+- **working_dir** is set to the binary's runfiles root (when `include_runfiles = True`)
+
+For multi-platform images, set the `platforms` attribute:
+
+```starlark
+image_from_binary(
+    name = "image",
+    binary = ":server",
+    base = "@ubuntu",
+    platforms = [
+        "//:linux_amd64",
+        "//:linux_arm64",
+    ],
+)
+```
+
+### 3. Push to a Registry
+
+```starlark
+load("@rules_img//img:push.bzl", "image_push")
+
+image_push(
+    name = "push",
+    image = ":image",
+    registry = "ghcr.io",
+    repository = "my-project/app",
+    tag = "latest",
+)
+```
+
+Run with:
+```bash
+bazel run //:push
+```
+
+### Composing Images from Layers
+
+For more control over the image contents, you can compose images from individual layers using `image_layer` and `image_manifest`:
 
 ```starlark
 load("@rules_img//img:layer.bzl", "image_layer")
@@ -165,7 +219,9 @@ image_manifest(
 
 ### Multi-Platform Images
 
-In most cases, you can just use the builtin transitions feature:
+If you're using `image_from_binary`, just pass the `platforms` attribute (see [step 2](#2-package-your-app)).
+
+When composing images from layers with `image_manifest`, use `image_index` with the builtin transitions feature:
 
 ```starlark
 load("@rules_img//img:image.bzl", "image_manifest", "image_index")
@@ -188,25 +244,6 @@ image_index(
 ```
 
 For more details on working with platforms, architecture variants, and building images for macOS Docker daemons, see the [Platforms Guide](docs/platforms.md).
-
-### Pushing to a Registry
-
-```starlark
-load("@rules_img//img:push.bzl", "image_push")
-
-image_push(
-    name = "push",
-    image = ":app",
-    registry = "ghcr.io",
-    repository = "my-project/app",
-    tag = "latest",
-)
-```
-
-Run with:
-```bash
-bazel run //:push
-```
 
 ### Registry Authentication
 
@@ -292,6 +329,8 @@ For advanced authentication scenarios (credential helpers, custom authentication
 
 ### Language-specific examples
 
+Any language that produces a `*_binary` target can be packaged with `image_from_binary`. These examples show both the simple `image_from_binary` approach and more advanced layer composition:
+
 * [C++](/e2e/cc/)
 * [Go](/e2e/go/)
 * [JS / TS](/e2e/js/)
@@ -318,9 +357,11 @@ This results in a more complex implementation, but also allows for interesting o
 - [API Reference](docs/)
   - **Layer Rules**
     - [`image_layer`](docs/layer.md#image_layer) - Create layers from files
+    - [`layer_from_binary`](docs/layer.md#layer_from_binary) - Create a layer from a `*_binary` target
     - [`layer_from_tar`](docs/layer.md#layer_from_tar) - Create layers from tar archives
     - [`file_metadata`](docs/layer.md#file_metadata) - Helper for specifying file attributes of `image_layer` rule.
   - **Image Rules**
+    - [`image_from_binary`](docs/image.md#image_from_binary) - Package a `*_binary` target into a container image
     - [`image_manifest`](docs/image.md#image_manifest) - Build single-platform images
     - [`image_index`](docs/image.md#image_index) - Build multi-platform image indexes
     - [`image_manifest_from_oci_layout`](docs/convert.md#image_manifest_from_oci_layout) - Convert oci_image to image_manifest

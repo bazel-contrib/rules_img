@@ -1,6 +1,10 @@
 # Python e2e example
 
-This directory contains an example of creating OCI container images for Python applications using `rules_img`.
+This directory contains examples of creating OCI container images for Python applications using `rules_img`.
+
+## Quick Start with `image_from_binary`
+
+The fastest way to package a Python binary: just point `image_from_binary` at your `py_binary` target. The entrypoint, args, env, and working directory are configured automatically. See [image_from_binary_example/](./image_from_binary_example/BUILD.bazel).
 
 ## Building
 

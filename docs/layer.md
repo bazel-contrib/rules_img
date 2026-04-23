@@ -86,6 +86,81 @@ image_layer(
 | <a id="image_layer-tree_artifact_handling"></a>tree_artifact_handling |  How to handle duplicate tree artifacts (directories) in the layer. If set to 'full', each tree artifact is stored at its intended path (no deduplication). If set to 'deduplicate_symlink', duplicate tree artifacts are replaced with symlinks to the first occurrence. If set to 'auto', uses the global default from --@rules_img//img/settings:layer_tree_artifact_handling.   | String | optional |  `"auto"`  |
 
 
+<a id="layer_from_binary"></a>
+
+## layer_from_binary
+
+<pre>
+load("@rules_img//img:layer.bzl", "layer_from_binary")
+
+layer_from_binary(<a href="#layer_from_binary-name">name</a>, <a href="#layer_from_binary-annotations">annotations</a>, <a href="#layer_from_binary-annotations_file">annotations_file</a>, <a href="#layer_from_binary-binary">binary</a>, <a href="#layer_from_binary-compress">compress</a>, <a href="#layer_from_binary-create_parent_directories">create_parent_directories</a>,
+                  <a href="#layer_from_binary-estargz">estargz</a>, <a href="#layer_from_binary-include_runfiles">include_runfiles</a>, <a href="#layer_from_binary-media_type">media_type</a>, <a href="#layer_from_binary-path">path</a>, <a href="#layer_from_binary-tree_artifact_handling">tree_artifact_handling</a>)
+</pre>
+
+Creates a container image layer from a *_binary target.
+
+This rule packages a binary executable and its runfiles into a layer, and additionally
+provides image configuration (entrypoint, cmd, env, working_dir) via ImageLayerConfigInfo.
+When used as a layer in image_manifest, the configuration is automatically applied to the
+image with Dockerfile-like semantics.
+
+The binary's `args` attribute becomes the image `cmd`, its `env` attribute (or
+RunEnvironmentInfo provider) becomes `env`, and the binary path becomes the `entrypoint`.
+When include_runfiles is True (default), the working directory is set to the runfiles root.
+
+Example:
+
+```python
+load("@rules_img//img:layer.bzl", "layer_from_binary")
+load("@rules_img//img:image.bzl", "image_manifest")
+
+# Package a Go binary with its runfiles
+layer_from_binary(
+    name = "app_layer",
+    binary = "//cmd/server",
+)
+
+# Use in an image - entrypoint, cmd, env, and working_dir are set automatically
+image_manifest(
+    name = "image",
+    base = "@distroless_base",
+    layers = [":app_layer"],
+)
+
+# Override the path inside the image
+layer_from_binary(
+    name = "custom_path_layer",
+    binary = "//cmd/server",
+    path = "/usr/local/bin/",
+)
+
+# Without runfiles (static binary)
+layer_from_binary(
+    name = "static_layer",
+    binary = "//cmd/server",
+    path = "/usr/local/bin/server",
+    include_runfiles = False,
+)
+```
+
+**ATTRIBUTES**
+
+
+| Name  | Description | Type | Mandatory | Default |
+| :------------- | :------------- | :------------- | :------------- | :------------- |
+| <a id="layer_from_binary-name"></a>name |  A unique name for this target.   | <a href="https://bazel.build/concepts/labels#target-names">Name</a> | required |  |
+| <a id="layer_from_binary-annotations"></a>annotations |  Annotations to add to the layer metadata as key-value pairs.   | <a href="https://bazel.build/rules/lib/core/dict">Dictionary: String -> String</a> | optional |  `{}`  |
+| <a id="layer_from_binary-annotations_file"></a>annotations_file |  File containing newline-delimited KEY=VALUE annotations for the layer.<br><br>The file should contain one annotation per line in KEY=VALUE format. Empty lines are ignored. Annotations from this file are merged with annotations specified via the `annotations` attribute.<br><br>Example file content: <pre><code>version=1.0.0&#10;build.date=2024-01-15&#10;source.url=https://github.com/...</code></pre>   | <a href="https://bazel.build/concepts/labels">Label</a> | optional |  `None`  |
+| <a id="layer_from_binary-binary"></a>binary |  The *_binary target to package into the layer.<br><br>The binary's `args` and `env` attributes are extracted and provided as image configuration (cmd and env) via ImageLayerConfigInfo. The `data` attribute is used for `$(location)` expansion in args and env values.   | <a href="https://bazel.build/concepts/labels">Label</a> | required |  |
+| <a id="layer_from_binary-compress"></a>compress |  Compression algorithm to use. If set to 'auto', uses the global default compression setting.   | String | optional |  `"auto"`  |
+| <a id="layer_from_binary-create_parent_directories"></a>create_parent_directories |  Whether to automatically create parent directory entries in the tar file for all files. If set to 'auto', uses the global default create_parent_directories setting. When enabled, parent directories will be created automatically for all files in the layer.   | String | optional |  `"auto"`  |
+| <a id="layer_from_binary-estargz"></a>estargz |  Whether to use estargz format. If set to 'auto', uses the global default estargz setting. When enabled, the layer will be optimized for lazy pulling and will be compatible with the estargz format.   | String | optional |  `"auto"`  |
+| <a id="layer_from_binary-include_runfiles"></a>include_runfiles |  Whether to include runfiles for executable targets. When True (default), executables in srcs will include their runfiles tree. When False, only the executable file itself is included, without runfiles.   | Boolean | optional |  `True`  |
+| <a id="layer_from_binary-media_type"></a>media_type |  Override the layer media type. By default, the media type is auto-detected from the compression algorithm.   | String | optional |  `""`  |
+| <a id="layer_from_binary-path"></a>path |  Optional path of the binary inside the image. If the path ends with a slash ("/"), the basename of the binary will be automatically appended. If unset, this defaults to the rlocationpath of the binary (e.g., "_main/cmd/server/server_/server").   | String | optional |  `""`  |
+| <a id="layer_from_binary-tree_artifact_handling"></a>tree_artifact_handling |  How to handle duplicate tree artifacts (directories) in the layer. If set to 'full', each tree artifact is stored at its intended path (no deduplication). If set to 'deduplicate_symlink', duplicate tree artifacts are replaced with symlinks to the first occurrence. If set to 'auto', uses the global default from --@rules_img//img/settings:layer_tree_artifact_handling.   | String | optional |  `"auto"`  |
+
+
 <a id="layer_from_file"></a>
 
 ## layer_from_file

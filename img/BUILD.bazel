@@ -40,6 +40,7 @@ bzl_library(
     srcs = ["image.bzl"],
     visibility = ["//visibility:public"],
     deps = [
+        "//img/private:image_from_binary",
         "//img/private:index",
         "//img/private:manifest",
     ],
@@ -52,6 +53,7 @@ bzl_library(
     deps = [
         "//img/private:file_metadata",
         "//img/private:layer",
+        "//img/private:layer_from_binary",
         "//img/private:layer_from_file",
         "//img/private:layer_from_tar",
     ],

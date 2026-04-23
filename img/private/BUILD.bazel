@@ -40,8 +40,34 @@ bzl_library(
     deps = [
         "//img:providers",
         "//img/private/common:build",
+        "//img/private/common:layer_attrs",
+        "//img/private/common:tar_layer",
         "//img/private/providers:layer_info",
-        "@bazel_skylib//rules:common_settings",
+    ],
+)
+
+bzl_library(
+    name = "layer_from_binary",
+    srcs = ["layer_from_binary.bzl"],
+    visibility = ["//img:__subpackages__"],
+    deps = [
+        "//img/private/common:build",
+        "//img/private/common:layer_attrs",
+        "//img/private/common:tar_layer",
+        "//img/private/providers:layer_config_info",
+        "//img/private/providers:layer_info",
+    ],
+)
+
+bzl_library(
+    name = "image_from_binary",
+    srcs = ["image_from_binary.bzl"],
+    visibility = ["//img:__subpackages__"],
+    deps = [
+        ":index",
+        ":layer_from_binary",
+        ":manifest",
+        "@bazel_features//:features",
     ],
 )
 
@@ -111,6 +137,7 @@ bzl_library(
         "//img/private/common:transitions",
         "//img/private/config:defs",
         "//img/private/providers:index_info",
+        "//img/private/providers:layer_config_info",
         "//img/private/providers:layer_info",
         "//img/private/providers:manifest_info",
         "//img/private/providers:oci_layout_settings_info",

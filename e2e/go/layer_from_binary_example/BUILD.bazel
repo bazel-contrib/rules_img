@@ -1,0 +1,24 @@
+load("@rules_img//img:image.bzl", "image_manifest")
+load("@rules_img//img:layer.bzl", "layer_from_binary")
+load("@rules_img//img:push.bzl", "image_push")
+
+layer_from_binary(
+    name = "layer",
+    binary = "//:app",
+)
+
+image_manifest(
+    name = "image",
+    layers = [
+        ":layer",
+    ],
+)
+
+image_push(
+    name = "push",
+    image = ":image",
+    registry = "ghcr.io",
+    repository = "malt3/rules_img/go",
+    tag = "layer_from_binary_example",
+    visibility = ["//:__pkg__"],
+)
