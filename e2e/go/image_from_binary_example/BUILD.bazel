@@ -1,0 +1,22 @@
+load("@rules_img//img:image.bzl", "image_from_binary")
+load("@rules_img//img:push.bzl", "image_push")
+
+image_from_binary(
+    name = "image",
+    binary = "//:app",
+    # This particular Go app is a statically linked binary with no runfiles deps.
+    include_runfiles = False,
+    platforms = [
+        "//platform:linux_amd64",
+        "//platform:linux_arm64",
+    ],
+)
+
+image_push(
+    name = "push",
+    image = ":image",
+    registry = "ghcr.io",
+    repository = "malt3/rules_img/go",
+    tag = "image_from_binary_example",
+    visibility = ["//:__pkg__"],
+)

@@ -4,7 +4,11 @@ This directory contains examples demonstrating how to build container images for
 
 ## Examples
 
-### 1. [BUILD.bazel](./BUILD.bazel) - Basic Multi-Platform C++ Image
+### 1. [image_from_binary_example/](./image_from_binary_example/BUILD.bazel) - Quick Start with `image_from_binary`
+
+The fastest way to package a C++ binary: just point `image_from_binary` at your `cc_binary` target. The entrypoint, args, env, and working directory are configured automatically.
+
+### 2. [BUILD.bazel](./BUILD.bazel) - Basic Multi-Platform C++ Image
 
 The simplest example showing how to build a container image for a C++ application:
 - Creates a multi-platform container image (AMD64 and ARM64) with a C++ binary

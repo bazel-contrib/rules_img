@@ -19,7 +19,10 @@ py_binary(
     name = "hello_world_app",
     srcs = ["__main__.py"],
     main = "__main__.py",
-    visibility = ["//oci_python_image:__subpackages__"],
+    visibility = [
+        "//image_from_binary_example:__subpackages__",
+        "//oci_python_image:__subpackages__",
+    ],
     deps = [":hello_world_lib"],
 )
 

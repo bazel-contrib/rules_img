@@ -95,6 +95,9 @@ http_archive(
 load("@rules_img//img:dependencies.bzl", "rules_img_dependencies")
 rules_img_dependencies()
 
+# Initialize Bazel Features
+load("@bazel_features//:deps.bzl", "bazel_features_deps")
+
 # Register prebuilt toolchains
 load("@rules_img//img:repositories.bzl", "img_register_prebuilt_toolchains", "pull_tool_register_prebuilt_repositories")
 img_register_prebuilt_toolchains()

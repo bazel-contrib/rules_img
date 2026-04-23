@@ -71,3 +71,9 @@ bzl_library(
     srcs = ["deploy_tool_info.bzl"],
     visibility = ["//img:__subpackages__"],
 )
+
+bzl_library(
+    name = "layer_config_info",
+    srcs = ["layer_config_info.bzl"],
+    visibility = ["//img:__subpackages__"],
+)

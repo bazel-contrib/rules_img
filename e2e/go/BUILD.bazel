@@ -13,7 +13,18 @@ go_library(
 
 go_binary(
     name = "app",
+    # "args" is preserved when using layer_from_binary (see e2e/go/layer_from_binary_example)
+    args = [
+        "This greeting is part of argv.",
+        "It was provided via the \"args\" attribute of go_binary $(rlocationpath main.go).",
+        "--define=CHEESE=$(CHEESE)",
+    ],
+    data = ["main.go"],
     embed = [":app_lib"],
+    # "env" is preserved when using layer_from_binary (see e2e/go/layer_from_binary_example)
+    env = {
+        "ENV_GREETING": "This is a special gretting from the \"env\" attribute of go_binary $(rlocationpath main.go).",
+    },
     pure = "on",
     visibility = ["//visibility:public"],
 )

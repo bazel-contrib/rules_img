@@ -9,6 +9,8 @@ common:stamp --stamp
 common:stamp --@rules_img//img/settings:stamp=enabled
 common:stamp --workspace_status_command=tools/workspace_status.sh
 
+common --define=CHEESE=gouda
+
 import %workspace%/.bazelrc.common
 
 try-import %workspace%/.bazelrc.user
