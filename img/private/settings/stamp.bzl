@@ -15,9 +15,10 @@ stamp_build_setting = rule(
             doc = "The value of the stamp build flag",
             mandatory = True,
         ),
-        "user_preference": attr.bool(
-            doc = "Whether the user prefers to use volatile-status.txt and version.txt if present",
+        "user_preference": attr.string(
+            doc = "Global stamp preference: 'auto', 'force', or 'disabled'",
             mandatory = True,
+            values = ["auto", "force", "disabled"],
         ),
     },
 )

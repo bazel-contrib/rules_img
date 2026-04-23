@@ -471,9 +471,14 @@ Available strategies:
             providers = [BuildSettingInfo],
         ),
         "stamp": attr.string(
-            doc = "Whether to use stamping for [template expansion](/docs/templating.md). If 'enabled', uses volatile-status.txt and version.txt if present. 'auto' uses the global default setting.",
+            doc = """Controls build stamping for [template expansion](/docs/templating.md).
+
+- **`auto`** (default): Defers to the global `--@rules_img//img/settings:stamp` setting.
+- **`force`**: Always stamp if templates contain `{{}}` placeholders, ignoring Bazel's `--stamp` flag.
+- **`disabled`**: Never include stamp information.
+""",
             default = "auto",
-            values = ["auto", "enabled", "disabled"],
+            values = ["auto", "force", "disabled"],
         ),
         "tool_cfg": attr.string(
             doc = """**Experimental**: This attribute may be removed if we find a way to automatically select the correct loader platform based on the context of use.

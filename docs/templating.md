@@ -79,17 +79,17 @@ Stamping allows you to include dynamic build information like git commits, times
 
 ### Requirements for Stamping
 
-**Important**: Stamping requires explicit opt-in at two levels:
+Stamping behavior is controlled at two levels:
 
-1. **Bazel level**: Enable stamping with the `--stamp` flag
-   - By default, Bazel disables stamping for build reproducibility and performance
-   - You must explicitly add `--stamp` to your build command or `.bazelrc`
+1. **Global setting** (`--@rules_img//img/settings:stamp`): Controls the default behavior for all targets
+   - `"auto"` (default): Stamps when Bazel's `--stamp` flag is set and templates contain `{{}}` placeholders
+   - `"force"`: Always stamps if templates contain `{{}}` placeholders, ignoring Bazel's `--stamp` flag
+   - `"disabled"`: Never stamps
 
-2. **Target level**: Enable stamping for specific `image_push`, `image_load`, `image_manifest`, or `image_index` targets
-   - Set `stamp = "enabled"` on the target, OR
-   - Set `stamp = "auto"` (the default) and use `--@rules_img//img/settings:stamp=enabled`
-
-Both levels must be enabled for stamping to work. If either is disabled, stamp variables will not be available in templates.
+2. **Target level** (`stamp` attribute): Overrides the global setting for a specific target
+   - `"auto"` (default): Defers to the global setting
+   - `"force"`: Always stamp if templates contain `{{}}` placeholders, ignoring Bazel's `--stamp` flag
+   - `"disabled"`: Never include stamp information
 
 ### Configure Workspace Status
 
@@ -129,20 +129,21 @@ build --workspace_status_command=./workspace_status.sh
 
 | Value | Behavior |
 |-------|----------|
-| `"enabled"` | Always use stamp values (if Bazel --stamp is set) |
+| `"auto"` | (default) Defer to global setting. With global default `"auto"`, stamps when `--stamp` is set and templates contain `{{}}` |
+| `"force"` | Always stamp if templates contain `{{}}` placeholders, regardless of `--stamp` |
 | `"disabled"` | Never use stamp values |
-| `"auto"` | Use the `--@rules_img//img/settings:stamp=enabled` flag (default) |
 
 ### Troubleshooting Stamping
 
 **Stamp variables are empty or not replaced:**
-1. Check that `--stamp` is set at Bazel level
-2. Check that `stamp = "enabled"` or proper flags are set
+1. Check that `--stamp` is set at Bazel level (or use `stamp = "force"` to bypass)
+2. Check that `stamp = "force"` or `--@rules_img//img/settings:stamp=force` is set
 3. Verify workspace_status_command is executable and in .bazelrc
 4. Test your script: `./workspace_status.sh` should output key-value pairs
 
 **Build not reproducible:**
-- Use `stamp = "disabled"` for development builds
+- Set `--nostamp` and use the default `auto` setting for rules_img stamping
+- Use `stamp = "disabled"` if you never want to include stamping information
 - Only enable stamping for release builds using configs
 
 **Testing stamp values:**
@@ -192,7 +193,7 @@ image_push(
         "region": ":region",
         "organization": ":organization",
     },
-    stamp = "enabled",
+    stamp = "force",
 )
 ```
 

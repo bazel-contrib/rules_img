@@ -43,8 +43,13 @@ config_setting(
 )
 
 config_setting(
-    name = "stamp_user_preference_enabled",
-    flag_values = {"//img/settings:stamp": "enabled"},
+    name = "stamp_global_force",
+    flag_values = {"//img/settings:stamp": "force"},
+)
+
+config_setting(
+    name = "stamp_global_disabled",
+    flag_values = {"//img/settings:stamp": "disabled"},
 )
 
 stamp_build_setting(
@@ -54,8 +59,9 @@ stamp_build_setting(
         "//conditions:default": False,
     }),
     user_preference = select({
-        ":stamp_user_preference_enabled": True,
-        "//conditions:default": False,
+        ":stamp_global_force": "force",
+        ":stamp_global_disabled": "disabled",
+        "//conditions:default": "auto",
     }),
     visibility = ["//visibility:public"],
 )
