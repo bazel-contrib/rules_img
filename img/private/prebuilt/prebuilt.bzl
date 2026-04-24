@@ -167,7 +167,7 @@ _prebuilt_attrs = {
     "version": attr.string(mandatory = True),
     "integrity": attr.string(mandatory = True),
     "os": attr.string(values = ["darwin", "linux", "windows"]),
-    "cpu": attr.string(values = ["amd64", "arm64"]),
+    "cpu": attr.string(values = ["amd64", "arm64", "s390x"]),
     "url_templates": attr.string_list(
         default = ["https://github.com/bazel-contrib/rules_img/releases/download/{version}/img_{os}_{cpu}{dot}{extension}"],
     ),
@@ -177,7 +177,7 @@ _prebuilt_pull_tool_attrs = {
     "version": attr.string(mandatory = True),
     "integrity": attr.string(mandatory = True),
     "os": attr.string(values = ["darwin", "linux", "windows"]),
-    "cpu": attr.string(values = ["amd64", "arm64"]),
+    "cpu": attr.string(values = ["amd64", "arm64", "s390x"]),
     "url_templates": attr.string_list(
         default = ["https://github.com/bazel-contrib/rules_img/releases/download/{version}/pull_tool_{os}_{cpu}{dot}{extension}"],
     ),

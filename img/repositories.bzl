@@ -57,6 +57,7 @@ def img_register_prebuilt_toolchains(
         platforms = [
             ("linux", "amd64"),
             ("linux", "arm64"),
+            ("linux", "s390x"),
             ("darwin", "amd64"),
             ("darwin", "arm64"),
             ("windows", "amd64"),
@@ -167,6 +168,7 @@ def pull_tool_register_prebuilt_repositories(
         platforms = [
             ("linux", "amd64"),
             ("linux", "arm64"),
+            ("linux", "s390x"),
             ("darwin", "amd64"),
             ("darwin", "arm64"),
             ("windows", "amd64"),

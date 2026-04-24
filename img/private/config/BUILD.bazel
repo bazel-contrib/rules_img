@@ -10,6 +10,7 @@ os_cpu(
         "@platforms//cpu:mips64": "mips64",
         "@platforms//cpu:ppc64le": "ppc64le",
         "@platforms//cpu:riscv64": "riscv64",
+        "@platforms//cpu:s390x": "s390x",
         "@platforms//cpu:x86_32": "386",
         "@platforms//cpu:x86_64": "amd64",
     }),
