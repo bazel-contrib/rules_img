@@ -24,6 +24,7 @@ var (
 	operatingSystem       string
 	architecture          string
 	variant               string
+	historyFile           string
 	layerFromMetadataArgs fileList
 	configFragment        string
 	configMediaType       string
@@ -47,6 +48,10 @@ var (
 	artifactType          string
 	subjectDescriptor     string
 )
+
+type historyConfig struct {
+	History []specv1.History `json:"history"`
+}
 
 func ManifestProcess(_ context.Context, args []string) {
 	flagSet := flag.NewFlagSet("manifest", flag.ExitOnError)
@@ -86,6 +91,7 @@ func ManifestProcess(_ context.Context, args []string) {
 	flagSet.Var(&annotations, "annotation", `Metadata annotations for the manifest (can be specified multiple times as key=value).`)
 	flagSet.StringVar(&stopSignal, "stop-signal", "", `Signal to stop the container.`)
 	flagSet.StringVar(&created, "created", "", `A file containing a datetime string (RFC 3339 format) for when the image was created.`)
+	flagSet.StringVar(&historyFile, "history-file", "", `A file containing the history of all layers`)
 	flagSet.StringVar(&artifactType, "artifact-type", "", `Optional IANA media type of the artifact when the manifest is used for an artifact (e.g. application/vnd.cncf.helm.chart.v1, application/spdx+json).`)
 	flagSet.StringVar(&subjectDescriptor, "subject-descriptor", "", `A JSON file containing the descriptor of the subject manifest or index.`)
 
@@ -141,12 +147,24 @@ func ManifestProcess(_ context.Context, args []string) {
 		}
 		createdTime = ct
 	}
+	var historyConfig historyConfig
+	if historyFile != "" {
+		content, err := os.ReadFile(historyFile)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed reading history file: %v\n", err)
+			os.Exit(1)
+		}
+		if err := json.Unmarshal(content, &historyConfig); err != nil {
+			fmt.Fprintf(os.Stderr, "Failed unmarshaling history config: %v\n", err)
+			os.Exit(1)
+		}
+	}
 
 	var configRaw []byte
 	if configMediaType == "" {
 		configMediaType = specv1.MediaTypeImageConfig
 
-		config, err := prepareConfig(layers, templatesData, createdTime)
+		config, err := prepareConfig(layers, templatesData, createdTime, &historyConfig)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to prepare config: %v\n", err)
 			os.Exit(1)
@@ -303,7 +321,7 @@ func ManifestProcess(_ context.Context, args []string) {
 	}
 }
 
-func prepareConfig(layers []api.Descriptor, templatesData *ConfigTemplates, createdTime *time.Time) (specv1.Image, error) {
+func prepareConfig(layers []api.Descriptor, templatesData *ConfigTemplates, createdTime *time.Time, history *historyConfig) (specv1.Image, error) {
 	// first, read the base config
 	// then, layer the config fragment on top of it
 	// finally, add our own stuff
@@ -319,7 +337,9 @@ func prepareConfig(layers []api.Descriptor, templatesData *ConfigTemplates, crea
 			return config, fmt.Errorf("reading config fragment: %w", err)
 		}
 	}
-
+	if len(history.History) > 0 {
+		config.History = append(config.History, history.History...)
+	}
 	if err := overlayNewConfigValues(&config, layers, templatesData); err != nil {
 		return config, fmt.Errorf("overlaying new config values: %w", err)
 	}
