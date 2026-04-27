@@ -13,7 +13,7 @@ load(
     "to_short_path_pair",
 )
 load("//img/private/providers:layer_config_info.bzl", "ImageLayerConfigInfo")
-load("//img/private/providers:single_layer_info.bzl", "SingleLayerInfo")
+load("//img/private/providers:layers_info.bzl", "LayersInfo")
 
 _BinaryRunInfo = provider(
     doc = """\
@@ -209,5 +209,5 @@ If unset, this defaults to the rlocationpath of the binary (e.g., "_main/cmd/ser
         ),
     } | layer_attrs.common,
     toolchains = TOOLCHAINS,
-    provides = [SingleLayerInfo],
+    provides = [LayersInfo],
 )

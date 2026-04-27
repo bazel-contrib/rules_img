@@ -5,7 +5,7 @@ configurations and combinations for container image layers.
 """
 
 load("@bazel_skylib//rules:build_test.bzl", "build_test")
-load("@rules_img//img:providers.bzl", "SingleLayerInfo")
+load("@rules_img//img:providers.bzl", "LayersInfo")
 
 # Predefined test combinations for compression parameter testing.
 # Each tuple contains: (name_suffix, layer, mode, jobs, level, algo, estargz)
@@ -113,16 +113,16 @@ def _tuned_layer_impl(ctx):
         ctx: Rule context containing attributes and dependencies.
 
     Returns:
-        List of providers including DefaultInfo, OutputGroupInfo, and SingleLayerInfo.
+        List of providers including DefaultInfo, OutputGroupInfo, and LayersInfo.
     """
-    layer_info = ctx.attr.layer[SingleLayerInfo]
+    single = ctx.attr.layer[LayersInfo].layers[0]
     return [
-        DefaultInfo(files = depset([layer_info.blob])),
+        DefaultInfo(files = depset([single.blob])),
         OutputGroupInfo(
-            layer = depset([layer_info.blob]),
-            metadata = depset([layer_info.metadata]),
+            layer = depset([single.blob]),
+            metadata = depset([single.metadata]),
         ),
-        layer_info,
+        ctx.attr.layer[LayersInfo],
     ]
 
 tuned_layer = rule(
@@ -138,7 +138,7 @@ tuned_layer = rule(
         "layer": attr.label(
             mandatory = True,
             doc = "The image_layer target to apply the tuned settings to.",
-            providers = [SingleLayerInfo],
+            providers = [LayersInfo],
         ),
         "compilation_mode": attr.string(
             default = "fastbuild",

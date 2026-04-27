@@ -12,7 +12,7 @@ load(
     "symlinks_arg",
     "to_short_path_pair",
 )
-load("//img/private/providers:single_layer_info.bzl", "SingleLayerInfo")
+load("//img/private/providers:layers_info.bzl", "LayersInfo")
 
 def _symlink_tuple_to_arg(pair):
     source = pair[0]
@@ -161,5 +161,5 @@ Metadata specified here overrides any defaults from default_metadata.""",
         ),
     } | layer_attrs.common,
     toolchains = TOOLCHAINS,
-    provides = [SingleLayerInfo],
+    provides = [LayersInfo],
 )
