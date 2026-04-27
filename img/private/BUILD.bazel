@@ -42,7 +42,7 @@ bzl_library(
         "//img/private/common:build",
         "//img/private/common:layer_attrs",
         "//img/private/common:tar_layer",
-        "//img/private/providers:single_layer_info",
+        "//img/private/providers:layers_info",
     ],
 )
 
@@ -55,7 +55,7 @@ bzl_library(
         "//img/private/common:layer_attrs",
         "//img/private/common:tar_layer",
         "//img/private/providers:layer_config_info",
-        "//img/private/providers:single_layer_info",
+        "//img/private/providers:layers_info",
     ],
 )
 
@@ -138,6 +138,7 @@ bzl_library(
         "//img/private/config:defs",
         "//img/private/providers:index_info",
         "//img/private/providers:layer_config_info",
+        "//img/private/providers:layers_info",
         "//img/private/providers:manifest_info",
         "//img/private/providers:oci_layout_settings_info",
         "//img/private/providers:pull_info",
@@ -171,7 +172,7 @@ bzl_library(
     deps = [
         "//img/private/common:build",
         "//img/private/common:layer_helper",
-        "//img/private/providers:single_layer_info",
+        "//img/private/providers:layers_info",
     ],
 )
 
@@ -182,7 +183,7 @@ bzl_library(
     deps = [
         "//img/private/common:build",
         "//img/private/common:layer_helper",
-        "//img/private/providers:single_layer_info",
+        "//img/private/providers:layers_info",
         "@bazel_skylib//rules:common_settings",
     ],
 )

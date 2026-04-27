@@ -2,7 +2,7 @@
 
 load("//img/private/common:build.bzl", "TOOLCHAINS")
 load("//img/private/common:layer_helper.bzl", "calculate_layer_info")
-load("//img/private/providers:single_layer_info.bzl", "SingleLayerInfo")
+load("//img/private/providers:layers_info.bzl", "LayersInfo")
 
 def _layer_from_file_impl(ctx):
     media_type = ctx.attr.media_type
@@ -42,7 +42,7 @@ def _layer_from_file_impl(ctx):
             layer = depset([layer_info.blob]),
             metadata = depset([layer_info.metadata]),
         ),
-        layer_info,
+        LayersInfo(layers = [layer_info]),
     ]
 
 layer_from_file = rule(
@@ -102,5 +102,5 @@ layer_from_file(
         ),
     },
     toolchains = TOOLCHAINS,
-    provides = [SingleLayerInfo],
+    provides = [LayersInfo],
 )

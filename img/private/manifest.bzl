@@ -9,6 +9,7 @@ load("//img/private/common:transitions.bzl", "normalize_layer_transition", "sing
 load("//img/private/config:defs.bzl", "TargetPlatformInfo")
 load("//img/private/providers:index_info.bzl", "ImageIndexInfo")
 load("//img/private/providers:layer_config_info.bzl", "ImageLayerConfigInfo")
+load("//img/private/providers:layers_info.bzl", "LayersInfo")
 load("//img/private/providers:manifest_info.bzl", "ImageManifestInfo")
 load("//img/private/providers:oci_layout_settings_info.bzl", "OCILayoutSettingsInfo")
 load("//img/private/providers:pull_info.bzl", "PullInfo")
@@ -282,12 +283,13 @@ def _image_manifest_impl(ctx):
         computed_annotations.update(extract_annotations_from_pull_info(pull_info))
         providers.append(pull_info)
     for (layer_idx, layer) in enumerate(ctx.attr.layers):
-        if SingleLayerInfo in layer:
-            # Use pre-built layer metadata
-            layers.append(layer[SingleLayerInfo])
+        if LayersInfo in layer:
+            layers.extend(layer[LayersInfo].layers)
             continue
+        elif SingleLayerInfo in layer:
+            fail("layer {} provides SingleLayerInfo directly, but LayersInfo is expected. Wrap layers using a layer rule that provides LayersInfo.".format(layer_idx))
         elif DefaultInfo not in layer:
-            fail("layer {} needs to provide SingleLayerInfo or DefaultInfo: {}".format(layer_idx, layer))
+            fail("layer {} needs to provide LayersInfo or DefaultInfo: {}".format(layer_idx, layer))
 
         # Calculate layer metadata on the fly
         default_info = layer[DefaultInfo]
@@ -530,7 +532,7 @@ Output groups:
             doc = "Base image to inherit layers from. Should provide ImageManifestInfo or ImageIndexInfo.",
         ),
         "layers": attr.label_list(
-            doc = "Layers to include in the image. Either a SingleLayerInfo provider or a DefaultInfo with tar files.",
+            doc = "Layers to include in the image. Either a LayersInfo provider or a DefaultInfo with tar files.",
             cfg = normalize_layer_transition,
         ),
         "platform": attr.label(

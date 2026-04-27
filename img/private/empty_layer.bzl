@@ -1,5 +1,6 @@
 """Rule for producing an empty OCI layer with application/vnd.oci.empty.v1+json media type."""
 
+load("//img/private/providers:layers_info.bzl", "LayersInfo")
 load("//img/private/providers:single_layer_info.bzl", "SingleLayerInfo")
 
 def _empty_layer_impl(ctx):
@@ -21,15 +22,15 @@ def _empty_layer_impl(ctx):
             layer = depset([out]),
             metadata = depset([metadata_out]),
         ),
-        SingleLayerInfo(
+        LayersInfo(layers = [SingleLayerInfo(
             blob = out,
             metadata = metadata_out,
             media_type = media_type,
             estargz = False,
-        ),
+        )]),
     ]
 
 empty_layer = rule(
     implementation = _empty_layer_impl,
-    provides = [SingleLayerInfo],
+    provides = [LayersInfo],
 )
