@@ -2,7 +2,7 @@
 
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("//img/private/common:build.bzl", "TOOLCHAIN")
-load("//img/private/providers:layer_info.bzl", "LayerInfo")
+load("//img/private/providers:single_layer_info.bzl", "SingleLayerInfo")
 
 allow_tar_files = [".tar", ".tar.gz", ".tgz", ".tar.zst", ".tzst"]
 
@@ -93,7 +93,7 @@ def calculate_layer_info(*, ctx, media_type, tar_file, metadata_file, estargz, a
             "diff_id_annotation:<name>" - same as diff_id but stored as annotation <name>.
 
     Returns:
-        LayerInfo provider with blob, metadata, and media type.
+        SingleLayerInfo provider with blob, metadata, and media type.
     """
     args = ctx.actions.args()
     args.add("--digest=sha256")
@@ -125,7 +125,7 @@ def calculate_layer_info(*, ctx, media_type, tar_file, metadata_file, estargz, a
             "supports-path-mapping": "1",
         },
     )
-    return LayerInfo(
+    return SingleLayerInfo(
         blob = tar_file,
         metadata = metadata_file,
         media_type = media_type,
@@ -146,7 +146,7 @@ def recompress_layer(*, ctx, media_type, tar_file, metadata_file, output, target
         annotations: Dict of string annotations to add to the layer metadata.
 
     Returns:
-        LayerInfo provider with recompressed blob and metadata.
+        SingleLayerInfo provider with recompressed blob and metadata.
     """
     args = ctx.actions.args()
     args.add("compress")
@@ -168,7 +168,7 @@ def recompress_layer(*, ctx, media_type, tar_file, metadata_file, output, target
         arguments = [args],
         mnemonic = "LayerCompress",
     )
-    return LayerInfo(
+    return SingleLayerInfo(
         blob = output,
         metadata = metadata_file,
         media_type = media_type,
@@ -189,7 +189,7 @@ def optimize_layer(*, ctx, media_type, tar_file, metadata_file, output, target_c
         annotations: Dict of string annotations to add to the layer metadata.
 
     Returns:
-        LayerInfo provider with optimized blob and metadata.
+        SingleLayerInfo provider with optimized blob and metadata.
     """
     inputs = [tar_file]
     args = ctx.actions.args()
@@ -212,7 +212,7 @@ def optimize_layer(*, ctx, media_type, tar_file, metadata_file, output, target_c
         arguments = [args],
         mnemonic = "LayerOptimize",
     )
-    return LayerInfo(
+    return SingleLayerInfo(
         blob = output,
         metadata = metadata_file,
         media_type = media_type,

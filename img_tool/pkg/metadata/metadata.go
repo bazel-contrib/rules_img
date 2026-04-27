@@ -9,7 +9,7 @@ import (
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/api"
 )
 
-// WriteLayerMetadata writes layer metadata in the format expected by LayerInfo provider.
+// WriteLayerMetadata writes layer metadata in the format expected by SingleLayerInfo provider.
 // The format includes: name, diff_id, mediaType, digest, size, and annotations.
 func WriteLayerMetadata(
 	name string,

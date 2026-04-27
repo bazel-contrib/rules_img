@@ -2,9 +2,9 @@
 
 load("//img/private/common:transitions.bzl", "reset_platform_transition")
 load("//img/private/providers:index_info.bzl", "ImageIndexInfo")
-load("//img/private/providers:layer_info.bzl", "LayerInfo")
 load("//img/private/providers:manifest_info.bzl", "ImageManifestInfo")
 load("//img/private/providers:pull_info.bzl", "PullInfo")
+load("//img/private/providers:single_layer_info.bzl", "SingleLayerInfo")
 load(":manifest_media_type.bzl", "get_media_type")
 
 def _digest_to_file(ctx, digest):
@@ -19,7 +19,7 @@ def _digest_to_file(ctx, digest):
     return files[0]
 
 def _write_layer_info(ctx, manifest, config, layer_index, index_position = None):
-    """Write layer info to file and return LayerInfo provider."""
+    """Write layer info to file and return SingleLayerInfo provider."""
     layers = manifest.get("layers", [])
     if layer_index >= len(layers):
         fail("layer index out of range for manifest: {}".format(layer_index))
@@ -61,7 +61,7 @@ def _write_layer_info(ctx, manifest, config, layer_index, index_position = None)
     index_position_str = "" if index_position == None else str(index_position) + "_"
     layer_metadata = ctx.actions.declare_file(ctx.attr.name + "_{}{}_layer_metadata.json".format(index_position_str, layer_index))
     ctx.actions.write(layer_metadata, json.encode(metadata))
-    return LayerInfo(
+    return SingleLayerInfo(
         blob = _digest_to_file(ctx, digest),
         metadata = layer_metadata,
         media_type = media_type,

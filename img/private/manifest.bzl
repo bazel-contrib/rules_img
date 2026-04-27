@@ -9,10 +9,10 @@ load("//img/private/common:transitions.bzl", "normalize_layer_transition", "sing
 load("//img/private/config:defs.bzl", "TargetPlatformInfo")
 load("//img/private/providers:index_info.bzl", "ImageIndexInfo")
 load("//img/private/providers:layer_config_info.bzl", "ImageLayerConfigInfo")
-load("//img/private/providers:layer_info.bzl", "LayerInfo")
 load("//img/private/providers:manifest_info.bzl", "ImageManifestInfo")
 load("//img/private/providers:oci_layout_settings_info.bzl", "OCILayoutSettingsInfo")
 load("//img/private/providers:pull_info.bzl", "PullInfo")
+load("//img/private/providers:single_layer_info.bzl", "SingleLayerInfo")
 load("//img/private/providers:stamp_setting_info.bzl", "StampSettingInfo")
 
 def _to_layer_arg(layer):
@@ -212,7 +212,7 @@ def _build_oci_layout(ctx, format, manifest_out, config_out, layers):
         format: The output format, either "directory" or "tar".
         manifest_out: The manifest file.
         config_out: The config file.
-        layers: List of LayerInfo providers.
+        layers: List of SingleLayerInfo providers.
 
     Returns:
         The OCI layout directory (tree artifact).
@@ -282,12 +282,12 @@ def _image_manifest_impl(ctx):
         computed_annotations.update(extract_annotations_from_pull_info(pull_info))
         providers.append(pull_info)
     for (layer_idx, layer) in enumerate(ctx.attr.layers):
-        if LayerInfo in layer:
+        if SingleLayerInfo in layer:
             # Use pre-built layer metadata
-            layers.append(layer[LayerInfo])
+            layers.append(layer[SingleLayerInfo])
             continue
         elif DefaultInfo not in layer:
-            fail("layer {} needs to provide LayerInfo or DefaultInfo: {}".format(layer_idx, layer))
+            fail("layer {} needs to provide SingleLayerInfo or DefaultInfo: {}".format(layer_idx, layer))
 
         # Calculate layer metadata on the fly
         default_info = layer[DefaultInfo]
@@ -530,7 +530,7 @@ Output groups:
             doc = "Base image to inherit layers from. Should provide ImageManifestInfo or ImageIndexInfo.",
         ),
         "layers": attr.label_list(
-            doc = "Layers to include in the image. Either a LayerInfo provider or a DefaultInfo with tar files.",
+            doc = "Layers to include in the image. Either a SingleLayerInfo provider or a DefaultInfo with tar files.",
             cfg = normalize_layer_transition,
         ),
         "platform": attr.label(

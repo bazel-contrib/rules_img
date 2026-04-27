@@ -25,8 +25,8 @@ bzl_library(
 )
 
 bzl_library(
-    name = "layer_info",
-    srcs = ["layer_info.bzl"],
+    name = "single_layer_info",
+    srcs = ["single_layer_info.bzl"],
     visibility = ["//img:__subpackages__"],
 )
 
