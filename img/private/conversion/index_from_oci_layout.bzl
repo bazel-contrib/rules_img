@@ -3,8 +3,8 @@
 load("//img/private/common:build.bzl", "TOOLCHAIN", "TOOLCHAINS")
 load("//img/private/common:media_types.bzl", "GZIP_LAYER", "LAYER_TYPES", "UNCOMPRESSED_LAYER", "ZSTD_LAYER")
 load("//img/private/providers:index_info.bzl", "ImageIndexInfo")
-load("//img/private/providers:layer_info.bzl", "LayerInfo")
 load("//img/private/providers:manifest_info.bzl", "ImageManifestInfo")
+load("//img/private/providers:single_layer_info.bzl", "SingleLayerInfo")
 
 _layer_extension = {
     UNCOMPRESSED_LAYER: "tar",
@@ -100,7 +100,7 @@ def _image_index_from_oci_layout(ctx):
         }
 
         layer_infos = [
-            LayerInfo(
+            SingleLayerInfo(
                 blob = layer_blobs[i],
                 estargz = False,
                 media_type = layer_media_types[i],

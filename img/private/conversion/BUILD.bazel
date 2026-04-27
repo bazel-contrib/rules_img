@@ -7,8 +7,8 @@ bzl_library(
     deps = [
         "//img/private/common:build",
         "//img/private/common:media_types",
-        "//img/private/providers:layer_info",
         "//img/private/providers:manifest_info",
+        "//img/private/providers:single_layer_info",
     ],
 )
 
@@ -20,8 +20,8 @@ bzl_library(
         "//img/private/common:build",
         "//img/private/common:media_types",
         "//img/private/providers:index_info",
-        "//img/private/providers:layer_info",
         "//img/private/providers:manifest_info",
+        "//img/private/providers:single_layer_info",
     ],
 )
 

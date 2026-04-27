@@ -29,9 +29,9 @@ bzl_library(
     deps = [
         "//img/private/providers:deploy_info",
         "//img/private/providers:index_info",
-        "//img/private/providers:layer_info",
         "//img/private/providers:manifest_info",
         "//img/private/providers:pull_info",
+        "//img/private/providers:single_layer_info",
     ],
 )
 

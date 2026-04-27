@@ -3,7 +3,7 @@
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("//img/private/common:build.bzl", "TOOLCHAINS")
 load("//img/private/common:layer_helper.bzl", "allow_tar_files", "calculate_layer_info", "extension_to_compression", "optimize_layer", "recompress_layer")
-load("//img/private/providers:layer_info.bzl", "LayerInfo")
+load("//img/private/providers:single_layer_info.bzl", "SingleLayerInfo")
 
 def _layer_from_tar_impl(ctx):
     optimize = ctx.attr.optimize
@@ -175,5 +175,5 @@ When enabled, the layer will be optimized for lazy pulling and will be compatibl
         ),
     },
     toolchains = TOOLCHAINS,
-    provides = [LayerInfo],
+    provides = [SingleLayerInfo],
 )

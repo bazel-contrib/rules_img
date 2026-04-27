@@ -3,7 +3,7 @@
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("//img/private/common:build.bzl", "TOOLCHAIN")
 load("//img/private/common:layer_helper.bzl", "compression_tuning_args")
-load("//img/private/providers:layer_info.bzl", "LayerInfo")
+load("//img/private/providers:single_layer_info.bzl", "SingleLayerInfo")
 
 def file_type(f):
     """Returns the tar entry type character for a file.
@@ -138,7 +138,7 @@ def create_tar_layer(ctx, settings, extra_args = [], extra_inputs = []):
         extra_inputs: list of depset objects to merge with base inputs.
 
     Returns:
-        list of [DefaultInfo, OutputGroupInfo, LayerInfo].
+        list of [DefaultInfo, OutputGroupInfo, SingleLayerInfo].
     """
     out = ctx.actions.declare_file(ctx.attr.name + settings.out_ext)
     metadata_out = ctx.actions.declare_file(ctx.attr.name + "_metadata.json")
@@ -179,7 +179,7 @@ def create_tar_layer(ctx, settings, extra_args = [], extra_inputs = []):
             layer = depset([out]),
             metadata = depset([metadata_out]),
         ),
-        LayerInfo(
+        SingleLayerInfo(
             blob = out,
             metadata = metadata_out,
             media_type = settings.media_type,

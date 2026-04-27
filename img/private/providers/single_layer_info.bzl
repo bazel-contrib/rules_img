@@ -20,7 +20,7 @@ FIELDS = dict(
     estargz = "Boolean indicating whether the layer is an estargz layer.",
 )
 
-LayerInfo = provider(
+SingleLayerInfo = provider(
     doc = DOC,
     fields = FIELDS,
 )

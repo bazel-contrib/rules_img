@@ -2,15 +2,15 @@
 
 load("//img/private/providers:deploy_info.bzl", _DeployInfo = "DeployInfo")
 load("//img/private/providers:index_info.bzl", _ImageIndexInfo = "ImageIndexInfo")
-load("//img/private/providers:layer_info.bzl", _LayerInfo = "LayerInfo")
 load("//img/private/providers:manifest_info.bzl", _ImageManifestInfo = "ImageManifestInfo")
 load("//img/private/providers:pull_info.bzl", _PullInfo = "PullInfo")
+load("//img/private/providers:single_layer_info.bzl", _SingleLayerInfo = "SingleLayerInfo")
 
 # providers with metadata about image pushes
 DeployInfo = _DeployInfo
 
 # providers describing images and their components
-LayerInfo = _LayerInfo
+SingleLayerInfo = _SingleLayerInfo
 ImageManifestInfo = _ImageManifestInfo
 ImageIndexInfo = _ImageIndexInfo
 
