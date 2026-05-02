@@ -11,6 +11,11 @@ def http_archive(**kwargs):
     maybe(_http_archive, **kwargs)
 
 def rules_img_dependencies():
+    """Fetches external repositories required by rules_img.
+
+    Call this in your WORKSPACE file after loading rules_img.
+    In bzlmod, these dependencies are managed automatically via MODULE.bazel.
+    """
     http_archive(
         name = "bazel_skylib",
         sha256 = "bc283cdfcd526a52c3201279cda4bc298652efa898b10b4db0837dc51652756f",
@@ -41,4 +46,11 @@ def rules_img_dependencies():
         sha256 = "adfdb3cffab3a99a63363d844d559a81965d2b61a6062dd51a3d2478d416768f",
         strip_prefix = "bazel_features-1.45.0",
         url = "https://github.com/bazel-contrib/bazel_features/releases/download/v1.45.0/bazel_features-v1.45.0.tar.gz",
+    )
+
+    http_archive(
+        name = "rules_runfiles_group",
+        sha256 = "bc9373ff5dcae2198f25474b8703f17f39926d374bc9c6422024bbcf50560f7b",
+        strip_prefix = "rules_runfiles_group-0.0.1-rc.3",
+        url = "https://github.com/hermeticbuild/rules_runfiles_group/releases/download/v0.0.1-rc.3/rules_runfiles_group-v0.0.1-rc.3.tar.gz",
     )

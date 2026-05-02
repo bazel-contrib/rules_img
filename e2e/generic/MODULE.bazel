@@ -28,13 +28,27 @@ bazel_dep(name = "platforms", version = "0.0.11")
 bazel_dep(name = "rules_distroless", version = "0.6.2")
 bazel_dep(name = "rules_pkg", version = "1.2.0")
 bazel_dep(name = "rules_python", version = "1.8.3")
+bazel_dep(name = "rules_runfiles_group", version = "0.0.1-rc.3")
 bazel_dep(name = "rules_shell", version = "0.6.1")
 bazel_dep(name = "tar.bzl", version = "0.7.0")
+bazel_dep(name = "rules_runfiles_group_example")
 
 single_version_override(
     module_name = "rules_distroless",
     patch_strip = 1,
     patches = ["//custom_distroless_base_image:rules_distroless.patch"],
+)
+
+archive_override(
+    module_name = "rules_runfiles_group_example",
+    integrity = "sha256-vJNz/13K4hmPJUdLhwPxfzmSbTdLycZCICS7z1BWD3s=",
+    patch_strip = 2,
+    patches = [
+        "rules_runfiles_group_example.patch",
+        "rules_runfiles_group_example_loadmap_path_len_windows.patch",
+    ],
+    strip_prefix = "rules_runfiles_group-0.0.1-rc.3/example",
+    urls = ["https://github.com/hermeticbuild/rules_runfiles_group/releases/download/v0.0.1-rc.3/rules_runfiles_group-v0.0.1-rc.3.tar.gz"],
 )
 
 # Configure apt for Debian packages

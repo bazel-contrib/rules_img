@@ -56,6 +56,8 @@ bzl_library(
         "//img/private/common:tar_layer",
         "//img/private/providers:layer_config_info",
         "//img/private/providers:layers_info",
+        "@rules_runfiles_group//runfiles_group:lib",
+        "@rules_runfiles_group//runfiles_group:providers",
     ],
 )
 

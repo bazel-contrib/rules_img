@@ -148,6 +148,23 @@ string_flag(
 )
 
 string_flag(
+    name = "runfiles_shared_path",
+    build_setting_default = ".shared_runfiles",
+    visibility = ["//visibility:public"],
+)
+
+string_flag(
+    name = "runfiles_sharing_mode",
+    build_setting_default = "auto",
+    values = [
+        "auto",
+        "shared",
+        "private",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+string_flag(
     name = "cross_mount",
     build_setting_default = "same_registry",
     values = [

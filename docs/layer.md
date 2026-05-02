@@ -94,7 +94,8 @@ image_layer(
 load("@rules_img//img:layer.bzl", "layer_from_binary")
 
 layer_from_binary(<a href="#layer_from_binary-name">name</a>, <a href="#layer_from_binary-annotations">annotations</a>, <a href="#layer_from_binary-annotations_file">annotations_file</a>, <a href="#layer_from_binary-binary">binary</a>, <a href="#layer_from_binary-compress">compress</a>, <a href="#layer_from_binary-create_parent_directories">create_parent_directories</a>,
-                  <a href="#layer_from_binary-estargz">estargz</a>, <a href="#layer_from_binary-include_runfiles">include_runfiles</a>, <a href="#layer_from_binary-media_type">media_type</a>, <a href="#layer_from_binary-path">path</a>, <a href="#layer_from_binary-tree_artifact_handling">tree_artifact_handling</a>)
+                  <a href="#layer_from_binary-estargz">estargz</a>, <a href="#layer_from_binary-include_runfiles">include_runfiles</a>, <a href="#layer_from_binary-layer_budget">layer_budget</a>, <a href="#layer_from_binary-media_type">media_type</a>, <a href="#layer_from_binary-path">path</a>, <a href="#layer_from_binary-runfiles_path">runfiles_path</a>,
+                  <a href="#layer_from_binary-runfiles_shared_path">runfiles_shared_path</a>, <a href="#layer_from_binary-runfiles_sharing_mode">runfiles_sharing_mode</a>, <a href="#layer_from_binary-tree_artifact_handling">tree_artifact_handling</a>)
 </pre>
 
 Creates a container image layer from a *_binary target.
@@ -107,6 +108,16 @@ image with Dockerfile-like semantics.
 The binary's `args` attribute becomes the image `cmd`, its `env` attribute (or
 RunEnvironmentInfo provider) becomes `env`, and the binary path becomes the `entrypoint`.
 When include_runfiles is True (default), the working directory is set to the runfiles root.
+
+If the binary provides RunfilesGroupInfo (from rules_runfiles_group), the runfiles are split
+into separate layers based on the groups. This allows for better caching: stable layers
+(interpreter, stdlib) change infrequently and can be shared, while the application code layer
+changes with each build. The resolution protocol respects RunfilesGroupTransformInfo and
+RunfilesGroupMetadataInfo from the binary's aspect_hints.
+
+When the number of groups exceeds what is practical for a container image, use `layer_budget`
+to merge groups down to a maximum count. The merge algorithm respects group rank (only merges
+within the same rank), do_not_merge flags, and weight hints (lighter groups merge first).
 
 Example:
 
@@ -151,13 +162,17 @@ layer_from_binary(
 | <a id="layer_from_binary-name"></a>name |  A unique name for this target.   | <a href="https://bazel.build/concepts/labels#target-names">Name</a> | required |  |
 | <a id="layer_from_binary-annotations"></a>annotations |  Annotations to add to the layer metadata as key-value pairs.   | <a href="https://bazel.build/rules/lib/core/dict">Dictionary: String -> String</a> | optional |  `{}`  |
 | <a id="layer_from_binary-annotations_file"></a>annotations_file |  File containing newline-delimited KEY=VALUE annotations for the layer.<br><br>The file should contain one annotation per line in KEY=VALUE format. Empty lines are ignored. Annotations from this file are merged with annotations specified via the `annotations` attribute.<br><br>Example file content: <pre><code>version=1.0.0&#10;build.date=2024-01-15&#10;source.url=https://github.com/...</code></pre>   | <a href="https://bazel.build/concepts/labels">Label</a> | optional |  `None`  |
-| <a id="layer_from_binary-binary"></a>binary |  The *_binary target to package into the layer.<br><br>The binary's `args` and `env` attributes are extracted and provided as image configuration (cmd and env) via ImageLayerConfigInfo. The `data` attribute is used for `$(location)` expansion in args and env values.   | <a href="https://bazel.build/concepts/labels">Label</a> | required |  |
+| <a id="layer_from_binary-binary"></a>binary |  The *_binary target to package into the layer.<br><br>The binary's `args` and `env` attributes are extracted and provided as image configuration (cmd and env) via ImageLayerConfigInfo. The `data` attribute is used for `$(location)` expansion in args and env values.<br><br>If the binary provides RunfilesGroupInfo, the runfiles are split into separate layers per group.   | <a href="https://bazel.build/concepts/labels">Label</a> | required |  |
 | <a id="layer_from_binary-compress"></a>compress |  Compression algorithm to use. If set to 'auto', uses the global default compression setting.   | String | optional |  `"auto"`  |
 | <a id="layer_from_binary-create_parent_directories"></a>create_parent_directories |  Whether to automatically create parent directory entries in the tar file for all files. If set to 'auto', uses the global default create_parent_directories setting. When enabled, parent directories will be created automatically for all files in the layer.   | String | optional |  `"auto"`  |
 | <a id="layer_from_binary-estargz"></a>estargz |  Whether to use estargz format. If set to 'auto', uses the global default estargz setting. When enabled, the layer will be optimized for lazy pulling and will be compatible with the estargz format.   | String | optional |  `"auto"`  |
 | <a id="layer_from_binary-include_runfiles"></a>include_runfiles |  Whether to include runfiles for executable targets. When True (default), executables in srcs will include their runfiles tree. When False, only the executable file itself is included, without runfiles.   | Boolean | optional |  `True`  |
+| <a id="layer_from_binary-layer_budget"></a>layer_budget |  Maximum number of runfiles group layers. If set to a value > 0 and the binary provides RunfilesGroupInfo, groups are merged down to this limit using the merge algorithm from rules_runfiles_group. The algorithm respects group rank (only merges within the same rank), do_not_merge flags, and weight hints (lighter groups merge first). 0 means no limit (all groups become separate layers).   | Integer | optional |  `0`  |
 | <a id="layer_from_binary-media_type"></a>media_type |  Override the layer media type. By default, the media type is auto-detected from the compression algorithm.   | String | optional |  `""`  |
 | <a id="layer_from_binary-path"></a>path |  Optional path of the binary inside the image. If the path ends with a slash ("/"), the basename of the binary will be automatically appended. If unset, this defaults to the rlocationpath of the binary (e.g., "_main/cmd/server/server_/server").   | String | optional |  `""`  |
+| <a id="layer_from_binary-runfiles_path"></a>runfiles_path |  Optional path of the runfiles directory of the binary inside the image. If unset, this defaults to the path of the binary with a .runfiles suffix (e.g., "_main/cmd/server/server_/server.runfiles"). Note: depending on the runfiles_sharing_mode, this may be a symlink to a shared runfiles directory.   | String | optional |  `""`  |
+| <a id="layer_from_binary-runfiles_shared_path"></a>runfiles_shared_path |  Optional path of the shared runfiles directory inside the image. This is only used when runfiles sharing is enabled and has a global default.   | String | optional |  `""`  |
+| <a id="layer_from_binary-runfiles_sharing_mode"></a>runfiles_sharing_mode |  How to process runfiles. Runfiles can either be placed next to the executable (in a directory with a .runfiles suffix, the runfiles_path attribute), or placed in a shared runfiles path. When sharing runfiles, there will be symlink added: {runfiles_path} -> {runfiles_shared_path}.<br><br>Possible settings:<br><br>* `"auto"`: Share runfiles based on the global default and based on the presence of `RunfilesGroupInfo`.     Globally, runfiles sharing can be set to `"shared"`, `"private"`, or `"auto"`, where auto shares runfiles if `RunfilesGroupInfo` is provided. * `"shared"`: Always share runfiles. * `"private"`: Never share runfiles   | String | optional |  `"auto"`  |
 | <a id="layer_from_binary-tree_artifact_handling"></a>tree_artifact_handling |  How to handle duplicate tree artifacts (directories) in the layer. If set to 'full', each tree artifact is stored at its intended path (no deduplication). If set to 'deduplicate_symlink', duplicate tree artifacts are replaced with symlinks to the first occurrence. If set to 'auto', uses the global default from --@rules_img//img/settings:layer_tree_artifact_handling.   | String | optional |  `"auto"`  |
 
 

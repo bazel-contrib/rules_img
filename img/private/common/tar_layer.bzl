@@ -124,25 +124,26 @@ def resolve_layer_settings(ctx):
         out_ext = out_ext,
     )
 
-def create_tar_layer(ctx, settings, extra_args = [], extra_inputs = []):
-    """Create a tar layer using 'img layer' and return providers.
+def create_tar_single_layer(ctx, settings, name, extra_args = [], extra_inputs = []):
+    """Create a single tar layer using 'img layer'.
 
-    Declares output files, builds base arguments for the 'img layer' command,
-    appends rule-specific extra_args, runs the action with mnemonic 'LayerTar',
-    and returns a list of providers.
+    Lower-level variant of create_tar_layer that accepts an explicit output
+    name and returns the layer components directly, allowing the caller to
+    assemble providers from multiple layers.
 
     Args:
         ctx: Rule context. Must have attrs from layer_attrs.common.
         settings: struct returned by resolve_layer_settings().
+        name: Base name for output files (e.g. "app_layer_stdlib").
         extra_args: list of strings and/or ctx.actions.args() objects to insert
             between the base arguments and the output path.
         extra_inputs: list of depset objects to merge with base inputs.
 
     Returns:
-        list of [DefaultInfo, OutputGroupInfo, LayersInfo].
+        tuple of (SingleLayerInfo, out_file, metadata_file).
     """
-    out = ctx.actions.declare_file(ctx.attr.name + settings.out_ext)
-    metadata_out = ctx.actions.declare_file(ctx.attr.name + "_metadata.json")
+    out = ctx.actions.declare_file(name + settings.out_ext)
+    metadata_out = ctx.actions.declare_file(name + "_metadata.json")
 
     args = ["layer", "--name", str(ctx.label), "--metadata", metadata_out.path, "--format", settings.compression]
     if ctx.attr.media_type:
@@ -174,16 +175,40 @@ def create_tar_layer(ctx, settings, extra_args = [], extra_inputs = []):
         arguments = args,
         mnemonic = "LayerTar",
     )
+    return (
+        SingleLayerInfo(
+            blob = out,
+            metadata = metadata_out,
+            media_type = settings.media_type,
+            estargz = settings.estargz,
+        ),
+        out,
+        metadata_out,
+    )
+
+def create_tar_layer(ctx, settings, extra_args = [], extra_inputs = []):
+    """Create a tar layer using 'img layer' and return providers.
+
+    Declares output files, builds base arguments for the 'img layer' command,
+    appends rule-specific extra_args, runs the action with mnemonic 'LayerTar',
+    and returns a list of providers.
+
+    Args:
+        ctx: Rule context. Must have attrs from layer_attrs.common.
+        settings: struct returned by resolve_layer_settings().
+        extra_args: list of strings and/or ctx.actions.args() objects to insert
+            between the base arguments and the output path.
+        extra_inputs: list of depset objects to merge with base inputs.
+
+    Returns:
+        list of [DefaultInfo, OutputGroupInfo, LayersInfo].
+    """
+    layer_info, out, metadata_out = create_tar_single_layer(ctx, settings, ctx.attr.name, extra_args, extra_inputs)
     return [
         DefaultInfo(files = depset([out])),
         OutputGroupInfo(
             layer = depset([out]),
             metadata = depset([metadata_out]),
         ),
-        LayersInfo(layers = [SingleLayerInfo(
-            blob = out,
-            metadata = metadata_out,
-            media_type = settings.media_type,
-            estargz = settings.estargz,
-        )]),
+        LayersInfo(layers = [layer_info]),
     ]

@@ -213,6 +213,20 @@ func (s *symlinksFromFileArgs) Set(value string) error {
 	return nil
 }
 
+type symlinkPairsFromFileArgs []string
+
+func (s *symlinkPairsFromFileArgs) String() string {
+	return strings.Join(*s, ", ")
+}
+
+func (s *symlinkPairsFromFileArgs) Set(value string) error {
+	if _, err := os.Stat(value); err != nil {
+		return fmt.Errorf("file %s does not exist: %w", value, err)
+	}
+	*s = append(*s, value)
+	return nil
+}
+
 type symlink struct {
 	LinkName string
 	Target   string

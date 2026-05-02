@@ -1,0 +1,60 @@
+From 4b8799f0efeafd7f1a719498df3f5f9be4e5a0df Mon Sep 17 00:00:00 2001
+From: Malte Poll <1780588+malt3@users.noreply.github.com>
+Date: Sat, 2 May 2026 09:50:27 +0100
+Subject: [PATCH] example: use shorter path name for loadmap generator
+
+This works around a path length issue with Bazel 7 on Windows.
+---
+ .../{loadmap_generator => loadmap}/BUILD.bazel            | 8 ++++----
+ .../interpreter/{loadmap_generator => loadmap}/main.go    | 0
+ example/producer/rules/starlark_binary.bzl                | 2 +-
+ 3 files changed, 5 insertions(+), 5 deletions(-)
+ rename example/producer/interpreter/{loadmap_generator => loadmap}/BUILD.bazel (52%)
+ rename example/producer/interpreter/{loadmap_generator => loadmap}/main.go (100%)
+
+diff --git a/example/producer/interpreter/loadmap_generator/BUILD.bazel b/example/producer/interpreter/loadmap/BUILD.bazel
+similarity index 52%
+rename from example/producer/interpreter/loadmap_generator/BUILD.bazel
+rename to example/producer/interpreter/loadmap/BUILD.bazel
+index 64025b8..063f875 100644
+--- a/example/producer/interpreter/loadmap_generator/BUILD.bazel
++++ b/example/producer/interpreter/loadmap/BUILD.bazel
+@@ -1,14 +1,14 @@
+ load("@rules_go//go:def.bzl", "go_binary", "go_library")
+ 
+ go_library(
+-    name = "loadmap_generator_lib",
++    name = "loadmap_lib",
+     srcs = ["main.go"],
+-    importpath = "example/producer/interpreter/loadmap_generator",
++    importpath = "example/producer/interpreter/loadmap",
+     visibility = ["//visibility:private"],
+ )
+ 
+ go_binary(
+-    name = "loadmap_generator",
+-    embed = [":loadmap_generator_lib"],
++    name = "loadmap",
++    embed = [":loadmap_lib"],
+     visibility = ["//visibility:public"],
+ )
+diff --git a/example/producer/interpreter/loadmap_generator/main.go b/example/producer/interpreter/loadmap/main.go
+similarity index 100%
+rename from example/producer/interpreter/loadmap_generator/main.go
+rename to example/producer/interpreter/loadmap/main.go
+diff --git a/example/producer/rules/starlark_binary.bzl b/example/producer/rules/starlark_binary.bzl
+index 0f0c6c1..9ead12e 100644
+--- a/example/producer/rules/starlark_binary.bzl
++++ b/example/producer/rules/starlark_binary.bzl
+@@ -254,7 +254,7 @@ starlark_binary = rule(
+             cfg = "target",
+         ),
+         "_loadmap_generator": attr.label(
+-            default = Label("//producer/interpreter/loadmap_generator"),
++            default = Label("//producer/interpreter/loadmap"),
+             executable = True,
+             cfg = "exec",
+         ),
+-- 
+2.51.2
+
