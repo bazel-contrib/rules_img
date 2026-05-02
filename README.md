@@ -64,6 +64,14 @@ common --@rules_img//img/settings:create_parent_directories=disabled
 # "deduplicate_symlink" replaces duplicate trees with symlinks to the first occurrence.
 common --@rules_img//img/settings:layer_tree_artifact_handling=full
 
+# How to handle runfiles when packaging binaries into layers.
+# "auto" shares runfiles if RunfilesGroupInfo is provided, "shared" always shares,
+# "private" never shares.
+common --@rules_img//img/settings:runfiles_sharing_mode=auto
+
+# Path for shared runfiles inside the image when runfiles sharing is enabled.
+common --@rules_img//img/settings:runfiles_shared_path=/.shared_runfiles
+
 # Opt-in to stamping of image_push rules
 common --@rules_img//img/settings:stamp=disabled
 

@@ -1,0 +1,85 @@
+load("@rules_img//img:image.bzl", "image_from_binary")
+load("@rules_img//img:multi_deploy.bzl", "multi_deploy")
+load("@rules_img//img:push.bzl", "image_push")
+
+image_from_binary(
+    name = "3p_deps_demo",
+    binary = "@rules_runfiles_group_example//src:3p_deps_demo",
+)
+
+image_from_binary(
+    name = "adder",
+    binary = "@rules_runfiles_group_example//src:adder",
+)
+
+image_from_binary(
+    name = "adder_without_interpreter",
+    binary = "@rules_runfiles_group_example//src:adder_without_interpreter",
+)
+
+image_from_binary(
+    name = "hasher",
+    binary = "@rules_runfiles_group_example//src:hasher",
+)
+
+image_from_binary(
+    name = "merge_demo",
+    binary = "@rules_runfiles_group_example//src:merge_demo",
+)
+
+image_from_binary(
+    name = "merge_demo_budgeted",
+    binary = "@rules_runfiles_group_example//src:merge_demo",
+    layer_budget = 4,
+)
+
+image_push(
+    name = "3p_deps_demo_push",
+    image = "3p_deps_demo",
+    registry = "ghcr.io",
+    repository = "malt3/3p_deps_demo",
+    tag = "latest",
+)
+
+image_push(
+    name = "adder_push",
+    image = "adder",
+    registry = "ghcr.io",
+    repository = "malt3/adder",
+    tag = "latest",
+)
+
+image_push(
+    name = "hasher_push",
+    image = "hasher",
+    registry = "ghcr.io",
+    repository = "malt3/hasher",
+    tag = "latest",
+)
+
+image_push(
+    name = "merge_demo_push",
+    image = "merge_demo",
+    registry = "ghcr.io",
+    repository = "malt3/merge_demo",
+    tag = "latest",
+)
+
+image_push(
+    name = "merge_demo_budgeted_push",
+    image = "merge_demo_budgeted",
+    registry = "ghcr.io",
+    repository = "malt3/merge_demo_budgeted",
+    tag = "latest",
+)
+
+multi_deploy(
+    name = "push",
+    operations = [
+        "3p_deps_demo_push",
+        "adder_push",
+        "hasher_push",
+        "merge_demo_push",
+        "merge_demo_budgeted_push",
+    ],
+)

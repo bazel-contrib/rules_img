@@ -1,0 +1,22 @@
+diff -Naur a/example/MODULE.bazel b/example/MODULE.bazel
+--- a/example/MODULE.bazel	2026-04-30 15:35:02
++++ b/example/MODULE.bazel	2026-04-30 15:36:05
+@@ -1,16 +1,11 @@
+-module(name = "rules_runfiles_group_example")
++module(name = "rules_runfiles_group_example", version = "0.0.1-rc.2")
+ 
+-bazel_dep(name = "rules_runfiles_group")
++bazel_dep(name = "rules_runfiles_group", version = "0.0.1-rc.2")
+ bazel_dep(name = "rules_go", version = "0.60.0")
+ bazel_dep(name = "hermetic_launcher", version = "0.0.5")
+ bazel_dep(name = "gazelle", version = "0.50.0")
+ bazel_dep(name = "sha256.bzl", version = "0.0.1")
+ bazel_dep(name = "bazel_skylib", version = "1.9.0")
+-
+-local_path_override(
+-    module_name = "rules_runfiles_group",
+-    path = "../",
+-)
+ 
+ local_starlark_repository = use_repo_rule("//producer/repository_rules:local_starlark_repository.bzl", "local_starlark_repository")
+ 

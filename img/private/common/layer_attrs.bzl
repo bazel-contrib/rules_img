@@ -89,6 +89,14 @@ Override the layer media type. By default, the media type is auto-detected from 
         default = Label("//img/settings:layer_tree_artifact_handling"),
         providers = [BuildSettingInfo],
     ),
+    _default_runfiles_shared_path = attr.label(
+        default = Label("//img/settings:runfiles_shared_path"),
+        providers = [BuildSettingInfo],
+    ),
+    _default_runfiles_sharing_mode = attr.label(
+        default = Label("//img/settings:runfiles_sharing_mode"),
+        providers = [BuildSettingInfo],
+    ),
     _compression_jobs = attr.label(
         default = Label("//img/settings:compression_jobs"),
         providers = [BuildSettingInfo],

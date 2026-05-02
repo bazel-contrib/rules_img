@@ -1,10 +1,19 @@
 """Binary layer rule for packaging a *_binary target into a container image layer."""
 
+load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
+load("@rules_runfiles_group//runfiles_group:lib.bzl", "lib")
+load(
+    "@rules_runfiles_group//runfiles_group:providers.bzl",
+    "RunfilesGroupInfo",
+    "RunfilesGroupMetadataInfo",
+    "RunfilesGroupTransformInfo",
+)
 load("//img/private/common:build.bzl", "TOOLCHAINS")
 load("//img/private/common:layer_attrs.bzl", "layer_attrs")
 load(
     "//img/private/common:tar_layer.bzl",
     "create_tar_layer",
+    "create_tar_single_layer",
     "files_arg",
     "get_repo_mapping_manifest",
     "resolve_layer_settings",
@@ -23,6 +32,17 @@ Collects args and env of a *_binary target.
     fields = dict(
         args = "Arguments of the *_binary target",
         env = "Environment variables of the *_binary target",
+    ),
+)
+
+_BinaryRunfilesGroupsInfo = provider(
+    doc = """\
+This provider is only used by a private aspect and shouldn't be visible outside the layer_from_binary rule.
+Holds the resolved runfiles groups and metadata from the RunfilesGroupInfo resolution protocol.
+""",
+    fields = dict(
+        runfiles_group_info = "RunfilesGroupInfo or None if RunfilesGroupInfo is absent",
+        runfiles_group_metadata_info = "RunfilesGroupMetadataInfo or None",
     ),
 )
 
@@ -55,19 +75,192 @@ def _binary_run_info_extraction_aspect_impl(target, ctx):
             v = ctx.expand_location(v, targets = targets_for_expansion)
             v = ctx.expand_make_variables("env", v, {})
             extracted_env[k] = v
-    return [_BinaryRunInfo(
-        args = extracted_args,
-        env = extracted_env,
-    )]
+
+    # Resolve RunfilesGroupInfo using the resolution protocol.
+    rgi = None
+    metadata = None
+    if RunfilesGroupInfo in target:
+        rgi = target[RunfilesGroupInfo]
+
+        # Accumulate metadata from binary + aspect_hints (per-key last-wins).
+        if RunfilesGroupMetadataInfo in target:
+            metadata = target[RunfilesGroupMetadataInfo]
+        if hasattr(ctx.rule.attr, "aspect_hints"):
+            for hint in ctx.rule.attr.aspect_hints:
+                if RunfilesGroupMetadataInfo in hint:
+                    metadata = lib.merge_metadata(metadata, hint[RunfilesGroupMetadataInfo])
+
+            # Apply transforms in aspect_hints order.
+            for hint in ctx.rule.attr.aspect_hints:
+                if RunfilesGroupTransformInfo in hint:
+                    result = lib.transform_groups(rgi, metadata, hint[RunfilesGroupTransformInfo])
+                    rgi = result.runfiles_group_info
+                    metadata = result.runfiles_group_metadata_info
+
+    return [
+        _BinaryRunInfo(
+            args = extracted_args,
+            env = extracted_env,
+        ),
+        _BinaryRunfilesGroupsInfo(
+            runfiles_group_info = rgi,
+            runfiles_group_metadata_info = metadata,
+        ),
+    ]
 
 _binary_run_info_extraction_aspect = aspect(
     implementation = _binary_run_info_extraction_aspect_impl,
     attr_aspects = [],  # The aspect only inspect the target itself (not the deps)
-    provides = [_BinaryRunInfo],
+    provides = [_BinaryRunInfo, _BinaryRunfilesGroupsInfo],
 )
+
+def _normalize_path(path):
+    """Strip leading slash from a path for use in tar entries."""
+    if path.startswith("/"):
+        return path[1:]
+    return path
+
+def _extract_runfiles_top_level_dir(f):
+    """Extract the top-level directory name from a runfiles file for symlink dedup.
+
+    Used as map_each callback with uniquify=True to produce one symlink entry
+    per unique top-level directory under the runfiles root.
+    """
+    if f.short_path.startswith("../"):
+        remainder = f.short_path[3:]
+        slash_pos = remainder.find("/")
+        entry = remainder[:slash_pos] if slash_pos > 0 else remainder
+    else:
+        entry = "_main"
+    if entry == "_repo_mapping":
+        return None
+    return entry
+
+def _resolve_runfiles_config(ctx, path_in_image, has_runfiles_groups):
+    """Resolve runfiles placement configuration."""
+    mode = ctx.attr.runfiles_sharing_mode
+    if mode == "auto":
+        mode = ctx.attr._default_runfiles_sharing_mode[BuildSettingInfo].value
+    if mode == "auto":
+        mode = "shared" if has_runfiles_groups else "private"
+
+    conventional_runfiles_path = ctx.attr.runfiles_path if ctx.attr.runfiles_path else "{}.runfiles".format(path_in_image)
+
+    if mode == "shared":
+        if ctx.attr.runfiles_shared_path:
+            content_path = ctx.attr.runfiles_shared_path
+        else:
+            content_path = ctx.attr._default_runfiles_shared_path[BuildSettingInfo].value
+        return struct(
+            shared = True,
+            runfiles_content_path = content_path,
+            runfiles_symlink_path = conventional_runfiles_path,
+        )
+    else:
+        return struct(
+            shared = False,
+            runfiles_content_path = conventional_runfiles_path,
+            runfiles_symlink_path = None,
+        )
+
+def _create_grouped_layers(ctx, settings, exe, path_in_image, ordered_groups, runfiles_config, can_use_executable_flag):
+    """Create multiple layers from RunfilesGroupInfo groups."""
+    all_layers = []
+    all_outs = []
+    all_metadata = []
+    default_info = ctx.attr.binary[DefaultInfo]
+    runfiles = default_info.default_runfiles
+    last_idx = len(ordered_groups) - 1
+    content_prefix = _normalize_path(runfiles_config.runfiles_content_path)
+
+    for i, (_, group_files) in enumerate(ordered_groups):
+        layer_name = "{}_{}".format(ctx.attr.name, i)
+        is_last = (i == last_idx)
+        extra_args = []
+        extra_inputs = [group_files]
+
+        if is_last:
+            extra_inputs.append(default_info.files)
+
+            if can_use_executable_flag:
+                extra_args.append("--executable={}={}".format(path_in_image, exe.path))
+
+                runfiles_args = ctx.actions.args()
+                runfiles_args.set_param_file_format("multiline")
+                runfiles_args.use_param_file("--runfiles={}=%s".format(exe.path), use_always = True)
+                runfiles_args.add_all(group_files, map_each = to_short_path_pair, expand_directories = False, uniquify = True)
+                if runfiles:
+                    runfiles_args.add_all(runfiles.symlinks, map_each = symlinks_arg)
+                    runfiles_args.add_all(runfiles.root_symlinks, map_each = root_symlinks_arg)
+                extra_args.append(runfiles_args)
+            else:
+                binary_args = ctx.actions.args()
+                binary_args.set_param_file_format("multiline")
+                binary_args.use_param_file("--add-from-file=%s", use_always = True)
+                binary_args.add_all([exe], map_each = files_arg, format_each = "{}\0%s".format(_normalize_path(path_in_image)), expand_directories = False)
+                extra_args.append(binary_args)
+
+                add_args = ctx.actions.args()
+                add_args.set_param_file_format("multiline")
+                add_args.use_param_file("--add-from-file=%s", use_always = True)
+                add_args.add_all(group_files, map_each = to_short_path_pair, format_each = "{}/%s".format(content_prefix), expand_directories = False, uniquify = True)
+                if runfiles:
+                    add_args.add_all(runfiles.symlinks, map_each = symlinks_arg, format_each = "{}/%s".format(content_prefix))
+                    add_args.add_all(runfiles.root_symlinks, map_each = root_symlinks_arg, format_each = "{}/%s".format(content_prefix))
+                extra_args.append(add_args)
+
+                if runfiles_config.shared:
+                    all_runfiles = depset(transitive = [gf for _, gf in ordered_groups])
+                    symlink_prefix = _normalize_path(runfiles_config.runfiles_symlink_path)
+                    rel_content = "/".join([".."] * (symlink_prefix.count("/") + 1)) + "/" + content_prefix
+                    symlink_args = ctx.actions.args()
+                    symlink_args.set_param_file_format("multiline")
+                    symlink_args.use_param_file("--symlink-pairs-from-file=%s", use_always = True)
+                    symlink_args.add_all(all_runfiles, map_each = _extract_runfiles_top_level_dir, format_each = "{}\0{}\0%s".format(symlink_prefix, rel_content), uniquify = True, expand_directories = False)
+                    extra_args.append(symlink_args)
+
+            if runfiles:
+                symlink_inputs = []
+                symlink_inputs.extend([se.target_file for se in runfiles.symlinks.to_list()])
+                symlink_inputs.extend([se.target_file for se in runfiles.root_symlinks.to_list()])
+                if len(symlink_inputs) > 0:
+                    extra_inputs.append(depset(symlink_inputs))
+
+            repo_mapping_manifest = get_repo_mapping_manifest(ctx.attr.binary)
+            if repo_mapping_manifest != None:
+                extra_inputs.append(depset([repo_mapping_manifest]))
+                repo_mapping_args = ctx.actions.args()
+                repo_mapping_args.set_param_file_format("multiline")
+                repo_mapping_args.use_param_file("--add-from-file=%s", use_always = True)
+                repo_mapping_args.add_all([repo_mapping_manifest], map_each = files_arg, format_each = "{}.repo_mapping\0%s".format(_normalize_path(path_in_image)), expand_directories = False)
+                repo_mapping_args.add_all([repo_mapping_manifest], map_each = files_arg, format_each = "{}/_repo_mapping\0%s".format(
+                    _normalize_path(runfiles_config.runfiles_symlink_path) if runfiles_config.shared else content_prefix,
+                ), expand_directories = False)
+                extra_args.append(repo_mapping_args)
+        else:
+            add_args = ctx.actions.args()
+            add_args.set_param_file_format("multiline")
+            add_args.use_param_file("--add-from-file=%s", use_always = True)
+            add_args.add_all(group_files, map_each = to_short_path_pair, format_each = "{}/%s".format(content_prefix), expand_directories = False, uniquify = True)
+            extra_args.append(add_args)
+
+        layer_info, out, metadata = create_tar_single_layer(ctx, settings, layer_name, extra_args, extra_inputs)
+        all_layers.append(layer_info)
+        all_outs.append(out)
+        all_metadata.append(metadata)
+
+    return [
+        DefaultInfo(files = depset(all_outs)),
+        OutputGroupInfo(
+            layer = depset(all_outs),
+            metadata = depset(all_metadata),
+        ),
+        LayersInfo(layers = all_layers),
+    ]
 
 def _layer_from_binary_impl(ctx):
     run_info = ctx.attr.binary[_BinaryRunInfo]
+    groups_info = ctx.attr.binary[_BinaryRunfilesGroupsInfo]
     exe = ctx.executable.binary
     path_in_image = ctx.attr.path
     if len(path_in_image) == 0:
@@ -81,55 +274,137 @@ def _layer_from_binary_impl(ctx):
             basename = exe.basename,
         )
     absolute_entrypoint = path_in_image if path_in_image.startswith("/") else "/" + path_in_image
+
+    rgi = groups_info.runfiles_group_info
+    metadata = groups_info.runfiles_group_metadata_info
+    ordered_groups = None
+    if rgi != None:
+        if ctx.attr.layer_budget > 0:
+            merge_result = lib.merge_to_limit(rgi, metadata, max_groups = ctx.attr.layer_budget)
+            rgi = merge_result.runfiles_group_info
+            metadata = merge_result.runfiles_group_metadata_info
+        ordered_groups = lib.ordered_groups(rgi, metadata)
+
+    has_runfiles_groups = (
+        ordered_groups != None and
+        len(ordered_groups) > 0
+    )
+    runfiles_config = _resolve_runfiles_config(ctx, path_in_image, has_runfiles_groups)
+
     working_dir = None
     if ctx.attr.include_runfiles:
-        working_dir = "{}.runfiles/_main".format(absolute_entrypoint)
+        effective_runfiles_path = runfiles_config.runfiles_symlink_path if runfiles_config.shared else runfiles_config.runfiles_content_path
+        abs_rf = effective_runfiles_path if effective_runfiles_path.startswith("/") else "/" + effective_runfiles_path
+        working_dir = "{}/_main".format(abs_rf)
 
     settings = resolve_layer_settings(ctx)
 
-    extra_args = []
-    extra_inputs = []
+    # The Go tool's --executable/--runfiles hardcodes {target}.runfiles as prefix.
+    # We can only use that fast path when the content path matches that convention.
+    can_use_executable_flag = (
+        runfiles_config.runfiles_content_path == "{}.runfiles".format(path_in_image) and
+        not runfiles_config.shared
+    )
 
-    default_info = ctx.attr.binary[DefaultInfo]
-    extra_inputs.append(default_info.files)
+    use_groups = (
+        ctx.attr.include_runfiles and
+        has_runfiles_groups
+    )
 
-    if ctx.attr.include_runfiles:
-        extra_args.append("--executable={}={}".format(path_in_image, exe.path))
-
-        runfiles = default_info.default_runfiles
-        if runfiles:
-            runfiles_args = ctx.actions.args()
-            runfiles_args.set_param_file_format("multiline")
-            runfiles_args.use_param_file("--runfiles={}=%s".format(exe.path), use_always = True)
-            runfiles_args.add_all(runfiles.files, map_each = to_short_path_pair, expand_directories = False, uniquify = True)
-            runfiles_args.add_all(runfiles.symlinks, map_each = symlinks_arg)
-            runfiles_args.add_all(runfiles.root_symlinks, map_each = root_symlinks_arg)
-            extra_args.append(runfiles_args)
-            extra_inputs.append(runfiles.files)
-
-            symlink_inputs = []
-            symlink_inputs.extend([symlink_entry.target_file for symlink_entry in runfiles.symlinks.to_list()])
-            symlink_inputs.extend([symlink_entry.target_file for symlink_entry in runfiles.root_symlinks.to_list()])
-            if len(symlink_inputs) > 0:
-                extra_inputs.append(depset(symlink_inputs))
-
-        repo_mapping_manifest = get_repo_mapping_manifest(ctx.attr.binary)
-        if repo_mapping_manifest != None:
-            extra_inputs.append(depset([repo_mapping_manifest]))
-            repo_mapping_args = ctx.actions.args()
-            repo_mapping_args.set_param_file_format("multiline")
-            repo_mapping_args.use_param_file("--add-from-file=%s", use_always = True)
-            repo_mapping_args.add_all([repo_mapping_manifest], map_each = files_arg, format_each = "{}.repo_mapping\0%s".format(path_in_image), expand_directories = False)
-            repo_mapping_args.add_all([repo_mapping_manifest], map_each = files_arg, format_each = "{}.runfiles/_repo_mapping\0%s".format(path_in_image), expand_directories = False)
-            extra_args.append(repo_mapping_args)
+    if use_groups:
+        result = _create_grouped_layers(ctx, settings, exe, path_in_image, ordered_groups, runfiles_config, can_use_executable_flag)
     else:
-        binary_file_args = ctx.actions.args()
-        binary_file_args.set_param_file_format("multiline")
-        binary_file_args.use_param_file("--add-from-file=%s", use_always = True)
-        binary_file_args.add_all(default_info.files, map_each = files_arg, format_each = "{}\0%s".format(path_in_image), expand_directories = False)
-        extra_args.append(binary_file_args)
+        extra_args = []
+        extra_inputs = []
 
-    result = create_tar_layer(ctx, settings, extra_args = extra_args, extra_inputs = extra_inputs)
+        default_info = ctx.attr.binary[DefaultInfo]
+        extra_inputs.append(default_info.files)
+
+        if ctx.attr.include_runfiles:
+            content_prefix = _normalize_path(runfiles_config.runfiles_content_path)
+
+            if can_use_executable_flag:
+                extra_args.append("--executable={}={}".format(path_in_image, exe.path))
+
+                runfiles = default_info.default_runfiles
+                if runfiles:
+                    runfiles_args = ctx.actions.args()
+                    runfiles_args.set_param_file_format("multiline")
+                    runfiles_args.use_param_file("--runfiles={}=%s".format(exe.path), use_always = True)
+                    runfiles_args.add_all(runfiles.files, map_each = to_short_path_pair, expand_directories = False, uniquify = True)
+                    runfiles_args.add_all(runfiles.symlinks, map_each = symlinks_arg)
+                    runfiles_args.add_all(runfiles.root_symlinks, map_each = root_symlinks_arg)
+                    extra_args.append(runfiles_args)
+                    extra_inputs.append(runfiles.files)
+
+                    symlink_inputs = []
+                    symlink_inputs.extend([symlink_entry.target_file for symlink_entry in runfiles.symlinks.to_list()])
+                    symlink_inputs.extend([symlink_entry.target_file for symlink_entry in runfiles.root_symlinks.to_list()])
+                    if len(symlink_inputs) > 0:
+                        extra_inputs.append(depset(symlink_inputs))
+
+                repo_mapping_manifest = get_repo_mapping_manifest(ctx.attr.binary)
+                if repo_mapping_manifest != None:
+                    extra_inputs.append(depset([repo_mapping_manifest]))
+                    repo_mapping_args = ctx.actions.args()
+                    repo_mapping_args.set_param_file_format("multiline")
+                    repo_mapping_args.use_param_file("--add-from-file=%s", use_always = True)
+                    repo_mapping_args.add_all([repo_mapping_manifest], map_each = files_arg, format_each = "{}.repo_mapping\0%s".format(_normalize_path(path_in_image)), expand_directories = False)
+                    repo_mapping_args.add_all([repo_mapping_manifest], map_each = files_arg, format_each = "{}/_repo_mapping\0%s".format(content_prefix), expand_directories = False)
+                    extra_args.append(repo_mapping_args)
+            else:
+                binary_args = ctx.actions.args()
+                binary_args.set_param_file_format("multiline")
+                binary_args.use_param_file("--add-from-file=%s", use_always = True)
+                binary_args.add_all([exe], map_each = files_arg, format_each = "{}\0%s".format(_normalize_path(path_in_image)), expand_directories = False)
+                extra_args.append(binary_args)
+
+                runfiles = default_info.default_runfiles
+                if runfiles:
+                    runfiles_add_args = ctx.actions.args()
+                    runfiles_add_args.set_param_file_format("multiline")
+                    runfiles_add_args.use_param_file("--add-from-file=%s", use_always = True)
+                    runfiles_add_args.add_all(runfiles.files, map_each = to_short_path_pair, format_each = "{}/%s".format(content_prefix), expand_directories = False, uniquify = True)
+                    runfiles_add_args.add_all(runfiles.symlinks, map_each = symlinks_arg, format_each = "{}/%s".format(content_prefix))
+                    runfiles_add_args.add_all(runfiles.root_symlinks, map_each = root_symlinks_arg, format_each = "{}/%s".format(content_prefix))
+                    extra_args.append(runfiles_add_args)
+                    extra_inputs.append(runfiles.files)
+
+                    symlink_inputs = []
+                    symlink_inputs.extend([symlink_entry.target_file for symlink_entry in runfiles.symlinks.to_list()])
+                    symlink_inputs.extend([symlink_entry.target_file for symlink_entry in runfiles.root_symlinks.to_list()])
+                    if len(symlink_inputs) > 0:
+                        extra_inputs.append(depset(symlink_inputs))
+
+                if runfiles_config.shared and runfiles:
+                    symlink_prefix = _normalize_path(runfiles_config.runfiles_symlink_path)
+                    rel_content = "/".join([".."] * (symlink_prefix.count("/") + 1)) + "/" + content_prefix
+                    symlink_args = ctx.actions.args()
+                    symlink_args.set_param_file_format("multiline")
+                    symlink_args.use_param_file("--symlink-pairs-from-file=%s", use_always = True)
+                    symlink_args.add_all(runfiles.files, map_each = _extract_runfiles_top_level_dir, format_each = "{}\0{}\0%s".format(symlink_prefix, rel_content), uniquify = True, expand_directories = False)
+                    extra_args.append(symlink_args)
+
+                repo_mapping_manifest = get_repo_mapping_manifest(ctx.attr.binary)
+                if repo_mapping_manifest != None:
+                    extra_inputs.append(depset([repo_mapping_manifest]))
+                    repo_mapping_args = ctx.actions.args()
+                    repo_mapping_args.set_param_file_format("multiline")
+                    repo_mapping_args.use_param_file("--add-from-file=%s", use_always = True)
+                    repo_mapping_args.add_all([repo_mapping_manifest], map_each = files_arg, format_each = "{}.repo_mapping\0%s".format(_normalize_path(path_in_image)), expand_directories = False)
+                    repo_mapping_args.add_all([repo_mapping_manifest], map_each = files_arg, format_each = "{}/_repo_mapping\0%s".format(
+                        _normalize_path(runfiles_config.runfiles_symlink_path) if runfiles_config.shared else content_prefix,
+                    ), expand_directories = False)
+                    extra_args.append(repo_mapping_args)
+        else:
+            binary_file_args = ctx.actions.args()
+            binary_file_args.set_param_file_format("multiline")
+            binary_file_args.use_param_file("--add-from-file=%s", use_always = True)
+            binary_file_args.add_all(default_info.files, map_each = files_arg, format_each = "{}\0%s".format(path_in_image), expand_directories = False)
+            extra_args.append(binary_file_args)
+
+        result = create_tar_layer(ctx, settings, extra_args = extra_args, extra_inputs = extra_inputs)
+
     return result + [
         ImageLayerConfigInfo(
             entrypoint = [absolute_entrypoint],
@@ -151,6 +426,16 @@ image with Dockerfile-like semantics.
 The binary's `args` attribute becomes the image `cmd`, its `env` attribute (or
 RunEnvironmentInfo provider) becomes `env`, and the binary path becomes the `entrypoint`.
 When include_runfiles is True (default), the working directory is set to the runfiles root.
+
+If the binary provides RunfilesGroupInfo (from rules_runfiles_group), the runfiles are split
+into separate layers based on the groups. This allows for better caching: stable layers
+(interpreter, stdlib) change infrequently and can be shared, while the application code layer
+changes with each build. The resolution protocol respects RunfilesGroupTransformInfo and
+RunfilesGroupMetadataInfo from the binary's aspect_hints.
+
+When the number of groups exceeds what is practical for a container image, use `layer_budget`
+to merge groups down to a maximum count. The merge algorithm respects group rank (only merges
+within the same rank), do_not_merge flags, and weight hints (lighter groups merge first).
 
 Example:
 
@@ -193,7 +478,9 @@ layer_from_binary(
 
 The binary's `args` and `env` attributes are extracted and provided as image configuration
 (cmd and env) via ImageLayerConfigInfo. The `data` attribute is used for `$(location)` expansion
-in args and env values.""",
+in args and env values.
+
+If the binary provides RunfilesGroupInfo, the runfiles are split into separate layers per group.""",
             executable = True,
             mandatory = True,
             cfg = "target",
@@ -205,6 +492,48 @@ in args and env values.""",
 Optional path of the binary inside the image.
 If the path ends with a slash ("/"), the basename of the binary will be automatically appended.
 If unset, this defaults to the rlocationpath of the binary (e.g., "_main/cmd/server/server_/server").
+""",
+        ),
+        "runfiles_path": attr.string(
+            mandatory = False,
+            doc = """\
+Optional path of the runfiles directory of the binary inside the image.
+If unset, this defaults to the path of the binary with a .runfiles suffix (e.g., "_main/cmd/server/server_/server.runfiles").
+Note: depending on the runfiles_sharing_mode, this may be a symlink to a shared runfiles directory.
+""",
+        ),
+        "runfiles_shared_path": attr.string(
+            mandatory = False,
+            doc = """\
+Optional path of the shared runfiles directory inside the image.
+This is only used when runfiles sharing is enabled and has a global default.
+""",
+        ),
+        "runfiles_sharing_mode": attr.string(
+            mandatory = False,
+            doc = """\
+How to process runfiles.
+Runfiles can either be placed next to the executable (in a directory with a .runfiles suffix, the runfiles_path attribute),
+or placed in a shared runfiles path. When sharing runfiles, there will be symlink added: {runfiles_path} -> {runfiles_shared_path}.
+
+Possible settings:
+
+* `"auto"`: Share runfiles based on the global default and based on the presence of `RunfilesGroupInfo`.
+    Globally, runfiles sharing can be set to `"shared"`, `"private"`, or `"auto"`, where auto shares runfiles if `RunfilesGroupInfo` is provided.
+* `"shared"`: Always share runfiles.
+* `"private"`: Never share runfiles
+""",
+            default = "auto",
+            values = ["auto", "shared", "private"],
+        ),
+        "layer_budget": attr.int(
+            default = 0,
+            doc = """\
+Maximum number of runfiles group layers.
+If set to a value > 0 and the binary provides RunfilesGroupInfo, groups are merged down to this
+limit using the merge algorithm from rules_runfiles_group. The algorithm respects group rank
+(only merges within the same rank), do_not_merge flags, and weight hints (lighter groups merge first).
+0 means no limit (all groups become separate layers).
 """,
         ),
     } | layer_attrs.common,

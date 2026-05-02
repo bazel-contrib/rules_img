@@ -127,3 +127,46 @@ func splitParamFileLineKV(line string) (string, string, error) {
 	value := parts[1]
 	return pathInImage, value, nil
 }
+
+// readSymlinkPairsParamFile reads a parameter file where each line contains
+// three null-separated fields: source_prefix, dest_prefix, and dir_name.
+// For each line, it produces a symlink: source_prefix/dir_name -> dest_prefix/dir_name.
+func readSymlinkPairsParamFile(paramFile string) (symlinks, error) {
+	file, err := os.Open(paramFile)
+	if err != nil {
+		return nil, fmt.Errorf("opening parameter file: %w", err)
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+
+	var links symlinks
+	for scanner.Scan() {
+		line := scanner.Text()
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, "\x00", 3)
+		if len(parts) != 3 {
+			return nil, fmt.Errorf("expected 3 null-separated fields (source_prefix, dest_prefix, dir_name), got %d in line: %s", len(parts), line)
+		}
+		srcPrefix := parts[0]
+		dstPrefix := parts[1]
+		dirName := parts[2]
+		if dirName == "" {
+			return nil, fmt.Errorf("dir_name cannot be empty: %s", line)
+		}
+		linkName := srcPrefix + "/" + dirName
+		if len(linkName) > 0 && linkName[0] == '/' {
+			linkName = linkName[1:]
+		}
+		links = append(links, symlink{
+			LinkName: linkName,
+			Target:   dstPrefix + "/" + dirName,
+		})
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("reading parameter file: %w", err)
+	}
+	return links, nil
+}

@@ -32,6 +32,7 @@ func LayerProcess(ctx context.Context, args []string) {
 	var executableFlags executables
 	var symlinkFlags symlinks
 	var symlinksFromFiles symlinksFromFileArgs
+	var symlinkPairsFromFiles symlinkPairsFromFileArgs
 	var contentManifestInputFlags contentManifests
 	var contentManifestCollection string
 	var formatFlag string
@@ -72,6 +73,7 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 	flagSet.Var(&runfilesFlags, "runfiles", `Add the runfiles of an executable file. The runfiles are read from the specified parameter file with the same encoding used by --add-from-file. The parameter file is usually written by Bazel.`)
 	flagSet.Var(&symlinkFlags, "symlink", `Add a symlink to the image layer. The parameter is a string of the form <path_in_image>=<target> where <path_in_image> is the path in the image and <target> is the target of the symlink.`)
 	flagSet.Var(&symlinksFromFiles, "symlinks-from-file", `Add all symlinks listed in the parameter file to the image layer. The parameter file is usually written by Bazel.`)
+	flagSet.Var(&symlinkPairsFromFiles, "symlink-pairs-from-file", `Add symlinks from a parameter file where each line has three null-separated fields: source_prefix, dest_prefix, dir_name. Creates symlink source_prefix/dir_name -> dest_prefix/dir_name.`)
 	flagSet.Var(&contentManifestInputFlags, "deduplicate", `Path of a content manifest of a previous layer that can be used for deduplication.`)
 	flagSet.StringVar(&contentManifestCollection, "deduplicate-collection", "", `Path of a content manifest collection file that can be used for deduplication.`)
 	flagSet.StringVar(&formatFlag, "format", "", `The compression format of the output layer. Can be "gzip", "zstd", or "none". Default is to guess the algorithm based on the filename, but fall back to "gzip".`)
@@ -173,6 +175,16 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 		symlinkOpsFromParamFile, err := readSymlinkParamFile(paramFile)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error reading symlink parameter file: %v\n", err)
+			os.Exit(1)
+		}
+		symlinkFlags = append(symlinkFlags, symlinkOpsFromParamFile...)
+	}
+
+	// read the symlinkPairsFromFile parameter file and create a list of operations
+	for _, paramFile := range symlinkPairsFromFiles {
+		symlinkOpsFromParamFile, err := readSymlinkPairsParamFile(paramFile)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error reading symlink pairs parameter file: %v\n", err)
 			os.Exit(1)
 		}
 		symlinkFlags = append(symlinkFlags, symlinkOpsFromParamFile...)

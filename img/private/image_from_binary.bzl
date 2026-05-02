@@ -5,7 +5,7 @@ load("//img/private:index.bzl", "image_index")
 load("//img/private:layer_from_binary.bzl", "layer_from_binary")
 load("//img/private:manifest.bzl", "image_manifest")
 
-def _image_from_binary_impl(name, binary, path, include_runfiles, layers, kind, platforms, visibility, tags, **kwargs):
+def _image_from_binary_impl(name, binary, path, include_runfiles, layer_budget, layers, kind, platforms, visibility, tags, **kwargs):
     tags = (tags or [])
     intermediate_tags = [] + tags
     if "manual" not in intermediate_tags:
@@ -15,6 +15,7 @@ def _image_from_binary_impl(name, binary, path, include_runfiles, layers, kind, 
         binary = binary,
         path = path,
         include_runfiles = include_runfiles,
+        layer_budget = layer_budget,
         visibility = visibility,
         tags = intermediate_tags,
     )
@@ -39,12 +40,13 @@ def _image_from_binary_impl(name, binary, path, include_runfiles, layers, kind, 
             visibility = visibility,
         )
 
-def _image_from_binary_legacy(*, name, binary, path = "", include_runfiles = True, layers = [], kind = "auto", platforms = [], visibility = None, tags = None, **kwargs):
+def _image_from_binary_legacy(*, name, binary, path = "", include_runfiles = True, layer_budget = 0, layers = [], kind = "auto", platforms = [], visibility = None, tags = None, **kwargs):
     _image_from_binary_impl(
         name = name,
         binary = binary,
         path = path,
         include_runfiles = include_runfiles,
+        layer_budget = layer_budget,
         layers = layers,
         kind = kind,
         platforms = platforms,
@@ -66,6 +68,12 @@ image configuration:
 - **cmd** is populated from the binary's `args` attribute
 - **env** is populated from the binary's `env` attribute (or RunEnvironmentInfo provider)
 - **working_dir** is set to the binary's runfiles root
+
+If the binary provides RunfilesGroupInfo (from rules_runfiles_group), the runfiles are split
+into separate layers based on the groups. This allows for better caching: stable layers
+(interpreter, stdlib) change infrequently and can be shared, while the application code layer
+changes with each build. The resolution protocol respects RunfilesGroupTransformInfo and
+RunfilesGroupMetadataInfo from the binary's aspect_hints.
 
 All image_manifest attributes (base, env, labels, annotations, etc.) are inherited and
 forwarded to the underlying image_manifest. The binary layer is always appended as the
@@ -123,7 +131,9 @@ Targets created:
             doc = """The *_binary target to package into the image.
 
 The binary's `args` and `env` attributes are extracted and applied as image configuration
-(cmd and env). The `data` attribute is used for `$(location)` expansion in args and env values.""",
+(cmd and env). The `data` attribute is used for `$(location)` expansion in args and env values.
+
+If the binary provides RunfilesGroupInfo, the runfiles are split into separate layers per group.""",
             mandatory = True,
         ),
         "path": attr.string(
@@ -145,6 +155,16 @@ Whether to include runfiles for the binary target.
 When True (default), the binary's runfiles tree is included and the working directory
 is set to the runfiles root. Set to False for statically linked binaries that don't
 need runfiles.
+""",
+        ),
+        "layer_budget": attr.int(
+            default = 0,
+            doc = """\
+Maximum number of runfiles group layers.
+If set to a value > 0 and the binary provides RunfilesGroupInfo, groups are merged down to this
+limit using the merge algorithm from rules_runfiles_group. The algorithm respects group rank
+(only merges within the same rank), do_not_merge flags, and weight hints (lighter groups merge first).
+0 means no limit (all groups become separate layers).
 """,
         ),
         "kind": attr.string(
