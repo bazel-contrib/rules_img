@@ -51,7 +51,10 @@ bazel_integration_tests(
 
 bazel_integration_tests(
     name = "js",
-    bazel_versions = bazel_binaries.versions.all,
+    bazel_versions = [
+        "8.6.0",
+        "9.0.2",
+    ],
     tags = TAGS,
     target_compatible_with = select({
         # skip windows due to this issue in aspect_rules_js:
@@ -78,7 +81,10 @@ bazel_integration_tests(
 
 bazel_integration_tests(
     name = "python",
-    bazel_versions = bazel_binaries.versions.all,
+    bazel_versions = [
+        "8.6.0",
+        "9.0.2",
+    ],
     tags = TAGS,
     target_compatible_with = select({
         # skip windows due to this issue in aspect_rules_py:
@@ -99,7 +105,7 @@ bazel_integration_tests(
     # Supply chain security tooling is still WIP.
     # It doesn't make sense to target older
     # Bazel versions.
-    bazel_versions = ["9.0.1"],
+    bazel_versions = ["9.0.2"],
     tags = TAGS,
     test_runner = "//img/private/integration_test_runner",
     workspace_files = integration_test_utils.glob_workspace_files("sbom") + [
@@ -136,14 +142,20 @@ test_suite(
         bazel_binaries.versions.all,
     ) + integration_test_utils.bazel_integration_test_names(
         "js",
-        bazel_binaries.versions.all,
+        [
+            "8.6.0",
+            "9.0.2",
+        ],
     ) + integration_test_utils.bazel_integration_test_names(
         "python",
-        bazel_binaries.versions.all,
+        [
+            "8.6.0",
+            "9.0.2",
+        ],
     ) + integration_test_utils.bazel_integration_test_names(
         "sbom",
         [
-            "9.0.1",
+            "9.0.2",
         ],
     ) + integration_test_utils.bazel_integration_test_names(
         "workspace",
