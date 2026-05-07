@@ -21,6 +21,15 @@ def _image_from_binary_impl(name, binary, path, include_runfiles, layer_budget, 
     )
     layers = layers + [name + ".layer"]
     root_kind = "manifest" if kind == "manifest" or (kind == "auto" and len(platforms) < 2) else "index"
+
+    # When the final target is an index, forward push_specs/load_specs to the index
+    # instead of the intermediate manifest.
+    index_extra_kwargs = {}
+    if root_kind == "index" and "push_specs" in kwargs:
+        index_extra_kwargs["push_specs"] = kwargs.pop("push_specs")
+    if root_kind == "index" and "load_specs" in kwargs:
+        index_extra_kwargs["load_specs"] = kwargs.pop("load_specs")
+
     manifest_name = name if root_kind == "manifest" else name + ".manifest"
     manifest_platform = None if (root_kind == "index" or len(platforms) == 0) else platforms[0]
     image_manifest(
@@ -38,6 +47,7 @@ def _image_from_binary_impl(name, binary, path, include_runfiles, layer_budget, 
             platforms = platforms,
             tags = tags,
             visibility = visibility,
+            **index_extra_kwargs
         )
 
 def _image_from_binary_legacy(*, name, binary, path = "", include_runfiles = True, layer_budget = 0, layers = [], kind = "auto", platforms = [], visibility = None, tags = None, **kwargs):

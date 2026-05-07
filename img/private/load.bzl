@@ -2,126 +2,33 @@
 
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("@hermetic_launcher//launcher:lib.bzl", "launcher")
-load("//img/private:layer_path_hints.bzl", "layer_hints_for_deploy_metadata")
+load("//img/private:push_metadata.bzl", "compute_load_metadata")
 load("//img/private:root_symlinks.bzl", "calculate_root_symlinks", "symlink_name_prefix")
 load("//img/private:stamp.bzl", "expand_or_write")
 load("//img/private/common:build.bzl", "TOOLCHAIN", "TOOLCHAINS")
 load("//img/private/common:default_deploy_tool.bzl", "default_deploy_tool")
+load("//img/private/common:deploy_attrs.bzl", "COMMON_LOAD_ATTRS")
+load("//img/private/common:deploy_helpers.bzl", "get_image_providers", "get_tags", "image_target_vars", "resolve_daemon", "resolve_load_strategy")
 load("//img/private/common:transitions.bzl", "reset_platform_transition")
 load("//img/private/providers:deploy_info.bzl", "DeployInfo")
 load("//img/private/providers:deploy_tool_info.bzl", "DeployToolInfo")
-load("//img/private/providers:index_info.bzl", "ImageIndexInfo")
 load("//img/private/providers:load_settings_info.bzl", "LoadSettingsInfo")
-load("//img/private/providers:manifest_info.bzl", "ImageManifestInfo")
 load("//img/private/providers:oci_layout_settings_info.bzl", "OCILayoutSettingsInfo")
 load("//img/private/providers:pull_info.bzl", "PullInfo")
-load("//img/private/providers:stamp_setting_info.bzl", "StampSettingInfo")
-
-def _load_strategy(ctx):
-    """Determine the load strategy to use based on the settings."""
-    load_settings = ctx.attr._load_settings[LoadSettingsInfo]
-    strategy = ctx.attr.strategy
-    if strategy == "auto":
-        strategy = load_settings.strategy
-    return strategy
-
-def _daemon(ctx):
-    """Determine the daemon to target based on the settings."""
-    load_settings = ctx.attr._load_settings[LoadSettingsInfo]
-    daemon = ctx.attr.daemon
-    if daemon == "auto":
-        daemon = load_settings.daemon
-    return daemon
-
-def _get_tags(ctx):
-    """Get the list of tags from the context, validating mutual exclusivity."""
-    if ctx.attr.tag and ctx.attr.tag_list:
-        fail("Cannot specify both 'tag' and 'tag_list' attributes")
-
-    tags = []
-    if ctx.attr.tag:
-        tags = [ctx.attr.tag]
-    elif ctx.attr.tag_list:
-        tags = ctx.attr.tag_list
-
-    # tag_file is handled separately via newline_delimited_lists_files and will be merged
-
-    return tags
-
-def _target_info(ctx):
-    pull_info = ctx.attr.image[PullInfo] if PullInfo in ctx.attr.image else None
-    if pull_info == None:
-        return {}
-    return dict(
-        original_registries = pull_info.registries,
-        original_repository = pull_info.repository,
-        original_tag = pull_info.tag,
-        original_digest = pull_info.digest,
-    )
 
 def _compute_load_metadata(*, ctx, configuration_json):
-    inputs = [configuration_json]
-    args = ctx.actions.args()
-    load_metadata_args = [args]
-    args.add("deploy-metadata")
-    args.add("--command", "load")
-    manifest_info = ctx.attr.image[ImageManifestInfo] if ImageManifestInfo in ctx.attr.image else None
-    index_info = ctx.attr.image[ImageIndexInfo] if ImageIndexInfo in ctx.attr.image else None
-    if manifest_info == None and index_info == None:
-        fail("image must provide ImageManifestInfo or ImageIndexInfo")
-    if manifest_info != None and index_info != None:
-        fail("image must provide either ImageManifestInfo or ImageIndexInfo, not both")
-    args.add("--strategy", _load_strategy(ctx))
-    args.add("--configuration-file", configuration_json.path)
-    target_info = _target_info(ctx)
-    if "original_registries" in target_info:
-        args.add_all(target_info["original_registries"], before_each = "--original-registry")
-    if "original_repository" in target_info:
-        args.add("--original-repository", target_info["original_repository"])
-    if "original_tag" in target_info and target_info["original_tag"] != None:
-        args.add("--original-tag", target_info["original_tag"])
-    if "original_digest" in target_info and target_info["original_digest"] != None:
-        args.add("--original-digest", target_info["original_digest"])
+    manifest_info, index_info = get_image_providers(ctx)
+    pull_info = ctx.attr.image[PullInfo] if PullInfo in ctx.attr.image else None
 
-    if manifest_info != None:
-        args.add("--root-path", manifest_info.manifest.path)
-        args.add("--root-kind", "manifest")
-        args.add("--manifest-path", "0=" + manifest_info.manifest.path)
-        args.add("--missing-blobs-for-manifest", "0=" + (",".join(manifest_info.missing_blobs)))
-        inputs.append(manifest_info.manifest)
-    if index_info != None:
-        args.add("--root-path", index_info.index.path)
-        args.add("--root-kind", "index")
-        for i, manifest in enumerate(index_info.manifests):
-            args.add("--manifest-path", "{}={}".format(i, manifest.manifest.path))
-            args.add("--missing-blobs-for-manifest", "{}={}".format(i, ",".join(manifest.missing_blobs)))
-        inputs.append(index_info.index)
-        inputs.extend([manifest.manifest for manifest in index_info.manifests])
-
-    outputs = []
-    layer_hints_file = layer_hints_for_deploy_metadata(
+    return compute_load_metadata(
         ctx,
-        index_info = index_info,
+        configuration_json = configuration_json,
         manifest_info = manifest_info,
-        strategy = _load_strategy(ctx),
-        args = load_metadata_args,
-        inputs = inputs,
-        outputs = outputs,
+        index_info = index_info,
+        strategy = resolve_load_strategy(ctx),
+        pull_info = pull_info,
+        output_prefix = ctx.label.name,
     )
-    metadata_out = ctx.actions.declare_file(ctx.label.name + ".json")
-    output_args = ctx.actions.args()
-    output_args.add(metadata_out)
-    load_metadata_args.append(output_args)
-    outputs.append(metadata_out)
-    img_toolchain_info = ctx.toolchains[TOOLCHAIN].imgtoolchaininfo
-    ctx.actions.run(
-        inputs = inputs,
-        outputs = outputs,
-        executable = img_toolchain_info.tool_exe,
-        arguments = load_metadata_args,
-        mnemonic = "LoadMetadata",
-    )
-    return metadata_out, layer_hints_file
 
 def _build_docker_tarball(ctx, configuration_json, manifest_info = None, index_info = None):
     """Build the Docker save tarball for the image.
@@ -198,23 +105,18 @@ def _build_docker_tarball(ctx, configuration_json, manifest_info = None, index_i
 
 def _image_load_impl(ctx):
     """Implementation of the load rule."""
-    manifest_info = ctx.attr.image[ImageManifestInfo] if ImageManifestInfo in ctx.attr.image else None
-    index_info = ctx.attr.image[ImageIndexInfo] if ImageIndexInfo in ctx.attr.image else None
-    if manifest_info == None and index_info == None:
-        fail("image must provide ImageManifestInfo or ImageIndexInfo")
-    if manifest_info != None and index_info != None:
-        fail("image must provide either ImageManifestInfo or ImageIndexInfo, not both")
+    manifest_info, index_info = get_image_providers(ctx)
     image_provider = manifest_info if manifest_info != None else index_info
 
-    strategy = _load_strategy(ctx)
+    strategy = resolve_load_strategy(ctx)
     include_layers = (strategy == "eager")
 
     root_symlinks_prefix = symlink_name_prefix(ctx)
     root_symlinks = calculate_root_symlinks(index_info, manifest_info, include_layers = include_layers, symlink_name_prefix = root_symlinks_prefix)
 
     templates = dict(
-        tags = _get_tags(ctx),
-        daemon = _daemon(ctx),
+        tags = get_tags(ctx),
+        daemon = resolve_daemon(ctx),
     )
 
     # Prepare newline_delimited_lists_files if tag_file is provided
@@ -229,6 +131,7 @@ def _image_load_impl(ctx):
         templates = templates,
         output_name = ctx.label.name + ".configuration.json",
         newline_delimited_lists_files = newline_delimited_lists_files,
+        extra_build_settings = image_target_vars(ctx.attr.image.label),
     )
 
     deploy_metadata, layer_hints = _compute_load_metadata(
@@ -385,102 +288,13 @@ Performance notes:
   a tar file (slower and limited to single-platform images)
 - The `--platform` flag filters which platforms are loaded from multi-platform images
 """,
-    attrs = {
-        "image": attr.label(
+    attrs = dict(
+        COMMON_LOAD_ATTRS,
+        image = attr.label(
             doc = "Image to load. Should provide ImageManifestInfo or ImageIndexInfo.",
             mandatory = True,
         ),
-        "daemon": attr.string(
-            doc = """Container daemon to use for loading the image.
-
-Available options:
-- **`auto`** (default): Uses the global default setting (usually `docker`)
-- **`containerd`**: Loads directly into containerd namespace. Supports multi-platform images
-  and incremental loading.
-- **`docker`**: Loads via Docker daemon. When Docker uses containerd storage (23.0+),
-  loads directly into containerd. Otherwise falls back to `docker load` command which
-  is slower and limited to single-platform images.
-- **`podman`**: Loads via Podman daemon using `podman load` command. Similar to Docker
-  fallback mode, this is slower than containerd and limited to single-platform images.
-- **`generic`**: Loads via a custom container runtime. The loader will invoke the command
-  specified in the `LOADER_BINARY` environment variable with the `load` subcommand. For example,
-  if `LOADER_BINARY=nerdctl`, it will run `nerdctl load`. Limited to single-platform images.
-  Requires `LOADER_BINARY` to be set at runtime.
-
-The best performance is achieved with:
-- Direct containerd access (daemon = "containerd")
-- Docker 23.0+ with containerd storage enabled and accessible containerd socket
-""",
-            default = "auto",
-            values = ["auto", "docker", "containerd", "podman", "generic"],
-        ),
-        "tag": attr.string(
-            doc = """Tag to apply when loading the image.
-
-Optional - if omitted, the image is loaded without a tag.
-
-Subject to [template expansion](/docs/templating.md).
-""",
-        ),
-        "tag_list": attr.string_list(
-            doc = """List of tags to apply when loading the image.
-
-Useful for applying multiple tags in a single load:
-
-```python
-tag_list = ["latest", "v1.0.0", "stable"]
-```
-
-Cannot be used together with `tag`. Can be combined with `tag_file` to merge tags from both sources.
-Each tag is subject to [template expansion](/docs/templating.md).
-""",
-        ),
-        "tag_file": attr.label(
-            doc = """File containing newline-delimited tags to apply when loading the image.
-
-The file should contain one tag per line. Empty lines are ignored. Tags from this file
-are merged with tags specified via `tag` or `tag_list` attributes.
-
-Example file content:
-```
-latest
-v1.0.0
-stable
-```
-
-Can be combined with `tag` or `tag_list` to merge tags from multiple sources.
-Each tag is subject to [template expansion](/docs/templating.md).
-""",
-            allow_single_file = True,
-        ),
-        "strategy": attr.string(
-            doc = """Strategy for handling image layers during load.
-
-Available strategies:
-- **`auto`** (default): Uses the global default load strategy
-- **`eager`**: Downloads all layers during the build phase. Ensures all layers are
-  available locally before running the load command.
-- **`lazy`**: Downloads layers only when needed during the load operation. More
-  efficient for large images where some layers might already exist in the daemon.
-""",
-            default = "auto",
-            values = ["auto", "eager", "lazy"],
-        ),
-        "build_settings": attr.string_keyed_label_dict(
-            doc = "Build settings to use for [template expansion](/docs/templating.md). Keys are setting names, values are labels to string_flag targets.",
-            providers = [BuildSettingInfo],
-        ),
-        "stamp": attr.string(
-            doc = """Controls build stamping for [template expansion](/docs/templating.md).
-
-- **`auto`** (default): Defers to the global `--@rules_img//img/settings:stamp` setting.
-- **`force`**: Always stamp if templates contain `{{}}` placeholders, ignoring Bazel's `--stamp` flag.
-- **`disabled`**: Never include stamp information.
-""",
-            default = "auto",
-            values = ["auto", "force", "disabled"],
-        ),
-        "tool_cfg": attr.string(
+        tool_cfg = attr.string(
             doc = """**Experimental**: This attribute may be removed if we find a way to automatically select the correct loader platform based on the context of use.
 Configuration of the loader executable. By default, the loader executable is always chosen for the host platform, regardless of the value of `--platforms`. Setting this attribute to 'target' makes the loader match the target platform instead.
 The `"target"` option is useful when the "image_load" target is used as a data dependency of an integration test.
@@ -492,32 +306,24 @@ Available options:
             default = "host",
             values = ["host", "target"],
         ),
-        "deploy_tool": attr.label(
+        deploy_tool = attr.label(
             doc = """Optional label of a deploy tool target providing `DeployToolInfo` (created with `img_deploy_tool` from `@rules_img//img:deploy_tool.bzl`). When set, overrides `tool_cfg`.""",
             mandatory = False,
             providers = [DeployToolInfo],
         ),
-        "_deploy_tool": attr.label(
+        _deploy_tool = attr.label(
             default = default_deploy_tool,
             providers = [DeployToolInfo],
         ),
-        "_load_settings": attr.label(
-            default = Label("//img/private/settings:load"),
-            providers = [LoadSettingsInfo],
-        ),
-        "_stamp_settings": attr.label(
-            default = Label("//img/private/settings:stamp"),
-            providers = [StampSettingInfo],
-        ),
-        "_oci_layout_settings": attr.label(
+        _oci_layout_settings = attr.label(
             default = Label("//img/private/settings:oci_layout"),
             providers = [OCILayoutSettingsInfo],
         ),
-        "_docker_config_path": attr.label(
+        _docker_config_path = attr.label(
             default = Label("//img/settings:docker_config_path"),
             providers = [BuildSettingInfo],
         ),
-    },
+    ),
     executable = True,
     cfg = reset_platform_transition,
     toolchains = [

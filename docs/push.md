@@ -134,3 +134,89 @@ bazel run //path/to:push_app
 | <a id="image_push-tool_cfg"></a>tool_cfg |  Configuration of the pusher executable platform.<br><br>Available options: - **`host`** (default): Pusher executable matches the host platform. - **`target`**: Pusher executable matches the target platform(s) specified via `--platforms`.   | String | optional |  `"host"`  |
 
 
+<a id="image_push_spec"></a>
+
+## image_push_spec
+
+<pre>
+load("@rules_img//img:push.bzl", "image_push_spec")
+
+image_push_spec(<a href="#image_push_spec-name">name</a>, <a href="#image_push_spec-build_settings">build_settings</a>, <a href="#image_push_spec-cross_mount_from">cross_mount_from</a>, <a href="#image_push_spec-destination_file">destination_file</a>, <a href="#image_push_spec-manifest_tags">manifest_tags</a>, <a href="#image_push_spec-referrers">referrers</a>,
+                <a href="#image_push_spec-registry">registry</a>, <a href="#image_push_spec-repository">repository</a>, <a href="#image_push_spec-stamp">stamp</a>, <a href="#image_push_spec-strategy">strategy</a>, <a href="#image_push_spec-tag">tag</a>, <a href="#image_push_spec-tag_file">tag_file</a>, <a href="#image_push_spec-tag_list">tag_list</a>)
+</pre>
+
+Defines push configuration for container images without referencing a specific image.
+
+This rule captures registry, repository, tag, and strategy settings that can be
+attached to `image_manifest` or `image_index` targets via their `push_specs`
+attribute. Template strings using Go template syntax (`{{.VAR}}`) are accepted
+but not expanded — expansion happens when the deployment is consumed by the
+image rule.
+Note that the template strings `{{.image_target_package}}` and `{{.image_target_name}}` are especially useful here.
+
+This enables an inverted dependency pattern: instead of `image_push` depending
+on the image, the image itself carries its deployment configuration, making it
+directly usable with `multi_deploy`.
+
+Example:
+
+```python
+load("@rules_img//img:push.bzl", "image_push_spec")
+
+image_push_spec(
+    name = "push_config",
+    registry = "gcr.io",
+    repository = "my-project/{{.image_target_package}}/{{.image_target_name}}",
+    tag = "{{.VERSION}}",
+    build_settings = {
+        "VERSION": "//settings:version",
+    },
+    stamp = "force",
+)
+
+# Attach to an image:
+image_manifest(
+    name = "my_app_a",
+    base = "@distroless_cc",
+    layers = [":app_layer"],
+    push_specs = [":push_config"],
+)
+
+# Attach to another image:
+image_manifest(
+    name = "my_app_b",
+    base = "@distroless_cc",
+    layers = [":app_layer"],
+    push_specs = [":push_config"],
+)
+
+# Now usable directly in multi_deploy:
+multi_deploy(
+    name = "deploy",
+    operations = [
+        ":my_app_a",
+        ":my_app_b",
+    ],
+)
+```
+
+**ATTRIBUTES**
+
+
+| Name  | Description | Type | Mandatory | Default |
+| :------------- | :------------- | :------------- | :------------- | :------------- |
+| <a id="image_push_spec-name"></a>name |  A unique name for this target.   | <a href="https://bazel.build/concepts/labels#target-names">Name</a> | required |  |
+| <a id="image_push_spec-build_settings"></a>build_settings |  Build settings for template expansion.<br><br>Maps template variable names to string_flag targets. These values can be used in registry, repository, and tag attributes using `{{.VARIABLE_NAME}}` syntax (Go template).<br><br>Example: <pre><code class="language-python">build_settings = {&#10;    "REGISTRY": "//settings:docker_registry",&#10;    "VERSION": "//settings:app_version",&#10;}</code></pre><br><br>See [template expansion](/docs/templating.md) for more details.   | Dictionary: String -> Label | optional |  `{}`  |
+| <a id="image_push_spec-cross_mount_from"></a>cross_mount_from |  An image_push target whose layers may be cross-mounted during push.   | <a href="https://bazel.build/concepts/labels">Label</a> | optional |  `None`  |
+| <a id="image_push_spec-destination_file"></a>destination_file |  File containing the push destination as `{registry}/{repository}`.<br><br>The file should contain a single line with the registry and repository separated by the first `/`. For example: `gcr.io/my-project/my-app`.<br><br>The content is read as a literal string without Go template expansion. Trailing newlines and whitespace are stripped.<br><br>Cannot be used together with `registry` or `repository` attributes.   | <a href="https://bazel.build/concepts/labels">Label</a> | optional |  `None`  |
+| <a id="image_push_spec-manifest_tags"></a>manifest_tags |  Per-platform tag templates for multi-platform (`image_index`) pushes.<br><br>Only valid when `image` provides `ImageIndexInfo`. For each entry in this list, the deploy command produces one tag per child manifest in the index by expanding the entry against the platform descriptor of that manifest.<br><br>Available template variables (lowercase):<br><br>- `{{.os}}` — platform OS (e.g. `linux`) - `{{.architecture}}`, `{{.arch}}`, `{{.cpu}}` — architecture (e.g. `amd64`, `arm64`) - `{{.variant}}` — architecture variant (e.g. `v8`), if set<br><br>The tags in `tag` / `tag_list` / `tag_file` continue to point at the index as a whole; `manifest_tags` complement those by publishing additional tags that each resolve to a single child manifest.<br><br>Example:<br><br><pre><code class="language-python">image_push(&#10;    name = "push_multiarch",&#10;    image = ":my_app_index",&#10;    registry = "gcr.io",&#10;    repository = "my-project/my-app",&#10;    tag_list = ["latest", "v1.0.0"],&#10;    manifest_tags = [&#10;        "latest-{{.os}}-{{.architecture}}",&#10;        "v1.0.0-{{.os}}-{{.architecture}}",&#10;    ],&#10;)</code></pre><br><br>Templates are expanded at build time per child manifest, so `build_settings` and stamping variables are available (and override any platform variable of the same name). The expanded tags are emitted as `registry_tag` operations in the deploy manifest, so non-CLI strategies like `bes` can honor them.   | List of strings | optional |  `[]`  |
+| <a id="image_push_spec-referrers"></a>referrers |  Additional manifests or indexes to push as referrers to the main image.<br><br>Each referrer is pushed to the same registry and repository as the main image, but without tags (referrers are discovered via the OCI referrers API by digest).<br><br>Each target must provide ImageManifestInfo or ImageIndexInfo and must have its `subject` field set to reference the main image being pushed.<br><br>Example: <pre><code class="language-python">image_push(&#10;    name = "push",&#10;    image = ":my_app",&#10;    referrers = [&#10;        ":sbom_manifest",&#10;        ":signature_manifest",&#10;    ],&#10;    registry = "ghcr.io",&#10;    repository = "myorg/myapp",&#10;    tag = "latest",&#10;)</code></pre>   | <a href="https://bazel.build/concepts/labels">List of labels</a> | optional |  `[]`  |
+| <a id="image_push_spec-registry"></a>registry |  Registry URL to push the image to.<br><br>Common registries: - Docker Hub: `index.docker.io` - Google Container Registry: `gcr.io` or `us.gcr.io` - GitHub Container Registry: `ghcr.io` - Amazon ECR: `123456789.dkr.ecr.us-east-1.amazonaws.com`<br><br>Subject to [template expansion](/docs/templating.md).   | String | optional |  `""`  |
+| <a id="image_push_spec-repository"></a>repository |  Repository path within the registry.<br><br>Subject to [template expansion](/docs/templating.md).   | String | optional |  `""`  |
+| <a id="image_push_spec-stamp"></a>stamp |  Controls build stamping for template expansion.<br><br>- **`auto`** (default): Defers to the global `--@rules_img//img/settings:stamp` setting. - **`force`**: Always stamp if templates contain `{{}}` placeholders, ignoring Bazel's `--stamp` flag. - **`disabled`**: Never include stamp information.<br><br>See [template expansion](/docs/templating.md) for available stamp variables.   | String | optional |  `"auto"`  |
+| <a id="image_push_spec-strategy"></a>strategy |  Push strategy to use.<br><br>See [push strategies documentation](/docs/push-strategies.md) for detailed information.   | String | optional |  `"auto"`  |
+| <a id="image_push_spec-tag"></a>tag |  Tag to apply to the pushed image.<br><br>Optional - if omitted, the image is pushed by digest only.<br><br>Subject to [template expansion](/docs/templating.md).   | String | optional |  `""`  |
+| <a id="image_push_spec-tag_file"></a>tag_file |  File containing newline-delimited tags to apply to the pushed image.<br><br>The file should contain one tag per line. Empty lines are ignored. Tags from this file are merged with tags specified via `tag` or `tag_list` attributes.<br><br>Example file content: <pre><code>latest&#10;v1.0.0&#10;stable</code></pre><br><br>Can be combined with `tag` or `tag_list` to merge tags from multiple sources. Each tag is subject to [template expansion](/docs/templating.md).   | <a href="https://bazel.build/concepts/labels">Label</a> | optional |  `None`  |
+| <a id="image_push_spec-tag_list"></a>tag_list |  List of tags to apply to the pushed image.<br><br>Useful for applying multiple tags in a single push:<br><br><pre><code class="language-python">tag_list = ["latest", "v1.0.0", "stable"]</code></pre><br><br>Cannot be used together with `tag`. Can be combined with `tag_file` to merge tags from both sources. Each tag is subject to [template expansion](/docs/templating.md).   | List of strings | optional |  `[]`  |
+
+

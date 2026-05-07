@@ -30,8 +30,10 @@ bzl_library(
         "//img/private/providers:deploy_info",
         "//img/private/providers:index_info",
         "//img/private/providers:layers_info",
+        "//img/private/providers:load_config_info",
         "//img/private/providers:manifest_info",
         "//img/private/providers:pull_info",
+        "//img/private/providers:push_config_info",
         "//img/private/providers:single_layer_info",
     ],
 )
@@ -74,14 +76,20 @@ bzl_library(
     name = "push",
     srcs = ["push.bzl"],
     visibility = ["//visibility:public"],
-    deps = ["//img/private:push"],
+    deps = [
+        "//img/private:push",
+        "//img/private:push_spec",
+    ],
 )
 
 bzl_library(
     name = "load",
     srcs = ["load.bzl"],
     visibility = ["//visibility:public"],
-    deps = ["//img/private:load"],
+    deps = [
+        "//img/private:load",
+        "//img/private:load_spec",
+    ],
 )
 
 bzl_library(
