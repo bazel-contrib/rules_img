@@ -154,15 +154,89 @@ Performance notes:
 | Name  | Description | Type | Mandatory | Default |
 | :------------- | :------------- | :------------- | :------------- | :------------- |
 | <a id="image_load-name"></a>name |  A unique name for this target.   | <a href="https://bazel.build/concepts/labels#target-names">Name</a> | required |  |
-| <a id="image_load-build_settings"></a>build_settings |  Build settings to use for [template expansion](/docs/templating.md). Keys are setting names, values are labels to string_flag targets.   | Dictionary: String -> Label | optional |  `{}`  |
+| <a id="image_load-build_settings"></a>build_settings |  Build settings for template expansion.<br><br>Maps template variable names to string_flag targets. These values can be used in tag attributes using `{{.VARIABLE_NAME}}` syntax (Go template).<br><br>See [template expansion](/docs/templating.md) for more details.   | Dictionary: String -> Label | optional |  `{}`  |
 | <a id="image_load-daemon"></a>daemon |  Container daemon to use for loading the image.<br><br>Available options: - **`auto`** (default): Uses the global default setting (usually `docker`) - **`containerd`**: Loads directly into containerd namespace. Supports multi-platform images   and incremental loading. - **`docker`**: Loads via Docker daemon. When Docker uses containerd storage (23.0+),   loads directly into containerd. Otherwise falls back to `docker load` command which   is slower and limited to single-platform images. - **`podman`**: Loads via Podman daemon using `podman load` command. Similar to Docker   fallback mode, this is slower than containerd and limited to single-platform images. - **`generic`**: Loads via a custom container runtime. The loader will invoke the command   specified in the `LOADER_BINARY` environment variable with the `load` subcommand. For example,   if `LOADER_BINARY=nerdctl`, it will run `nerdctl load`. Limited to single-platform images.   Requires `LOADER_BINARY` to be set at runtime.<br><br>The best performance is achieved with: - Direct containerd access (daemon = "containerd") - Docker 23.0+ with containerd storage enabled and accessible containerd socket   | String | optional |  `"auto"`  |
 | <a id="image_load-deploy_tool"></a>deploy_tool |  Optional label of a deploy tool target providing `DeployToolInfo` (created with `img_deploy_tool` from `@rules_img//img:deploy_tool.bzl`). When set, overrides `tool_cfg`.   | <a href="https://bazel.build/concepts/labels">Label</a> | optional |  `None`  |
 | <a id="image_load-image"></a>image |  Image to load. Should provide ImageManifestInfo or ImageIndexInfo.   | <a href="https://bazel.build/concepts/labels">Label</a> | required |  |
-| <a id="image_load-stamp"></a>stamp |  Controls build stamping for [template expansion](/docs/templating.md).<br><br>- **`auto`** (default): Defers to the global `--@rules_img//img/settings:stamp` setting. - **`force`**: Always stamp if templates contain `{{}}` placeholders, ignoring Bazel's `--stamp` flag. - **`disabled`**: Never include stamp information.   | String | optional |  `"auto"`  |
+| <a id="image_load-stamp"></a>stamp |  Controls build stamping for template expansion.<br><br>- **`auto`** (default): Defers to the global `--@rules_img//img/settings:stamp` setting. - **`force`**: Always stamp if templates contain `{{}}` placeholders, ignoring Bazel's `--stamp` flag. - **`disabled`**: Never include stamp information.<br><br>See [template expansion](/docs/templating.md) for available stamp variables.   | String | optional |  `"auto"`  |
 | <a id="image_load-strategy"></a>strategy |  Strategy for handling image layers during load.<br><br>Available strategies: - **`auto`** (default): Uses the global default load strategy - **`eager`**: Downloads all layers during the build phase. Ensures all layers are   available locally before running the load command. - **`lazy`**: Downloads layers only when needed during the load operation. More   efficient for large images where some layers might already exist in the daemon.   | String | optional |  `"auto"`  |
 | <a id="image_load-tag"></a>tag |  Tag to apply when loading the image.<br><br>Optional - if omitted, the image is loaded without a tag.<br><br>Subject to [template expansion](/docs/templating.md).   | String | optional |  `""`  |
 | <a id="image_load-tag_file"></a>tag_file |  File containing newline-delimited tags to apply when loading the image.<br><br>The file should contain one tag per line. Empty lines are ignored. Tags from this file are merged with tags specified via `tag` or `tag_list` attributes.<br><br>Example file content: <pre><code>latest&#10;v1.0.0&#10;stable</code></pre><br><br>Can be combined with `tag` or `tag_list` to merge tags from multiple sources. Each tag is subject to [template expansion](/docs/templating.md).   | <a href="https://bazel.build/concepts/labels">Label</a> | optional |  `None`  |
 | <a id="image_load-tag_list"></a>tag_list |  List of tags to apply when loading the image.<br><br>Useful for applying multiple tags in a single load:<br><br><pre><code class="language-python">tag_list = ["latest", "v1.0.0", "stable"]</code></pre><br><br>Cannot be used together with `tag`. Can be combined with `tag_file` to merge tags from both sources. Each tag is subject to [template expansion](/docs/templating.md).   | List of strings | optional |  `[]`  |
 | <a id="image_load-tool_cfg"></a>tool_cfg |  **Experimental**: This attribute may be removed if we find a way to automatically select the correct loader platform based on the context of use. Configuration of the loader executable. By default, the loader executable is always chosen for the host platform, regardless of the value of `--platforms`. Setting this attribute to 'target' makes the loader match the target platform instead. The `"target"` option is useful when the "image_load" target is used as a data dependency of an integration test.<br><br>Available options: - **`host`** (default): Loader executable matches the host platform. - **`target`**: Loader executable matches the target platform(s) specified via `--platforms`.   | String | optional |  `"host"`  |
+
+
+<a id="image_load_spec"></a>
+
+## image_load_spec
+
+<pre>
+load("@rules_img//img:load.bzl", "image_load_spec")
+
+image_load_spec(<a href="#image_load_spec-name">name</a>, <a href="#image_load_spec-build_settings">build_settings</a>, <a href="#image_load_spec-daemon">daemon</a>, <a href="#image_load_spec-stamp">stamp</a>, <a href="#image_load_spec-strategy">strategy</a>, <a href="#image_load_spec-tag">tag</a>, <a href="#image_load_spec-tag_file">tag_file</a>, <a href="#image_load_spec-tag_list">tag_list</a>)
+</pre>
+
+Defines load configuration for container images without referencing a specific image.
+
+This rule captures daemon, tag, and strategy settings that can be attached to
+`image_manifest` or `image_index` targets via their `load_specs` attribute.
+Template strings using Go template syntax (`{{.VAR}}`) are accepted but not
+expanded — expansion happens when the deployment is consumed by the image rule.
+Note that the template strings `{{.image_target_package}}` and `{{.image_target_name}}` are especially useful here.
+
+This enables an inverted dependency pattern: instead of `image_load` depending
+on the image, the image itself carries its load configuration, making it
+directly usable with `multi_deploy`.
+
+Example:
+
+```python
+load("@rules_img//img:load.bzl", "image_load_spec")
+
+image_load_spec(
+    name = "load_config",
+    tag = "{{.image_target_package}}/{{.image_target_name}}:latest",
+    daemon = "containerd",
+)
+
+# Attach to an image:
+image_manifest(
+    name = "my_app_a",
+    base = "@distroless_cc",
+    layers = [":app_layer"],
+    load_specs = [":load_config"],
+)
+
+# Attach to another image:
+image_manifest(
+    name = "my_app_b",
+    base = "@distroless_cc",
+    layers = [":app_layer"],
+    load_specs = [":load_config"],
+)
+
+# Now usable directly in multi_deploy:
+multi_deploy(
+    name = "deploy",
+    operations = [
+        ":my_app_a",
+        ":my_app_b",
+    ],
+)
+```
+
+**ATTRIBUTES**
+
+
+| Name  | Description | Type | Mandatory | Default |
+| :------------- | :------------- | :------------- | :------------- | :------------- |
+| <a id="image_load_spec-name"></a>name |  A unique name for this target.   | <a href="https://bazel.build/concepts/labels#target-names">Name</a> | required |  |
+| <a id="image_load_spec-build_settings"></a>build_settings |  Build settings for template expansion.<br><br>Maps template variable names to string_flag targets. These values can be used in tag attributes using `{{.VARIABLE_NAME}}` syntax (Go template).<br><br>See [template expansion](/docs/templating.md) for more details.   | Dictionary: String -> Label | optional |  `{}`  |
+| <a id="image_load_spec-daemon"></a>daemon |  Container daemon to use for loading the image.<br><br>Available options: - **`auto`** (default): Uses the global default setting (usually `docker`) - **`containerd`**: Loads directly into containerd namespace. Supports multi-platform images   and incremental loading. - **`docker`**: Loads via Docker daemon. When Docker uses containerd storage (23.0+),   loads directly into containerd. Otherwise falls back to `docker load` command which   is slower and limited to single-platform images. - **`podman`**: Loads via Podman daemon using `podman load` command. Similar to Docker   fallback mode, this is slower than containerd and limited to single-platform images. - **`generic`**: Loads via a custom container runtime. The loader will invoke the command   specified in the `LOADER_BINARY` environment variable with the `load` subcommand. For example,   if `LOADER_BINARY=nerdctl`, it will run `nerdctl load`. Limited to single-platform images.   Requires `LOADER_BINARY` to be set at runtime.<br><br>The best performance is achieved with: - Direct containerd access (daemon = "containerd") - Docker 23.0+ with containerd storage enabled and accessible containerd socket   | String | optional |  `"auto"`  |
+| <a id="image_load_spec-stamp"></a>stamp |  Controls build stamping for template expansion.<br><br>- **`auto`** (default): Defers to the global `--@rules_img//img/settings:stamp` setting. - **`force`**: Always stamp if templates contain `{{}}` placeholders, ignoring Bazel's `--stamp` flag. - **`disabled`**: Never include stamp information.<br><br>See [template expansion](/docs/templating.md) for available stamp variables.   | String | optional |  `"auto"`  |
+| <a id="image_load_spec-strategy"></a>strategy |  Strategy for handling image layers during load.<br><br>Available strategies: - **`auto`** (default): Uses the global default load strategy - **`eager`**: Downloads all layers during the build phase. Ensures all layers are   available locally before running the load command. - **`lazy`**: Downloads layers only when needed during the load operation. More   efficient for large images where some layers might already exist in the daemon.   | String | optional |  `"auto"`  |
+| <a id="image_load_spec-tag"></a>tag |  Tag to apply when loading the image.<br><br>Optional - if omitted, the image is loaded without a tag.<br><br>Subject to [template expansion](/docs/templating.md).   | String | optional |  `""`  |
+| <a id="image_load_spec-tag_file"></a>tag_file |  File containing newline-delimited tags to apply when loading the image.<br><br>The file should contain one tag per line. Empty lines are ignored. Tags from this file are merged with tags specified via `tag` or `tag_list` attributes.<br><br>Example file content: <pre><code>latest&#10;v1.0.0&#10;stable</code></pre><br><br>Can be combined with `tag` or `tag_list` to merge tags from multiple sources. Each tag is subject to [template expansion](/docs/templating.md).   | <a href="https://bazel.build/concepts/labels">Label</a> | optional |  `None`  |
+| <a id="image_load_spec-tag_list"></a>tag_list |  List of tags to apply when loading the image.<br><br>Useful for applying multiple tags in a single load:<br><br><pre><code class="language-python">tag_list = ["latest", "v1.0.0", "stable"]</code></pre><br><br>Cannot be used together with `tag`. Can be combined with `tag_file` to merge tags from both sources. Each tag is subject to [template expansion](/docs/templating.md).   | List of strings | optional |  `[]`  |
 
 

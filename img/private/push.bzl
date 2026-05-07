@@ -2,11 +2,13 @@
 
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("@hermetic_launcher//launcher:lib.bzl", "launcher")
-load("//img/private:layer_path_hints.bzl", "layer_hints_for_deploy_metadata")
+load("//img/private:push_metadata.bzl", "compute_push_metadata")
 load("//img/private:root_symlinks.bzl", "calculate_root_symlinks", "symlink_name_prefix")
 load("//img/private:stamp.bzl", "expand_or_write")
-load("//img/private/common:build.bzl", "TOOLCHAIN", "TOOLCHAINS")
+load("//img/private/common:build.bzl", "TOOLCHAINS")
 load("//img/private/common:default_deploy_tool.bzl", "default_deploy_tool")
+load("//img/private/common:deploy_attrs.bzl", "COMMON_PUSH_ATTRS")
+load("//img/private/common:deploy_helpers.bzl", "extract_cross_mount_from", "extract_referrers", "get_image_providers", "get_tags", "image_target_vars", "resolve_push_registry", "resolve_push_strategy")
 load("//img/private/common:transitions.bzl", "reset_platform_transition")
 load("//img/private/providers:deploy_info.bzl", "DeployInfo")
 load("//img/private/providers:deploy_tool_info.bzl", "DeployToolInfo")
@@ -14,187 +16,64 @@ load("//img/private/providers:index_info.bzl", "ImageIndexInfo")
 load("//img/private/providers:manifest_info.bzl", "ImageManifestInfo")
 load("//img/private/providers:pull_info.bzl", "PullInfo")
 load("//img/private/providers:push_settings_info.bzl", "PushSettingsInfo")
-load("//img/private/providers:stamp_setting_info.bzl", "StampSettingInfo")
-
-def _push_strategy(ctx):
-    """Determine the push strategy to use based on the settings."""
-    push_settings = ctx.attr._push_settings[PushSettingsInfo]
-    strategy = ctx.attr.strategy
-    if strategy == "auto":
-        strategy = push_settings.strategy
-    return strategy
-
-def _target_info(ctx):
-    pull_info = ctx.attr.image[PullInfo] if PullInfo in ctx.attr.image else None
-    if pull_info == None:
-        return {}
-    return dict(
-        original_registries = pull_info.registries,
-        original_repository = pull_info.repository,
-        original_tag = pull_info.tag,
-        original_digest = pull_info.digest,
-    )
-
-def _get_tags(ctx):
-    """Get the list of tags from the context, validating mutual exclusivity."""
-    if ctx.attr.tag and ctx.attr.tag_list:
-        fail("Cannot specify both 'tag' and 'tag_list' attributes")
-
-    tags = []
-    if ctx.attr.tag:
-        tags = [ctx.attr.tag]
-    elif ctx.attr.tag_list:
-        tags = ctx.attr.tag_list
-
-    # tag_file is handled separately via newline_delimited_lists_files and will be merged
-
-    # Empty list is allowed for digest-only push
-    return tags
 
 def _per_child_manifest_tag_file(*, ctx, child_index, child_info):
-    platform_vars = {
+    extra = image_target_vars(ctx.attr.image.label)
+    extra.update({
         "os": child_info.os or "",
         "architecture": child_info.architecture or "",
         "arch": child_info.architecture or "",
         "cpu": child_info.architecture or "",
         "variant": child_info.variant or "",
-    }
+    })
     templates = dict(manifest_tags = ctx.attr.manifest_tags)
     return expand_or_write(
         ctx = ctx,
         templates = templates,
         output_name = "{}.manifest_tags.{}.json".format(ctx.label.name, child_index),
-        extra_build_settings = platform_vars,
+        extra_build_settings = extra,
     )
 
 def _compute_push_metadata(*, ctx, configuration_json, destination_file = None):
-    inputs = [configuration_json]
-    args = ctx.actions.args()
-    push_metadata_args = [args]
-    args.add("deploy-metadata")
-    args.add("--command", "push")
-    manifest_info = ctx.attr.image[ImageManifestInfo] if ImageManifestInfo in ctx.attr.image else None
-    index_info = ctx.attr.image[ImageIndexInfo] if ImageIndexInfo in ctx.attr.image else None
-    if manifest_info == None and index_info == None:
-        fail("image must provide ImageManifestInfo or ImageIndexInfo")
-    if manifest_info != None and index_info != None:
-        fail("image must provide either ImageManifestInfo or ImageIndexInfo, not both")
-    args.add("--strategy", _push_strategy(ctx))
-    args.add("--configuration-file", configuration_json.path)
-    if destination_file != None:
-        inputs.append(destination_file)
-        args.add("--destination-file", destination_file.path)
-    target_info = _target_info(ctx)
-    if "original_registries" in target_info:
-        args.add_all(target_info["original_registries"], before_each = "--original-registry")
-    if "original_repository" in target_info:
-        args.add("--original-repository", target_info["original_repository"])
-    if "original_tag" in target_info and target_info["original_tag"] != None:
-        args.add("--original-tag", target_info["original_tag"])
-    if "original_digest" in target_info and target_info["original_digest"] != None:
-        args.add("--original-digest", target_info["original_digest"])
+    manifest_info, index_info = get_image_providers(ctx)
+    pull_info = ctx.attr.image[PullInfo] if PullInfo in ctx.attr.image else None
 
-    args.add("--cross-mount-strategy={}".format(ctx.attr._push_settings[PushSettingsInfo].cross_mount))
-
-    if ctx.attr.cross_mount_from != None:
-        cross_mount_from = ctx.attr.cross_mount_from[DeployInfo]
-        inputs.append(cross_mount_from.deploy_manifest)
-        args.add("--cross-mount-from-manifest-path", cross_mount_from.deploy_manifest.path)
-
-    if manifest_info != None:
-        args.add("--root-path", manifest_info.manifest.path)
-        args.add("--root-kind", "manifest")
-        args.add("--manifest-path", "0=" + manifest_info.manifest.path)
-        args.add("--missing-blobs-for-manifest", "0=" + (",".join(manifest_info.missing_blobs)))
-        inputs.append(manifest_info.manifest)
-    if index_info != None:
-        args.add("--root-path", index_info.index.path)
-        args.add("--root-kind", "index")
+    manifest_tags_expanded = []
+    if index_info != None and ctx.attr.manifest_tags:
         for i, manifest in enumerate(index_info.manifests):
-            args.add("--manifest-path", "{}={}".format(i, manifest.manifest.path))
-            args.add("--missing-blobs-for-manifest", "{}={}".format(i, ",".join(manifest.missing_blobs)))
-        if ctx.attr.manifest_tags:
-            for i, manifest in enumerate(index_info.manifests):
-                tag_file = _per_child_manifest_tag_file(ctx = ctx, child_index = i, child_info = manifest)
-                if tag_file != None:
-                    args.add("--manifest-tag-file", "{}={}".format(i, tag_file.path))
-                    inputs.append(tag_file)
-        inputs.append(index_info.index)
-        inputs.extend([manifest.manifest for manifest in index_info.manifests])
+            tag_file = _per_child_manifest_tag_file(ctx = ctx, child_index = i, child_info = manifest)
+            if tag_file != None:
+                manifest_tags_expanded.append((i, tag_file))
 
-    # Add referrer arguments
-    for ref_idx, referrer in enumerate(ctx.attr.referrers):
-        ref_manifest_info = referrer[ImageManifestInfo] if ImageManifestInfo in referrer else None
-        ref_index_info = referrer[ImageIndexInfo] if ImageIndexInfo in referrer else None
-        if ref_manifest_info != None:
-            args.add("--referrer-root-path", "{}={}".format(ref_idx, ref_manifest_info.manifest.path))
-            args.add("--referrer-root-kind", "{}=manifest".format(ref_idx))
-            args.add("--referrer-manifest-path", "{},0={}".format(ref_idx, ref_manifest_info.manifest.path))
-            args.add("--referrer-missing-blobs-for-manifest", "{},0={}".format(ref_idx, ",".join(ref_manifest_info.missing_blobs)))
-            inputs.append(ref_manifest_info.manifest)
-        elif ref_index_info != None:
-            args.add("--referrer-root-path", "{}={}".format(ref_idx, ref_index_info.index.path))
-            args.add("--referrer-root-kind", "{}=index".format(ref_idx))
-            for i, manifest in enumerate(ref_index_info.manifests):
-                args.add("--referrer-manifest-path", "{},{}={}".format(ref_idx, i, manifest.manifest.path))
-                args.add("--referrer-missing-blobs-for-manifest", "{},{}={}".format(ref_idx, i, ",".join(manifest.missing_blobs)))
-            inputs.append(ref_index_info.index)
-            inputs.extend([manifest.manifest for manifest in ref_index_info.manifests])
-
-    outputs = []
-    layer_hints_file = layer_hints_for_deploy_metadata(
+    return compute_push_metadata(
         ctx,
-        index_info = index_info,
+        configuration_json = configuration_json,
         manifest_info = manifest_info,
-        strategy = _push_strategy(ctx),
-        args = push_metadata_args,
-        inputs = inputs,
-        outputs = outputs,
+        index_info = index_info,
+        strategy = resolve_push_strategy(ctx),
+        cross_mount_strategy = ctx.attr._push_settings[PushSettingsInfo].cross_mount,
+        cross_mount_from = extract_cross_mount_from(ctx),
+        referrers = extract_referrers(ctx),
+        manifest_tags_expanded = manifest_tags_expanded,
+        pull_info = pull_info,
+        destination_file = destination_file,
+        output_prefix = ctx.label.name,
     )
-    metadata_out = ctx.actions.declare_file(ctx.label.name + ".json")
-    output_args = ctx.actions.args()
-    output_args.add(metadata_out)
-    push_metadata_args.append(output_args)
-    outputs.append(metadata_out)
-    img_toolchain_info = ctx.toolchains[TOOLCHAIN].imgtoolchaininfo
-    ctx.actions.run(
-        inputs = inputs,
-        outputs = outputs,
-        executable = img_toolchain_info.tool_exe,
-        arguments = push_metadata_args,
-        mnemonic = "PushMetadata",
-    )
-    return metadata_out, layer_hints_file
 
 def _image_push_impl(ctx):
     """Implementation of the push rule."""
-    manifest_info = ctx.attr.image[ImageManifestInfo] if ImageManifestInfo in ctx.attr.image else None
-    index_info = ctx.attr.image[ImageIndexInfo] if ImageIndexInfo in ctx.attr.image else None
-    if manifest_info == None and index_info == None:
-        fail("image must provide ImageManifestInfo or ImageIndexInfo")
-    if manifest_info != None and index_info != None:
-        fail("image must provide either ImageManifestInfo or ImageIndexInfo, not both")
+    manifest_info, index_info = get_image_providers(ctx)
     image_provider = manifest_info if manifest_info != None else index_info
 
     if ctx.attr.manifest_tags and index_info == None:
         fail("'manifest_tags' can only be used when 'image' is an image_index")
 
-    # Validate mutual exclusivity of destination_file vs registry/repository
-    if ctx.attr.destination_file:
-        if ctx.attr.registry:
-            fail("Cannot specify both 'destination_file' and 'registry' attributes")
-        if ctx.attr.repository:
-            fail("Cannot specify both 'destination_file' and 'repository' attributes")
-    else:
-        if not ctx.attr.registry:
-            fail("'registry' is required when 'destination_file' is not set")
-        if not ctx.attr.repository:
-            fail("'repository' is required when 'destination_file' is not set")
+    registry = resolve_push_registry(ctx)
 
     templates = dict(
-        registry = ctx.attr.registry,
+        registry = registry,
         repository = ctx.attr.repository,
-        tags = _get_tags(ctx),
+        tags = get_tags(ctx),
     )
 
     # Prepare newline_delimited_lists_files if tag_file is provided
@@ -209,6 +88,7 @@ def _image_push_impl(ctx):
         templates = templates,
         output_name = ctx.label.name + ".configuration.json",
         newline_delimited_lists_files = newline_delimited_lists_files,
+        extra_build_settings = image_target_vars(ctx.attr.image.label),
     )
 
     deploy_metadata, layer_hints = _compute_push_metadata(
@@ -220,7 +100,7 @@ def _image_push_impl(ctx):
     root_symlinks = calculate_root_symlinks(
         index_info,
         manifest_info,
-        include_layers = _push_strategy(ctx) == "eager",
+        include_layers = resolve_push_strategy(ctx) == "eager",
         symlink_name_prefix = root_symlinks_prefix,
     )
 
@@ -231,7 +111,7 @@ def _image_push_impl(ctx):
         root_symlinks.update(calculate_root_symlinks(
             ref_index_info,
             ref_manifest_info,
-            include_layers = _push_strategy(ctx) == "eager",
+            include_layers = resolve_push_strategy(ctx) == "eager",
             symlink_name_prefix = root_symlinks_prefix,
             operation_index = ref_idx + 1,
         ))
@@ -394,201 +274,13 @@ bazel run //path/to:push_app
 # The push command will output the image digest
 ```
 """,
-    attrs = {
-        "registry": attr.string(
-            doc = """Registry URL to push the image to.
-
-Common registries:
-- Docker Hub: `index.docker.io`
-- Google Container Registry: `gcr.io` or `us.gcr.io`
-- GitHub Container Registry: `ghcr.io`
-- Amazon ECR: `123456789.dkr.ecr.us-east-1.amazonaws.com`
-
-Subject to [template expansion](/docs/templating.md).
-""",
-        ),
-        "repository": attr.string(
-            doc = """Repository path within the registry.
-
-Subject to [template expansion](/docs/templating.md).
-""",
-        ),
-        "tag": attr.string(
-            doc = """Tag to apply to the pushed image.
-
-Optional - if omitted, the image is pushed by digest only.
-
-Subject to [template expansion](/docs/templating.md).
-""",
-        ),
-        "tag_list": attr.string_list(
-            doc = """List of tags to apply to the pushed image.
-
-Useful for applying multiple tags in a single push:
-
-```python
-tag_list = ["latest", "v1.0.0", "stable"]
-```
-
-Cannot be used together with `tag`. Can be combined with `tag_file` to merge tags from both sources.
-Each tag is subject to [template expansion](/docs/templating.md).
-""",
-        ),
-        "manifest_tags": attr.string_list(
-            doc = """Per-platform tag templates for multi-platform (`image_index`) pushes.
-
-Only valid when `image` provides `ImageIndexInfo`. For each entry in this list, the
-deploy command produces one tag per child manifest in the index by expanding the
-entry against the platform descriptor of that manifest.
-
-Available template variables (lowercase):
-
-- `{{.os}}` — platform OS (e.g. `linux`)
-- `{{.architecture}}`, `{{.arch}}`, `{{.cpu}}` — architecture (e.g. `amd64`, `arm64`)
-- `{{.variant}}` — architecture variant (e.g. `v8`), if set
-
-The tags in `tag` / `tag_list` / `tag_file` continue to point at the index as a
-whole; `manifest_tags` complement those by publishing additional tags that each
-resolve to a single child manifest.
-
-Example:
-
-```python
-image_push(
-    name = "push_multiarch",
-    image = ":my_app_index",
-    registry = "gcr.io",
-    repository = "my-project/my-app",
-    tag_list = ["latest", "v1.0.0"],
-    manifest_tags = [
-        "latest-{{.os}}-{{.architecture}}",
-        "v1.0.0-{{.os}}-{{.architecture}}",
-    ],
-)
-```
-
-Templates are expanded at build time per child manifest, so `build_settings`
-and stamping variables are available (and override any platform variable of
-the same name). The expanded tags are emitted as `registry_tag` operations
-in the deploy manifest, so non-CLI strategies like `bes` can honor them.
-""",
-        ),
-        "tag_file": attr.label(
-            doc = """File containing newline-delimited tags to apply to the pushed image.
-
-The file should contain one tag per line. Empty lines are ignored. Tags from this file
-are merged with tags specified via `tag` or `tag_list` attributes.
-
-Example file content:
-```
-latest
-v1.0.0
-stable
-```
-
-Can be combined with `tag` or `tag_list` to merge tags from multiple sources.
-Each tag is subject to [template expansion](/docs/templating.md).
-""",
-            allow_single_file = True,
-        ),
-        "destination_file": attr.label(
-            doc = """File containing the push destination as `{registry}/{repository}`.
-
-The file should contain a single line with the registry and repository separated by
-the first `/`. For example: `gcr.io/my-project/my-app`.
-
-The content is read as a literal string without Go template expansion. Trailing
-newlines and whitespace are stripped.
-
-Cannot be used together with `registry` or `repository` attributes.
-""",
-            allow_single_file = True,
-        ),
-        "image": attr.label(
+    attrs = dict(
+        COMMON_PUSH_ATTRS,
+        image = attr.label(
             doc = "Image to push. Should provide ImageManifestInfo or ImageIndexInfo.",
             mandatory = True,
         ),
-        "referrers": attr.label_list(
-            doc = """Additional manifests or indexes to push as referrers to the main image.
-
-Each referrer is pushed to the same registry and repository as the main image,
-but without tags (referrers are discovered via the OCI referrers API by digest).
-
-Each target must provide ImageManifestInfo or ImageIndexInfo and must have its
-`subject` field set to reference the main image being pushed.
-
-Example:
-```python
-image_push(
-    name = "push",
-    image = ":my_app",
-    referrers = [
-        ":sbom_manifest",
-        ":signature_manifest",
-    ],
-    registry = "ghcr.io",
-    repository = "myorg/myapp",
-    tag = "latest",
-)
-```
-""",
-            providers = [[ImageManifestInfo], [ImageIndexInfo]],
-        ),
-        "cross_mount_from": attr.label(
-            doc = "An image_push target whose layers may be cross-mounted during push.",
-            providers = [DeployInfo],
-        ),
-        "strategy": attr.string(
-            doc = """Push strategy to use.
-
-See [push strategies documentation](/docs/push-strategies.md) for detailed information.
-""",
-            default = "auto",
-            values = ["auto", "eager", "lazy", "cas_registry", "bes"],
-        ),
-        "build_settings": attr.string_keyed_label_dict(
-            doc = """Build settings for template expansion.
-
-Maps template variable names to string_flag targets. These values can be used in
-registry, repository, and tag attributes using `{{.VARIABLE_NAME}}` syntax (Go template).
-
-Example:
-```python
-build_settings = {
-    "REGISTRY": "//settings:docker_registry",
-    "VERSION": "//settings:app_version",
-}
-```
-
-See [template expansion](/docs/templating.md) for more details.
-""",
-            providers = [BuildSettingInfo],
-        ),
-        "stamp": attr.string(
-            doc = """Controls build stamping for template expansion.
-
-- **`auto`** (default): Defers to the global `--@rules_img//img/settings:stamp` setting.
-- **`force`**: Always stamp if templates contain `{{}}` placeholders, ignoring Bazel's `--stamp` flag.
-- **`disabled`**: Never include stamp information.
-
-See [template expansion](/docs/templating.md) for available stamp variables.
-""",
-            default = "auto",
-            values = ["auto", "force", "disabled"],
-        ),
-        "_push_settings": attr.label(
-            default = Label("//img/private/settings:push"),
-            providers = [PushSettingsInfo],
-        ),
-        "_stamp_settings": attr.label(
-            default = Label("//img/private/settings:stamp"),
-            providers = [StampSettingInfo],
-        ),
-        "_docker_config_path": attr.label(
-            default = Label("//img/settings:docker_config_path"),
-            providers = [BuildSettingInfo],
-        ),
-        "tool_cfg": attr.string(
+        tool_cfg = attr.string(
             doc = """Configuration of the pusher executable platform.
 
 Available options:
@@ -598,15 +290,19 @@ Available options:
             default = "host",
             values = ["host", "target"],
         ),
-        "deploy_tool": attr.label(
+        deploy_tool = attr.label(
             doc = """Optional label of a deploy tool target providing `DeployToolInfo` (created with `img_deploy_tool` from `@rules_img//img:deploy_tool.bzl`). When set, overrides `tool_cfg`.""",
             providers = [DeployToolInfo],
         ),
-        "_deploy_tool": attr.label(
+        _deploy_tool = attr.label(
             default = default_deploy_tool,
             providers = [DeployToolInfo],
         ),
-    },
+        _docker_config_path = attr.label(
+            default = Label("//img/settings:docker_config_path"),
+            providers = [BuildSettingInfo],
+        ),
+    ),
     executable = True,
     cfg = reset_platform_transition,
     toolchains = [

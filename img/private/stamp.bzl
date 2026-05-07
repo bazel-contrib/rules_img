@@ -18,20 +18,22 @@ def get_build_settings(ctx):
         settings[setting_name] = setting_label[BuildSettingInfo].value
     return settings
 
-def should_stamp(*, ctx, template_strings):
+def should_stamp(*, ctx, template_strings, stamp_override = None, stamp_settings_override = None):
     """Get the stamp configuration from the context.
 
     Args:
         ctx: The rule context
         template_strings: List of strings to check for Go template placeholders ({{...}})
+        stamp_override: If set, use this stamp preference instead of ctx.attr.stamp
+        stamp_settings_override: If set, use this StampSettingInfo instead of ctx.attr._stamp_settings
 
     Returns:
         A struct containing stamp, can_stamp, and want_stamp boolean fields
     """
-    stamp_settings = ctx.attr._stamp_settings[StampSettingInfo]
+    stamp_settings = stamp_settings_override if stamp_settings_override != None else ctx.attr._stamp_settings[StampSettingInfo]
     bazel_stamp = stamp_settings.bazel_setting
     global_preference = stamp_settings.user_preference
-    target_stamp = ctx.attr.stamp
+    target_stamp = stamp_override if stamp_override != None else ctx.attr.stamp
 
     contains_template_placeholders = False
     for template in template_strings:
@@ -60,7 +62,7 @@ def should_stamp(*, ctx, template_strings):
         want_stamp = want_stamp,
     )
 
-def expand_or_write(*, ctx, templates, output_name, only_if_stamping = False, newline_delimited_lists_files = None, json_vars = None, json_path_to_root = None, expose_kvs = None, extra_build_settings = None):
+def expand_or_write(*, ctx, templates, output_name, only_if_stamping = False, newline_delimited_lists_files = None, json_vars = None, json_path_to_root = None, expose_kvs = None, extra_build_settings = None, build_settings_override = None, stamp_override = None, stamp_settings_override = None):
     """Either expand templates or write JSON directly based on build_settings.
 
     Args:
@@ -73,16 +75,22 @@ def expand_or_write(*, ctx, templates, output_name, only_if_stamping = False, ne
         json_path_to_root: Optional dict mapping json-var names to dot-separated paths selecting a sub-object as root
         expose_kvs: Optional list of template keys whose values are OCI-style key-value pair arrays to expose as template variables
         extra_build_settings: Optional dict of additional template variables (lowest precedence; overridden by `build_settings`)
+        build_settings_override: Optional dict(string, string) to use instead of ctx.attr.build_settings
+        stamp_override: Optional stamp preference string to use instead of ctx.attr.stamp
+        stamp_settings_override: Optional StampSettingInfo to use instead of ctx.attr._stamp_settings
 
     Returns:
         The File object for the final JSON, or None if only_if_stamping=True and no stamping needed
     """
-    build_settings = get_build_settings(ctx)
+    if build_settings_override != None:
+        build_settings = dict(build_settings_override)
+    else:
+        build_settings = get_build_settings(ctx)
     if extra_build_settings:
         merged = dict(extra_build_settings)
         merged.update(build_settings)
         build_settings = merged
-    stamp_settings = should_stamp(ctx = ctx, template_strings = [json.encode(v) for v in templates.values()])
+    stamp_settings = should_stamp(ctx = ctx, template_strings = [json.encode(v) for v in templates.values()], stamp_override = stamp_override, stamp_settings_override = stamp_settings_override)
 
     # If only_if_stamping is True and no stamping is needed and no newline-delimited files or json_vars provided, return None
     if only_if_stamping and not stamp_settings.want_stamp and not newline_delimited_lists_files and not json_vars:

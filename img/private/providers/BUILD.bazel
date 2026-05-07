@@ -83,3 +83,15 @@ bzl_library(
     srcs = ["layer_config_info.bzl"],
     visibility = ["//img:__subpackages__"],
 )
+
+bzl_library(
+    name = "push_config_info",
+    srcs = ["push_config_info.bzl"],
+    visibility = ["//img:__subpackages__"],
+)
+
+bzl_library(
+    name = "load_config_info",
+    srcs = ["load_config_info.bzl"],
+    visibility = ["//img:__subpackages__"],
+)

@@ -61,5 +61,7 @@ bazel run //path/to:load_target -- --platform linux/amd64
 """
 
 load("//img/private:load.bzl", _image_load = "image_load")
+load("//img/private:load_spec.bzl", _image_load_spec = "image_load_spec")
 
 image_load = _image_load
+image_load_spec = _image_load_spec

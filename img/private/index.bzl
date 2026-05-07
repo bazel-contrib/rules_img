@@ -1,14 +1,17 @@
 """Image index rule for composing multi-layer OCI images."""
 
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
+load("//img/private:push_metadata.bzl", "process_deploy_specs")
 load("//img/private:stamp.bzl", "expand_or_write")
 load("//img/private/common:build.bzl", "TOOLCHAIN", "TOOLCHAINS")
 load("//img/private/common:transitions.bzl", "multi_platform_image_transition", "reset_platform_transition")
 load("//img/private/common:write_index_json.bzl", "write_index_json")
 load("//img/private/providers:index_info.bzl", "ImageIndexInfo")
+load("//img/private/providers:load_config_info.bzl", "LoadConfigInfo")
 load("//img/private/providers:manifest_info.bzl", "ImageManifestInfo")
 load("//img/private/providers:oci_layout_settings_info.bzl", "OCILayoutSettingsInfo")
 load("//img/private/providers:pull_info.bzl", "PullInfo")
+load("//img/private/providers:push_config_info.bzl", "PushConfigInfo")
 load("//img/private/providers:stamp_setting_info.bzl", "StampSettingInfo")
 
 def _build_oci_layout(ctx, format, index_out, manifests):
@@ -154,6 +157,11 @@ def _image_index_impl(ctx):
         config_json = config_json,
         subject_descriptor = subject_descriptor_file,
     )
+    index_info_provider = ImageIndexInfo(
+        descriptor = descriptor_out,
+        index = index_out,
+        manifests = manifest_infos,
+    )
     providers = [
         DefaultInfo(files = depset([index_out])),
         OutputGroupInfo(
@@ -162,14 +170,24 @@ def _image_index_impl(ctx):
             oci_layout = depset([_build_oci_layout(ctx, "directory", index_out, manifest_infos)]),
             oci_tarball = depset([_build_oci_layout(ctx, "tar", index_out, manifest_infos)]),
         ),
-        ImageIndexInfo(
-            descriptor = descriptor_out,
-            index = index_out,
-            manifests = manifest_infos,
-        ),
+        index_info_provider,
     ]
     if pull_info != None:
         providers.append(pull_info)
+
+    deploy_info = process_deploy_specs(
+        ctx,
+        manifest_info = None,
+        index_info = index_info_provider,
+        manifest_infos = manifest_infos,
+        pull_info = pull_info,
+        push_specs = ctx.attr.push_specs,
+        load_specs = ctx.attr.load_specs,
+        allow_manifest_tags = True,
+    )
+    if deploy_info != None:
+        providers.append(deploy_info)
+
     return providers
 
 image_index = rule(
@@ -299,6 +317,27 @@ See [template expansion](/docs/templating.md) for available stamp variables.
         "_stamp_settings": attr.label(
             default = Label("//img/private/settings:stamp"),
             providers = [StampSettingInfo],
+        ),
+        "push_specs": attr.label_list(
+            doc = """Push configurations to produce DeployInfo for this image index.
+
+Each entry should be an `image_push_spec` target (providing `PushConfigInfo`).
+When set (together with or without `load_specs`), this rule additionally returns
+`DeployInfo`, making it directly usable as an operation in `multi_deploy`.
+
+For multi-platform pushes, `manifest_tags` on the push spec are expanded
+per child manifest with platform variables (`{{.os}}`, `{{.architecture}}`, etc.).
+""",
+            providers = [PushConfigInfo],
+        ),
+        "load_specs": attr.label_list(
+            doc = """Load configurations to produce DeployInfo for this image index.
+
+Each entry should be an `image_load_spec` target (providing `LoadConfigInfo`).
+When set (together with or without `push_specs`), this rule additionally returns
+`DeployInfo`, making it directly usable as an operation in `multi_deploy`.
+""",
+            providers = [LoadConfigInfo],
         ),
     },
     toolchains = TOOLCHAINS,

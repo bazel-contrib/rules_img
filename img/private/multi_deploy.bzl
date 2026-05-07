@@ -8,7 +8,9 @@ load("//img/private/common:default_deploy_tool.bzl", "default_deploy_tool")
 load("//img/private/common:transitions.bzl", "reset_platform_transition")
 load("//img/private/providers:deploy_info.bzl", "DeployInfo")
 load("//img/private/providers:deploy_tool_info.bzl", "DeployToolInfo")
+load("//img/private/providers:index_info.bzl", "ImageIndexInfo")
 load("//img/private/providers:load_settings_info.bzl", "LoadSettingsInfo")
+load("//img/private/providers:manifest_info.bzl", "ImageManifestInfo")
 load("//img/private/providers:push_settings_info.bzl", "PushSettingsInfo")
 load("//img/private/providers:stamp_setting_info.bzl", "StampSettingInfo")
 
@@ -104,6 +106,13 @@ def _multi_deploy_impl(ctx):
     if not ctx.attr.operations:
         fail("operations attribute cannot be empty")
 
+    for operation in ctx.attr.operations:
+        if DeployInfo not in operation:
+            if ImageManifestInfo in operation or ImageIndexInfo in operation:
+                fail("Target '{}' provides an image but not DeployInfo. Add 'push_specs' or 'load_specs' to produce DeployInfo, or wrap it with image_push.".format(operation.label))
+            else:
+                fail("Target '{}' does not provide DeployInfo.".format(operation.label))
+
     # Merge all deploy manifests
     deploy_metadata, layer_hints = _compute_multi_deploy_metadata(ctx = ctx)
 
@@ -196,76 +205,67 @@ def _multi_deploy_impl(ctx):
 
 multi_deploy = rule(
     implementation = _multi_deploy_impl,
-    doc = """Merges multiple deploy operations into a single unified deployment command.
+    doc = """Deploys multiple container images in a single coordinated command.
 
-This rule takes multiple operations (typically from image_push or image_load rules)
-that provide DeployInfo and merges them into a single command that can deploy all
-operations in parallel. This is useful for scenarios where you need to push and/or
-load multiple related images as a coordinated deployment.
-
-The rule produces an executable that can be run with `bazel run`.
-
-Example:
+Use `push_specs` and `load_specs` on your image targets to attach deployment
+configuration directly, then reference the images in `operations`:
 
 ```python
-load("@rules_img//img:push.bzl", "image_push")
-load("@rules_img//img:load.bzl", "image_load")
+load("@rules_img//img:image.bzl", "image_manifest")
+load("@rules_img//img:push.bzl", "image_push_spec")
 load("@rules_img//img:multi_deploy.bzl", "multi_deploy")
 
-# Individual operations
-image_push(
-    name = "push_frontend",
-    image = ":frontend",
+image_push_spec(
+    name = "push_spec",
     registry = "gcr.io",
-    repository = "my-project/frontend",
+    repository = "my-project/{{.image_target_name}}",
     tag = "latest",
 )
 
-image_push(
-    name = "push_backend",
-    image = ":backend",
-    registry = "gcr.io",
-    repository = "my-project/backend",
-    tag = "latest",
+image_manifest(
+    name = "frontend",
+    base = "@distroless_cc",
+    layers = [":frontend_layer"],
+    push_specs = [":push_spec"],
 )
 
-image_load(
-    name = "load_database",
-    image = ":database",
-    tag = "my-database:latest",
+image_manifest(
+    name = "backend",
+    base = "@distroless_cc",
+    layers = [":backend_layer"],
+    push_specs = [":push_spec"],
 )
 
-# Unified deployment
 multi_deploy(
     name = "deploy_all",
     operations = [
-        ":push_frontend",
-        ":push_backend",
-        ":load_database",
+        ":frontend",
+        ":backend",
     ],
-    push_strategy = "lazy",
-    load_strategy = "eager",
 )
 ```
 
+Alternatively, standalone `image_push` or `image_load` targets that already
+provide `DeployInfo` can be used directly in `operations`.
+
 Runtime usage:
 ```bash
-# Deploy all operations together
 bazel run //path/to:deploy_all
 ```
-
-The deploy-merge subcommand will execute all push and load operations in sequence,
-allowing for coordinated deployment of related container images.
 """,
     attrs = {
         "operations": attr.label_list(
             doc = """List of operations to deploy together.
 
-Each operation must provide DeployInfo (typically from image_push or image_load rules).
+Each operation must provide DeployInfo (typically from image_push, image_load,
+image_manifest with push_specs/load_specs, or image_index with push_specs/load_specs).
 All operations will be merged and executed in the order specified.
 """,
             mandatory = True,
-            providers = [DeployInfo],
+            # OR-semantics: accepts image targets without DeployInfo so that
+            # _multi_deploy_impl can provide actionable error messages guiding
+            # users to add push_specs/load_specs or wrap with image_push.
+            providers = [[DeployInfo], [ImageManifestInfo], [ImageIndexInfo]],
         ),
         "push_strategy": attr.string(
             doc = """Push strategy to use for all push operations in the deployment.

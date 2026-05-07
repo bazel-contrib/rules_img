@@ -2,6 +2,7 @@
 
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("//img/private:annotations_util.bzl", "extract_annotations_from_pull_info")
+load("//img/private:push_metadata.bzl", "process_deploy_specs")
 load("//img/private:stamp.bzl", "expand_or_write")
 load("//img/private/common:build.bzl", "TOOLCHAIN", "TOOLCHAINS")
 load("//img/private/common:layer_helper.bzl", "allow_tar_files", "calculate_layer_info", "extension_to_compression")
@@ -10,9 +11,11 @@ load("//img/private/config:defs.bzl", "TargetPlatformInfo")
 load("//img/private/providers:index_info.bzl", "ImageIndexInfo")
 load("//img/private/providers:layer_config_info.bzl", "ImageLayerConfigInfo")
 load("//img/private/providers:layers_info.bzl", "LayersInfo")
+load("//img/private/providers:load_config_info.bzl", "LoadConfigInfo")
 load("//img/private/providers:manifest_info.bzl", "ImageManifestInfo")
 load("//img/private/providers:oci_layout_settings_info.bzl", "OCILayoutSettingsInfo")
 load("//img/private/providers:pull_info.bzl", "PullInfo")
+load("//img/private/providers:push_config_info.bzl", "PushConfigInfo")
 load("//img/private/providers:single_layer_info.bzl", "SingleLayerInfo")
 load("//img/private/providers:stamp_setting_info.bzl", "StampSettingInfo")
 
@@ -466,6 +469,17 @@ def _image_manifest_impl(ctx):
         mnemonic = "ImageManifest",
     )
 
+    manifest_info_provider = ImageManifestInfo(
+        descriptor = descriptor_out,
+        manifest = manifest_out,
+        config = config_out,
+        structured_config = structured_config,
+        architecture = arch,
+        os = os,
+        variant = variant,
+        layers = layers,
+        missing_blobs = base.missing_blobs if base != None else [],
+    )
     providers.extend([
         DefaultInfo(
             files = depset([manifest_out, config_out]),
@@ -476,18 +490,22 @@ def _image_manifest_impl(ctx):
             oci_layout = depset([_build_oci_layout(ctx, "directory", manifest_out, config_out, layers)]),
             oci_tarball = depset([_build_oci_layout(ctx, "tar", manifest_out, config_out, layers)]),
         ),
-        ImageManifestInfo(
-            descriptor = descriptor_out,
-            manifest = manifest_out,
-            config = config_out,
-            structured_config = structured_config,
-            architecture = arch,
-            os = os,
-            variant = variant,
-            layers = layers,
-            missing_blobs = base.missing_blobs if base != None else [],
-        ),
+        manifest_info_provider,
     ])
+
+    deploy_info = process_deploy_specs(
+        ctx,
+        manifest_info = manifest_info_provider,
+        index_info = None,
+        manifest_infos = [],
+        pull_info = pull_info,
+        push_specs = ctx.attr.push_specs,
+        load_specs = ctx.attr.load_specs,
+        allow_manifest_tags = False,
+    )
+    if deploy_info != None:
+        providers.append(deploy_info)
+
     return providers
 
 image_manifest = rule(
@@ -691,6 +709,66 @@ See [template expansion](/docs/templating.md) for available stamp variables.
         "_stamp_settings": attr.label(
             default = Label("//img/private/settings:stamp"),
             providers = [StampSettingInfo],
+        ),
+        "push_specs": attr.label_list(
+            doc = """Push configurations to produce DeployInfo for this image.
+
+Each entry should be an `image_push_spec` target (providing `PushConfigInfo`).
+When set (together with or without `load_specs`), this rule additionally returns
+`DeployInfo`, making it directly usable as an operation in `multi_deploy`.
+
+Example:
+```python
+image_push_spec(
+    name = "push_config",
+    registry = "gcr.io",
+    repository = "my-project/my-app",
+    tag = "latest",
+)
+
+image_manifest(
+    name = "my_app",
+    base = "@distroless_cc",
+    layers = [":app_layer"],
+    push_specs = [":push_config"],
+)
+
+multi_deploy(
+    name = "deploy",
+    operations = [":my_app"],
+)
+```
+""",
+            providers = [PushConfigInfo],
+        ),
+        "load_specs": attr.label_list(
+            doc = """Load configurations to produce DeployInfo for this image.
+
+Each entry should be an `image_load_spec` target (providing `LoadConfigInfo`).
+When set (together with or without `push_specs`), this rule additionally returns
+`DeployInfo`, making it directly usable as an operation in `multi_deploy`.
+
+Example:
+```python
+image_load_spec(
+    name = "load_config",
+    tag = "my-app:latest",
+)
+
+image_manifest(
+    name = "my_app",
+    base = "@distroless_cc",
+    layers = [":app_layer"],
+    load_specs = [":load_config"],
+)
+
+multi_deploy(
+    name = "deploy",
+    operations = [":my_app"],
+)
+```
+""",
+            providers = [LoadConfigInfo],
         ),
     },
     provides = [ImageManifestInfo],

@@ -52,6 +52,35 @@ bzl_library(
 )
 
 bzl_library(
+    name = "deploy_attrs",
+    srcs = ["deploy_attrs.bzl"],
+    visibility = ["//img:__subpackages__"],
+    deps = [
+        "//img/private/providers:deploy_info",
+        "//img/private/providers:index_info",
+        "//img/private/providers:load_settings_info",
+        "//img/private/providers:manifest_info",
+        "//img/private/providers:push_settings_info",
+        "//img/private/providers:stamp_setting_info",
+        "@bazel_skylib//rules:common_settings",
+    ],
+)
+
+bzl_library(
+    name = "deploy_helpers",
+    srcs = ["deploy_helpers.bzl"],
+    visibility = ["//img:__subpackages__"],
+    deps = [
+        "//img/private/providers:deploy_info",
+        "//img/private/providers:index_info",
+        "//img/private/providers:load_settings_info",
+        "//img/private/providers:manifest_info",
+        "//img/private/providers:push_settings_info",
+        "@bazel_skylib//rules:common_settings",
+    ],
+)
+
+bzl_library(
     name = "tar_layer",
     srcs = ["tar_layer.bzl"],
     visibility = ["//img:__subpackages__"],

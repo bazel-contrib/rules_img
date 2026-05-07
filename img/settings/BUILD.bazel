@@ -174,3 +174,9 @@ string_flag(
     ],
     visibility = ["//img/private:__subpackages__"],
 )
+
+string_flag(
+    name = "destination_registry",
+    build_setting_default = "",
+    visibility = ["//img/private:__subpackages__"],
+)
