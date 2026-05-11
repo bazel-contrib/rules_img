@@ -3,11 +3,12 @@ diff -Naur a/example/MODULE.bazel b/example/MODULE.bazel
 +++ b/example/MODULE.bazel	2026-04-30 15:36:05
 @@ -1,16 +1,11 @@
 -module(name = "rules_runfiles_group_example")
-+module(name = "rules_runfiles_group_example", version = "0.0.1-rc.2")
++module(name = "rules_runfiles_group_example", version = "0.0.1-rc.5")
  
 -bazel_dep(name = "rules_runfiles_group")
-+bazel_dep(name = "rules_runfiles_group", version = "0.0.1-rc.2")
++bazel_dep(name = "rules_runfiles_group", version = "0.0.1-rc.5")
  bazel_dep(name = "rules_go", version = "0.60.0")
+ bazel_dep(name = "rules_shell", version = "0.8.0")
  bazel_dep(name = "hermetic_launcher", version = "0.0.5")
  bazel_dep(name = "gazelle", version = "0.50.0")
  bazel_dep(name = "sha256.bzl", version = "0.0.1")

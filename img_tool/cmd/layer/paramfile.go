@@ -128,6 +128,32 @@ func splitParamFileLineKV(line string) (string, string, error) {
 	return pathInImage, value, nil
 }
 
+func readEmptyFilesParamFile(paramFile string) ([]string, error) {
+	file, err := os.Open(paramFile)
+	if err != nil {
+		return nil, fmt.Errorf("opening parameter file: %w", err)
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+
+	var paths []string
+	for scanner.Scan() {
+		line := scanner.Text()
+		if line == "" {
+			continue
+		}
+		if line[0] == '/' {
+			line = line[1:]
+		}
+		paths = append(paths, line)
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("reading parameter file: %w", err)
+	}
+	return paths, nil
+}
+
 // readSymlinkPairsParamFile reads a parameter file where each line contains
 // three null-separated fields: source_prefix, dest_prefix, and dir_name.
 // For each line, it produces a symlink: source_prefix/dir_name -> dest_prefix/dir_name.

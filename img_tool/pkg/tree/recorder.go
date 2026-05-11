@@ -250,6 +250,21 @@ func (r Recorder) Symlink(target, linkName string) error {
 	return r.tf.WriteHeader(hdr)
 }
 
+func (r Recorder) EmptyFile(target string) error {
+	hdr := &tar.Header{
+		Typeflag: tar.TypeReg,
+		Name:     target,
+		Size:     0,
+		Mode:     0o755,
+	}
+	if r.metadata != nil {
+		if err := r.metadata.ApplyToHeader(hdr, target); err != nil {
+			return fmt.Errorf("applying metadata: %w", err)
+		}
+	}
+	return r.tf.WriteHeader(hdr)
+}
+
 func relativeSymlinkTarget(target, linkName string) string {
 	sourceDir := path.Dir(linkName)
 	if sourceDir == "." {

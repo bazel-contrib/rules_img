@@ -28,7 +28,7 @@ bazel_dep(name = "platforms", version = "0.0.11")
 bazel_dep(name = "rules_distroless", version = "0.8.0")
 bazel_dep(name = "rules_pkg", version = "1.2.0")
 bazel_dep(name = "rules_python", version = "2.0.0")
-bazel_dep(name = "rules_runfiles_group", version = "0.0.1-rc.4")
+bazel_dep(name = "rules_runfiles_group", version = "0.0.1-rc.5")
 bazel_dep(name = "rules_shell", version = "0.8.0")
 bazel_dep(name = "tar.bzl", version = "0.7.0")
 bazel_dep(name = "rules_runfiles_group_example")
@@ -41,14 +41,11 @@ single_version_override(
 
 archive_override(
     module_name = "rules_runfiles_group_example",
-    integrity = "sha256-vJNz/13K4hmPJUdLhwPxfzmSbTdLycZCICS7z1BWD3s=",
+    integrity = "sha256-BvxyzlZEsR0BzH4b1dHTOgvt4lX2sifJrsGCpbdvnMc=",
     patch_strip = 2,
-    patches = [
-        "rules_runfiles_group_example.patch",
-        "rules_runfiles_group_example_loadmap_path_len_windows.patch",
-    ],
-    strip_prefix = "rules_runfiles_group-0.0.1-rc.3/example",
-    urls = ["https://github.com/hermeticbuild/rules_runfiles_group/releases/download/v0.0.1-rc.3/rules_runfiles_group-v0.0.1-rc.3.tar.gz"],
+    patches = ["rules_runfiles_group_example.patch"],
+    strip_prefix = "rules_runfiles_group-0.0.1-rc.5/example",
+    urls = ["https://github.com/hermeticbuild/rules_runfiles_group/releases/download/v0.0.1-rc.5/rules_runfiles_group-v0.0.1-rc.5.tar.gz"],
 )
 
 # Configure apt for Debian packages
