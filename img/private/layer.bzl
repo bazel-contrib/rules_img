@@ -61,6 +61,11 @@ def _image_layer_impl(ctx):
             symlink_inputs.extend([symlink_entry.target_file for symlink_entry in runfiles.root_symlinks.to_list()])
             if len(symlink_inputs) > 0:
                 extra_inputs.append(depset(symlink_inputs))
+            empty_files_args = ctx.actions.args()
+            empty_files_args.set_param_file_format("multiline")
+            empty_files_args.use_param_file("--empty-files-from-file=%s", use_always = True)
+            empty_files_args.add_all(runfiles.empty_filenames, format_each = "{}.runfiles/%s".format(path_in_image))
+            extra_args.append(empty_files_args)
             repo_mapping_manifest = get_repo_mapping_manifest(files)
             if repo_mapping_manifest != None:
                 extra_inputs.append(depset([repo_mapping_manifest]))
