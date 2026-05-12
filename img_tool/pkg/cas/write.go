@@ -33,6 +33,7 @@ func (c *CAS) WriteBlob(ctx context.Context, digest Digest, r io.Reader) error {
 
 func (c *CAS) batchUploadOne(ctx context.Context, digest Digest, data []byte) error {
 	resp, err := c.casClient.BatchUpdateBlobs(ctx, &remoteexecution_proto.BatchUpdateBlobsRequest{
+		InstanceName: c.instanceName,
 		Requests: []*remoteexecution_proto.BatchUpdateBlobsRequest_Request{{
 			Digest: digest.protoDigest(),
 			Data:   data,
@@ -58,6 +59,9 @@ func (c *CAS) streamUploadOne(ctx context.Context, digest Digest, r io.Reader) e
 	}
 
 	resourceName := fmt.Sprintf("uploads/%s/blobs/%x/%d", uuid.NewString(), digest.Hash, digest.SizeBytes)
+	if c.instanceName != "" {
+		resourceName = c.instanceName + "/" + resourceName
+	}
 	buf := make([]byte, c.capabilities.MaxBatchTotalSizeBytes)
 	var offset int64
 	var eof bool

@@ -6,12 +6,14 @@ load("//img/private/providers:push_settings_info.bzl", "PushSettingsInfo")
 def _push_settings_impl(ctx):
     strategy = ctx.attr._push_strategy[BuildSettingInfo].value
     remote_cache = ctx.attr._remote_cache[BuildSettingInfo].value
+    remote_instance_name = ctx.attr._remote_instance_name[BuildSettingInfo].value
     credential_helper = ctx.attr._credential_helper[BuildSettingInfo].value
     cross_mount = ctx.attr._cross_mount[BuildSettingInfo].value
 
     return [PushSettingsInfo(
         strategy = strategy,
         remote_cache = remote_cache,
+        remote_instance_name = remote_instance_name,
         credential_helper = credential_helper,
         cross_mount = cross_mount,
     )]
@@ -25,6 +27,10 @@ push_settings = rule(
         ),
         "_remote_cache": attr.label(
             default = Label("//img/settings:remote_cache"),
+            providers = [BuildSettingInfo],
+        ),
+        "_remote_instance_name": attr.label(
+            default = Label("//img/settings:remote_instance_name"),
             providers = [BuildSettingInfo],
         ),
         "_credential_helper": attr.label(

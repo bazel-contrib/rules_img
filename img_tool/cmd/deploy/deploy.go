@@ -94,6 +94,7 @@ func DeployWithExtras(ctx context.Context, rawRequest []byte, additionalTags []s
 	}
 
 	reapiEndpoint := os.Getenv("IMG_REAPI_ENDPOINT")
+	reapiInstanceName := os.Getenv("IMG_REAPI_INSTANCE_NAME")
 	blobcacheEndpoint := os.Getenv("IMG_BLOB_CACHE_ENDPOINT")
 	credentialHelperPath := credentialHelperPath()
 	var credentialHelper credential.Helper
@@ -129,7 +130,7 @@ func DeployWithExtras(ctx context.Context, rawRequest []byte, additionalTags []s
 		if err != nil {
 			return fmt.Errorf("Failed to create gRPC client connection: %w", err)
 		}
-		casReader, err = cas.New(grpcClientConn)
+		casReader, err = cas.New(grpcClientConn, cas.WithInstanceName(reapiInstanceName))
 		if err != nil {
 			return fmt.Errorf("creating CAS client: %w", err)
 		}

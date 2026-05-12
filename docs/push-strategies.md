@@ -79,6 +79,9 @@ common --@rules_img//img/settings:push_strategy=lazy
 # instead of environment variables:
 common --@rules_img//img/settings:remote_cache=grpc://your-cache-server:9092
 common --@rules_img//img/settings:credential_helper=tweag-credential-helper
+
+# If your remote cache requires a remote instance name, set it here:
+common --@rules_img//img/settings:remote_instance_name=my-instance-name
 ```
 
 3. Run your push target:
@@ -86,6 +89,8 @@ common --@rules_img//img/settings:credential_helper=tweag-credential-helper
 # Configure the push utility via environment variables:
 export IMG_REAPI_ENDPOINT=grpc://your-cache-server:9092
 export IMG_CREDENTIAL_HELPER=tweag-credential-helper
+# Set the remote instance name if required by your RBE backend:
+export IMG_REAPI_INSTANCE_NAME=my-instance-name
 bazel run //your:push_target
 
 # Or use the settings flags (if configured above):

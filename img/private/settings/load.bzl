@@ -8,6 +8,7 @@ def _load_settings_impl(ctx):
         strategy = ctx.attr._load_strategy[BuildSettingInfo].value,
         daemon = ctx.attr._load_daemon[BuildSettingInfo].value,
         remote_cache = ctx.attr._remote_cache[BuildSettingInfo].value,
+        remote_instance_name = ctx.attr._remote_instance_name[BuildSettingInfo].value,
         credential_helper = ctx.attr._credential_helper[BuildSettingInfo].value,
     )]
 
@@ -24,6 +25,10 @@ load_settings = rule(
         ),
         "_remote_cache": attr.label(
             default = Label("//img/settings:remote_cache"),
+            providers = [BuildSettingInfo],
+        ),
+        "_remote_instance_name": attr.label(
+            default = Label("//img/settings:remote_instance_name"),
             providers = [BuildSettingInfo],
         ),
         "_credential_helper": attr.label(

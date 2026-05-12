@@ -97,6 +97,13 @@ common --@rules_img//img/settings:load_daemon=docker
 # Falls back to $IMG_REAPI_ENDPOINT env var.
 common --@rules_img//img/settings:remote_cache=grpcs://remote.buildbuddy.io
 
+# Remote instance name for REAPI requests.
+# Same format as Bazel's --remote_instance_name flag.
+# Set as instance_name in CAS RPCs and as path prefix in ByteStream resource names.
+# Falls back to $IMG_REAPI_INSTANCE_NAME env var.
+# Required by some RBE backends.
+common --@rules_img//img/settings:remote_instance_name=my-instance-name
+
 # Credential helper to use for authenticating gRPC connections during push operations
 # in some push strategies.
 # This can be the same as Bazel's credential helper.
