@@ -14,10 +14,12 @@ File containing metadata about the layer blob as a JSON file with the following 
 """
 
 FIELDS = dict(
-    blob = "File containing the raw layer or None (for shallow base images).",
+    blob = "File containing the raw layer or None (for shallow base images or tar-index-only mode).",
     metadata = _metadata_doc,
     media_type = "The media type of the layer as a string. Example: application/vnd.oci.image.layer.v1.tar+gzip.",
     estargz = "Boolean indicating whether the layer is an estargz layer.",
+    tar_index = "File containing the tar index (.taridx) for the layer, or None.",
+    layer_input_files = "Depset of files that went into this layer, or None.",
 )
 
 SingleLayerInfo = provider(

@@ -1,12 +1,18 @@
 """Helper functions to create a root symlink tree for pushing and loading."""
 
+load("@sha256.bzl//:sha256.bzl", "sha256")
+
 def _layer_root_symlinks_for_manifest(manifest_info, operation_index, manifest_index, symlink_name_prefix):
     base_path = "{}{}/manifests/{}/layer".format(symlink_name_prefix, operation_index, manifest_index)
-    return {
-        "{base}/{layer_index}".format(base = base_path, layer_index = layer_index): layer.blob
-        for (layer_index, layer) in enumerate(manifest_info.layers)
-        if layer.blob != None
-    }
+    result = {}
+    for (layer_index, layer) in enumerate(manifest_info.layers):
+        if layer.blob != None:
+            result["{base}/{layer_index}".format(base = base_path, layer_index = layer_index)] = layer.blob
+        elif layer.tar_index != None and layer.layer_input_files != None:
+            for f in layer.layer_input_files.to_list():
+                key = "++rules_img_private++/{}".format(sha256(f.path))
+                result[key] = f
+    return result
 
 def calculate_root_symlinks(index_info, manifest_info, *, include_layers, symlink_name_prefix, operation_index = 0):
     """Creates a dictionary of symlinks for container image root structure.

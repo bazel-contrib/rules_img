@@ -291,6 +291,9 @@ def _build_sparse_oci_layout(ctx, format, manifest_out, config_out, layers):
     for layer in layers:
         args.add("--layer", layer.metadata.path)
         inputs.append(layer.metadata)
+        if layer.tar_index != None:
+            args.add("--layer-index", "{}={}".format(layer.metadata.path, layer.tar_index.path))
+            inputs.append(layer.tar_index)
 
     img_toolchain_info = ctx.toolchains[TOOLCHAIN].imgtoolchaininfo
     ctx.actions.run(

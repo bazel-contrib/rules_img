@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+
 	"os"
 	"path/filepath"
 	"runtime"
@@ -46,6 +47,10 @@ func LayerProcess(ctx context.Context, args []string) {
 	var compressionLevelFlag int
 	var createParentDirectoriesFlag bool
 	var treeArtifactHandlingFlag string
+	var casIndexOutputFlag string
+	var casIndexOnlyFlag bool
+	var casIndexInlineThresholdFlag uint64
+	var casIndexLocalPathsFlag bool
 	fileMetadataFlags := make(fileMetadataFlag)
 
 	flagSet := flag.NewFlagSet("layer", flag.ExitOnError)
@@ -91,18 +96,34 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 	flagSet.Var(&fileMetadataFlags, "file-metadata", `Per-file metadata override in the format path=json. Can be specified multiple times. Overrides any defaults from --default-metadata.`)
 	flagSet.BoolVar(&createParentDirectoriesFlag, "create-parent-directories", false, `Create parent directory entries in the tar file for all files. Default is false.`)
 	flagSet.StringVar(&treeArtifactHandlingFlag, "layer-tree-artifact-handling", "full", `How to handle duplicate tree artifacts. "full" stores each tree at its path. "deduplicate_symlink" replaces duplicates with symlinks.`)
+	flagSet.StringVar(&casIndexOutputFlag, "cas-index", "", `Write a compact, content-addressed tar index file alongside the tar output. The index records raw tar headers with content digests in an optionally zstd-compressed format, enabling bit-for-bit tar reconstruction from a content-addressed store.`)
+	flagSet.BoolVar(&casIndexOnlyFlag, "cas-index-only", false, `Only produce the CAS index and metadata; do not write the tar output file. Requires --cas-index.`)
+	flagSet.Uint64Var(&casIndexInlineThresholdFlag, "cas-index-inline-threshold", 0, `Maximum file size (in bytes) to store inline in the CAS stream index. Files smaller than this threshold have their content stored directly in the byte stream instead of as a CAS reference. 0 disables inlining.`)
+	flagSet.BoolVar(&casIndexLocalPathsFlag, "cas-index-local-paths", false, `Record local file paths in the CAS stream index. During reconstruction, these paths are used as a lookaside cache to avoid CAS lookups when the local file still exists with the expected content.`)
 
 	if err := flagSet.Parse(args); err != nil {
 		flagSet.Usage()
 		os.Exit(1)
 	}
 
-	if flagSet.NArg() != 1 {
-		flagSet.Usage()
+	if casIndexOnlyFlag && casIndexOutputFlag == "" {
+		fmt.Fprintf(os.Stderr, "Error: --cas-index-only requires --cas-index\n")
 		os.Exit(1)
 	}
 
-	outputFilePath := flagSet.Arg(0)
+	if !casIndexOnlyFlag && flagSet.NArg() != 1 {
+		flagSet.Usage()
+		os.Exit(1)
+	}
+	if casIndexOnlyFlag && flagSet.NArg() > 0 {
+		fmt.Fprintf(os.Stderr, "Error: --cas-index-only does not accept a positional output argument\n")
+		os.Exit(1)
+	}
+
+	var outputFilePath string
+	if !casIndexOnlyFlag {
+		outputFilePath = flagSet.Arg(0)
+	}
 
 	// Read annotations from file if provided
 	if annotationsFile != "" {
@@ -123,7 +144,9 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 	var compressionAlgorithm api.CompressionAlgorithm
 	switch formatFlag {
 	case "":
-		if filepath.Ext(outputFilePath) == ".tar" {
+		if casIndexOnlyFlag {
+			compressionAlgorithm = api.Gzip
+		} else if filepath.Ext(outputFilePath) == ".tar" {
 			compressionAlgorithm = api.Uncompressed
 		} else if filepath.Ext(outputFilePath) == ".tgz" || filepath.Ext(outputFilePath) == ".gz" {
 			compressionAlgorithm = api.Gzip
@@ -143,17 +166,23 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 		os.Exit(1)
 	}
 
-	outputFile, err := os.OpenFile(outputFilePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error opening output file: %v\n", err)
-		os.Exit(1)
-	}
-	defer func() {
-		if err := outputFile.Close(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error closing output file: %v\n", err)
+	var outputFile io.Writer
+	if casIndexOnlyFlag {
+		outputFile = io.Discard
+	} else {
+		f, err := os.OpenFile(outputFilePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error opening output file: %v\n", err)
 			os.Exit(1)
 		}
-	}()
+		defer func() {
+			if err := f.Close(); err != nil {
+				fmt.Fprintf(os.Stderr, "Error closing output file: %v\n", err)
+				os.Exit(1)
+			}
+		}()
+		outputFile = f
+	}
 
 	// Parse layer metadata
 	layerMetadata, err := ParseLayerMetadata(defaultMetadataFlag, fileMetadataFlags)
@@ -246,11 +275,13 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 		casExporter = contentmanifest.NopExporter()
 	}
 
+
 	compressorState, err := handleLayerState(
 		compressionAlgorithm, estargzFlag, addFiles, importTarFlags, executableFlags, symlinkFlags, emptyFilePaths,
 		casImporter, casExporter, outputFile, layerMetadata,
 		compressorJobsFlag, compressionLevelFlag, createParentDirectoriesFlag,
 		treeArtifactHandlingFlag,
+		casIndexOutputFlag, casIndexInlineThresholdFlag, casIndexLocalPathsFlag,
 	)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Writing layer: %v\n", err)
@@ -282,6 +313,7 @@ func handleLayerState(
 	casImporter api.CASStateSupplier, casExporter api.CASStateExporter, outputFile io.Writer, layerMetadata *LayerMetadata,
 	compressorJobsFlag string, compressionLevelFlag int, createParentDirectories bool,
 	treeArtifactHandling string,
+	casIndexPath string, casIndexInlineThreshold uint64, casIndexLocalPaths bool,
 ) (compressorState api.AppenderState, err error) {
 	// Create shared digestfs with precaching
 	digestFS := digestfs.New(&tarcas.SHA256Helper{})
@@ -318,10 +350,66 @@ func handleLayerState(
 		}
 	}()
 
-	tw, err := tarcas.CASFactoryWithDigestFS("sha256", compressor, digestFS,
+	var tarcasOpts []tarcas.Option
+	tarcasOpts = append(tarcasOpts,
 		tarcas.CreateParentDirectories(createParentDirectories),
 		tarcas.DeduplicateTreeArtifacts(treeArtifactHandling == "deduplicate_symlink"),
 	)
+
+	if casIndexPath != "" {
+		indexFile, err := os.OpenFile(casIndexPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+		if err != nil {
+			return compressorState, fmt.Errorf("opening CAS index output file: %w", err)
+		}
+		defer func() {
+			if err := indexFile.Close(); err != nil {
+				fmt.Fprintf(os.Stderr, "Error closing index file: %v\n", err)
+				os.Exit(1)
+			}
+		}()
+
+		var origComp uint8
+		switch compressionAlgorithm {
+		case api.Gzip:
+			origComp = tarcas.IndexOriginalCompressionGzip
+		case api.Zstd:
+			origComp = tarcas.IndexOriginalCompressionZstd
+		default:
+			origComp = tarcas.IndexOriginalCompressionNone
+		}
+
+		compressorJobs := uint8(1)
+		if compressorJobsFlag == "nproc" {
+			compressorJobs = uint8(runtime.NumCPU())
+		} else if n, err := strconv.Atoi(compressorJobsFlag); err == nil && n > 0 {
+			compressorJobs = uint8(n)
+		}
+
+		var inlineThreshold int64
+		if casIndexInlineThreshold > 0 {
+			inlineThreshold = int64(casIndexInlineThreshold)
+		}
+
+		iw := tarcas.NewIndexWriter(
+			indexFile,
+			tarcas.IndexHashAlgoSHA256,
+			uint16(api.SHA256.Len()),
+			tarcas.IndexStreamCompressionZstd,
+			tarcas.OriginalCompressionInfo{
+				Compression:      origComp,
+				Seekable:         useEstargz,
+				CompressionLevel: int8(compressionLevelFlag),
+				CompressorJobs:   compressorJobs,
+			},
+			inlineThreshold,
+		)
+		tarcasOpts = append(tarcasOpts, tarcas.WithIndexWriter{Writer: iw})
+		if casIndexLocalPaths {
+			tarcasOpts = append(tarcasOpts, tarcas.IndexRecordLocalPaths(true))
+		}
+	}
+
+	tw, err := tarcas.CASFactoryWithDigestFS("sha256", compressor, digestFS, tarcasOpts...)
 	if err != nil {
 		return compressorState, fmt.Errorf("creating Content-addressable storage inside tar file: %w", err)
 	}

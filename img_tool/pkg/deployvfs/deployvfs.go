@@ -2,9 +2,12 @@ package deployvfs
 
 import (
 	"bufio"
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"hash"
 	"io"
 	"os"
 	"path"
@@ -21,6 +24,7 @@ import (
 
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/api"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/cas"
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/tarcas"
 )
 
 // Stats tracks statistics about blob access in the VFS.
@@ -30,6 +34,7 @@ type Stats struct {
 	BlobsFromDiskCache   atomic.Uint64 // Blobs opened from Bazel disk cache
 	BlobsFromRegistry    atomic.Uint64 // Blobs opened from container registry
 	BlobsFromRemoteCache atomic.Uint64 // Blobs opened from Bazel remote cache (RE API)
+	BlobsFromTarIndex    atomic.Uint64 // Blobs reconstructed from tar index
 }
 
 // VFS represents a virtual file system for deployment manifests and their associated blobs.
@@ -490,10 +495,11 @@ func (b *vfsBuilder) layerBlob(operationIndex int, manifestIndex int, layerIndex
 	// 1. OCI layouts (--oci-layout flags, supports both sparse and standard formats)
 	// 2. explicit layer files (--layer flags)
 	// 3. runfiles tree
-	// 4. registry of base image (if base image is shallow, blob was marked as "missing blob" (exists remotely) and strategy allows it)
-	// 5. bazel disk cache (if configured via IMG_DISK_CACHE)
-	// 6. bazel remote cache (if configured via IMG_REAPI_ENDPOINT)
-	// 7. stub blob (cas_registry strategy where all blobs are assumed to already be in the remote CAS)
+	// 4. tar index in runfiles sparse layout
+	// 5. registry of base image (if base image is shallow, blob was marked as "missing blob" (exists remotely) and strategy allows it)
+	// 6. bazel disk cache (if configured via IMG_DISK_CACHE)
+	// 7. bazel remote cache (if configured via IMG_REAPI_ENDPOINT)
+	// 8. stub blob (cas_registry strategy where all blobs are assumed to already be in the remote CAS)
 
 	if entry, found := b.layerFromOCILayouts(desc); found {
 		return entry, nil
@@ -502,6 +508,9 @@ func (b *vfsBuilder) layerBlob(operationIndex int, manifestIndex int, layerIndex
 		return entry, nil
 	}
 	if entry, found := b.layerFromFile(operationIndex, manifestIndex, layerIndex, desc); found {
+		return entry, nil
+	}
+	if entry, found := b.layerFromRunfilesTarIndex(operationIndex, desc); found {
 		return entry, nil
 	}
 	if entry, found := b.layerFromRegistry(pullInfo, manifestInfo.MissingBlobs, desc); found {
@@ -515,7 +524,7 @@ func (b *vfsBuilder) layerBlob(operationIndex int, manifestIndex int, layerIndex
 	}
 	switch strategy {
 	case "eager", "lazy":
-		return blobEntry{}, fmt.Errorf("layer with digest %s not found in any source (OCI layouts, explicit layers, runfiles at %s, base image registry, disk cache, or remote cache)", desc.Digest, layerRunfilesPath(operationIndex, manifestIndex, layerIndex))
+		return blobEntry{}, fmt.Errorf("layer with digest %s not found in any source (OCI layouts, explicit layers, runfiles at %s, tar index, base image registry, disk cache, or remote cache)", desc.Digest, layerRunfilesPath(operationIndex, manifestIndex, layerIndex))
 	case "cas_registry", "bes":
 		// create a stub blob that cannot be read.
 		// The push code should never try to read it, since the remote CAS is assumed to already have it.
@@ -541,6 +550,11 @@ func (b *vfsBuilder) layerFromOCILayouts(desc api.Descriptor) (blobEntry, bool) 
 					return os.Open(fpath)
 				},
 			}, true
+		}
+		// Check for tar index file
+		taridxPath := blobPath + ".taridx"
+		if _, err := os.Stat(taridxPath); err == nil {
+			return b.layerFromTarIndex(taridxPath, desc), true
 		}
 	}
 	return blobEntry{}, false
@@ -589,6 +603,20 @@ func (b *vfsBuilder) layerFromFile(operationIndex int, manifestIndex int, layerI
 		}, true
 	}
 	return blobEntry{}, false
+}
+
+// layerFromRunfilesTarIndex checks for a .taridx file in the runfiles sparse OCI layout
+// and returns a blobEntry that reconstructs the tar on-the-fly.
+func (b *vfsBuilder) layerFromRunfilesTarIndex(operationIndex int, desc api.Descriptor) (blobEntry, bool) {
+	taridxRunfilesPath := sparseLayoutBlobPath(operationIndex, desc.Digest) + ".taridx"
+	fpath, err := b.rlocation(taridxRunfilesPath)
+	if err != nil {
+		return blobEntry{}, false
+	}
+	if _, err := os.Stat(fpath); err != nil {
+		return blobEntry{}, false
+	}
+	return b.layerFromTarIndex(fpath, desc), true
 }
 
 // layerFromRegistry tries to find the layer in the registry of the base image. It returns the blobEntry and true if found.
@@ -886,4 +914,130 @@ func sparseLayoutBlobPath(operationIndex int, digest string) string {
 
 func layerRunfilesPath(operationIndex int, manifestIndex int, layerIndex int) string {
 	return path.Join(fmt.Sprintf("%d", operationIndex), "manifests", fmt.Sprintf("%d", manifestIndex), "layer", fmt.Sprintf("%d", layerIndex))
+}
+
+// layerFromTarIndex creates a blobEntry that reconstructs the tar layer on-the-fly from a .taridx file.
+func (b *vfsBuilder) layerFromTarIndex(taridxPath string, desc api.Descriptor) blobEntry {
+	stats := b.stats
+	builder := b
+	return blobEntry{
+		Descriptor: desc,
+		Location:   "tar_index",
+		stats:      stats,
+		Opener: func() (io.ReadCloser, error) {
+			indexFile, err := os.Open(taridxPath)
+			if err != nil {
+				return nil, fmt.Errorf("opening tar index %s: %w", taridxPath, err)
+			}
+
+			localResolver := &deployLocalBlobResolver{builder: builder}
+			blobStore := &deployBlobStore{casReader: builder.casReader, diskCachePath: builder.diskCachePath}
+
+			pr, pw := io.Pipe()
+			go func() {
+				err := tarcas.ReconstructFromIndex(context.Background(), indexFile, blobStore, localResolver, pw)
+				indexFile.Close()
+				pw.CloseWithError(err)
+			}()
+
+			stats.BlobsFromTarIndex.Add(1)
+			return pr, nil
+		},
+	}
+}
+
+// deployLocalBlobResolver resolves blobs from local sources for tar index reconstruction.
+type deployLocalBlobResolver struct {
+	builder *vfsBuilder
+}
+
+func (r *deployLocalBlobResolver) ResolveLocalBlob(pathHint string, digest []byte, newHash func() hash.Hash, size int64) (io.ReadCloser, bool) {
+	// 1. Try workspace-relative path (output base)
+	workspaceDir := os.Getenv("BUILD_WORKSPACE_DIRECTORY")
+	if workspaceDir != "" {
+		fullPath := filepath.Join(workspaceDir, pathHint)
+		if rc, ok := tryOpenAndVerify(fullPath, digest, newHash, size); ok {
+			return rc, true
+		}
+	}
+
+	// 2. Try runfiles via sha256(pathHint)
+	pathHash := sha256Hex(pathHint)
+	runfilesKey := "++rules_img_private++/" + pathHash
+	resolvedPath, err := r.builder.rlocation(runfilesKey)
+	if err == nil {
+		if rc, ok := tryOpenAndVerify(resolvedPath, digest, newHash, size); ok {
+			return rc, true
+		}
+	}
+
+	// 3. Try disk cache
+	if r.builder.diskCachePath != "" {
+		hexDigest := hex.EncodeToString(digest)
+		cachePath := diskCacheBlobPath(r.builder.diskCachePath, "sha256:"+hexDigest)
+		if rc, ok := tryOpenAndVerify(cachePath, digest, newHash, size); ok {
+			return rc, true
+		}
+	}
+
+	return nil, false
+}
+
+// deployBlobStore implements tarcas.BlobStore for remote CAS fallback.
+type deployBlobStore struct {
+	casReader     casReader
+	diskCachePath string
+}
+
+func (s *deployBlobStore) ReaderForBlob(ctx context.Context, digest []byte, size int64) (io.ReadCloser, error) {
+	// Try disk cache first
+	if s.diskCachePath != "" {
+		hexDigest := hex.EncodeToString(digest)
+		cachePath := diskCacheBlobPath(s.diskCachePath, "sha256:"+hexDigest)
+		if f, err := os.Open(cachePath); err == nil {
+			info, err := f.Stat()
+			if err == nil && info.Size() == size {
+				return f, nil
+			}
+			f.Close()
+		}
+	}
+
+	// Fall back to remote CAS
+	if s.casReader == nil {
+		return nil, fmt.Errorf("blob %x not found in disk cache and no remote cache configured", digest)
+	}
+	casDigest := cas.SHA256(digest, size)
+	return s.casReader.ReaderForBlob(ctx, casDigest)
+}
+
+func sha256Hex(input string) string {
+	h := sha256.Sum256([]byte(input))
+	return hex.EncodeToString(h[:])
+}
+
+func tryOpenAndVerify(path string, digest []byte, newHash func() hash.Hash, size int64) (io.ReadCloser, bool) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, false
+	}
+	info, err := f.Stat()
+	if err != nil || info.Size() != size {
+		f.Close()
+		return nil, false
+	}
+	h := newHash()
+	if _, err := io.Copy(h, f); err != nil {
+		f.Close()
+		return nil, false
+	}
+	if !bytes.Equal(h.Sum(nil), digest) {
+		f.Close()
+		return nil, false
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		f.Close()
+		return nil, false
+	}
+	return f, true
 }

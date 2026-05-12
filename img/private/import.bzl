@@ -68,6 +68,8 @@ def _write_layer_info(ctx, manifest, config, layer_index, index_position = None)
         metadata = layer_metadata,
         media_type = media_type,
         estargz = layer.get("annotations", {}).get(TOC_JSON_DIGEST_ANNOTATION) != None,
+        tar_index = None,
+        layer_input_files = None,
     )
 
 def _write_manifest_descriptor(ctx, digest, manifest, platform, descriptor = None, index_position = None):

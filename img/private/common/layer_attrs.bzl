@@ -105,6 +105,14 @@ Override the layer media type. By default, the media type is auto-detected from 
         default = Label("//img/settings:compression_level"),
         providers = [BuildSettingInfo],
     ),
+    _experimental_layer_emit_tar_index = attr.label(
+        default = Label("//img/settings:experimental_layer_emit_tar_index"),
+        providers = [BuildSettingInfo],
+    ),
+    _experimental_layer_index_local_paths = attr.label(
+        default = Label("//img/settings:experimental_layer_index_local_paths"),
+        providers = [BuildSettingInfo],
+    ),
 )
 
 layer_attrs = struct(

@@ -27,6 +27,8 @@ def _empty_layer_impl(ctx):
             metadata = metadata_out,
             media_type = media_type,
             estargz = False,
+            tar_index = None,
+            layer_input_files = None,
         )]),
     ]
 

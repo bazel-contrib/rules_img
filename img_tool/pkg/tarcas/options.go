@@ -35,6 +35,9 @@ type options struct {
 	writeHeaderCallbackFilter WriteHeaderCallbackFilter
 	createParentDirectories   bool
 	deduplicateTreeArtifacts  bool
+	indexWriter               *IndexWriter
+	indexRecordLocalPaths     bool
+	observer                  EntryObserver
 }
 
 type CreateParentDirectories bool
@@ -50,3 +53,15 @@ func (c CreateParentDirectories) apply(opts *options) { opts.createParentDirecto
 type DeduplicateTreeArtifacts bool
 
 func (d DeduplicateTreeArtifacts) apply(opts *options) { opts.deduplicateTreeArtifacts = bool(d) }
+
+type WithIndexWriter struct{ Writer *IndexWriter }
+
+func (w WithIndexWriter) apply(opts *options) { opts.indexWriter = w.Writer }
+
+type IndexRecordLocalPaths bool
+
+func (r IndexRecordLocalPaths) apply(opts *options) { opts.indexRecordLocalPaths = bool(r) }
+
+type WithEntryObserver struct{ Observer EntryObserver }
+
+func (w WithEntryObserver) apply(opts *options) { opts.observer = w.Observer }

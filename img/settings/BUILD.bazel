@@ -186,3 +186,23 @@ string_flag(
     build_setting_default = "",
     visibility = ["//img/private:__subpackages__"],
 )
+
+string_flag(
+    name = "experimental_layer_emit_tar_index",
+    build_setting_default = "disabled",
+    values = [
+        "enabled",
+        "disabled",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+string_flag(
+    name = "experimental_layer_index_local_paths",
+    build_setting_default = "disabled",
+    values = [
+        "enabled",
+        "disabled",
+    ],
+    visibility = ["//visibility:public"],
+)

@@ -226,6 +226,7 @@ def _create_grouped_layers(ctx, settings, exe, path_in_image, ordered_groups, ru
     all_layers = []
     all_outs = []
     all_metadata = []
+    all_tar_index = []
     default_info = ctx.attr.binary[DefaultInfo]
     content_prefix = _normalize_path(runfiles_config.runfiles_content_path)
 
@@ -263,10 +264,13 @@ def _create_grouped_layers(ctx, settings, exe, path_in_image, ordered_groups, ru
             extra_inputs.append(default_info.files)
             _append_binary_args(ctx, exe, path_in_image, ordered_groups, None, runfiles_config, content_prefix, extra_args, extra_inputs)
 
-        layer_info, out, metadata = create_tar_single_layer(ctx, settings, layer_name, extra_args, extra_inputs)
+        layer_info, out, metadata, tar_index = create_tar_single_layer(ctx, settings, layer_name, extra_args, extra_inputs)
         all_layers.append(layer_info)
-        all_outs.append(out)
+        if out:
+            all_outs.append(out)
         all_metadata.append(metadata)
+        if tar_index:
+            all_tar_index.append(tar_index)
 
     if executable_group_index < 0:
         bin_layer_name = "{}_{}".format(ctx.attr.name, len(ordered_groups))
@@ -274,17 +278,25 @@ def _create_grouped_layers(ctx, settings, exe, path_in_image, ordered_groups, ru
         bin_extra_inputs = [default_info.files]
         _append_binary_args(ctx, exe, path_in_image, ordered_groups, default_info.default_runfiles, runfiles_config, content_prefix, bin_extra_args, bin_extra_inputs)
 
-        layer_info, out, metadata = create_tar_single_layer(ctx, settings, bin_layer_name, bin_extra_args, bin_extra_inputs)
+        layer_info, out, metadata, tar_index = create_tar_single_layer(ctx, settings, bin_layer_name, bin_extra_args, bin_extra_inputs)
         all_layers.append(layer_info)
-        all_outs.append(out)
+        if out:
+            all_outs.append(out)
         all_metadata.append(metadata)
+        if tar_index:
+            all_tar_index.append(tar_index)
 
+    output_groups = dict(
+        metadata = depset(all_metadata),
+    )
+    if all_outs:
+        output_groups["layer"] = depset(all_outs)
+    if all_tar_index:
+        output_groups["experimental_tar_index"] = depset(all_tar_index)
+    default_files = all_outs if all_outs else all_tar_index
     return [
-        DefaultInfo(files = depset(all_outs)),
-        OutputGroupInfo(
-            layer = depset(all_outs),
-            metadata = depset(all_metadata),
-        ),
+        DefaultInfo(files = depset(default_files)),
+        OutputGroupInfo(**output_groups),
         LayersInfo(layers = all_layers),
     ]
 
