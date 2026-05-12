@@ -15,11 +15,28 @@ import (
 	"text/template"
 )
 
+// stringOrStrings is a JSON type that unmarshals from either a single string or an array of strings.
+type stringOrStrings []string
+
+func (s *stringOrStrings) UnmarshalJSON(data []byte) error {
+	var single string
+	if err := json.Unmarshal(data, &single); err == nil {
+		*s = []string{single}
+		return nil
+	}
+	var arr []string
+	if err := json.Unmarshal(data, &arr); err != nil {
+		return fmt.Errorf("expected string or []string, got: %s", string(data))
+	}
+	*s = arr
+	return nil
+}
+
 // request represents the input JSON for template expansion
 type request struct {
 	BuildSettings              map[string]buildSetting    `json:"build_settings"`
 	Templates                  map[string]json.RawMessage `json:"templates"`
-	NewlineDelimitedListsFiles map[string]string          `json:"newline_delimited_lists_files,omitempty"`
+	NewlineDelimitedListsFiles map[string]stringOrStrings `json:"newline_delimited_lists_files,omitempty"`
 }
 
 // buildSetting represents the "value" of the Bazel skylibs' BuildSettingInfo provider.
@@ -453,11 +470,15 @@ func readNewlineDelimitedFile(path string) ([]string, error) {
 
 // mergeNewlineDelimitedFiles reads newline-delimited list files and merges them into templates
 func mergeNewlineDelimitedFiles(req *request) error {
-	for key, filePath := range req.NewlineDelimitedListsFiles {
-		// Read the file
-		lines, err := readNewlineDelimitedFile(filePath)
-		if err != nil {
-			return fmt.Errorf("reading file %s for key %q: %w", filePath, key, err)
+	for key, filePaths := range req.NewlineDelimitedListsFiles {
+		// Read all files and collect lines
+		var lines []string
+		for _, filePath := range filePaths {
+			fileLines, err := readNewlineDelimitedFile(filePath)
+			if err != nil {
+				return fmt.Errorf("reading file %s for key %q: %w", filePath, key, err)
+			}
+			lines = append(lines, fileLines...)
 		}
 
 		// Get existing template value for this key

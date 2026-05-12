@@ -110,10 +110,13 @@ def expand_or_write(*, ctx, templates, output_name, only_if_stamping = False, ne
 
         # Add newline-delimited files if provided
         if newline_delimited_lists_files:
-            request["newline_delimited_lists_files"] = {
-                key: file.path
-                for key, file in newline_delimited_lists_files.items()
-            }
+            ndl = {}
+            for key, files in newline_delimited_lists_files.items():
+                if type(files) == "list":
+                    ndl[key] = [f.path for f in files]
+                else:
+                    ndl[key] = files.path
+            request["newline_delimited_lists_files"] = ndl
 
         # Write the template JSON
         template_name = output_name.replace(".json", ".template_request.json")
@@ -131,7 +134,11 @@ def expand_or_write(*, ctx, templates, output_name, only_if_stamping = False, ne
 
         # Add newline-delimited list files as inputs
         if newline_delimited_lists_files:
-            inputs.extend(newline_delimited_lists_files.values())
+            for files in newline_delimited_lists_files.values():
+                if type(files) == "list":
+                    inputs.extend(files)
+                else:
+                    inputs.append(files)
 
         # Add stamp files if stamping is active
         if stamp_settings.stamp:
