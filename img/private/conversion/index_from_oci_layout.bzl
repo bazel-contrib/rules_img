@@ -106,6 +106,8 @@ def _image_index_from_oci_layout(ctx):
                 estargz = False,
                 media_type = layer_media_types[i],
                 metadata = metadata_jsons[i],
+                tar_index = None,
+                layer_input_files = None,
             )
             for i in range(len(layer_media_types))
         ]

@@ -298,7 +298,7 @@ func DeployWithExtras(ctx context.Context, rawRequest []byte, opts DeployOptions
 
 	// Print VFS statistics to stderr
 	stats := vfs.Stats()
-	fmt.Fprintf(os.Stderr, "    blob transfers: %d from disk, %d from disk cache, %d from container registry, %d from remote cache\n", stats.BlobsFromLocalDisk.Load(), stats.BlobsFromDiskCache.Load(), stats.BlobsFromRegistry.Load(), stats.BlobsFromRemoteCache.Load())
+	fmt.Fprintf(os.Stderr, "    blob transfers: %d from disk, %d from disk cache, %d from container registry, %d from remote cache, %d from tar index\n", stats.BlobsFromLocalDisk.Load(), stats.BlobsFromDiskCache.Load(), stats.BlobsFromRegistry.Load(), stats.BlobsFromRemoteCache.Load(), stats.BlobsFromTarIndex.Load())
 
 	// Print all pushed tags to stdout, one per line.
 	for _, tag := range pushedTags {

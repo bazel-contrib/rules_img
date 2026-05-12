@@ -371,4 +371,5 @@ bzl_library(
     name = "root_symlinks",
     srcs = ["root_symlinks.bzl"],
     visibility = ["//img:__subpackages__"],
+    deps = ["@sha256.bzl//:sha256"],
 )

@@ -115,6 +115,9 @@ def resolve_layer_settings(ctx):
     if ctx.attr.media_type:
         media_type = ctx.attr.media_type
 
+    emit_tar_index = ctx.attr._experimental_layer_emit_tar_index[BuildSettingInfo].value == "enabled"
+    index_local_paths = ctx.attr._experimental_layer_index_local_paths[BuildSettingInfo].value == "enabled"
+
     return struct(
         compression = compression,
         estargz = estargz_enabled,
@@ -122,6 +125,8 @@ def resolve_layer_settings(ctx):
         tree_artifact_handling = tree_artifact_handling,
         media_type = media_type,
         out_ext = out_ext,
+        emit_tar_index = emit_tar_index,
+        index_local_paths = index_local_paths,
     )
 
 def create_tar_single_layer(ctx, settings, name, extra_args = [], extra_inputs = []):
@@ -140,10 +145,15 @@ def create_tar_single_layer(ctx, settings, name, extra_args = [], extra_inputs =
         extra_inputs: list of depset objects to merge with base inputs.
 
     Returns:
-        tuple of (SingleLayerInfo, out_file, metadata_file).
+        tuple of (SingleLayerInfo, out_file_or_None, metadata_file, tar_index_file_or_None).
     """
-    out = ctx.actions.declare_file(name + settings.out_ext)
     metadata_out = ctx.actions.declare_file(name + "_metadata.json")
+    out = None
+    tar_index_out = None
+    if settings.emit_tar_index:
+        tar_index_out = ctx.actions.declare_file(name + settings.out_ext + ".taridx")
+    else:
+        out = ctx.actions.declare_file(name + settings.out_ext)
 
     args = ["layer", "--name", str(ctx.label), "--metadata", metadata_out.path, "--format", settings.compression]
     if ctx.attr.media_type:
@@ -158,32 +168,50 @@ def create_tar_single_layer(ctx, settings, name, extra_args = [], extra_inputs =
         args.extend(["--annotation", "{}={}".format(key, value)])
     if ctx.attr.annotations_file != None:
         args.extend(["--annotations-file", ctx.file.annotations_file.path])
+    if tar_index_out:
+        args.extend(["--cas-index", tar_index_out.path])
+        args.append("--cas-index-only")
+        if settings.index_local_paths:
+            args.append("--cas-index-local-paths")
 
     args.extend(extra_args)
-    args.append(out.path)
+    if out:
+        args.append(out.path)
 
     inputs = []
     if ctx.attr.annotations_file != None:
         inputs.append(depset([ctx.file.annotations_file]))
     inputs.extend(extra_inputs)
 
+    outputs = [metadata_out]
+    if out:
+        outputs.append(out)
+    if tar_index_out:
+        outputs.append(tar_index_out)
+
     img_toolchain_info = ctx.toolchains[TOOLCHAIN].imgtoolchaininfo
     ctx.actions.run(
-        outputs = [out, metadata_out],
+        outputs = outputs,
         inputs = depset(transitive = inputs),
         executable = img_toolchain_info.tool_exe,
         arguments = args,
         mnemonic = "LayerTar",
     )
+
+    layer_input_files = depset(transitive = extra_inputs) if settings.emit_tar_index else None
+
     return (
         SingleLayerInfo(
             blob = out,
             metadata = metadata_out,
             media_type = settings.media_type,
             estargz = settings.estargz,
+            tar_index = tar_index_out,
+            layer_input_files = layer_input_files,
         ),
         out,
         metadata_out,
+        tar_index_out,
     )
 
 def create_tar_layer(ctx, settings, extra_args = [], extra_inputs = []):
@@ -203,12 +231,17 @@ def create_tar_layer(ctx, settings, extra_args = [], extra_inputs = []):
     Returns:
         list of [DefaultInfo, OutputGroupInfo, LayersInfo].
     """
-    layer_info, out, metadata_out = create_tar_single_layer(ctx, settings, ctx.attr.name, extra_args, extra_inputs)
+    layer_info, out, metadata_out, tar_index_out = create_tar_single_layer(ctx, settings, ctx.attr.name, extra_args, extra_inputs)
+    output_groups = dict(
+        metadata = depset([metadata_out]),
+    )
+    if out:
+        output_groups["layer"] = depset([out])
+    if tar_index_out:
+        output_groups["experimental_tar_index"] = depset([tar_index_out])
+    default_file = out if out else tar_index_out
     return [
-        DefaultInfo(files = depset([out])),
-        OutputGroupInfo(
-            layer = depset([out]),
-            metadata = depset([metadata_out]),
-        ),
+        DefaultInfo(files = depset([default_file])),
+        OutputGroupInfo(**output_groups),
         LayersInfo(layers = [layer_info]),
     ]
