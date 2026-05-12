@@ -290,6 +290,49 @@ image_manifest(
     layers = [":mixed_layer"],
 )
 
+# Files containing labels (one KEY=VALUE per line)
+write_file(
+    name = "manifest_labels_file_1",
+    out = "manifest_labels_1.txt",
+    content = [
+        "org.opencontainers.image.version=1.0.0",
+        "org.opencontainers.image.authors=team@example.com",
+    ],
+)
+
+write_file(
+    name = "manifest_labels_file_2",
+    out = "manifest_labels_2.txt",
+    content = [
+        "org.opencontainers.image.source=https://github.com/bazel-contrib/rules_img",
+        "custom.build.id=abc123",
+    ],
+)
+
+# Edge case: Manifest with labels from multiple files
+image_manifest(
+    name = "manifest_with_label_files",
+    label_files = [
+        ":manifest_labels_file_1",
+        ":manifest_labels_file_2",
+    ],
+    layers = [":mixed_layer"],
+)
+
+# Edge case: Manifest with both inline labels and label_files
+image_manifest(
+    name = "manifest_with_merged_labels",
+    label_files = [
+        ":manifest_labels_file_1",
+        ":manifest_labels_file_2",
+    ],
+    labels = {
+        "inline.label": "inline_value",
+        "org.opencontainers.image.title": "Test Image",
+    },
+    layers = [":mixed_layer"],
+)
+
 # Edge case: Multi-platform image index
 image_index(
     name = "multi_platform_index",
@@ -545,6 +588,8 @@ build_test(
         ":annotated_manifest",
         ":manifest_with_annotations_file",
         ":manifest_with_merged_annotations",
+        ":manifest_with_label_files",
+        ":manifest_with_merged_labels",
         ":complex_manifest",
         ":manifest_with_created",
         ":manifest_with_config_media_type",

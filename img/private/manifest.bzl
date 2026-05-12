@@ -377,11 +377,14 @@ def _image_manifest_impl(ctx):
         inputs.append(subject_descriptor_file)
         args.add("--subject-descriptor", subject_descriptor_file.path)
 
-    # Prepare newline_delimited_lists_files if annotations_file is provided
+    # Prepare newline_delimited_lists_files if annotations_file or label_files is provided
     newline_delimited_lists_files = None
-    if ctx.attr.annotations_file != None:
-        annotations_file = ctx.file.annotations_file
-        newline_delimited_lists_files = {"annotations": annotations_file}
+    if ctx.attr.annotations_file != None or ctx.attr.label_files:
+        newline_delimited_lists_files = {}
+        if ctx.attr.annotations_file != None:
+            newline_delimited_lists_files["annotations"] = ctx.file.annotations_file
+        if ctx.attr.label_files:
+            newline_delimited_lists_files["labels"] = ctx.files.label_files
 
     # Prepare json_vars with base image data if available
     json_vars = None
@@ -600,6 +603,25 @@ Subject to [template expansion](/docs/templating.md).
 Subject to [template expansion](/docs/templating.md).
 """,
             default = {},
+        ),
+        "label_files": attr.label_list(
+            doc = """Files containing newline-delimited KEY=VALUE labels for the image config.
+
+Each file should contain one label per line in KEY=VALUE format. Empty lines are ignored.
+Labels from these files are merged together, and then merged with labels specified via
+the `labels` attribute. Values from files take precedence over the `labels` attribute
+for matching keys.
+
+Example file content:
+```
+org.opencontainers.image.version=1.0.0
+org.opencontainers.image.authors=team@example.com
+```
+
+Each label value is subject to [template expansion](/docs/templating.md).
+""",
+            allow_files = True,
+            default = [],
         ),
         "annotations": attr.string_dict(
             doc = """This field contains arbitrary metadata for the manifest.
