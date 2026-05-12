@@ -72,6 +72,12 @@ string_flag(
 )
 
 string_flag(
+    name = "remote_instance_name",
+    build_setting_default = "",
+    visibility = ["//img/private:__subpackages__"],
+)
+
+string_flag(
     name = "credential_helper",
     build_setting_default = "",
     visibility = ["//img/private:__subpackages__"],

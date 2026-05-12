@@ -138,10 +138,12 @@ def _image_push_impl(ctx):
     # Build environment for RunEnvironmentInfo
     environment = {
         "IMG_REAPI_ENDPOINT": ctx.attr._push_settings[PushSettingsInfo].remote_cache,
+        "IMG_REAPI_INSTANCE_NAME": ctx.attr._push_settings[PushSettingsInfo].remote_instance_name,
         "IMG_CREDENTIAL_HELPER": ctx.attr._push_settings[PushSettingsInfo].credential_helper,
     }
     inherited_environment = [
         "IMG_REAPI_ENDPOINT",
+        "IMG_REAPI_INSTANCE_NAME",
         "IMG_CREDENTIAL_HELPER",
         "DOCKER_CONFIG",
     ]

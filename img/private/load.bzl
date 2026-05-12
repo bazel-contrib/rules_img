@@ -161,10 +161,12 @@ def _image_load_impl(ctx):
     # Build environment for RunEnvironmentInfo
     environment = {
         "IMG_REAPI_ENDPOINT": ctx.attr._load_settings[LoadSettingsInfo].remote_cache,
+        "IMG_REAPI_INSTANCE_NAME": ctx.attr._load_settings[LoadSettingsInfo].remote_instance_name,
         "IMG_CREDENTIAL_HELPER": ctx.attr._load_settings[LoadSettingsInfo].credential_helper,
     }
     inherited_environment = [
         "IMG_REAPI_ENDPOINT",
+        "IMG_REAPI_INSTANCE_NAME",
         "IMG_CREDENTIAL_HELPER",
         "DOCKER_CONFIG",
         "LOADER_BINARY",

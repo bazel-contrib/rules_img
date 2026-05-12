@@ -18,6 +18,7 @@ type CAS struct {
 	casClient        remoteexecution_proto.ContentAddressableStorageClient
 	byteStreamClient bytestream_proto.ByteStreamClient
 	capabilities     capabilities
+	instanceName     string
 }
 
 func New(clientConn *grpc.ClientConn, opts ...casOption) (*CAS, error) {
@@ -39,7 +40,7 @@ func New(clientConn *grpc.ClientConn, opts ...casOption) (*CAS, error) {
 	if casOpts.learnCapabilities {
 		capabilitiesClient := remoteexecution_proto.NewCapabilitiesClient(clientConn)
 		var err error
-		capabilities, err = learnCapabilities(context.Background(), capabilitiesClient)
+		capabilities, err = learnCapabilities(context.Background(), capabilitiesClient, casOpts.instanceName)
 		if err != nil {
 			return nil, fmt.Errorf("failed to learn capabilities: %w", err)
 		}
@@ -52,6 +53,7 @@ func New(clientConn *grpc.ClientConn, opts ...casOption) (*CAS, error) {
 		casClient:        casClient,
 		byteStreamClient: byteStreamClient,
 		capabilities:     capabilities,
+		instanceName:     casOpts.instanceName,
 	}, nil
 }
 
@@ -74,6 +76,7 @@ func (c *CAS) FindMissingBlobs(ctx context.Context, digests []Digest) ([]Digest,
 		protoDigests = append(protoDigests, d.protoDigest())
 	}
 	resp, err := c.casClient.FindMissingBlobs(ctx, &remoteexecution_proto.FindMissingBlobsRequest{
+		InstanceName:   c.instanceName,
 		BlobDigests:    protoDigests,
 		DigestFunction: digestFunction,
 	})
@@ -139,6 +142,7 @@ func (c *CAS) ReaderForBlob(ctx context.Context, digest Digest) (io.ReadCloser, 
 
 func (c *CAS) batchReadOne(ctx context.Context, digest Digest) ([]byte, error) {
 	resp, err := c.casClient.BatchReadBlobs(ctx, &remoteexecution_proto.BatchReadBlobsRequest{
+		InstanceName:   c.instanceName,
 		Digests:        []*remoteexecution_proto.Digest{digest.protoDigest()},
 		DigestFunction: digest.protoDigestFunction(),
 	})
@@ -159,8 +163,12 @@ func (c *CAS) batchReadOne(ctx context.Context, digest Digest) ([]byte, error) {
 
 func (c *CAS) streamReadOne(ctx context.Context, digest Digest) (io.ReadCloser, error) {
 	ctx, cancel := context.WithCancel(ctx)
+	resourceName := fmt.Sprintf("blobs/%x/%d", digest.Hash, digest.SizeBytes)
+	if c.instanceName != "" {
+		resourceName = c.instanceName + "/" + resourceName
+	}
 	resp, err := c.byteStreamClient.Read(ctx, &bytestream_proto.ReadRequest{
-		ResourceName: fmt.Sprintf("blobs/%x/%d", digest.Hash, digest.SizeBytes),
+		ResourceName: resourceName,
 		ReadOffset:   0,
 	})
 	if err != nil {
@@ -248,8 +256,10 @@ func (c capabilities) supportedDigestFunction(algorithm string) bool {
 	return false
 }
 
-func learnCapabilities(ctx context.Context, capabilitiesClient remoteexecution_proto.CapabilitiesClient) (capabilities, error) {
-	resp, err := capabilitiesClient.GetCapabilities(ctx, &remoteexecution_proto.GetCapabilitiesRequest{})
+func learnCapabilities(ctx context.Context, capabilitiesClient remoteexecution_proto.CapabilitiesClient, instanceName string) (capabilities, error) {
+	resp, err := capabilitiesClient.GetCapabilities(ctx, &remoteexecution_proto.GetCapabilitiesRequest{
+		InstanceName: instanceName,
+	})
 	if err != nil {
 		return capabilities{}, casErr(err)
 	}
@@ -371,6 +381,7 @@ func (b *byteStreamReadCloser) nilOrEOF() error {
 type casOptions struct {
 	capabilities      capabilities
 	learnCapabilities bool
+	instanceName      string
 }
 
 type casOption func(*casOptions)
@@ -396,5 +407,11 @@ func WithSHA256(supprted bool) casOption {
 func WithSHA512(supported bool) casOption {
 	return func(opts *casOptions) {
 		opts.capabilities.DigestFunctionSHA512 = supported
+	}
+}
+
+func WithInstanceName(instanceName string) casOption {
+	return func(opts *casOptions) {
+		opts.instanceName = instanceName
 	}
 }
