@@ -651,7 +651,21 @@ Each annotation is subject to [template expansion](/docs/templating.md).
             doc = "This field contains the system call signal that will be sent to the container to exit. The signal can be a signal name in the format SIGNAME, for instance SIGKILL or SIGRTMIN+3.",
         ),
         "config_fragment": attr.label(
-            doc = "Optional JSON file containing a partial image config, which will be used as a base for the final image config. When config_media_type is set to a non-OCI type (e.g. Helm), this file is used as the entire config blob as-is.",
+            doc = """Optional JSON file containing a partial OCI image config, which will be used as a base for the final image config.
+
+For OCI image configuration fields such as exposed ports or volumes, the JSON should use the top-level `config` object:
+
+```json
+{
+  "config": {
+    "ExposedPorts": {
+      "8080/tcp": {}
+    }
+  }
+}
+```
+
+When config_media_type is set to a non-OCI type (e.g. Helm), this file is used as the entire config blob as-is.""",
             allow_single_file = True,
         ),
         "config_media_type": attr.string(

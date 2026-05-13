@@ -309,12 +309,14 @@ For attributes not directly supported (like `exposed_ports` or `volumes`), use `
 ```starlark
 # config.json
 {
-  "ExposedPorts": {
-    "8080/tcp": {},
-    "9090/tcp": {}
-  },
-  "Volumes": {
-    "/data": {}
+  "config": {
+    "ExposedPorts": {
+      "8080/tcp": {},
+      "9090/tcp": {}
+    },
+    "Volumes": {
+      "/data": {}
+    }
   }
 }
 
