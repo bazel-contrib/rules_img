@@ -21,7 +21,7 @@ func WithAuthFromMultiKeychain() remote.Option {
 	}
 
 	if value, ok := os.LookupEnv("IMG_CREDENTIAL_HELPER"); ok {
-		bazel := credential.New(value)
+		bazel := credential.New(value, &credential.Options{CaptureStderr: true})
 		docker := credential.ContainerRegistryHelper(bazel)
 		keychain := authn.NewKeychainFromHelper(docker)
 		keychains = append(keychains, keychain)

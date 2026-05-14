@@ -99,7 +99,7 @@ func DeployWithExtras(ctx context.Context, rawRequest []byte, additionalTags []s
 	credentialHelperPath := credentialHelperPath()
 	var credentialHelper credential.Helper
 	if credentialHelperPath != "" {
-		credentialHelper = credential.New(credentialHelperPath)
+		credentialHelper = credential.New(credentialHelperPath, nil)
 	} else {
 		credentialHelper = credential.NopHelper()
 	}
