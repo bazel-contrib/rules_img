@@ -157,6 +157,46 @@ Output groups:
 | <a id="image_manifest-working_dir"></a>working_dir |  Sets the current working directory of the entrypoint process in the container. This value acts as a default and may be replaced by a working directory specified when creating a container.   | String | optional |  `""`  |
 
 
+<a id="image_optimize"></a>
+
+## image_optimize
+
+<pre>
+load("@rules_img//img:image.bzl", "image_optimize")
+
+image_optimize(<a href="#image_optimize-name">name</a>, <a href="#image_optimize-compress">compress</a>, <a href="#image_optimize-estargz">estargz</a>, <a href="#image_optimize-image">image</a>)
+</pre>
+
+Rewrites every available layer in an image manifest or image index.
+
+This rule applies image-wide layer transformations, such as recompressing every
+layer as eStargz. It is intentionally explicit because it requires every input
+layer blob to be available to Bazel. Images that were pulled shallowly will fail
+analysis instead of downloading missing base-image layers.
+
+Example:
+
+```python
+load("@rules_img//img:image.bzl", "image_optimize")
+
+image_optimize(
+    name = "base_estargz",
+    image = "@ubuntu//:image",
+    estargz = "enabled",
+)
+```
+
+**ATTRIBUTES**
+
+
+| Name  | Description | Type | Mandatory | Default |
+| :------------- | :------------- | :------------- | :------------- | :------------- |
+| <a id="image_optimize-name"></a>name |  A unique name for this target.   | <a href="https://bazel.build/concepts/labels#target-names">Name</a> | required |  |
+| <a id="image_optimize-compress"></a>compress |  Compression algorithm to use for rewritten layers. If set to 'auto', uses the global default compression setting.   | String | optional |  `"auto"`  |
+| <a id="image_optimize-estargz"></a>estargz |  Whether to rewrite layers using eStargz. If set to 'auto', uses the global default eStargz setting.   | String | optional |  `"auto"`  |
+| <a id="image_optimize-image"></a>image |  Image manifest or image index to optimize. All layer blobs must be available.   | <a href="https://bazel.build/concepts/labels">Label</a> | required |  |
+
+
 <a id="image_from_binary"></a>
 
 ## image_from_binary

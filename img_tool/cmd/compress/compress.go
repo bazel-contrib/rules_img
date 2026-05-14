@@ -23,6 +23,7 @@ var (
 	format             string
 	estargzFlag        bool
 	metadataOutputFile string
+	sourceMetadataFile string
 )
 
 func CompressProcess(ctx context.Context, args []string) {
@@ -52,6 +53,7 @@ func CompressProcess(ctx context.Context, args []string) {
 	flagSet.IntVar(&compressionLevelFlag, "compression-level", -1, `Compression level. For gzip: 0-9. If unset, use library default.`)
 	flagSet.Var(&annotations, "annotation", `Add an annotation as key=value. Can be specified multiple times.`)
 	flagSet.StringVar(&metadataOutputFile, "metadata", "", `Write the metadata to the specified file. The metadata is a JSON file containing info needed to use the layer as part of an OCI image.`)
+	flagSet.StringVar(&sourceMetadataFile, "source-metadata", "", `Read existing layer metadata and preserve its name and annotations in the output metadata.`)
 
 	if err := flagSet.Parse(args); err != nil {
 		flagSet.Usage()
@@ -132,7 +134,12 @@ func CompressProcess(ctx context.Context, args []string) {
 				os.Exit(1)
 			}
 		}()
-		if err := writeMetadata(compressorState, annotations, mediaType, metadataOutputHandle); err != nil {
+		sourceMetadata, err := readSourceMetadata(sourceMetadataFile)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Reading source metadata: %v\n", err)
+			os.Exit(1)
+		}
+		if err := writeMetadata(compressorState, annotations, mediaType, metadataOutputHandle, sourceMetadata); err != nil {
 			fmt.Fprintf(os.Stderr, "Writing metadata: %v\n", err)
 			os.Exit(1)
 		}
@@ -179,14 +186,41 @@ func recompress(input io.Reader, output io.Writer, format api.LayerFormat, estar
 	return compressorState, mediaType, compressor.AppendTar(input)
 }
 
-func writeMetadata(compressorState api.AppenderState, annotations map[string]string, mediaType string, outputFile io.Writer) error {
+func readSourceMetadata(filePath string) (*api.Descriptor, error) {
+	if filePath == "" {
+		return nil, nil
+	}
+	sourceMetadataRaw, err := os.ReadFile(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("reading source metadata file %s: %w", filePath, err)
+	}
+	var sourceMetadata api.Descriptor
+	if err := json.Unmarshal(sourceMetadataRaw, &sourceMetadata); err != nil {
+		return nil, fmt.Errorf("decoding source metadata file %s: %w", filePath, err)
+	}
+	return &sourceMetadata, nil
+}
+
+func writeMetadata(compressorState api.AppenderState, annotations map[string]string, mediaType string, outputFile io.Writer, sourceMetadata *api.Descriptor) error {
 	if len(layerName) == 0 {
-		layerName = fmt.Sprintf("sha256:%x", compressorState.OuterHash)
+		if sourceMetadata != nil && sourceMetadata.Name != "" {
+			layerName = sourceMetadata.Name
+		} else {
+			layerName = fmt.Sprintf("sha256:%x", compressorState.OuterHash)
+		}
 	}
 
 	// Merge user annotations with layer annotations from the appender state
 	mergedAnnotations := make(map[string]string)
-	// First add user annotations in sorted order to ensure determinism
+	if sourceMetadata != nil {
+		for k, v := range sourceMetadata.Annotations {
+			if k == api.TocDigestAnnotation || k == api.UncompressedSizeAnnotation {
+				continue
+			}
+			mergedAnnotations[k] = v
+		}
+	}
+	// Add user annotations in sorted order to ensure determinism
 	keys := make([]string, 0, len(annotations))
 	for k := range annotations {
 		keys = append(keys, k)
