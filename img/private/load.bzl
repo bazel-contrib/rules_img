@@ -168,6 +168,7 @@ def _image_load_impl(ctx):
         "IMG_REAPI_ENDPOINT",
         "IMG_REAPI_INSTANCE_NAME",
         "IMG_CREDENTIAL_HELPER",
+        "IMG_AUTH_DEBUG",
         "DOCKER_CONFIG",
         "LOADER_BINARY",
     ]
