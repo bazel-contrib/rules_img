@@ -46,6 +46,7 @@ bzl_library(
         "//img/private:image_from_binary",
         "//img/private:index",
         "//img/private:manifest",
+        "//img/private:optimize",
     ],
 )
 
