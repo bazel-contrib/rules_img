@@ -187,6 +187,25 @@ bzl_library(
 )
 
 bzl_library(
+    name = "rules_pkg_providers",
+    srcs = ["@rules_pkg_providers//:providers.bzl"],
+    visibility = ["//img:__subpackages__"],
+)
+
+bzl_library(
+    name = "layer_from_pkg",
+    srcs = ["layer_from_pkg.bzl"],
+    visibility = ["//img:__subpackages__"],
+    deps = [
+        ":rules_pkg_providers",
+        "//img/private/common:build",
+        "//img/private/common:layer_attrs",
+        "//img/private/common:tar_layer",
+        "//img/private/providers:layers_info",
+    ],
+)
+
+bzl_library(
     name = "layer_from_tar",
     srcs = ["layer_from_tar.bzl"],
     visibility = ["//img:__subpackages__"],
