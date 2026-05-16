@@ -51,6 +51,9 @@ def _compute_multi_deploy_metadata(*, ctx):
     args.add("deploy-merge")
     args.add("--push-strategy", _multi_deploy_strategy(ctx, "push"))
     args.add("--load-strategy", _multi_deploy_strategy(ctx, "load"))
+    push_jobs = ctx.attr._push_settings[PushSettingsInfo].push_jobs
+    if push_jobs > 0:
+        args.add("--push-jobs", push_jobs)
 
     # Add layer hints inputs and output if any exist
     layer_hints_out = None

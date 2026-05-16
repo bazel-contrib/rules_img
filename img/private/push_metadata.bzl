@@ -187,7 +187,7 @@ def expand_manifest_tags_for_child(
         stamp_settings_override = stamp_settings_override,
     )
 
-def merge_deploy_manifests(ctx, *, deploy_infos, push_strategy = "auto", load_strategy = "auto"):
+def merge_deploy_manifests(ctx, *, deploy_infos, push_strategy = "auto", load_strategy = "auto", push_jobs = 0):
     """Merge multiple deploy manifests using the deploy-merge tool.
 
     Args:
@@ -195,6 +195,7 @@ def merge_deploy_manifests(ctx, *, deploy_infos, push_strategy = "auto", load_st
         deploy_infos: List of struct(metadata=File, layer_hints=File-or-None).
         push_strategy: Push strategy string for the merge.
         load_strategy: Load strategy string for the merge.
+        push_jobs: Number of parallel push threads (0 = use default).
 
     Returns:
         Tuple of (merged_metadata_file, merged_layer_hints_file).
@@ -204,6 +205,8 @@ def merge_deploy_manifests(ctx, *, deploy_infos, push_strategy = "auto", load_st
     args.add("deploy-merge")
     args.add("--push-strategy", push_strategy)
     args.add("--load-strategy", load_strategy)
+    if push_jobs > 0:
+        args.add("--push-jobs", push_jobs)
 
     layer_hints_files = []
     for info in deploy_infos:
@@ -469,6 +472,7 @@ def process_deploy_specs(
         deploy_infos = deploy_infos,
         push_strategy = first_push_strategy,
         load_strategy = first_load_strategy,
+        push_jobs = ctx.attr._push_settings[PushSettingsInfo].push_jobs,
     )
     return DeployInfo(
         image = image_info,

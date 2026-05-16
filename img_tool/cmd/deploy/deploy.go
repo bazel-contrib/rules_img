@@ -37,6 +37,7 @@ func DeployProcess(ctx context.Context, args []string) {
 	var overrideRegistry string
 	var overrideRepository string
 	var platforms string
+	var pushJobs int
 
 	flagSet := flag.NewFlagSet("deploy", flag.ContinueOnError)
 	flagSet.StringVar(&requestFile, "request-file", "", "Deploy manifest JSON request file")
@@ -46,6 +47,7 @@ func DeployProcess(ctx context.Context, args []string) {
 	flagSet.StringVar(&overrideRegistry, "registry", "", "Override registry to push to")
 	flagSet.StringVar(&overrideRepository, "repository", "", "Override repository to push to")
 	flagSet.StringVar(&platforms, "platform", "", "Comma-separated list of platforms to load (e.g., linux/amd64). If not set, loads the platform closest to the host (or the single available platform). Use 'all' to load the full multi-platform index. Doesn't affect push, only load.")
+	flagSet.IntVar(&pushJobs, "jobs", 0, "Number of parallel push threads (overrides push_jobs setting; 0 means use setting or default)")
 
 	if err := flagSet.Parse(args); err != nil {
 		flagSet.Usage()
@@ -79,13 +81,13 @@ func DeployProcess(ctx context.Context, args []string) {
 		}
 	}
 
-	if err := DeployWithExtras(ctx, rawRequest, []string(additionalTags), overrideRegistry, overrideRepository, platformList, runfilesRootSymlinksPrefix); err != nil {
+	if err := DeployWithExtras(ctx, rawRequest, []string(additionalTags), overrideRegistry, overrideRepository, platformList, runfilesRootSymlinksPrefix, pushJobs); err != nil {
 		fmt.Fprintf(os.Stderr, "Error during deploy: %v\n", err)
 		os.Exit(1)
 	}
 }
 
-func DeployWithExtras(ctx context.Context, rawRequest []byte, additionalTags []string, overrideRegistry, overrideRepository string, platformList []string, runfilesRootSymlinksPrefix string) error {
+func DeployWithExtras(ctx context.Context, rawRequest []byte, additionalTags []string, overrideRegistry, overrideRepository string, platformList []string, runfilesRootSymlinksPrefix string, pushJobsOverride int) error {
 	var req api.DeployManifest
 	decoder := json.NewDecoder(bytes.NewReader(rawRequest))
 	decoder.DisallowUnknownFields()
@@ -179,6 +181,14 @@ func DeployWithExtras(ctx context.Context, rawRequest []byte, additionalTags []s
 		}
 		if len(additionalTags) > 0 {
 			uploadBuilder = uploadBuilder.WithExtraTags(additionalTags)
+		}
+		// CLI flag takes precedence over settings value; 0 means "use default"
+		pushJobs := pushJobsOverride
+		if pushJobs == 0 {
+			pushJobs = req.Settings.PushJobs
+		}
+		if pushJobs > 0 {
+			uploadBuilder = uploadBuilder.WithJobs(pushJobs)
 		}
 		uploadBuilder.WithRemoteOptions(registry.WithAuthFromMultiKeychain())
 		uploader := uploadBuilder.Build()

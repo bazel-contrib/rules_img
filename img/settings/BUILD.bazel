@@ -1,4 +1,4 @@
-load("@bazel_skylib//rules:common_settings.bzl", "string_flag")
+load("@bazel_skylib//rules:common_settings.bzl", "int_flag", "string_flag")
 
 string_flag(
     name = "compress",
@@ -86,6 +86,12 @@ string_flag(
 string_flag(
     name = "docker_config_path",
     build_setting_default = "",
+    visibility = ["//img/private:__subpackages__"],
+)
+
+int_flag(
+    name = "push_jobs",
+    build_setting_default = 0,
     visibility = ["//img/private:__subpackages__"],
 )
 

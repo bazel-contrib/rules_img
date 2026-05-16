@@ -13,6 +13,7 @@ import (
 var (
 	pushStrategy              string
 	loadStrategy              string
+	pushJobs                  int
 	mergeLayerHintsInputPaths []string
 	mergeLayerHintsOutputPath string
 )
@@ -34,6 +35,7 @@ func DeployMergeProcess(ctx context.Context, args []string) {
 	}
 	flagSet.StringVar(&pushStrategy, "push-strategy", "lazy", `Push strategy to use for all push operations. One of "eager", "lazy", "cas_registry", or "bes".`)
 	flagSet.StringVar(&loadStrategy, "load-strategy", "lazy", `Load strategy to use for all load operations. One of "eager", "lazy".`)
+	flagSet.IntVar(&pushJobs, "push-jobs", 0, `Number of parallel push threads. 0 means use the default.`)
 	flagSet.Func("layer-hints-input", `(Optional) path to layer hints file to merge. Can be specified multiple times.`, func(value string) error {
 		mergeLayerHintsInputPaths = append(mergeLayerHintsInputPaths, value)
 		return nil
@@ -119,6 +121,7 @@ func MergeDeployManifests(ctx context.Context, inputPaths []string, outputPath s
 		Settings: api.DeploySettings{
 			PushStrategy: pushStrategy,
 			LoadStrategy: loadStrategy,
+			PushJobs:     pushJobs,
 		},
 	}
 
