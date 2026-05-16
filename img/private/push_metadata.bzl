@@ -10,6 +10,7 @@ load("//img/private/common:build.bzl", "TOOLCHAIN")
 load("//img/private/providers:deploy_info.bzl", "DeployInfo")
 load("//img/private/providers:load_config_info.bzl", "LoadConfigInfo")
 load("//img/private/providers:push_config_info.bzl", "PushConfigInfo")
+load("//img/private/providers:push_settings_info.bzl", "PushSettingsInfo")
 
 def compute_push_metadata(
         ctx,
