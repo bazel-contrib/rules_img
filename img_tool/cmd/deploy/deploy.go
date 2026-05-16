@@ -157,6 +157,21 @@ func DeployWithExtras(ctx context.Context, rawRequest []byte, additionalTags []s
 	if casReader != nil {
 		vfsBuilder = vfsBuilder.WithCASReader(casReader)
 	}
+	// Partition push operations into sequential waves so that shared layers are
+	// uploaded exactly once and later waves can cross-mount them rather than
+	// re-uploading.  Hints are passed into the VFS builder so the VFS is
+	// immutable after Build(), and base-image cross-mount hints retain priority.
+	// Wave planning only has effect with two or more push operations.
+	var wg waveGroup
+	if len(pushOperations) > 1 {
+		wg = planPushWaves(pushOperations, overrideRegistry, overrideRepository)
+		if len(wg.crossMountHints) > 0 {
+			vfsBuilder = vfsBuilder.WithCrossMountHints(wg.crossMountHints)
+		}
+	} else if len(pushOperations) == 1 {
+		wg = waveGroup{waves: [][]api.IndexedPushDeployOperation{pushOperations}}
+	}
+
 	vfs, err := vfsBuilder.Build()
 	if err != nil {
 		return fmt.Errorf("building VFS: %w", err)
@@ -184,11 +199,16 @@ func DeployWithExtras(ctx context.Context, rawRequest []byte, additionalTags []s
 		uploader := uploadBuilder.Build()
 
 		g.Go(func() error {
-			tags, err := uploader.PushAll(groupCtx, pushOperations, req.Settings.PushStrategy)
-			if err != nil {
-				return err
+			// Push wave by wave.  Operations within a wave run concurrently via
+			// remote.MultiWrite; waves are sequential so that cross-mount hints
+			// from wave N are satisfied before wave N+1 begins.
+			for _, wave := range wg.waves {
+				tags, err := uploader.PushAll(groupCtx, wave, req.Settings.PushStrategy)
+				if err != nil {
+					return err
+				}
+				pushedTags = append(pushedTags, tags...)
 			}
-			pushedTags = tags
 			return nil
 		})
 	}

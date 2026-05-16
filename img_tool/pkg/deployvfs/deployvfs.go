@@ -262,6 +262,7 @@ type vfsBuilder struct {
 	containerRegistryOptions   []remote.Option
 	runfilesRootSymlinksPrefix string
 	layerHints                 map[string][]string // digest -> []paths
+	extraCrossMountHints       map[string]api.CrossMountSource
 	stats                      *Stats
 }
 
@@ -287,6 +288,15 @@ func (b *vfsBuilder) WithRunfilesRootSymlinksPrefix(prefix string) *vfsBuilder {
 	return b
 }
 
+// WithCrossMountHints supplies additional cross-mount hints to merge into the
+// VFS at build time.  Hints already derived from the deploy manifest (i.e.
+// base-image cross-mount hints populated during ingest) take priority and are
+// not overwritten; see Build() for details.
+func (b *vfsBuilder) WithCrossMountHints(hints map[string]api.CrossMountSource) *vfsBuilder {
+	b.extraCrossMountHints = hints
+	return b
+}
+
 // rlocation wraps runfiles.Rlocation and adds the runfiles root symlinks prefix if configured.
 func (b *vfsBuilder) rlocation(runfilesPath string) (string, error) {
 	fullPath := runfilesPath
@@ -307,6 +317,15 @@ func (b *vfsBuilder) Build() (*VFS, error) {
 	blobs, manifests, crossMountHints, err := b.ingest()
 	if err != nil {
 		return nil, err
+	}
+	// Merge intra-deploy cross-mount hints (e.g. from planPushWaves) after the
+	// base-image hints from ingest.  Base-image hints take priority because they
+	// originate from the image's own metadata and may point to a specific
+	// external registry — at least as authoritative as an intra-deploy hint.
+	for digest, hint := range b.extraCrossMountHints {
+		if _, exists := crossMountHints[digest]; !exists {
+			crossMountHints[digest] = hint
+		}
 	}
 	return &VFS{
 		dm:              b.dm,
