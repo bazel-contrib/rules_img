@@ -1,8 +1,3 @@
 import %workspace%/.bazelrc.common
 
 try-import %workspace%/.bazelrc.user
-
-# Point tools such as coursier (used in rules_jvm_external) to Bazel's downloaded JDK
-# suggested in https://github.com/bazelbuild/rules_jvm_external/issues/445
-common --repo_env=JAVA_HOME=../bazel_tools/jdk
-common --action_env=JAVA_HOME=../bazel_tools/jdk

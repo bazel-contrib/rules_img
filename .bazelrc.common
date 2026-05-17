@@ -32,3 +32,8 @@ build --experimental_rule_extension_api
 # enable protobuf toolchain resolution
 # docs: https://bazel.build/reference/command-line-reference#common_options-flag--incompatible_enable_proto_toolchain_resolution
 common --incompatible_enable_proto_toolchain_resolution
+
+# Point tools such as coursier (used in rules_jvm_external) to Bazel's downloaded JDK
+# suggested in https://github.com/bazelbuild/rules_jvm_external/issues/445
+common --repo_env=JAVA_HOME=../bazel_tools/jdk
+common --action_env=JAVA_HOME=../bazel_tools/jdk
