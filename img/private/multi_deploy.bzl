@@ -164,7 +164,7 @@ def _multi_deploy_impl(ctx):
 
     # Merge environment settings from push and load
     environment = {}
-    inherited_environment = ["DOCKER_CONFIG"]
+    inherited_environment = ["DOCKER_CONFIG", "IMG_AUTH_DEBUG"]
 
     push_settings = ctx.attr._push_settings[PushSettingsInfo]
     load_settings = ctx.attr._load_settings[LoadSettingsInfo]

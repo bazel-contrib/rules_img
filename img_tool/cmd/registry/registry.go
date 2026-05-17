@@ -82,7 +82,7 @@ func Run(ctx context.Context, args []string) {
 
 	var credentialHelper credential.Helper
 	if len(credentialHelperPath) > 0 {
-		credentialHelper = credential.New(credentialHelperPath)
+		credentialHelper = credential.New(credentialHelperPath, nil)
 	} else {
 		credentialHelper = credential.NopHelper()
 	}
