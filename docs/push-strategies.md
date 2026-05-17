@@ -226,5 +226,25 @@ bazel build //your:image_target
 | Simple deployments | Eager | No infrastructure requirements |
 | Air-gapped environments | Eager | Works without external dependencies |
 
+## Tuning Push Parallelism
+
+By default, `rules_img` uses 4 parallel threads for push operations (the go-containerregistry default). You can tune this with the `push_jobs` setting or the `--jobs` deploy flag.
+
+### Via Bazel setting (applies to all push targets)
+
+```bash
+# Use 8 parallel push threads
+common --@rules_img//img/settings:push_jobs=8
+```
+
+### Via deploy CLI flag (one-off override)
+
+```bash
+# Override for a single run
+bazel run //your:push_target -- --jobs=8
+```
+
+The CLI `--jobs` flag takes precedence over the `push_jobs` setting. A value of `0` (the default) means "use the setting or fall back to the go-containerregistry default".
+
 
 [reapi-spec-cas-lifetime]: https://github.com/bazelbuild/remote-apis/blob/e95641649b5b4d3c582c89daabfaabeb8189dd77/build/bazel/remote/execution/v2/remote_execution.proto#L305-L308

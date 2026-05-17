@@ -303,6 +303,7 @@ bzl_library(
         "//img/private/providers:deploy_info",
         "//img/private/providers:load_config_info",
         "//img/private/providers:push_config_info",
+        "//img/private/providers:push_settings_info",
     ],
 )
 

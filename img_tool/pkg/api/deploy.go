@@ -103,6 +103,7 @@ func (dm *DeployManifest) LoadOperations() ([]IndexedLoadDeployOperation, error)
 type DeploySettings struct {
 	PushStrategy string `json:"push_strategy,omitempty"`
 	LoadStrategy string `json:"load_strategy,omitempty"`
+	PushJobs     int    `json:"push_jobs,omitempty"`
 }
 
 type BaseCommandOperation struct {

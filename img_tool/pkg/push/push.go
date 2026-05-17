@@ -26,6 +26,7 @@ type builder struct {
 	overrideRepository string
 	extraTags          []string
 	remoteOptions      []remote.Option
+	jobs               int
 }
 
 func NewBuilder(vfs vfs) *builder {
@@ -57,6 +58,11 @@ func (b *builder) WithRemoteOptions(opts ...remote.Option) *builder {
 	return b
 }
 
+func (b *builder) WithJobs(jobs int) *builder {
+	b.jobs = jobs
+	return b
+}
+
 func (b *builder) Build() *uploader {
 	return &uploader{
 		blobcacheClient:    b.blobcacheClient,
@@ -65,6 +71,7 @@ func (b *builder) Build() *uploader {
 		overrideRepository: b.overrideRepository,
 		extraTags:          b.extraTags,
 		remoteOptions:      b.remoteOptions,
+		jobs:               b.jobs,
 	}
 }
 
@@ -75,6 +82,7 @@ type uploader struct {
 	overrideRepository string
 	extraTags          []string
 	remoteOptions      []remote.Option
+	jobs               int
 }
 
 func (u *uploader) PushAll(ctx context.Context, ops []api.IndexedPushDeployOperation, strategy string) (tags []string, retErr error) {
@@ -134,6 +142,9 @@ func (u *uploader) PushAll(ctx context.Context, ops []api.IndexedPushDeployOpera
 
 	// push all collected tags in parallel
 	opts := append(u.remoteOptions, remote.WithProgress(progCh))
+	if u.jobs > 0 {
+		opts = append(opts, remote.WithJobs(u.jobs))
+	}
 	return allTags, remote.MultiWrite(todo, opts...)
 }
 
