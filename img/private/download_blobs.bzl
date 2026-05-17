@@ -22,9 +22,12 @@ def _download_blob(ctx, output):
     # Convert sources dict to list of "repository@registry" strings
     sources_list = get_sources_list(ctx.attr.sources)
 
-    # Only set REGISTRY_AUTH_FILE if docker_config_path is non-empty
-    docker_config_path = ctx.attr._docker_config_path[BuildSettingInfo].value
+    # Only set auth environment variables if their configured values are non-empty.
+    credential_helper = ctx.attr.credential_helper or ctx.attr._credential_helper[BuildSettingInfo].value
+    docker_config_path = ctx.attr.docker_config_path or ctx.attr._docker_config_path[BuildSettingInfo].value
     env = {}
+    if credential_helper:
+        env["IMG_CREDENTIAL_HELPER"] = credential_helper
     if docker_config_path:
         env["REGISTRY_AUTH_FILE"] = docker_config_path
 
@@ -81,6 +84,20 @@ Each entry specifies a repository path and the registries that can serve it:
 All repository@registry combinations will be tried (in random order for load distribution).
 
 If a registry list is empty, it defaults to Docker Hub (index.docker.io).""",
+        ),
+        "credential_helper": attr.string(
+            doc = """Credential helper to use for registry authentication.
+
+If omitted, this falls back to `//img/settings:credential_helper`.""",
+        ),
+        "docker_config_path": attr.string(
+            doc = """Path to Docker-compatible registry authentication config.
+
+If omitted, this falls back to `//img/settings:docker_config_path`.""",
+        ),
+        "_credential_helper": attr.label(
+            default = Label("//img/settings:credential_helper"),
+            providers = [BuildSettingInfo],
         ),
         "_docker_config_path": attr.label(
             default = Label("//img/settings:docker_config_path"),

@@ -1,4 +1,7 @@
 load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
+load("//img/private:download_blobs_test.bzl", "download_blobs_test_suite")
+
+download_blobs_test_suite(name = "download_blobs_test")
 
 bzl_library(
     name = "annotations_util",
