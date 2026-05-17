@@ -11,18 +11,21 @@ import (
 	"github.com/malt3/go-containerregistry/pkg/v1/remote"
 )
 
-// WithAuthFromMultiKeychain returns a remote.Option that uses a MultiKeychain
-// combining the default keychain and the Google keychain for authentication.
-// If `IMG_CREDENTIAL_HELPER` is set in the environment, the Bazel credential helper will
-// contribute to the keychain.
+// WithAuthFromMultiKeychain returns a remote.Option that uses a MultiKeychain.
+// If `IMG_CREDENTIAL_HELPER` is set in the environment, the Bazel credential helper
+// is checked before the default Docker and Google keychains.
 // If `IMG_AUTH_DEBUG` is set, each keychain resolution is logged to stderr.
 // WARNING: keep in sync with the same function in pull_tool/pkg/auth/registry/registry.go.
 func WithAuthFromMultiKeychain() remote.Option {
+	return remote.WithAuthFromKeychain(keychainFromEnvironment())
+}
+
+func keychainFromEnvironment() authn.Keychain {
 	_, debug := os.LookupEnv("IMG_AUTH_DEBUG")
 
 	var keychains []authn.Keychain
 
-	if value, ok := os.LookupEnv("IMG_CREDENTIAL_HELPER"); ok {
+	if value, ok := os.LookupEnv("IMG_CREDENTIAL_HELPER"); ok && value != "" {
 		bazel := credential.New(value, &credential.Options{CaptureStderr: true})
 		docker := credential.ContainerRegistryHelper(bazel)
 		keychain := authn.NewKeychainFromHelper(docker)
@@ -35,9 +38,7 @@ func WithAuthFromMultiKeychain() remote.Option {
 		namedKeychain("docker config", authn.DefaultKeychain, debug),
 	)
 
-	kc := authn.NewMultiKeychain(keychains...)
-
-	return remote.WithAuthFromKeychain(kc)
+	return authn.NewMultiKeychain(keychains...)
 }
 
 func namedKeychain(name string, kc authn.Keychain, debug bool) authn.Keychain {

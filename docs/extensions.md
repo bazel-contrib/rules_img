@@ -9,7 +9,7 @@ Public API for rules_img module extensions.
 <pre>
 images = use_extension("@rules_img//img:extensions.bzl", "images")
 images.pull(<a href="#images.pull-name">name</a>, <a href="#images.pull-digest">digest</a>, <a href="#images.pull-layer_handling">layer_handling</a>, <a href="#images.pull-registries">registries</a>, <a href="#images.pull-registry">registry</a>, <a href="#images.pull-repository">repository</a>, <a href="#images.pull-tag">tag</a>)
-images.settings(<a href="#images.settings-downloader">downloader</a>, <a href="#images.settings-hub_repo">hub_repo</a>, <a href="#images.settings-image_repos">image_repos</a>)
+images.settings(<a href="#images.settings-credential_helper">credential_helper</a>, <a href="#images.settings-docker_config_path">docker_config_path</a>, <a href="#images.settings-downloader">downloader</a>, <a href="#images.settings-hub_repo">hub_repo</a>, <a href="#images.settings-image_repos">image_repos</a>)
 </pre>
 
 Module extension for pulling container images in Bzlmod projects.
@@ -92,6 +92,8 @@ required for reproducibility.
 
 | Name  | Description | Type | Mandatory | Default |
 | :------------- | :------------- | :------------- | :------------- | :------------- |
+| <a id="images.settings-credential_helper"></a>credential_helper |  Credential helper to use for registry authentication when the module extension runs the pull tool.<br><br>If omitted, the pull tool inherits `$IMG_CREDENTIAL_HELPER` when present.   | String | optional |  `""`  |
+| <a id="images.settings-docker_config_path"></a>docker_config_path |  Path to Docker-compatible registry authentication config.<br><br>If omitted, the pull tool inherits `$REGISTRY_AUTH_FILE` when present.   | String | optional |  `""`  |
 | <a id="images.settings-downloader"></a>downloader |  The tool to use for downloading manifests and blobs if the current module is the root module.<br><br>**Available options:**<br><br>* **`img_tool`** (default): Uses the `img` tool for all downloads.<br><br>* **`bazel`**: Uses Bazel's native HTTP capabilities for downloading manifests and blobs.   | String | optional |  `"img_tool"`  |
 | <a id="images.settings-hub_repo"></a>hub_repo |  Controls visibility of the hub repository @rules_img_images.bzl for image access via the images macro.<br><br>**Available options:**<br><br>* **`auto`** (default): The hub repository is made visible if named repositories cannot be mapped in the current Bazel version.                         This means you either get @rules_img_images.bzl or one repository per image.<br><br>* **`enabled`**: Always create and expose the hub repository @rules_img_images.bzl for image access via the images macro.<br><br>* **`disabled`**: Do not create the hub repository.   | String | optional |  `"auto"`  |
 | <a id="images.settings-image_repos"></a>image_repos |  Controls visibility of individual image repositories for direct access. Repos internally use the naming scheme img_<digest> and are mapped via friendly names (i.e. "ubuntu") if possible.<br><br>**Available options:**<br><br>* **`auto`** (default): Individual image repositories are made visible if named repositories can be mapped in the current Bazel version.                         This means you either get one repository per image or @rules_img_images.bzl.<br><br>* **`enabled`**: Always expose individual image repositories for direct access.<br><br>* **`disabled`**: Do not expose individual image repositories.   | String | optional |  `"auto"`  |
