@@ -3,10 +3,10 @@ module github.com/bazel-contrib/rules_img/img_tool
 go 1.26.1
 
 require (
-	cloud.google.com/go/longrunning v0.12.0
+	cloud.google.com/go/longrunning v0.13.0
 	github.com/aws/aws-sdk-go-v2 v1.41.7
 	github.com/aws/aws-sdk-go-v2/config v1.32.17
-	github.com/aws/aws-sdk-go-v2/service/s3 v1.100.1
+	github.com/aws/aws-sdk-go-v2/service/s3 v1.101.0
 	github.com/bazelbuild/rules_go v0.60.0
 	github.com/containerd/containerd/api v1.11.0
 	github.com/containerd/platforms v1.0.0-rc.4
@@ -19,11 +19,11 @@ require (
 	github.com/opencontainers/go-digest v1.0.0
 	github.com/opencontainers/image-spec v1.1.1
 	golang.org/x/sync v0.20.0
-	golang.org/x/term v0.42.0
-	google.golang.org/genproto/googleapis/api v0.0.0-20260427160629-7cedc36a6bc4
-	google.golang.org/genproto/googleapis/bytestream v0.0.0-20260427160629-7cedc36a6bc4
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20260427160629-7cedc36a6bc4
-	google.golang.org/grpc v1.80.0
+	golang.org/x/term v0.43.0
+	google.golang.org/genproto/googleapis/api v0.0.0-20260511170946-3700d4141b60
+	google.golang.org/genproto/googleapis/bytestream v0.0.0-20260511170946-3700d4141b60
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20260511170946-3700d4141b60
+	google.golang.org/grpc v1.81.1
 	google.golang.org/protobuf v1.36.11
 )
 
@@ -55,7 +55,7 @@ require (
 	github.com/vbatts/tar-split v0.12.3 // indirect
 	golang.org/x/net v0.53.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
-	golang.org/x/sys v0.43.0 // indirect
+	golang.org/x/sys v0.44.0 // indirect
 	golang.org/x/text v0.36.0 // indirect
 	gotest.tools/v3 v3.5.2 // indirect
 )
