@@ -705,18 +705,11 @@ container_structure_test(
 
 ```starlark
 load("@container_structure_test//:defs.bzl", "container_structure_test")
-load("@rules_img//img:load.bzl", "image_load")
-
-image_load(
-    name = "load_image",
-    image = ":app_image",
-    tag = "test:latest",
-)
 
 container_structure_test(
     name = "structure_test_docker",
     driver = "docker",
-    image = ":load_image",
+    image = ":app_image",
     configs = ["test_config.yaml"],
 )
 ```
