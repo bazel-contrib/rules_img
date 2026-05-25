@@ -262,7 +262,7 @@ func (r Recorder) EmptyFile(target string) error {
 			return fmt.Errorf("applying metadata: %w", err)
 		}
 	}
-	return r.tf.WriteHeader(hdr)
+	return r.tf.WriteRegular(hdr, strings.NewReader(""))
 }
 
 func relativeSymlinkTarget(target, linkName string) string {
