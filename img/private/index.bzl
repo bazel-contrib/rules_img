@@ -205,10 +205,12 @@ def _image_index_impl(ctx):
         config_json = config_json,
         subject_descriptor = subject_descriptor_file,
     )
+    sparse_layout = _build_sparse_oci_layout(ctx, "directory", index_out, manifest_infos)
     index_info_provider = ImageIndexInfo(
         descriptor = descriptor_out,
         index = index_out,
         manifests = manifest_infos,
+        sparse_oci_layout = sparse_layout,
     )
     providers = [
         DefaultInfo(files = depset([index_out])),
@@ -217,7 +219,7 @@ def _image_index_impl(ctx):
             digest = depset([digest_out]),
             oci_layout = depset([_build_oci_layout(ctx, "directory", index_out, manifest_infos)]),
             oci_tarball = depset([_build_oci_layout(ctx, "tar", index_out, manifest_infos)]),
-            sparse_oci_layout = depset([_build_sparse_oci_layout(ctx, "directory", index_out, manifest_infos)]),
+            sparse_oci_layout = depset([sparse_layout]),
         ),
         index_info_provider,
     ]

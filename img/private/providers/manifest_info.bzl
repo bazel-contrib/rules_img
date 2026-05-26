@@ -16,6 +16,7 @@ FIELDS = dict(
     missing_blobs = """List of hex-encoded sha256 hashes.
 Used to convey information lost during shallow image pulling, where the base image layers are referenced, but never materialized.
 """,
+    sparse_oci_layout = "Tree artifact containing the sparse OCI layout for this manifest.",
 )
 
 ImageManifestInfo = provider(

@@ -516,6 +516,7 @@ def _image_manifest_impl(ctx):
         mnemonic = "ImageManifest",
     )
 
+    sparse_layout = _build_sparse_oci_layout(ctx, "directory", manifest_out, config_out, layers)
     manifest_info_provider = ImageManifestInfo(
         descriptor = descriptor_out,
         manifest = manifest_out,
@@ -526,6 +527,7 @@ def _image_manifest_impl(ctx):
         variant = variant,
         layers = layers,
         missing_blobs = base.missing_blobs if base != None else [],
+        sparse_oci_layout = sparse_layout,
     )
     providers.extend([
         DefaultInfo(
@@ -536,7 +538,7 @@ def _image_manifest_impl(ctx):
             digest = depset([digest_out]),
             oci_layout = depset([_build_oci_layout(ctx, "directory", manifest_out, config_out, layers)]),
             oci_tarball = depset([_build_oci_layout(ctx, "tar", manifest_out, config_out, layers)]),
-            sparse_oci_layout = depset([_build_sparse_oci_layout(ctx, "directory", manifest_out, config_out, layers)]),
+            sparse_oci_layout = depset([sparse_layout]),
         ),
         manifest_info_provider,
     ])
