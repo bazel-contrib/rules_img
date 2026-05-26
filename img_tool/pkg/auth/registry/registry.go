@@ -31,8 +31,8 @@ func WithAuthFromMultiKeychain() remote.Option {
 
 	keychains = append(
 		keychains,
-		namedKeychain("google", google.Keychain, debug),
 		namedKeychain("docker config", authn.DefaultKeychain, debug),
+		namedKeychain("google", google.Keychain, debug),
 	)
 
 	kc := authn.NewMultiKeychain(keychains...)
