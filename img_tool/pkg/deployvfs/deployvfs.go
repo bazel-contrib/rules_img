@@ -427,8 +427,8 @@ func (b *vfsBuilder) ingest() (map[string]blobEntry, map[string]blobEntry, map[s
 			manifests[op.Root.Digest] = b.localIndex(i, op.Root)
 		}
 		for manifestIndex, manifest := range op.Manifests {
-			manifests[manifest.Descriptor.Digest] = b.localManifest(i, manifestIndex, manifest.Descriptor)
-			blobs[manifest.Config.Digest] = b.localConfig(i, manifestIndex, manifest.Config)
+			manifests[manifest.Descriptor.Digest] = b.localManifest(i, manifest.Descriptor)
+			blobs[manifest.Config.Digest] = b.localConfig(i, manifest.Config)
 			for layerIndex, layer := range manifest.LayerBlobs {
 				blob, err := b.layerBlob(i, manifestIndex, layerIndex, strategy, op.PullInfo, manifest, layer)
 				if err != nil {
@@ -630,7 +630,7 @@ func (b *vfsBuilder) localIndex(operationIndex int, desc api.Descriptor) blobEnt
 		Descriptor: desc,
 		Location:   "file",
 		Opener: func() (io.ReadCloser, error) {
-			fpath, err := b.rlocation(path.Join(fmt.Sprintf("%d", operationIndex), "index.json"))
+			fpath, err := b.rlocation(sparseLayoutBlobPath(operationIndex, desc.Digest))
 			if err != nil {
 				return nil, err
 			}
@@ -639,12 +639,12 @@ func (b *vfsBuilder) localIndex(operationIndex int, desc api.Descriptor) blobEnt
 	}
 }
 
-func (b *vfsBuilder) localManifest(operationIndex int, manifestIndex int, desc api.Descriptor) blobEntry {
+func (b *vfsBuilder) localManifest(operationIndex int, desc api.Descriptor) blobEntry {
 	return blobEntry{
 		Descriptor: desc,
 		Location:   "file",
 		Opener: func() (io.ReadCloser, error) {
-			fpath, err := b.rlocation(path.Join(fmt.Sprintf("%d", operationIndex), "manifests", fmt.Sprintf("%d", manifestIndex), "manifest.json"))
+			fpath, err := b.rlocation(sparseLayoutBlobPath(operationIndex, desc.Digest))
 			if err != nil {
 				return nil, err
 			}
@@ -653,12 +653,12 @@ func (b *vfsBuilder) localManifest(operationIndex int, manifestIndex int, desc a
 	}
 }
 
-func (b *vfsBuilder) localConfig(operationIndex int, manifestIndex int, desc api.Descriptor) blobEntry {
+func (b *vfsBuilder) localConfig(operationIndex int, desc api.Descriptor) blobEntry {
 	return blobEntry{
 		Descriptor: desc,
 		Location:   "file",
 		Opener: func() (io.ReadCloser, error) {
-			fpath, err := b.rlocation(path.Join(fmt.Sprintf("%d", operationIndex), "manifests", fmt.Sprintf("%d", manifestIndex), "config.json"))
+			fpath, err := b.rlocation(sparseLayoutBlobPath(operationIndex, desc.Digest))
 			if err != nil {
 				return nil, err
 			}
@@ -718,6 +718,11 @@ func digestFromHashAndSize(hash registryv1.Hash, sizeBytes int64) (cas.Digest, e
 		return cas.SHA512(rawHash, sizeBytes), nil
 	}
 	return cas.Digest{}, fmt.Errorf("unsupported digest algorithm: %s", hash.Algorithm)
+}
+
+func sparseLayoutBlobPath(operationIndex int, digest string) string {
+	algo, hex, _ := strings.Cut(digest, ":")
+	return path.Join(fmt.Sprintf("%d", operationIndex), "sparse_oci_layout", "blobs", algo, hex)
 }
 
 func layerRunfilesPath(operationIndex int, manifestIndex int, layerIndex int) string {

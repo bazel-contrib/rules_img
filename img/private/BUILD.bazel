@@ -13,6 +13,8 @@ bzl_library(
     deps = [
         ":manifest_media_type",
         "//img:providers",
+        "//img/private/common:build",
+        "//img/private/common:sparse_oci_layout",
         "//img/private/common:transitions",
     ],
 )

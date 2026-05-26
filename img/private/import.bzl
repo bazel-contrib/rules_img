@@ -1,5 +1,7 @@
 """rule to import OCI images from a local directory."""
 
+load("//img/private/common:build.bzl", "TOOLCHAIN")
+load("//img/private/common:sparse_oci_layout.bzl", "build_sparse_oci_layout_for_index", "build_sparse_oci_layout_for_manifest")
 load("//img/private/common:transitions.bzl", "reset_platform_transition")
 load("//img/private/providers:index_info.bzl", "ImageIndexInfo")
 load("//img/private/providers:manifest_info.bzl", "ImageManifestInfo")
@@ -118,16 +120,26 @@ def _build_manifest_info(ctx, digest, descriptor = None, index_position = None, 
         if layer_info.blob == None:
             missing_blobs.append(layer["digest"].removeprefix("sha256:"))
         layers.append(layer_info)
+
+    manifest_file = _digest_to_file(ctx, digest)
+    config_file = _digest_to_file(ctx, config_digest)
+
+    if index_position == None:
+        sparse_layout = build_sparse_oci_layout_for_manifest(ctx, manifest_file, config_file, layers)
+    else:
+        sparse_layout = build_sparse_oci_layout_for_manifest(ctx, manifest_file, config_file, layers, suffix = "_" + str(index_position))
+
     return ImageManifestInfo(
         descriptor = _write_manifest_descriptor(ctx, digest, manifest, platform, descriptor, index_position),
-        manifest = _digest_to_file(ctx, digest),
-        config = _digest_to_file(ctx, config_digest),
+        manifest = manifest_file,
+        config = config_file,
         structured_config = config,
         architecture = platform.get("architecture", "unknown"),
         os = platform.get("os", "unknown"),
         variant = variant,
         layers = layers,
         missing_blobs = missing_blobs,
+        sparse_oci_layout = sparse_layout,
     )
 
 def _image_import_impl(ctx):
@@ -161,10 +173,13 @@ def _image_import_impl(ctx):
             digest = ctx.attr.digest,
         )
         ctx.actions.write(index_descriptor_file, json.encode(index_descriptor))
+        index_file = _digest_to_file(ctx, ctx.attr.digest)
+        sparse_layout = build_sparse_oci_layout_for_index(ctx, index_file, manifests)
         providers.append(ImageIndexInfo(
             descriptor = index_descriptor_file,
-            index = _digest_to_file(ctx, ctx.attr.digest),
+            index = index_file,
             manifests = manifests,
+            sparse_oci_layout = sparse_layout,
         ))
     return providers
 
@@ -187,6 +202,7 @@ image_import = rule(
         ),
     },
     cfg = reset_platform_transition,
+    toolchains = [TOOLCHAIN],
 )
 
 MEDIA_TYPE_INDEX = "application/vnd.oci.image.index.v1+json"
