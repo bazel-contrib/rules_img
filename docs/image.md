@@ -61,6 +61,7 @@ Output groups:
 - `digest`: Digest of the image (sha256:...)
 - `oci_layout`: Complete OCI layout directory with all platform blobs
 - `oci_tarball`: OCI layout packaged as a tar file for downstream use
+- `sparse_oci_layout`: Sparse OCI layout directory (without layer blobs, only layer descriptors)
 
 **ATTRIBUTES**
 
@@ -126,6 +127,7 @@ Output groups:
 - `digest`: Digest of the image (sha256:...)
 - `oci_layout`: Complete OCI layout directory with blobs
 - `oci_tarball`: OCI layout packaged as a tar file for downstream use
+- `sparse_oci_layout`: Sparse OCI layout directory (without layer blobs, only layer descriptors)
 
 **ATTRIBUTES**
 

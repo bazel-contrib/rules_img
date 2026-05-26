@@ -18,6 +18,7 @@ import (
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/manifest"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/manifestfromocilayout"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/ocilayout"
+	"github.com/bazel-contrib/rules_img/img_tool/cmd/sparseocilayout"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/validate"
 )
 
@@ -35,6 +36,7 @@ Commands:
   manifest                 creates an image manifest and config from layers
   manifest-from-oci-layout converts an OCI layout to an image manifest
   oci-layout               assembles an OCI layout directory from manifest and layers
+  sparse-oci-layout        assembles a sparse OCI layout (without layer blobs) from manifest and layers
   validate                 validates layers and images
   deploy                   pushes an image to a registry or loads it into a local container runtime
   deploy-metadata          calculates metadata for deploying an image (push/load)
@@ -76,6 +78,8 @@ func Run(ctx context.Context, args []string) {
 		hash.HashProcess(ctx, args[2:])
 	case "oci-layout":
 		ocilayout.OCILayoutProcess(ctx, args[2:])
+	case "sparse-oci-layout":
+		sparseocilayout.SparseOCILayoutProcess(ctx, args[2:])
 	case "expand-template":
 		expandtemplate.ExpandTemplateProcess(ctx, args[2:])
 	default:
