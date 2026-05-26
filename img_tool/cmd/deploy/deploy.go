@@ -186,6 +186,7 @@ func DeployWithExtras(ctx context.Context, rawRequest []byte, opts DeployOptions
 	reapiEndpoint := os.Getenv("IMG_REAPI_ENDPOINT")
 	reapiInstanceName := os.Getenv("IMG_REAPI_INSTANCE_NAME")
 	blobcacheEndpoint := os.Getenv("IMG_BLOB_CACHE_ENDPOINT")
+	diskCachePath := os.Getenv("IMG_DISK_CACHE")
 	credentialHelperPath := credentialHelperPath()
 	var credentialHelper credential.Helper
 	if credentialHelperPath != "" {
@@ -210,12 +211,9 @@ func DeployWithExtras(ctx context.Context, rawRequest []byte, opts DeployOptions
 		return fmt.Errorf("no push, load, or registry_tag operations found in deploy manifest")
 	}
 
-	// check if any operation requires a reapi endpoint
+	// Create CAS reader if endpoint is available (used as universal blob source fallback)
 	var casReader *cas.CAS
-	if (len(pushOperations) > 0 && req.Settings.PushStrategy == "lazy") || (len(loadOperations) > 0 && req.Settings.LoadStrategy == "lazy") {
-		if reapiEndpoint == "" {
-			return fmt.Errorf("IMG_REAPI_ENDPOINT environment variable must be set for lazy push/load strategy")
-		}
+	if reapiEndpoint != "" {
 		grpcClientConn, err := protohelper.Client(reapiEndpoint, credentialHelper)
 		if err != nil {
 			return fmt.Errorf("Failed to create gRPC client connection: %w", err)
@@ -249,6 +247,9 @@ func DeployWithExtras(ctx context.Context, rawRequest []byte, opts DeployOptions
 	}
 	for digest, filePath := range opts.ExplicitLayers {
 		vfsBuilder = vfsBuilder.WithExplicitLayer(digest, filePath)
+	}
+	if diskCachePath != "" {
+		vfsBuilder = vfsBuilder.WithDiskCache(diskCachePath)
 	}
 	if casReader != nil {
 		vfsBuilder = vfsBuilder.WithCASReader(casReader)
@@ -321,7 +322,7 @@ func DeployWithExtras(ctx context.Context, rawRequest []byte, opts DeployOptions
 
 	// Print VFS statistics to stderr
 	stats := vfs.Stats()
-	fmt.Fprintf(os.Stderr, "    layer transfers: %d from disk, %d from container registry, %d from remote cache\n", stats.LayersFromLocalDisk.Load(), stats.LayersFromRegistry.Load(), stats.LayersFromRemoteCache.Load())
+	fmt.Fprintf(os.Stderr, "    blob transfers: %d from disk, %d from disk cache, %d from container registry, %d from remote cache\n", stats.BlobsFromLocalDisk.Load(), stats.BlobsFromDiskCache.Load(), stats.BlobsFromRegistry.Load(), stats.BlobsFromRemoteCache.Load())
 
 	// Print all pushed tags to stdout, one per line.
 	for _, tag := range pushedTags {

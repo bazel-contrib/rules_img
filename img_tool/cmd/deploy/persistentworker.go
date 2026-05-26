@@ -22,8 +22,9 @@ import (
 )
 
 type deployWorkerHandler struct {
-	pusher *remote.Pusher
-	jobs   int
+	pusher        *remote.Pusher
+	jobs          int
+	diskCachePath string
 }
 
 func newDeployWorkerHandler(jobs int) *deployWorkerHandler {
@@ -31,9 +32,9 @@ func newDeployWorkerHandler(jobs int) *deployWorkerHandler {
 	p, err := remote.NewPusher(opts...)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "warning: failed to create persistent pusher: %v\n", err)
-		return &deployWorkerHandler{jobs: jobs}
+		return &deployWorkerHandler{jobs: jobs, diskCachePath: os.Getenv("IMG_DISK_CACHE")}
 	}
-	return &deployWorkerHandler{pusher: p, jobs: jobs}
+	return &deployWorkerHandler{pusher: p, jobs: jobs, diskCachePath: os.Getenv("IMG_DISK_CACHE")}
 }
 
 func (h *deployWorkerHandler) HandleRequest(ctx context.Context, req persistentworker.WorkRequest) persistentworker.WorkResponse {
@@ -77,6 +78,9 @@ func (h *deployWorkerHandler) processRequest(ctx context.Context, req persistent
 	}
 	if opts.runfilesPrefix != "" {
 		vfsBuilder = vfsBuilder.WithRunfilesRootSymlinksPrefix(opts.runfilesPrefix)
+	}
+	if h.diskCachePath != "" {
+		vfsBuilder = vfsBuilder.WithDiskCache(h.diskCachePath)
 	}
 	vfs, err := vfsBuilder.Build()
 	if err != nil {
