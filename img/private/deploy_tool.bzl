@@ -3,7 +3,13 @@
 load("//img/private/providers:deploy_tool_info.bzl", "DeployToolInfo")
 
 def _img_deploy_tool_impl(ctx):
+    executable = ctx.actions.declare_file(ctx.label.name)
+    ctx.actions.symlink(output = executable, target_file = ctx.file.img_deploy_exe, is_executable = True)
     return [
+        DefaultInfo(
+            executable = executable,
+            runfiles = ctx.runfiles(files = [executable]),
+        ),
         DeployToolInfo(
             img_deploy_exe = ctx.file.img_deploy_exe,
             launcher_template = ctx.file.launcher_template,
@@ -27,5 +33,6 @@ img_deploy_tool = rule(
         ),
     },
     doc = "Defines a set of tools used to deploy images.",
+    executable = True,
     provides = [DeployToolInfo],
 )
