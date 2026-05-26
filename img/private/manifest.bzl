@@ -533,13 +533,6 @@ def _image_manifest_impl(ctx):
         DefaultInfo(
             files = depset([manifest_out, config_out]),
         ),
-        OutputGroupInfo(
-            descriptor = depset([descriptor_out]),
-            digest = depset([digest_out]),
-            oci_layout = depset([_build_oci_layout(ctx, "directory", manifest_out, config_out, layers)]),
-            oci_tarball = depset([_build_oci_layout(ctx, "tar", manifest_out, config_out, layers)]),
-            sparse_oci_layout = depset([sparse_layout]),
-        ),
         manifest_info_provider,
     ])
 
@@ -553,8 +546,18 @@ def _image_manifest_impl(ctx):
         load_specs = ctx.attr.load_specs,
         allow_manifest_tags = False,
     )
+
+    output_groups = dict(
+        descriptor = depset([descriptor_out]),
+        digest = depset([digest_out]),
+        oci_layout = depset([_build_oci_layout(ctx, "directory", manifest_out, config_out, layers)]),
+        oci_tarball = depset([_build_oci_layout(ctx, "tar", manifest_out, config_out, layers)]),
+        sparse_oci_layout = depset([sparse_layout]),
+    )
     if deploy_info != None:
         providers.append(deploy_info)
+        output_groups["deploy_manifest"] = depset([deploy_info.deploy_manifest])
+    providers.append(OutputGroupInfo(**output_groups))
 
     return providers
 

@@ -214,13 +214,6 @@ def _image_index_impl(ctx):
     )
     providers = [
         DefaultInfo(files = depset([index_out])),
-        OutputGroupInfo(
-            descriptor = depset([descriptor_out]),
-            digest = depset([digest_out]),
-            oci_layout = depset([_build_oci_layout(ctx, "directory", index_out, manifest_infos)]),
-            oci_tarball = depset([_build_oci_layout(ctx, "tar", index_out, manifest_infos)]),
-            sparse_oci_layout = depset([sparse_layout]),
-        ),
         index_info_provider,
     ]
     if pull_info != None:
@@ -236,8 +229,18 @@ def _image_index_impl(ctx):
         load_specs = ctx.attr.load_specs,
         allow_manifest_tags = True,
     )
+
+    output_groups = dict(
+        descriptor = depset([descriptor_out]),
+        digest = depset([digest_out]),
+        oci_layout = depset([_build_oci_layout(ctx, "directory", index_out, manifest_infos)]),
+        oci_tarball = depset([_build_oci_layout(ctx, "tar", index_out, manifest_infos)]),
+        sparse_oci_layout = depset([sparse_layout]),
+    )
     if deploy_info != None:
         providers.append(deploy_info)
+        output_groups["deploy_manifest"] = depset([deploy_info.deploy_manifest])
+    providers.append(OutputGroupInfo(**output_groups))
 
     return providers
 
