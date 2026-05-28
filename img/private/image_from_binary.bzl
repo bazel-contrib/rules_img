@@ -37,7 +37,7 @@ def _image_from_binary_impl(name, binary, path, include_runfiles, layer_budget, 
         layers = layers,
         platform = manifest_platform,
         visibility = visibility,
-        tags = tags if root_kind == "manfest" else intermediate_tags,
+        tags = tags if root_kind == "manifest" else intermediate_tags,
         **kwargs
     )
     if root_kind == "index":
