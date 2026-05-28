@@ -550,6 +550,7 @@ def _image_manifest_impl(ctx):
     output_groups = dict(
         descriptor = depset([descriptor_out]),
         digest = depset([digest_out]),
+        root_blob = depset([manifest_out]),
         oci_layout = depset([_build_oci_layout(ctx, "directory", manifest_out, config_out, layers)]),
         oci_tarball = depset([_build_oci_layout(ctx, "tar", manifest_out, config_out, layers)]),
         sparse_oci_layout = depset([sparse_layout]),
@@ -595,6 +596,7 @@ image_manifest(
 Output groups:
 - `descriptor`: OCI descriptor JSON file
 - `digest`: Digest of the image (sha256:...)
+- `root_blob`: The manifest JSON blob file
 - `oci_layout`: Complete OCI layout directory with blobs
 - `oci_tarball`: OCI layout packaged as a tar file for downstream use
 - `sparse_oci_layout`: Sparse OCI layout directory (without layer blobs, only layer descriptors)

@@ -233,6 +233,7 @@ def _image_index_impl(ctx):
     output_groups = dict(
         descriptor = depset([descriptor_out]),
         digest = depset([digest_out]),
+        root_blob = depset([index_out]),
         oci_layout = depset([_build_oci_layout(ctx, "directory", index_out, manifest_infos)]),
         oci_tarball = depset([_build_oci_layout(ctx, "tar", index_out, manifest_infos)]),
         sparse_oci_layout = depset([sparse_layout]),
@@ -288,6 +289,7 @@ image_index(
 
 Output groups:
 - `digest`: Digest of the image (sha256:...)
+- `root_blob`: The index JSON blob file
 - `oci_layout`: Complete OCI layout directory with all platform blobs
 - `oci_tarball`: OCI layout packaged as a tar file for downstream use
 - `sparse_oci_layout`: Sparse OCI layout directory (without layer blobs, only layer descriptors)

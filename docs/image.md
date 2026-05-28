@@ -59,6 +59,7 @@ image_index(
 
 Output groups:
 - `digest`: Digest of the image (sha256:...)
+- `root_blob`: The index JSON blob file
 - `oci_layout`: Complete OCI layout directory with all platform blobs
 - `oci_tarball`: OCI layout packaged as a tar file for downstream use
 - `sparse_oci_layout`: Sparse OCI layout directory (without layer blobs, only layer descriptors)
@@ -125,6 +126,7 @@ image_manifest(
 Output groups:
 - `descriptor`: OCI descriptor JSON file
 - `digest`: Digest of the image (sha256:...)
+- `root_blob`: The manifest JSON blob file
 - `oci_layout`: Complete OCI layout directory with blobs
 - `oci_tarball`: OCI layout packaged as a tar file for downstream use
 - `sparse_oci_layout`: Sparse OCI layout directory (without layer blobs, only layer descriptors)
