@@ -480,6 +480,12 @@ def _image_manifest_impl(ctx):
         for key, value in computed_annotations.items():
             args.add("--annotation", "%s=%s" % (key, value))
 
+    # Environment variables from a file are merged in by the tool.
+    # Values from `env` (or expanded templates) take precedence over file entries.
+    if ctx.attr.env_file != None:
+        inputs.append(ctx.file.env_file)
+        args.add("--env-file", ctx.file.env_file.path)
+
     # Add other image config attributes
     if ctx.attr.user:
         args.add("--user", ctx.attr.user)
@@ -638,6 +644,10 @@ This acts as a default value to use when the value is not specified when creatin
 Subject to [template expansion](/docs/templating.md).
 """,
             default = {},
+        ),
+        "env_file": attr.label(
+            allow_single_file = True,
+            doc = """File containing newline-delimited KEY=VALUE enviroment variables to set when starting a container based on this image.""",
         ),
         "entrypoint": attr.string_list(
             doc = "A list of arguments to use as the command to execute when the container starts. These values act as defaults and may be replaced by an entrypoint specified when creating a container.",
