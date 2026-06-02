@@ -174,13 +174,20 @@ func ManifestProcess(_ context.Context, args []string) {
 
 	layerDescriptors := make([]specv1.Descriptor, len(layers))
 	for i, layer := range layers {
+		// While the spec says Docker and OCI layer types SHOULD be fully interchangeable,
+		// some tools like podman don't allow mixing and matching. For that reason, we
+		// promote the old Docker type to the new OCI one.
+		mediaType := layer.MediaType
+		if mediaType == "application/vnd.docker.image.rootfs.diff.tar.gzip" {
+			mediaType = api.TarGzipLayer
+		}
 		layerDescriptors[i] = specv1.Descriptor{
-			MediaType:   layer.MediaType,
+			MediaType:   mediaType,
 			Digest:      digest.Digest(layer.Digest),
 			Size:        layer.Size,
 			Annotations: layer.Annotations,
 		}
-		if layer.MediaType == api.MediaTypeEmptyJSON {
+		if mediaType == api.MediaTypeEmptyJSON {
 			layerDescriptors[i].Data = []byte("{}")
 		}
 	}

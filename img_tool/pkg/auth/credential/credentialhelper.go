@@ -20,20 +20,34 @@ type Helper interface {
 	Get(ctx context.Context, uri string) (headers map[string][]string, expiresAt time.Time, err error)
 }
 
-type externalCredentialHelper struct {
-	helperBinary string
-	cache        map[string]cacheEntry
-	mux          sync.RWMutex
+// Options configures the behavior of a credential helper.
+type Options struct {
+	// CaptureStderr captures the credential helper's stderr output instead of
+	// forwarding it to os.Stderr. When set, stderr content is included in any
+	// error returned by Get.
+	CaptureStderr bool
 }
 
-func New(credentialHelperBinary string) Helper {
+type externalCredentialHelper struct {
+	helperBinary  string
+	captureStderr bool
+	cache         map[string]cacheEntry
+	mux           sync.RWMutex
+}
+
+func New(credentialHelperBinary string, opts *Options) Helper {
 	workingDirectory := os.Getenv("BUILD_WORKSPACE_DIRECTORY")
 	if workingDirectory != "" {
 		credentialHelperBinary = strings.Replace(credentialHelperBinary, "%workspace%", workingDirectory, 1)
 	}
+	var captureStderr bool
+	if opts != nil {
+		captureStderr = opts.CaptureStderr
+	}
 	return &externalCredentialHelper{
-		helperBinary: credentialHelperBinary,
-		cache:        make(map[string]cacheEntry),
+		helperBinary:  credentialHelperBinary,
+		captureStderr: captureStderr,
+		cache:         make(map[string]cacheEntry),
 	}
 }
 
@@ -46,10 +60,20 @@ func (e *externalCredentialHelper) Get(ctx context.Context, uri string) (headers
 	if err != nil {
 		return nil, time.Time{}, err
 	}
-	cmd.Stderr = os.Stderr
+	var stderrBuf bytes.Buffer
+	if e.captureStderr {
+		cmd.Stderr = &stderrBuf
+	} else {
+		cmd.Stderr = os.Stderr
+	}
 	cmd.Stdin = bytes.NewReader(stdin)
 	stdout, err := cmd.Output()
 	if err != nil {
+		if e.captureStderr {
+			if stderrContent := stderrBuf.String(); stderrContent != "" {
+				return nil, time.Time{}, fmt.Errorf("%w\ncredential helper stderr:\n%s", err, stderrContent)
+			}
+		}
 		return nil, time.Time{}, err
 	}
 	var resp externalResponse

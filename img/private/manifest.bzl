@@ -259,6 +259,50 @@ def _build_oci_layout(ctx, format, manifest_out, config_out, layers):
 
     return oci_layout_output
 
+def _build_sparse_oci_layout(ctx, format, manifest_out, config_out, layers):
+    """Build a sparse OCI layout for the image (without layer blobs).
+
+    Args:
+        ctx: Rule context.
+        format: The output format, either "directory" or "tar".
+        manifest_out: The manifest file.
+        config_out: The config file.
+        layers: List of SingleLayerInfo providers.
+
+    Returns:
+        The sparse OCI layout output (tree artifact or tar file).
+    """
+    if format not in ["directory", "tar"]:
+        fail('sparse oci layout format must be either "directory" or "tar"')
+    if format == "directory":
+        output = ctx.actions.declare_directory(ctx.label.name + "_sparse_oci_layout")
+    else:
+        output = ctx.actions.declare_file(ctx.label.name + "_sparse_oci_layout.tar")
+
+    args = ctx.actions.args()
+    args.add("sparse-oci-layout")
+    args.add("--format", format)
+    args.add("--manifest", manifest_out.path)
+    args.add("--config", config_out.path)
+    args.add("--output", output.path)
+
+    inputs = [manifest_out, config_out]
+
+    for layer in layers:
+        args.add("--layer", layer.metadata.path)
+        inputs.append(layer.metadata)
+
+    img_toolchain_info = ctx.toolchains[TOOLCHAIN].imgtoolchaininfo
+    ctx.actions.run(
+        inputs = inputs,
+        outputs = [output],
+        executable = img_toolchain_info.tool_exe,
+        arguments = [args],
+        mnemonic = "SparseOCILayout",
+    )
+
+    return output
+
 def _image_manifest_impl(ctx):
     inputs = []
     providers = []
@@ -472,6 +516,7 @@ def _image_manifest_impl(ctx):
         mnemonic = "ImageManifest",
     )
 
+    sparse_layout = _build_sparse_oci_layout(ctx, "directory", manifest_out, config_out, layers)
     manifest_info_provider = ImageManifestInfo(
         descriptor = descriptor_out,
         manifest = manifest_out,
@@ -482,16 +527,11 @@ def _image_manifest_impl(ctx):
         variant = variant,
         layers = layers,
         missing_blobs = base.missing_blobs if base != None else [],
+        sparse_oci_layout = sparse_layout,
     )
     providers.extend([
         DefaultInfo(
             files = depset([manifest_out, config_out]),
-        ),
-        OutputGroupInfo(
-            descriptor = depset([descriptor_out]),
-            digest = depset([digest_out]),
-            oci_layout = depset([_build_oci_layout(ctx, "directory", manifest_out, config_out, layers)]),
-            oci_tarball = depset([_build_oci_layout(ctx, "tar", manifest_out, config_out, layers)]),
         ),
         manifest_info_provider,
     ])
@@ -506,8 +546,19 @@ def _image_manifest_impl(ctx):
         load_specs = ctx.attr.load_specs,
         allow_manifest_tags = False,
     )
+
+    output_groups = dict(
+        descriptor = depset([descriptor_out]),
+        digest = depset([digest_out]),
+        root_blob = depset([manifest_out]),
+        oci_layout = depset([_build_oci_layout(ctx, "directory", manifest_out, config_out, layers)]),
+        oci_tarball = depset([_build_oci_layout(ctx, "tar", manifest_out, config_out, layers)]),
+        sparse_oci_layout = depset([sparse_layout]),
+    )
     if deploy_info != None:
         providers.append(deploy_info)
+        output_groups["deploy_manifest"] = depset([deploy_info.deploy_manifest])
+    providers.append(OutputGroupInfo(**output_groups))
 
     return providers
 
@@ -545,8 +596,10 @@ image_manifest(
 Output groups:
 - `descriptor`: OCI descriptor JSON file
 - `digest`: Digest of the image (sha256:...)
+- `root_blob`: The manifest JSON blob file
 - `oci_layout`: Complete OCI layout directory with blobs
 - `oci_tarball`: OCI layout packaged as a tar file for downstream use
+- `sparse_oci_layout`: Sparse OCI layout directory (without layer blobs, only layer descriptors)
 """,
     attrs = {
         "base": attr.label(

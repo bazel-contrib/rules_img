@@ -2,7 +2,10 @@ load("@rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "deploy",
-    srcs = ["deploy.go"],
+    srcs = [
+        "deploy.go",
+        "persistentworker.go",
+    ],
     importpath = "github.com/bazel-contrib/rules_img/img_tool/cmd/deploy",
     visibility = ["//visibility:public"],
     deps = [
@@ -13,6 +16,7 @@ go_library(
         "//pkg/cas",
         "//pkg/deployvfs",
         "//pkg/load",
+        "//pkg/persistentworker",
         "//pkg/proto/blobcache",
         "//pkg/push",
         "@com_github_malt3_go_containerregistry//pkg/name",

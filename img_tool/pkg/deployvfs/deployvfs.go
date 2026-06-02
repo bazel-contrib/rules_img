@@ -26,9 +26,10 @@ import (
 // Stats tracks statistics about blob access in the VFS.
 // All fields are accessed atomically for thread safety.
 type Stats struct {
-	LayersFromLocalDisk   atomic.Uint64 // Layers opened from local disk
-	LayersFromRegistry    atomic.Uint64 // Layers opened from registry
-	LayersFromRemoteCache atomic.Uint64 // Layers opened from remote cache
+	BlobsFromLocalDisk   atomic.Uint64 // Blobs opened from local disk (runfiles, OCI layouts, explicit layers)
+	BlobsFromDiskCache   atomic.Uint64 // Blobs opened from Bazel disk cache
+	BlobsFromRegistry    atomic.Uint64 // Blobs opened from container registry
+	BlobsFromRemoteCache atomic.Uint64 // Blobs opened from Bazel remote cache (RE API)
 }
 
 // VFS represents a virtual file system for deployment manifests and their associated blobs.
@@ -259,8 +260,11 @@ func (vfs *VFS) SizeOf(digest registryv1.Hash) (int64, error) {
 type vfsBuilder struct {
 	dm                         api.DeployManifest
 	casReader                  casReader
+	diskCachePath              string              // path to Bazel disk cache directory (contains cas/ subdirectory)
 	containerRegistryOptions   []remote.Option
 	runfilesRootSymlinksPrefix string
+	ociLayouts                 []string            // paths to OCI layout directories (sparse or standard)
+	explicitLayers             map[string]string   // digest -> file path
 	layerHints                 map[string][]string // digest -> []paths
 	stats                      *Stats
 }
@@ -277,6 +281,11 @@ func (b *vfsBuilder) WithCASReader(br casReader) *vfsBuilder {
 	return b
 }
 
+func (b *vfsBuilder) WithDiskCache(path string) *vfsBuilder {
+	b.diskCachePath = path
+	return b
+}
+
 func (b *vfsBuilder) WithContainerRegistryOption(o remote.Option) *vfsBuilder {
 	b.containerRegistryOptions = append(b.containerRegistryOptions, o)
 	return b
@@ -284,6 +293,19 @@ func (b *vfsBuilder) WithContainerRegistryOption(o remote.Option) *vfsBuilder {
 
 func (b *vfsBuilder) WithRunfilesRootSymlinksPrefix(prefix string) *vfsBuilder {
 	b.runfilesRootSymlinksPrefix = prefix
+	return b
+}
+
+func (b *vfsBuilder) WithOCILayout(layoutPath string) *vfsBuilder {
+	b.ociLayouts = append(b.ociLayouts, layoutPath)
+	return b
+}
+
+func (b *vfsBuilder) WithExplicitLayer(digest string, filePath string) *vfsBuilder {
+	if b.explicitLayers == nil {
+		b.explicitLayers = make(map[string]string)
+	}
+	b.explicitLayers[digest] = filePath
 	return b
 }
 
@@ -423,12 +445,11 @@ func (b *vfsBuilder) ingest() (map[string]blobEntry, map[string]blobEntry, map[s
 			continue
 		}
 		if op.RootKind == "index" {
-			// There must be a "index.json" file in the runfiles
-			manifests[op.Root.Digest] = b.localIndex(i, op.Root)
+			manifests[op.Root.Digest] = b.resolveManifestBlob(i, op.Root)
 		}
 		for manifestIndex, manifest := range op.Manifests {
-			manifests[manifest.Descriptor.Digest] = b.localManifest(i, manifestIndex, manifest.Descriptor)
-			blobs[manifest.Config.Digest] = b.localConfig(i, manifestIndex, manifest.Config)
+			manifests[manifest.Descriptor.Digest] = b.resolveManifestBlob(i, manifest.Descriptor)
+			blobs[manifest.Config.Digest] = b.resolveConfigBlob(i, manifest.Config)
 			for layerIndex, layer := range manifest.LayerBlobs {
 				blob, err := b.layerBlob(i, manifestIndex, layerIndex, strategy, op.PullInfo, manifest, layer)
 				if err != nil {
@@ -466,25 +487,35 @@ func (b *vfsBuilder) ingest() (map[string]blobEntry, map[string]blobEntry, map[s
 
 func (b *vfsBuilder) layerBlob(operationIndex int, manifestIndex int, layerIndex int, strategy string, pullInfo api.PullInfo, manifestInfo api.ManifestDeployInfo, desc api.Descriptor) (blobEntry, error) {
 	// we try the following sources, in order:
-	// 1. runfiles tree
-	// 2. registry of base image (if base image is shallow, blob was marked as "missing blob" (exists remotely) and strategy allows it)
-	// 3. bazel remote cache (lazy strategy)
-	// 4. stub blob (cas_registry stategy where all blobs are assumed to already be in the remote CAS)
+	// 1. OCI layouts (--oci-layout flags, supports both sparse and standard formats)
+	// 2. explicit layer files (--layer flags)
+	// 3. runfiles tree
+	// 4. registry of base image (if base image is shallow, blob was marked as "missing blob" (exists remotely) and strategy allows it)
+	// 5. bazel disk cache (if configured via IMG_DISK_CACHE)
+	// 6. bazel remote cache (if configured via IMG_REAPI_ENDPOINT)
+	// 7. stub blob (cas_registry strategy where all blobs are assumed to already be in the remote CAS)
 
+	if entry, found := b.layerFromOCILayouts(desc); found {
+		return entry, nil
+	}
+	if entry, found := b.layerFromExplicit(desc); found {
+		return entry, nil
+	}
 	if entry, found := b.layerFromFile(operationIndex, manifestIndex, layerIndex, desc); found {
 		return entry, nil
 	}
 	if entry, found := b.layerFromRegistry(pullInfo, manifestInfo.MissingBlobs, desc); found {
 		return entry, nil
 	}
+	if entry, found := b.blobFromDiskCache(desc); found {
+		return entry, nil
+	}
+	if entry, found := b.layerFromCAS(desc); found {
+		return entry, nil
+	}
 	switch strategy {
-	case "eager":
-		return blobEntry{}, fmt.Errorf("layer not found in runfiles (%s) or base image registry, cannot proceed with eager strategy", layerRunfilesPath(operationIndex, manifestIndex, layerIndex))
-	case "lazy":
-		if entry, found := b.layerFromCAS(desc); found {
-			return entry, nil
-		}
-		return blobEntry{}, fmt.Errorf("layer not found in runfiles (%s) or base image registry, and not found in remote cache, cannot proceed with lazy strategy", layerRunfilesPath(operationIndex, manifestIndex, layerIndex))
+	case "eager", "lazy":
+		return blobEntry{}, fmt.Errorf("layer with digest %s not found in any source (OCI layouts, explicit layers, runfiles at %s, base image registry, disk cache, or remote cache)", desc.Digest, layerRunfilesPath(operationIndex, manifestIndex, layerIndex))
 	case "cas_registry", "bes":
 		// create a stub blob that cannot be read.
 		// The push code should never try to read it, since the remote CAS is assumed to already have it.
@@ -492,6 +523,51 @@ func (b *vfsBuilder) layerBlob(operationIndex int, manifestIndex int, layerIndex
 		return stubBlob(desc), nil
 	}
 	return blobEntry{}, fmt.Errorf("unknown push/load strategy: %s", strategy)
+}
+
+// layerFromOCILayouts tries to find the layer in any OCI layout directory (sparse or standard).
+func (b *vfsBuilder) layerFromOCILayouts(desc api.Descriptor) (blobEntry, bool) {
+	for _, layoutPath := range b.ociLayouts {
+		blobPath := sparseLayoutBlobPathInDir(layoutPath, desc.Digest)
+		if _, err := os.Stat(blobPath); err == nil {
+			fpath := blobPath
+			stats := b.stats
+			return blobEntry{
+				Descriptor: desc,
+				Location:   "file",
+				stats:      stats,
+				Opener: func() (io.ReadCloser, error) {
+					stats.BlobsFromLocalDisk.Add(1)
+					return os.Open(fpath)
+				},
+			}, true
+		}
+	}
+	return blobEntry{}, false
+}
+
+// layerFromExplicit tries to find the layer in the explicit layer map.
+func (b *vfsBuilder) layerFromExplicit(desc api.Descriptor) (blobEntry, bool) {
+	if b.explicitLayers == nil {
+		return blobEntry{}, false
+	}
+	fpath, found := b.explicitLayers[desc.Digest]
+	if !found {
+		return blobEntry{}, false
+	}
+	if _, err := os.Stat(fpath); err != nil {
+		return blobEntry{}, false
+	}
+	stats := b.stats
+	return blobEntry{
+		Descriptor: desc,
+		Location:   "file",
+		stats:      stats,
+		Opener: func() (io.ReadCloser, error) {
+			stats.BlobsFromLocalDisk.Add(1)
+			return os.Open(fpath)
+		},
+	}, true
 }
 
 // layerFromFile tries to find the layer in the runfiles tree. If it exists, it returns the blobEntry and true.
@@ -507,7 +583,7 @@ func (b *vfsBuilder) layerFromFile(operationIndex int, manifestIndex int, layerI
 			Location:   "file",
 			stats:      stats,
 			Opener: func() (io.ReadCloser, error) {
-				stats.LayersFromLocalDisk.Add(1)
+				stats.BlobsFromLocalDisk.Add(1)
 				return os.Open(fpath)
 			},
 		}, true
@@ -548,7 +624,7 @@ func (b *vfsBuilder) layerFromRegistry(pullInfo api.PullInfo, missingBlobs []str
 						if err != nil {
 							continue
 						}
-						stats.LayersFromRegistry.Add(1)
+						stats.BlobsFromRegistry.Add(1)
 						return rc, nil
 					}
 					return nil, fmt.Errorf("layer %s not found in any of the original registries", desc.Digest)
@@ -587,7 +663,7 @@ func (b *vfsBuilder) layerFromCAS(desc api.Descriptor) (blobEntry, bool) {
 			for _, localPath := range hintPaths {
 				if file, err := os.Open(localPath); err == nil {
 					// Successfully opened local file from layer hints
-					stats.LayersFromLocalDisk.Add(1)
+					stats.BlobsFromLocalDisk.Add(1)
 					return file, nil
 				}
 				// If open failed, try the next path
@@ -602,7 +678,7 @@ func (b *vfsBuilder) layerFromCAS(desc api.Descriptor) (blobEntry, bool) {
 			if err != nil {
 				return nil, err
 			}
-			stats.LayersFromRemoteCache.Add(1)
+			stats.BlobsFromRemoteCache.Add(1)
 			return casReader.ReaderForBlob(context.TODO(), digest)
 		},
 	}, true
@@ -625,46 +701,129 @@ type blobEntry struct {
 	stats    *Stats // reference to VFS stats for tracking
 }
 
-func (b *vfsBuilder) localIndex(operationIndex int, desc api.Descriptor) blobEntry {
+// resolveManifestBlob resolves a manifest or index blob from available sources.
+// Priority: OCI layouts → disk cache → remote CAS → runfiles sparse layout path.
+func (b *vfsBuilder) resolveManifestBlob(operationIndex int, desc api.Descriptor) blobEntry {
+	if entry, found := b.blobFromOCILayouts(desc); found {
+		return entry
+	}
+	if entry, found := b.blobFromDiskCache(desc); found {
+		return entry
+	}
+	if entry, found := b.blobFromCAS(desc); found {
+		return entry
+	}
+	return b.blobFromRunfilesSparseLayout(operationIndex, desc)
+}
+
+// resolveConfigBlob resolves a config blob from available sources.
+// Priority: OCI layouts → disk cache → remote CAS → runfiles sparse layout path.
+func (b *vfsBuilder) resolveConfigBlob(operationIndex int, desc api.Descriptor) blobEntry {
+	if entry, found := b.blobFromOCILayouts(desc); found {
+		return entry
+	}
+	if entry, found := b.blobFromDiskCache(desc); found {
+		return entry
+	}
+	if entry, found := b.blobFromCAS(desc); found {
+		return entry
+	}
+	return b.blobFromRunfilesSparseLayout(operationIndex, desc)
+}
+
+// blobFromCAS tries to resolve a blob from the Bazel remote cache.
+func (b *vfsBuilder) blobFromCAS(desc api.Descriptor) (blobEntry, bool) {
+	if b.casReader == nil {
+		return blobEntry{}, false
+	}
+	stats := b.stats
 	return blobEntry{
 		Descriptor: desc,
-		Location:   "file",
+		Location:   "remote_cache",
+		stats:      stats,
 		Opener: func() (io.ReadCloser, error) {
-			fpath, err := b.rlocation(path.Join(fmt.Sprintf("%d", operationIndex), "index.json"))
+			digest, err := digestFromDescriptor(desc)
 			if err != nil {
 				return nil, err
 			}
+			stats.BlobsFromRemoteCache.Add(1)
+			return b.casReader.ReaderForBlob(context.TODO(), digest)
+		},
+	}, true
+}
+
+// blobFromDiskCache tries to resolve a blob from the Bazel disk cache.
+// The disk cache layout is: {diskCachePath}/cas/{first2hex}/{fullhex}
+func (b *vfsBuilder) blobFromDiskCache(desc api.Descriptor) (blobEntry, bool) {
+	if b.diskCachePath == "" {
+		return blobEntry{}, false
+	}
+	fpath := diskCacheBlobPath(b.diskCachePath, desc.Digest)
+	if _, err := os.Stat(fpath); err != nil {
+		return blobEntry{}, false
+	}
+	stats := b.stats
+	return blobEntry{
+		Descriptor: desc,
+		Location:   "file",
+		stats:      stats,
+		Opener: func() (io.ReadCloser, error) {
+			stats.BlobsFromDiskCache.Add(1)
+			return os.Open(fpath)
+		},
+	}, true
+}
+
+// diskCacheBlobPath returns the path to a blob in Bazel's disk cache.
+// Layout: {cacheDir}/cas/{first2hex}/{fullhex}
+func diskCacheBlobPath(cacheDir string, digest string) string {
+	_, hex, _ := strings.Cut(digest, ":")
+	return filepath.Join(cacheDir, "cas", hex[:2], hex)
+}
+
+// blobFromOCILayouts tries to find a blob in any of the configured OCI layout directories.
+func (b *vfsBuilder) blobFromOCILayouts(desc api.Descriptor) (blobEntry, bool) {
+	for _, layoutPath := range b.ociLayouts {
+		blobPath := sparseLayoutBlobPathInDir(layoutPath, desc.Digest)
+		if _, err := os.Stat(blobPath); err == nil {
+			fpath := blobPath
+			stats := b.stats
+			return blobEntry{
+				Descriptor: desc,
+				Location:   "file",
+				stats:      stats,
+				Opener: func() (io.ReadCloser, error) {
+					stats.BlobsFromLocalDisk.Add(1)
+					return os.Open(fpath)
+				},
+			}, true
+		}
+	}
+	return blobEntry{}, false
+}
+
+// blobFromRunfilesSparseLayout resolves a blob from the runfiles sparse layout tree.
+func (b *vfsBuilder) blobFromRunfilesSparseLayout(operationIndex int, desc api.Descriptor) blobEntry {
+	stats := b.stats
+	return blobEntry{
+		Descriptor: desc,
+		Location:   "file",
+		stats:      stats,
+		Opener: func() (io.ReadCloser, error) {
+			fpath, err := b.rlocation(sparseLayoutBlobPath(operationIndex, desc.Digest))
+			if err != nil {
+				return nil, err
+			}
+			stats.BlobsFromLocalDisk.Add(1)
 			return os.Open(fpath)
 		},
 	}
 }
 
-func (b *vfsBuilder) localManifest(operationIndex int, manifestIndex int, desc api.Descriptor) blobEntry {
-	return blobEntry{
-		Descriptor: desc,
-		Location:   "file",
-		Opener: func() (io.ReadCloser, error) {
-			fpath, err := b.rlocation(path.Join(fmt.Sprintf("%d", operationIndex), "manifests", fmt.Sprintf("%d", manifestIndex), "manifest.json"))
-			if err != nil {
-				return nil, err
-			}
-			return os.Open(fpath)
-		},
-	}
-}
-
-func (b *vfsBuilder) localConfig(operationIndex int, manifestIndex int, desc api.Descriptor) blobEntry {
-	return blobEntry{
-		Descriptor: desc,
-		Location:   "file",
-		Opener: func() (io.ReadCloser, error) {
-			fpath, err := b.rlocation(path.Join(fmt.Sprintf("%d", operationIndex), "manifests", fmt.Sprintf("%d", manifestIndex), "config.json"))
-			if err != nil {
-				return nil, err
-			}
-			return os.Open(fpath)
-		},
-	}
+// sparseLayoutBlobPathInDir returns the absolute path to a blob within a sparse layout directory.
+func sparseLayoutBlobPathInDir(layoutDir string, digest string) string {
+	algo, hex, _ := strings.Cut(digest, ":")
+	return filepath.Join(layoutDir, "blobs", algo, hex)
 }
 
 func (b blobEntry) Digest() (registryv1.Hash, error) {
@@ -718,6 +877,11 @@ func digestFromHashAndSize(hash registryv1.Hash, sizeBytes int64) (cas.Digest, e
 		return cas.SHA512(rawHash, sizeBytes), nil
 	}
 	return cas.Digest{}, fmt.Errorf("unsupported digest algorithm: %s", hash.Algorithm)
+}
+
+func sparseLayoutBlobPath(operationIndex int, digest string) string {
+	algo, hex, _ := strings.Cut(digest, ":")
+	return path.Join(fmt.Sprintf("%d", operationIndex), "sparse_oci_layout", "blobs", algo, hex)
 }
 
 func layerRunfilesPath(operationIndex int, manifestIndex int, layerIndex int) string {

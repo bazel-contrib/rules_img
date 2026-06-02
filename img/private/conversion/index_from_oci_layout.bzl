@@ -2,6 +2,7 @@
 
 load("//img/private/common:build.bzl", "TOOLCHAIN", "TOOLCHAINS")
 load("//img/private/common:media_types.bzl", "GZIP_LAYER", "LAYER_TYPES", "UNCOMPRESSED_LAYER", "ZSTD_LAYER")
+load("//img/private/common:sparse_oci_layout.bzl", "build_sparse_oci_layout_for_index", "build_sparse_oci_layout_for_manifest")
 load("//img/private/providers:index_info.bzl", "ImageIndexInfo")
 load("//img/private/providers:manifest_info.bzl", "ImageManifestInfo")
 load("//img/private/providers:single_layer_info.bzl", "SingleLayerInfo")
@@ -156,6 +157,7 @@ def _image_index_from_oci_layout(ctx):
     manifest_infos = []
     for idx_str in sorted(manifest_platforms.keys()):
         info = manifest_outputs[idx_str]
+        sparse_layout = build_sparse_oci_layout_for_manifest(ctx, info["manifest"], info["config"], all_layer_infos[idx_str], suffix = "_" + idx_str)
         manifest_infos.append(ImageManifestInfo(
             descriptor = info["descriptor"],
             manifest = info["manifest"],
@@ -166,7 +168,10 @@ def _image_index_from_oci_layout(ctx):
             variant = info["variant"],
             layers = all_layer_infos[idx_str],
             missing_blobs = [],
+            sparse_oci_layout = sparse_layout,
         ))
+
+    index_sparse_layout = build_sparse_oci_layout_for_index(ctx, output_index, manifest_infos)
 
     return [
         DefaultInfo(files = depset([output_index])),
@@ -178,6 +183,7 @@ def _image_index_from_oci_layout(ctx):
             descriptor = output_descriptor,
             index = output_index,
             manifests = manifest_infos,
+            sparse_oci_layout = index_sparse_layout,
         ),
     ]
 

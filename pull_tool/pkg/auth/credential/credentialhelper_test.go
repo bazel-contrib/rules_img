@@ -15,7 +15,7 @@ func TestNew_ReplacesWorkspacePlaceholder(t *testing.T) {
 	defer os.Setenv("BUILD_WORKSPACE_DIRECTORY", orig)
 	os.Setenv("BUILD_WORKSPACE_DIRECTORY", "/tmp/workspace")
 
-	helper := New("%workspace%/bin/helper")
+	helper := New("%workspace%/bin/helper", nil)
 	extHelper, ok := helper.(*externalCredentialHelper)
 	if !ok {
 		t.Fatalf("expected *externalCredentialHelper, got %T", helper)
@@ -31,7 +31,7 @@ func TestNew_WithoutWorkspacePlaceholder(t *testing.T) {
 	defer os.Setenv("BUILD_WORKSPACE_DIRECTORY", orig)
 	os.Setenv("BUILD_WORKSPACE_DIRECTORY", "/tmp/workspace")
 
-	helper := New("/usr/local/bin/helper")
+	helper := New("/usr/local/bin/helper", nil)
 	extHelper, ok := helper.(*externalCredentialHelper)
 	if !ok {
 		t.Fatalf("expected *externalCredentialHelper, got %T", helper)

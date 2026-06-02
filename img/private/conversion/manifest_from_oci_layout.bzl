@@ -2,6 +2,7 @@
 
 load("//img/private/common:build.bzl", "TOOLCHAIN", "TOOLCHAINS")
 load("//img/private/common:media_types.bzl", "GZIP_LAYER", "LAYER_TYPES", "UNCOMPRESSED_LAYER", "ZSTD_LAYER")
+load("//img/private/common:sparse_oci_layout.bzl", "build_sparse_oci_layout_for_manifest")
 load("//img/private/providers:manifest_info.bzl", "ImageManifestInfo")
 load("//img/private/providers:single_layer_info.bzl", "SingleLayerInfo")
 
@@ -97,6 +98,8 @@ def _image_manifest_from_oci_layout(ctx):
         progress_message = "Converting OCI layout at {} to image manifest {}".format(src_dir.path, output_manifest.path),
     )
 
+    sparse_layout = build_sparse_oci_layout_for_manifest(ctx, output_manifest, output_config, layer_infos)
+
     return [
         DefaultInfo(files = depset([output_manifest, output_config])),
         OutputGroupInfo(
@@ -114,6 +117,7 @@ def _image_manifest_from_oci_layout(ctx):
             variant = variant,
             layers = layer_infos,
             missing_blobs = [],
+            sparse_oci_layout = sparse_layout,
         ),
     ]
 
