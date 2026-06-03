@@ -3,13 +3,20 @@ package registry
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 
+	ecr "github.com/awslabs/amazon-ecr-credential-helper/ecr-login"
 	"github.com/bazel-contrib/rules_img/pull_tool/pkg/auth/credential"
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/v1/google"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 )
+
+// amazonKeychain authenticates to Amazon ECR registries using the
+// amazon-ecr-credential-helper, resolving credentials from the ambient AWS
+// configuration (environment, shared config files, or instance/role metadata).
+var amazonKeychain authn.Keychain = authn.NewKeychainFromHelper(ecr.NewECRHelper(ecr.WithLogger(io.Discard)))
 
 // WithAuthFromMultiKeychain returns a remote.Option that uses a MultiKeychain
 // combining the default keychain and the Google keychain for authentication.
@@ -33,6 +40,7 @@ func WithAuthFromMultiKeychain() remote.Option {
 		keychains,
 		namedKeychain("docker config", authn.DefaultKeychain, debug),
 		namedKeychain("google", google.Keychain, debug),
+		namedKeychain("amazon ecr", amazonKeychain, debug),
 	)
 
 	kc := authn.NewMultiKeychain(keychains...)
