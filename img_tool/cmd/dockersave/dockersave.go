@@ -6,12 +6,18 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 
 	v1 "github.com/malt3/go-containerregistry/pkg/v1"
+	"github.com/malt3/go-containerregistry/pkg/v1/types"
+
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/api"
+
+	"github.com/malt3/go-containerregistry/pkg/name"
 )
 
 type blobMap map[string]string // digest -> source path
@@ -165,7 +171,12 @@ func DockerSaveProcess(ctx context.Context, args []string) {
 		}
 	}
 
-	// Default repo tag if none provided from either flags or config
+	// ociTags are the user-provided tags used for OCI index.json annotations.
+	// They may be empty if no tags were specified.
+	ociTags := []string(repoTags)
+
+	// Default repo tag if none provided from either flags or config.
+	// This default is only used for Docker's manifest.json RepoTags.
 	if len(repoTags) == 0 {
 		repoTags = []string{"image:latest"}
 	}
@@ -185,7 +196,7 @@ func DockerSaveProcess(ctx context.Context, args []string) {
 			fmt.Fprintf(os.Stderr, "Error: --index requires at least one --manifest-path and --config-path\n")
 			os.Exit(1)
 		}
-		err = assembleDockerSaveWithIndex(indexPath, outputPath, format, manifestPaths, configPaths, layerFlags, repoTags, useSymlinks, allowMissingBlobs)
+		err = assembleDockerSaveWithIndex(indexPath, outputPath, format, manifestPaths, configPaths, layerFlags, repoTags, ociTags, useSymlinks, allowMissingBlobs)
 	} else {
 		// Single manifest mode
 		if manifestPath == "" {
@@ -202,7 +213,7 @@ func DockerSaveProcess(ctx context.Context, args []string) {
 			fmt.Fprintf(os.Stderr, "Error: cannot use --manifest-path or --config-path without --index\n")
 			os.Exit(1)
 		}
-		err = assembleDockerSave(manifestPath, configPath, outputPath, format, layerFlags, repoTags, useSymlinks, allowMissingBlobs)
+		err = assembleDockerSave(manifestPath, configPath, outputPath, format, layerFlags, repoTags, ociTags, useSymlinks, allowMissingBlobs)
 	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -222,7 +233,60 @@ func createSink(outputPath, format string) (DockerSaveSink, error) {
 	}
 }
 
-func assembleDockerSave(manifestPath, configPath, outputPath, format string, layers layerMappingFlag, repoTags []string, useSymlinks, allowMissingBlobs bool) error {
+// descriptorsForTags generates descriptors for the given image manifest and tags.
+// Tooling that ingests OCI layouts (containerd loading, docker image load, container load, ...)
+// can recover image names from the descriptors of the root index.json file based on some well-known annotations:
+//   - Containerd uses "io.containerd.image.name" to refer to the full image name (<registry>/<repository>:<tag>)
+//   - Apple Containerization uses "com.apple.containerization.image.name" to refer to the full image name (<registry>/<repository>:<tag>)
+//   - The OCI image spec mentions "org.opencontainers.image.ref.name" to refer to the tag only (i.e. "latest")
+//
+// Note that the "org.opencontainers.image.ref.name" may not be unique within the index.json file.
+// This is surprising, but allowed by the OCI image spec. Other tools also generate duplicate ref.name attributes.
+// Tooling that consumes the index and needs to select images based on tags SHOULD select the first matching manifest.
+// See also this upstream discussion: https://github.com/opencontainers/image-spec/issues/581
+//
+// Annotations from the referenced content (data) are copied into the produced descriptors.
+// Tag annotations take precedence over content annotations.
+func descriptorsForTags(ociTags []string, mediaType types.MediaType, data []byte, digest v1.Hash, artifactType string) []v1.Descriptor {
+	size := int64(len(data))
+
+	var parsed struct {
+		Annotations map[string]string `json:"annotations,omitempty"`
+	}
+	json.Unmarshal(data, &parsed)
+
+	if len(ociTags) == 0 {
+		desc := v1.Descriptor{MediaType: mediaType, Digest: digest, Size: size, Annotations: parsed.Annotations}
+		if artifactType != "" {
+			desc.ArtifactType = artifactType
+		}
+		return []v1.Descriptor{desc}
+	}
+
+	descs := make([]v1.Descriptor, 0, len(ociTags))
+	for _, repoTag := range ociTags {
+		annotations := make(map[string]string)
+		maps.Copy(annotations, parsed.Annotations)
+		annotations[api.AnnotationContainerdImageName] = repoTag
+		annotations[api.AnnotationAppleContainerizationImageName] = repoTag
+		if ref, err := name.NewTag(repoTag, name.WithDefaultTag("")); err == nil && ref.TagStr() != "" {
+			annotations[api.AnnotationOCIImageRefName] = ref.TagStr()
+		}
+		desc := v1.Descriptor{
+			MediaType:   mediaType,
+			Digest:      digest,
+			Size:        size,
+			Annotations: annotations,
+		}
+		if artifactType != "" {
+			desc.ArtifactType = artifactType
+		}
+		descs = append(descs, desc)
+	}
+	return descs
+}
+
+func assembleDockerSave(manifestPath, configPath, outputPath, format string, layers layerMappingFlag, repoTags, ociTags []string, useSymlinks, allowMissingBlobs bool) error {
 	sink, err := createSink(outputPath, format)
 	if err != nil {
 		return err
@@ -300,19 +364,15 @@ func assembleDockerSave(manifestPath, configPath, outputPath, format string, lay
 	}
 
 	// Write OCI index.json pointing to the manifest
-	indexDesc := v1.Descriptor{
-		MediaType:   manifest.MediaType,
-		Digest:      manifestDigest,
-		Size:        int64(len(manifestData)),
-		Annotations: manifest.Annotations,
-	}
+	var artifactType string
 	if manifest.Config.MediaType != "" && !manifest.Config.MediaType.IsConfig() {
-		indexDesc.ArtifactType = string(manifest.Config.MediaType)
+		artifactType = string(manifest.Config.MediaType)
 	}
+	manifests := descriptorsForTags(ociTags, manifest.MediaType, manifestData, manifestDigest, artifactType)
 	ociIndex := v1.IndexManifest{
 		SchemaVersion: 2,
 		MediaType:     "application/vnd.oci.image.index.v1+json",
-		Manifests:     []v1.Descriptor{indexDesc},
+		Manifests:     manifests,
 	}
 	if err := writeJSONWithSink(sink, "index.json", ociIndex); err != nil {
 		return fmt.Errorf("writing index.json: %w", err)
@@ -365,7 +425,7 @@ func copyBlobs(sink DockerSaveSink, blobs blobMap, useSymlinks bool) error {
 	return nil
 }
 
-func assembleDockerSaveWithIndex(indexPath, outputPath, format string, manifestPaths, configPaths []string, layers layerMappingFlag, repoTags []string, useSymlinks, allowMissingBlobs bool) error {
+func assembleDockerSaveWithIndex(indexPath, outputPath, format string, manifestPaths, configPaths []string, layers layerMappingFlag, repoTags, ociTags []string, useSymlinks, allowMissingBlobs bool) error {
 	sink, err := createSink(outputPath, format)
 	if err != nil {
 		return err
@@ -448,9 +508,23 @@ func assembleDockerSaveWithIndex(indexPath, outputPath, format string, manifestP
 		return fmt.Errorf("writing oci-layout: %w", err)
 	}
 
-	// Copy pre-built index.json (already generated by Bazel)
-	if err := sink.CopyFile("index.json", indexPath, false); err != nil {
-		return fmt.Errorf("copying index file: %w", err)
+	// Read the pre-built index to store as a blob and wrap in a new root index
+	indexData, err := os.ReadFile(indexPath)
+	if err != nil {
+		return fmt.Errorf("reading index file: %w", err)
+	}
+	indexDigest := hashBytes(indexData)
+	blobs[indexDigest.Hex] = indexPath
+
+	// Write new root index.json referencing the pre-built index blob
+	manifests := descriptorsForTags(ociTags, types.OCIImageIndex, indexData, indexDigest, "")
+	rootIndex := v1.IndexManifest{
+		SchemaVersion: 2,
+		MediaType:     "application/vnd.oci.image.index.v1+json",
+		Manifests:     manifests,
+	}
+	if err := writeJSONWithSink(sink, "index.json", rootIndex); err != nil {
+		return fmt.Errorf("writing index.json: %w", err)
 	}
 
 	// Build Docker manifest.json from the FIRST manifest (the "default" for docker load)

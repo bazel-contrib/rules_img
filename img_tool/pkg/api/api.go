@@ -106,6 +106,22 @@ type TarAppender interface {
 }
 
 const (
+	// AnnotationContainerdImageName is the annotation used by containerd to store the full
+	// image reference (<registry>/<repository>:<tag>) in an OCI image index descriptor.
+	// See https://github.com/containerd/containerd/blob/main/core/images/image.go
+	AnnotationContainerdImageName = "io.containerd.image.name"
+
+	// AnnotationAppleContainerizationImageName is the annotation used by Apple's Containerization
+	// framework to store the full image reference (<registry>/<repository>:<tag>) in an OCI
+	// image index descriptor.
+	AnnotationAppleContainerizationImageName = "com.apple.containerization.image.name"
+
+	// AnnotationOCIImageRefName is the annotation defined by the OCI image spec to store the
+	// tag component of an image reference (e.g. "latest") in an OCI image index descriptor.
+	// Note that this value may not be unique within the index.
+	// See https://github.com/opencontainers/image-spec/blob/main/annotations.md
+	AnnotationOCIImageRefName = "org.opencontainers.image.ref.name"
+
 	// TocDigestAnnotation is the annotation key for the TOC digest in estargz layers
 	TocDigestAnnotation = "containerd.io/snapshot/stargz/toc.digest"
 	// UncompressedSizeAnnotation is the annotation key for the uncompressed size in estargz layers
