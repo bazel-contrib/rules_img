@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"maps"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -15,9 +15,7 @@ import (
 	v1 "github.com/malt3/go-containerregistry/pkg/v1"
 	"github.com/malt3/go-containerregistry/pkg/v1/types"
 
-	"github.com/bazel-contrib/rules_img/img_tool/pkg/api"
-
-	"github.com/malt3/go-containerregistry/pkg/name"
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/ocitar"
 )
 
 type blobMap map[string]string // digest -> source path
@@ -221,78 +219,7 @@ func DockerSaveProcess(ctx context.Context, args []string) {
 	}
 }
 
-// createSink creates the appropriate sink based on the format
-func createSink(outputPath, format string) (DockerSaveSink, error) {
-	switch format {
-	case "directory":
-		return NewDirectorySink(outputPath), nil
-	case "tar":
-		return NewTarSink(outputPath)
-	default:
-		return nil, fmt.Errorf("unsupported format: %s", format)
-	}
-}
-
-// descriptorsForTags generates descriptors for the given image manifest and tags.
-// Tooling that ingests OCI layouts (containerd loading, docker image load, container load, ...)
-// can recover image names from the descriptors of the root index.json file based on some well-known annotations:
-//   - Containerd uses "io.containerd.image.name" to refer to the full image name (<registry>/<repository>:<tag>)
-//   - Apple Containerization uses "com.apple.containerization.image.name" to refer to the full image name (<registry>/<repository>:<tag>)
-//   - The OCI image spec mentions "org.opencontainers.image.ref.name" to refer to the tag only (i.e. "latest")
-//
-// Note that the "org.opencontainers.image.ref.name" may not be unique within the index.json file.
-// This is surprising, but allowed by the OCI image spec. Other tools also generate duplicate ref.name attributes.
-// Tooling that consumes the index and needs to select images based on tags SHOULD select the first matching manifest.
-// See also this upstream discussion: https://github.com/opencontainers/image-spec/issues/581
-//
-// Annotations from the referenced content (data) are copied into the produced descriptors.
-// Tag annotations take precedence over content annotations.
-func descriptorsForTags(ociTags []string, mediaType types.MediaType, data []byte, digest v1.Hash, artifactType string) []v1.Descriptor {
-	size := int64(len(data))
-
-	var parsed struct {
-		Annotations map[string]string `json:"annotations,omitempty"`
-	}
-	json.Unmarshal(data, &parsed)
-
-	if len(ociTags) == 0 {
-		desc := v1.Descriptor{MediaType: mediaType, Digest: digest, Size: size, Annotations: parsed.Annotations}
-		if artifactType != "" {
-			desc.ArtifactType = artifactType
-		}
-		return []v1.Descriptor{desc}
-	}
-
-	descs := make([]v1.Descriptor, 0, len(ociTags))
-	for _, repoTag := range ociTags {
-		annotations := make(map[string]string)
-		maps.Copy(annotations, parsed.Annotations)
-		annotations[api.AnnotationContainerdImageName] = repoTag
-		annotations[api.AnnotationAppleContainerizationImageName] = repoTag
-		if ref, err := name.NewTag(repoTag, name.WithDefaultTag("")); err == nil && ref.TagStr() != "" {
-			annotations[api.AnnotationOCIImageRefName] = ref.TagStr()
-		}
-		desc := v1.Descriptor{
-			MediaType:   mediaType,
-			Digest:      digest,
-			Size:        size,
-			Annotations: annotations,
-		}
-		if artifactType != "" {
-			desc.ArtifactType = artifactType
-		}
-		descs = append(descs, desc)
-	}
-	return descs
-}
-
 func assembleDockerSave(manifestPath, configPath, outputPath, format string, layers layerMappingFlag, repoTags, ociTags []string, useSymlinks, allowMissingBlobs bool) error {
-	sink, err := createSink(outputPath, format)
-	if err != nil {
-		return err
-	}
-	defer sink.Close()
-
 	// Read and parse the manifest
 	manifestData, err := os.ReadFile(manifestPath)
 	if err != nil {
@@ -319,7 +246,6 @@ func assembleDockerSave(manifestPath, configPath, outputPath, format string, lay
 			return fmt.Errorf("unmarshaling layer metadata %s: %w", layer.metadata, err)
 		}
 
-		// Extract hex digest from sha256:xxxx format
 		digest := strings.TrimPrefix(metadata.Digest, "sha256:")
 		layerBlobsByDigest[digest] = layer.blob
 	}
@@ -327,19 +253,12 @@ func assembleDockerSave(manifestPath, configPath, outputPath, format string, lay
 	blobs := make(blobMap)
 	blobs[manifest.Config.Digest.Hex] = configPath
 
-	// Add manifest itself as a blob for OCI layout
 	manifestDigest := hashBytes(manifestData)
 	blobs[manifestDigest.Hex] = manifestPath
 
-	// Collect layer paths for Docker manifest and check for missing blobs
-	var dockerLayers []string
+	// Check for missing blobs
 	var missingBlobs []string
-
-	// Add layers to blobs and collect their paths
 	for _, layerDesc := range manifest.Layers {
-		// Always include the layer path in the Docker manifest (use forward slashes for JSON format)
-		dockerLayers = append(dockerLayers, "blobs/sha256/"+layerDesc.Digest.Hex)
-
 		if blobPath, ok := layerBlobsByDigest[layerDesc.Digest.Hex]; ok {
 			blobs[layerDesc.Digest.Hex] = blobPath
 		} else if !allowMissingBlobs {
@@ -351,8 +270,39 @@ func assembleDockerSave(manifestPath, configPath, outputPath, format string, lay
 		return &MissingBlobsError{MissingBlobs: missingBlobs}
 	}
 
-	// Write metadata files first so consumers can read them without scanning the full tar.
-	// Order: oci-layout, index.json, manifest.json, then blobs.
+	if format == "tar" {
+		return assembleDockerSaveTar(outputPath, &manifest, manifestData, blobs, repoTags, ociTags)
+	}
+	return assembleDockerSaveDirectory(outputPath, &manifest, manifestData, blobs, repoTags, ociTags, useSymlinks)
+}
+
+func assembleDockerSaveTar(outputPath string, manifest *v1.Manifest, manifestData []byte, blobs blobMap, repoTags, ociTags []string) error {
+	var w *os.File
+	var err error
+	if outputPath == "-" {
+		w = os.Stdout
+	} else {
+		w, err = os.Create(outputPath)
+		if err != nil {
+			return fmt.Errorf("creating output file: %w", err)
+		}
+		defer w.Close()
+	}
+
+	source := &fileBlobSource{blobs: blobs}
+	opts := ocitar.Options{
+		Tags:    repoTags,
+		OCITags: ociTags,
+	}
+	return ocitar.WriteSingleManifest(context.Background(), w, manifest, manifestData, source, opts)
+}
+
+func assembleDockerSaveDirectory(outputPath string, manifest *v1.Manifest, manifestData []byte, blobs blobMap, repoTags, ociTags []string, useSymlinks bool) error {
+	sink := NewDirectorySink(outputPath)
+	defer sink.Close()
+
+	manifestDigest := hashBytes(manifestData)
+
 	if err := sink.CreateDir("."); err != nil {
 		return fmt.Errorf("creating output directory: %w", err)
 	}
@@ -363,12 +313,12 @@ func assembleDockerSave(manifestPath, configPath, outputPath, format string, lay
 		return fmt.Errorf("writing oci-layout: %w", err)
 	}
 
-	// Write OCI index.json pointing to the manifest
+	// Write OCI index.json
 	var artifactType string
 	if manifest.Config.MediaType != "" && !manifest.Config.MediaType.IsConfig() {
 		artifactType = string(manifest.Config.MediaType)
 	}
-	manifests := descriptorsForTags(ociTags, manifest.MediaType, manifestData, manifestDigest, artifactType)
+	manifests := ocitar.DescriptorsForTags(ociTags, manifest.MediaType, manifestData, manifestDigest, artifactType)
 	ociIndex := v1.IndexManifest{
 		SchemaVersion: 2,
 		MediaType:     "application/vnd.oci.image.index.v1+json",
@@ -379,6 +329,10 @@ func assembleDockerSave(manifestPath, configPath, outputPath, format string, lay
 	}
 
 	// Write Docker manifest.json
+	var dockerLayers []string
+	for _, layerDesc := range manifest.Layers {
+		dockerLayers = append(dockerLayers, "blobs/sha256/"+layerDesc.Digest.Hex)
+	}
 	dockerManifest := DockerManifest{
 		Config:   "blobs/sha256/" + manifest.Config.Digest.Hex,
 		RepoTags: repoTags,
@@ -393,7 +347,7 @@ func assembleDockerSave(manifestPath, configPath, outputPath, format string, lay
 		return fmt.Errorf("writing manifest.json: %w", err)
 	}
 
-	// Write blobs last
+	// Write blobs
 	if err := sink.CreateDir("blobs"); err != nil {
 		return fmt.Errorf("creating blobs directory: %w", err)
 	}
@@ -425,13 +379,28 @@ func copyBlobs(sink DockerSaveSink, blobs blobMap, useSymlinks bool) error {
 	return nil
 }
 
-func assembleDockerSaveWithIndex(indexPath, outputPath, format string, manifestPaths, configPaths []string, layers layerMappingFlag, repoTags, ociTags []string, useSymlinks, allowMissingBlobs bool) error {
-	sink, err := createSink(outputPath, format)
-	if err != nil {
-		return err
-	}
-	defer sink.Close()
+type fileBlobSource struct {
+	blobs blobMap
+}
 
+func (f *fileBlobSource) OpenBlob(_ context.Context, hexDigest string) (io.ReadCloser, int64, error) {
+	path, ok := f.blobs[hexDigest]
+	if !ok {
+		return nil, 0, fmt.Errorf("blob %s not found", hexDigest)
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, 0, err
+	}
+	info, err := file.Stat()
+	if err != nil {
+		file.Close()
+		return nil, 0, err
+	}
+	return file, info.Size(), nil
+}
+
+func assembleDockerSaveWithIndex(indexPath, outputPath, format string, manifestPaths, configPaths []string, layers layerMappingFlag, repoTags, ociTags []string, useSymlinks, allowMissingBlobs bool) error {
 	// Build a map of available layers by their digest
 	layerBlobsByDigest := make(map[string]string)
 	for _, layer := range layers {
@@ -453,10 +422,7 @@ func assembleDockerSaveWithIndex(indexPath, outputPath, format string, manifestP
 
 	blobs := make(blobMap)
 	var allMissingBlobs []string
-
-	// Track the first manifest's data for the Docker manifest.json
-	var firstManifest *v1.Manifest
-	var firstConfigDigestHex string
+	var manifestInfos []ocitar.ManifestInfo
 
 	for i := range manifestPaths {
 		manifestData, err := os.ReadFile(manifestPaths[i])
@@ -476,6 +442,13 @@ func assembleDockerSaveWithIndex(indexPath, outputPath, format string, manifestP
 		// Add config blob
 		blobs[manifest.Config.Digest.Hex] = configPaths[i]
 
+		// Build ManifestInfo
+		info := ocitar.ManifestInfo{
+			ManifestData: manifestData,
+			ConfigDigest: manifest.Config.Digest.Hex,
+			MediaType:    manifest.MediaType,
+		}
+
 		// Check for missing layer blobs
 		for _, layerDesc := range manifest.Layers {
 			if blobPath, ok := layerBlobsByDigest[layerDesc.Digest.Hex]; ok {
@@ -483,21 +456,55 @@ func assembleDockerSaveWithIndex(indexPath, outputPath, format string, manifestP
 			} else if !allowMissingBlobs {
 				allMissingBlobs = append(allMissingBlobs, layerDesc.Digest.String())
 			}
+			info.LayerDigests = append(info.LayerDigests, layerDesc.Digest.Hex)
 		}
 
-		// Remember first manifest for Docker manifest.json
-		if i == 0 {
-			firstManifest = &manifest
-			firstConfigDigestHex = manifest.Config.Digest.Hex
-		}
+		manifestInfos = append(manifestInfos, info)
 	}
 
 	if len(allMissingBlobs) > 0 {
 		return &MissingBlobsError{MissingBlobs: allMissingBlobs}
 	}
 
-	// Write metadata files first so consumers can read them without scanning the full tar.
-	// Order: oci-layout, index.json, manifest.json, then blobs.
+	// Read the pre-built index
+	indexData, err := os.ReadFile(indexPath)
+	if err != nil {
+		return fmt.Errorf("reading index file: %w", err)
+	}
+	indexDigest := hashBytes(indexData)
+	blobs[indexDigest.Hex] = indexPath
+
+	if format == "tar" {
+		return assembleDockerSaveWithIndexTar(outputPath, indexData, manifestInfos, blobs, repoTags, ociTags)
+	}
+	return assembleDockerSaveWithIndexDirectory(outputPath, indexData, indexDigest, manifestInfos, blobs, repoTags, ociTags, useSymlinks)
+}
+
+func assembleDockerSaveWithIndexTar(outputPath string, indexData []byte, manifestInfos []ocitar.ManifestInfo, blobs blobMap, repoTags, ociTags []string) error {
+	var w *os.File
+	var err error
+	if outputPath == "-" {
+		w = os.Stdout
+	} else {
+		w, err = os.Create(outputPath)
+		if err != nil {
+			return fmt.Errorf("creating output file: %w", err)
+		}
+		defer w.Close()
+	}
+
+	source := &fileBlobSource{blobs: blobs}
+	opts := ocitar.Options{
+		Tags:    repoTags,
+		OCITags: ociTags,
+	}
+	return ocitar.WriteIndex(context.Background(), w, indexData, manifestInfos, source, opts)
+}
+
+func assembleDockerSaveWithIndexDirectory(outputPath string, indexData []byte, indexDigest v1.Hash, manifestInfos []ocitar.ManifestInfo, blobs blobMap, repoTags, ociTags []string, useSymlinks bool) error {
+	sink := NewDirectorySink(outputPath)
+	defer sink.Close()
+
 	if err := sink.CreateDir("."); err != nil {
 		return fmt.Errorf("creating output directory: %w", err)
 	}
@@ -508,16 +515,8 @@ func assembleDockerSaveWithIndex(indexPath, outputPath, format string, manifestP
 		return fmt.Errorf("writing oci-layout: %w", err)
 	}
 
-	// Read the pre-built index to store as a blob and wrap in a new root index
-	indexData, err := os.ReadFile(indexPath)
-	if err != nil {
-		return fmt.Errorf("reading index file: %w", err)
-	}
-	indexDigest := hashBytes(indexData)
-	blobs[indexDigest.Hex] = indexPath
-
 	// Write new root index.json referencing the pre-built index blob
-	manifests := descriptorsForTags(ociTags, types.OCIImageIndex, indexData, indexDigest, "")
+	manifests := ocitar.DescriptorsForTags(ociTags, types.OCIImageIndex, indexData, indexDigest, "")
 	rootIndex := v1.IndexManifest{
 		SchemaVersion: 2,
 		MediaType:     "application/vnd.oci.image.index.v1+json",
@@ -527,14 +526,14 @@ func assembleDockerSaveWithIndex(indexPath, outputPath, format string, manifestP
 		return fmt.Errorf("writing index.json: %w", err)
 	}
 
-	// Build Docker manifest.json from the FIRST manifest (the "default" for docker load)
+	// Build Docker manifest.json from the first manifest
+	firstInfo := manifestInfos[0]
 	var dockerLayers []string
-	for _, layerDesc := range firstManifest.Layers {
-		dockerLayers = append(dockerLayers, "blobs/sha256/"+layerDesc.Digest.Hex)
+	for _, layerHex := range firstInfo.LayerDigests {
+		dockerLayers = append(dockerLayers, "blobs/sha256/"+layerHex)
 	}
-
 	dockerManifest := DockerManifest{
-		Config:   "blobs/sha256/" + firstConfigDigestHex,
+		Config:   "blobs/sha256/" + firstInfo.ConfigDigest,
 		RepoTags: repoTags,
 		Layers:   dockerLayers,
 	}
@@ -547,7 +546,7 @@ func assembleDockerSaveWithIndex(indexPath, outputPath, format string, manifestP
 		return fmt.Errorf("writing manifest.json: %w", err)
 	}
 
-	// Write blobs last
+	// Write blobs
 	if err := sink.CreateDir("blobs"); err != nil {
 		return fmt.Errorf("creating blobs directory: %w", err)
 	}
