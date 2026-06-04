@@ -2,10 +2,11 @@ load("@bazel_skylib//rules:build_test.bzl", "build_test")
 load("@bazel_skylib//rules:copy_directory.bzl", "copy_directory")
 load("@bazel_skylib//rules:write_file.bzl", "write_file")
 load("@rules_img//img:image.bzl", "image_index", "image_manifest")
-load("@rules_img//img:layer.bzl", "file_metadata", "image_layer")
+load("@rules_img//img:layer.bzl", "file_metadata", "image_layer", "layer_from_pkg")
 load("@rules_img//img:push.bzl", "image_push")
 load("@rules_img_images.bzl", "image")
 load("@rules_pkg//pkg:tar.bzl", "pkg_tar")
+load(":bzl/fake_pkg.bzl", "fake_pkg_filegroup", "fake_pkg_files", "fake_pkg_mkdirs", "fake_pkg_symlink")
 load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
 load(":bzl/binary_with_runfiles_symlinks.bzl", "binary_with_runfiles_symlinks")
 load(":bzl/gen_link.bzl", "gen_dir_link")
@@ -693,6 +694,77 @@ image_push(
     visibility = ["//visibility:public"],
 )
 
+# pkg_files/pkg_filegroup integration tests for layer_from_pkg
+# Uses fake_pkg_* fixtures that emit rules_pkg_providers providers directly.
+# Once rules_pkg itself migrates to rules_pkg_providers, real pkg_files
+# targets can be passed to layer_from_pkg without an adapter.
+fake_pkg_files(
+    name = "pkg_bin_files",
+    srcs = [":executable_script"],
+    prefix = "/usr/local/bin",
+)
+
+fake_pkg_files(
+    name = "pkg_data_files",
+    srcs = [
+        ":large_file",
+        ":unicode_file",
+    ],
+    prefix = "/app/data",
+)
+
+fake_pkg_symlink(
+    name = "pkg_bin_link",
+    link_name = "/usr/bin/script",
+    target = "/usr/local/bin/script.sh",
+)
+
+fake_pkg_mkdirs(
+    name = "pkg_log_dirs",
+    dirs = ["/var/log/app"],
+)
+
+fake_pkg_filegroup(
+    name = "app_pkg",
+    srcs = [
+        ":pkg_bin_files",
+        ":pkg_bin_link",
+        ":pkg_data_files",
+        ":pkg_log_dirs",
+    ],
+)
+
+# Layer built from a single pkg_files target
+layer_from_pkg(
+    name = "layer_from_single_pkg_files",
+    srcs = [":pkg_bin_files"],
+)
+
+# Layer built from a pkg_filegroup (files + symlinks + dirs)
+layer_from_pkg(
+    name = "layer_from_pkg_filegroup",
+    srcs = [":app_pkg"],
+)
+
+# Layer mixing multiple pkg_files and pkg_mklink targets directly
+layer_from_pkg(
+    name = "layer_from_mixed_pkg_srcs",
+    srcs = [
+        ":pkg_bin_files",
+        ":pkg_bin_link",
+        ":pkg_data_files",
+    ],
+)
+
+build_test(
+    name = "pkg_files_layer_tests",
+    targets = [
+        ":layer_from_mixed_pkg_srcs",
+        ":layer_from_pkg_filegroup",
+        ":layer_from_single_pkg_files",
+    ],
+)
+
 build_test(
     name = "all_tests",
     targets = [
@@ -701,5 +773,6 @@ build_test(
         ":index_tests",
         ":push_tests",
         ":platform_transition_tests",
+        ":pkg_files_layer_tests",
     ],
 )

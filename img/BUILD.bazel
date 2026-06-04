@@ -58,6 +58,7 @@ bzl_library(
         "//img/private:layer",
         "//img/private:layer_from_binary",
         "//img/private:layer_from_file",
+        "//img/private:layer_from_pkg",
         "//img/private:layer_from_tar",
     ],
 )
