@@ -36,7 +36,7 @@ func loadWithBinary(tarReader io.Reader, loaderBinary string) error {
 
 	fmt.Fprintf(os.Stderr, "Using %s as loader binary\n", loaderBinary)
 
-	cmd := exec.Command(loaderBinary, "load")
+	cmd := exec.Command(loaderBinary, "image", "load")
 	cmd.Stdin = tarReader
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
