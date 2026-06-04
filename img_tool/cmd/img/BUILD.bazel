@@ -20,6 +20,7 @@ go_library(
         "//cmd/manifest",
         "//cmd/manifestfromocilayout",
         "//cmd/ocilayout",
+        "//cmd/optimize",
         "//cmd/sparseocilayout",
         "//cmd/validate",
         "@rules_go//go/runfiles",
