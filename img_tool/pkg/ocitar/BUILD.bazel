@@ -1,0 +1,24 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "ocitar",
+    srcs = ["ocitar.go"],
+    importpath = "github.com/bazel-contrib/rules_img/img_tool/pkg/ocitar",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/api",
+        "@com_github_malt3_go_containerregistry//pkg/name",
+        "@com_github_malt3_go_containerregistry//pkg/v1:pkg",
+        "@com_github_malt3_go_containerregistry//pkg/v1/types",
+    ],
+)
+
+go_test(
+    name = "ocitar_test",
+    srcs = ["ocitar_test.go"],
+    embed = [":ocitar"],
+    deps = [
+        "@com_github_malt3_go_containerregistry//pkg/v1:pkg",
+        "@com_github_malt3_go_containerregistry//pkg/v1/types",
+    ],
+)

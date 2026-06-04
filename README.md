@@ -88,7 +88,7 @@ common --@rules_img//img/settings:destination_registry=gcr.io
 common --@rules_img//img/settings:load_strategy=eager
 
 # The daemon to target with image_load
-# "docker", "containerd", "podman", or "generic"
+# "docker", "containerd", "podman", "containerization", "tar", or "generic"
 # For "generic", set LOADER_BINARY environment variable at runtime
 common --@rules_img//img/settings:load_daemon=docker
 
