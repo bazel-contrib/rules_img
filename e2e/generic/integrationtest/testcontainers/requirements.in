@@ -2,7 +2,9 @@ docker==7.1.0
 pytest==9.0.3
 testcontainers==4.13.2
 requests==2.32.5
-# CVE-2025-66471 and CVE-2025-66418
-urllib3>=2.6.0
+# several CVEs require updating urllib3
+urllib3>=2.7.0
 # CVE-2026-28684
 python-dotenv>=1.2.2
+# CVE-2024-3651
+idna>=3.15

@@ -52,7 +52,7 @@ bazel_integration_tests(
 bazel_integration_tests(
     name = "js",
     bazel_versions = [
-        "8.6.0",
+        "8.7.0",
         "9.0.2",
     ],
     tags = TAGS,
@@ -82,7 +82,7 @@ bazel_integration_tests(
 bazel_integration_tests(
     name = "python",
     bazel_versions = [
-        "8.6.0",
+        "8.7.0",
         "9.0.2",
     ],
     tags = TAGS,
@@ -143,13 +143,13 @@ test_suite(
     ) + integration_test_utils.bazel_integration_test_names(
         "js",
         [
-            "8.6.0",
+            "8.7.0",
             "9.0.2",
         ],
     ) + integration_test_utils.bazel_integration_test_names(
         "python",
         [
-            "8.6.0",
+            "8.7.0",
             "9.0.2",
         ],
     ) + integration_test_utils.bazel_integration_test_names(
