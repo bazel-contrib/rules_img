@@ -300,7 +300,10 @@ func (vfs *VFS) SizeOf(digest registryv1.Hash) (int64, error) {
 	return entry.Size()
 }
 
-type vfsBuilder struct {
+// Builder constructs a VFS by configuring blob sources and resolving layers.
+// Use NewBuilder to create one, configure with With* methods, then call Build().
+// Use Clone() to create an independent copy for per-request customization.
+type Builder struct {
 	dm                         api.DeployManifest
 	casReader                  casReader
 	diskCachePath              string // path to Bazel disk cache directory (contains cas/ subdirectory)
@@ -312,39 +315,59 @@ type vfsBuilder struct {
 	stats                      *Stats
 }
 
-func Builder(dm api.DeployManifest) *vfsBuilder {
-	return &vfsBuilder{
+func NewBuilder(dm api.DeployManifest) *Builder {
+	return &Builder{
 		dm:    dm,
 		stats: &Stats{},
 	}
 }
 
-func (b *vfsBuilder) WithCASReader(br casReader) *vfsBuilder {
+func (b *Builder) Clone() *Builder {
+	clone := *b
+	clone.ociLayouts = slices.Clone(b.ociLayouts)
+	clone.containerRegistryOptions = slices.Clone(b.containerRegistryOptions)
+	if b.explicitLayers != nil {
+		clone.explicitLayers = make(map[string]string, len(b.explicitLayers))
+		for k, v := range b.explicitLayers {
+			clone.explicitLayers[k] = v
+		}
+	}
+	clone.layerHints = nil
+	clone.stats = &Stats{}
+	return &clone
+}
+
+func (b *Builder) WithDeployManifest(dm api.DeployManifest) *Builder {
+	b.dm = dm
+	return b
+}
+
+func (b *Builder) WithCASReader(br casReader) *Builder {
 	b.casReader = br
 	return b
 }
 
-func (b *vfsBuilder) WithDiskCache(path string) *vfsBuilder {
+func (b *Builder) WithDiskCache(path string) *Builder {
 	b.diskCachePath = path
 	return b
 }
 
-func (b *vfsBuilder) WithContainerRegistryOption(o remote.Option) *vfsBuilder {
+func (b *Builder) WithContainerRegistryOption(o remote.Option) *Builder {
 	b.containerRegistryOptions = append(b.containerRegistryOptions, o)
 	return b
 }
 
-func (b *vfsBuilder) WithRunfilesRootSymlinksPrefix(prefix string) *vfsBuilder {
+func (b *Builder) WithRunfilesRootSymlinksPrefix(prefix string) *Builder {
 	b.runfilesRootSymlinksPrefix = prefix
 	return b
 }
 
-func (b *vfsBuilder) WithOCILayout(layoutPath string) *vfsBuilder {
+func (b *Builder) WithOCILayout(layoutPath string) *Builder {
 	b.ociLayouts = append(b.ociLayouts, layoutPath)
 	return b
 }
 
-func (b *vfsBuilder) WithExplicitLayer(digest string, filePath string) *vfsBuilder {
+func (b *Builder) WithExplicitLayer(digest string, filePath string) *Builder {
 	if b.explicitLayers == nil {
 		b.explicitLayers = make(map[string]string)
 	}
@@ -353,7 +376,7 @@ func (b *vfsBuilder) WithExplicitLayer(digest string, filePath string) *vfsBuild
 }
 
 // rlocation wraps runfiles.Rlocation and adds the runfiles root symlinks prefix if configured.
-func (b *vfsBuilder) rlocation(runfilesPath string) (string, error) {
+func (b *Builder) rlocation(runfilesPath string) (string, error) {
 	fullPath := runfilesPath
 	if b.runfilesRootSymlinksPrefix != "" {
 		fullPath = path.Join(b.runfilesRootSymlinksPrefix, runfilesPath)
@@ -361,7 +384,7 @@ func (b *vfsBuilder) rlocation(runfilesPath string) (string, error) {
 	return runfiles.Rlocation(fullPath)
 }
 
-func (b *vfsBuilder) Build() (*VFS, error) {
+func (b *Builder) Build() (*VFS, error) {
 	// Try to load layer hints if available
 	if err := b.loadLayerHints(); err != nil {
 		// Layer hints are optional, log but don't fail
@@ -386,7 +409,7 @@ func (b *vfsBuilder) Build() (*VFS, error) {
 // Layer hints are only enabled if:
 // 1. BUILD_WORKSPACE_DIRECTORY environment variable is set
 // 2. A layer_hints file exists under the runfiles prefix
-func (b *vfsBuilder) loadLayerHints() error {
+func (b *Builder) loadLayerHints() error {
 	// Check if BUILD_WORKSPACE_DIRECTORY is set
 	workspaceDir := os.Getenv("BUILD_WORKSPACE_DIRECTORY")
 	if workspaceDir == "" {
@@ -459,7 +482,7 @@ func parseLayerHints(hintsPath string, workspaceDir string) (map[string][]string
 	return hints, nil
 }
 
-func (b *vfsBuilder) ingest() (map[string]blobEntry, map[string]blobEntry, map[string]api.CrossMountSource, error) {
+func (b *Builder) ingest() (map[string]blobEntry, map[string]blobEntry, map[string]api.CrossMountSource, error) {
 	blobs := make(map[string]blobEntry)
 	manifests := make(map[string]blobEntry)
 	crossMountHints := make(map[string]api.CrossMountSource)
@@ -528,7 +551,7 @@ func (b *vfsBuilder) ingest() (map[string]blobEntry, map[string]blobEntry, map[s
 	return blobs, manifests, crossMountHints, nil
 }
 
-func (b *vfsBuilder) layerBlob(operationIndex int, manifestIndex int, layerIndex int, strategy string, pullInfo api.PullInfo, manifestInfo api.ManifestDeployInfo, desc api.Descriptor) (blobEntry, error) {
+func (b *Builder) layerBlob(operationIndex int, manifestIndex int, layerIndex int, strategy string, pullInfo api.PullInfo, manifestInfo api.ManifestDeployInfo, desc api.Descriptor) (blobEntry, error) {
 	// we try the following sources, in order:
 	// 1. OCI layouts (--oci-layout flags, supports both sparse and standard formats)
 	// 2. explicit layer files (--layer flags)
@@ -586,7 +609,7 @@ func (b *vfsBuilder) layerBlob(operationIndex int, manifestIndex int, layerIndex
 }
 
 // layerFromOCILayouts tries to find the layer in any OCI layout directory (sparse or standard).
-func (b *vfsBuilder) layerFromOCILayouts(desc api.Descriptor) (blobEntry, error) {
+func (b *Builder) layerFromOCILayouts(desc api.Descriptor) (blobEntry, error) {
 	if len(b.ociLayouts) == 0 {
 		return blobEntry{}, &BlobSourceError{Source: "OCI layouts", Digest: desc.Digest, Kind: BlobSourceUnconfigured, Message: "no OCI layouts configured"}
 	}
@@ -612,7 +635,7 @@ func (b *vfsBuilder) layerFromOCILayouts(desc api.Descriptor) (blobEntry, error)
 }
 
 // layerFromExplicit tries to find the layer in the explicit layer map.
-func (b *vfsBuilder) layerFromExplicit(desc api.Descriptor) (blobEntry, error) {
+func (b *Builder) layerFromExplicit(desc api.Descriptor) (blobEntry, error) {
 	if b.explicitLayers == nil {
 		return blobEntry{}, &BlobSourceError{Source: "explicit layers", Digest: desc.Digest, Kind: BlobSourceUnconfigured, Message: "no explicit layers configured"}
 	}
@@ -636,7 +659,7 @@ func (b *vfsBuilder) layerFromExplicit(desc api.Descriptor) (blobEntry, error) {
 }
 
 // layerFromFile tries to find the layer in the runfiles tree. If it exists, it returns the blobEntry.
-func (b *vfsBuilder) layerFromFile(operationIndex int, manifestIndex int, layerIndex int, desc api.Descriptor) (blobEntry, error) {
+func (b *Builder) layerFromFile(operationIndex int, manifestIndex int, layerIndex int, desc api.Descriptor) (blobEntry, error) {
 	runfilesPath := layerRunfilesPath(operationIndex, manifestIndex, layerIndex)
 	fpath, err := b.rlocation(runfilesPath)
 	if err != nil {
@@ -658,7 +681,7 @@ func (b *vfsBuilder) layerFromFile(operationIndex int, manifestIndex int, layerI
 }
 
 // layerFromRegistry tries to find the layer in the registry of the base image.
-func (b *vfsBuilder) layerFromRegistry(pullInfo api.PullInfo, missingBlobs []string, desc api.Descriptor) (blobEntry, error) {
+func (b *Builder) layerFromRegistry(pullInfo api.PullInfo, missingBlobs []string, desc api.Descriptor) (blobEntry, error) {
 	if len(pullInfo.OriginalBaseImageRegistries) == 0 {
 		return blobEntry{}, &BlobSourceError{Source: "base image registry", Digest: desc.Digest, Kind: BlobSourceUnconfigured, Message: "no base image registries configured"}
 	}
@@ -703,7 +726,7 @@ func (b *vfsBuilder) layerFromRegistry(pullInfo api.PullInfo, missingBlobs []str
 // layerFromCAS tries to find the layer using a two-step fallback strategy:
 // 1. If layer hints are available, try to read from local paths in BUILD_WORKSPACE_DIRECTORY
 // 2. Fall back to reading from the bazel remote cache
-func (b *vfsBuilder) layerFromCAS(desc api.Descriptor) (blobEntry, error) {
+func (b *Builder) layerFromCAS(desc api.Descriptor) (blobEntry, error) {
 	if b.casReader == nil && b.layerHints == nil {
 		return blobEntry{}, &BlobSourceError{Source: "remote CAS", Digest: desc.Digest, Kind: BlobSourceUnconfigured, Message: "no CAS reader and no layer hints configured"}
 	}
@@ -764,7 +787,7 @@ type blobEntry struct {
 
 // resolveManifestBlob resolves a manifest or index blob from available sources.
 // Priority: OCI layouts → disk cache → remote CAS → runfiles sparse layout path.
-func (b *vfsBuilder) resolveManifestBlob(operationIndex int, desc api.Descriptor) blobEntry {
+func (b *Builder) resolveManifestBlob(operationIndex int, desc api.Descriptor) blobEntry {
 	if entry, err := b.blobFromOCILayouts(desc); err == nil {
 		return entry
 	}
@@ -779,7 +802,7 @@ func (b *vfsBuilder) resolveManifestBlob(operationIndex int, desc api.Descriptor
 
 // resolveConfigBlob resolves a config blob from available sources.
 // Priority: OCI layouts → disk cache → remote CAS → runfiles sparse layout path.
-func (b *vfsBuilder) resolveConfigBlob(operationIndex int, desc api.Descriptor) blobEntry {
+func (b *Builder) resolveConfigBlob(operationIndex int, desc api.Descriptor) blobEntry {
 	if entry, err := b.blobFromOCILayouts(desc); err == nil {
 		return entry
 	}
@@ -793,7 +816,7 @@ func (b *vfsBuilder) resolveConfigBlob(operationIndex int, desc api.Descriptor) 
 }
 
 // blobFromCAS tries to resolve a blob from the Bazel remote cache.
-func (b *vfsBuilder) blobFromCAS(desc api.Descriptor) (blobEntry, error) {
+func (b *Builder) blobFromCAS(desc api.Descriptor) (blobEntry, error) {
 	if b.casReader == nil {
 		return blobEntry{}, &BlobSourceError{Source: "remote CAS", Digest: desc.Digest, Kind: BlobSourceUnconfigured, Message: "no CAS reader configured"}
 	}
@@ -815,7 +838,7 @@ func (b *vfsBuilder) blobFromCAS(desc api.Descriptor) (blobEntry, error) {
 
 // blobFromDiskCache tries to resolve a blob from the Bazel disk cache.
 // The disk cache layout is: {diskCachePath}/cas/{first2hex}/{fullhex}
-func (b *vfsBuilder) blobFromDiskCache(desc api.Descriptor) (blobEntry, error) {
+func (b *Builder) blobFromDiskCache(desc api.Descriptor) (blobEntry, error) {
 	if b.diskCachePath == "" {
 		return blobEntry{}, &BlobSourceError{Source: "disk cache", Digest: desc.Digest, Kind: BlobSourceUnconfigured, Message: "no disk cache path configured"}
 	}
@@ -843,7 +866,7 @@ func diskCacheBlobPath(cacheDir string, digest string) string {
 }
 
 // blobFromOCILayouts tries to find a blob in any of the configured OCI layout directories.
-func (b *vfsBuilder) blobFromOCILayouts(desc api.Descriptor) (blobEntry, error) {
+func (b *Builder) blobFromOCILayouts(desc api.Descriptor) (blobEntry, error) {
 	if len(b.ociLayouts) == 0 {
 		return blobEntry{}, &BlobSourceError{Source: "OCI layouts", Digest: desc.Digest, Kind: BlobSourceUnconfigured, Message: "no OCI layouts configured"}
 	}
@@ -869,7 +892,7 @@ func (b *vfsBuilder) blobFromOCILayouts(desc api.Descriptor) (blobEntry, error) 
 }
 
 // blobFromRunfilesSparseLayout resolves a blob from the runfiles sparse layout tree.
-func (b *vfsBuilder) blobFromRunfilesSparseLayout(operationIndex int, desc api.Descriptor) blobEntry {
+func (b *Builder) blobFromRunfilesSparseLayout(operationIndex int, desc api.Descriptor) blobEntry {
 	stats := b.stats
 	return blobEntry{
 		Descriptor: desc,

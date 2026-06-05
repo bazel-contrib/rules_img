@@ -22,19 +22,25 @@ import (
 )
 
 type deployWorkerHandler struct {
-	pusher        *remote.Pusher
-	jobs          int
-	diskCachePath string
+	pusher      *remote.Pusher
+	jobs        int
+	baseBuilder *deployvfs.Builder
 }
 
 func newDeployWorkerHandler(jobs int) *deployWorkerHandler {
+	baseBuilder := deployvfs.NewBuilder(api.DeployManifest{}).
+		WithContainerRegistryOption(registry.WithAuthFromMultiKeychain())
+	baseBuilder, err := configureBuilderFromEnv(baseBuilder)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to configure VFS from environment: %v\n", err)
+	}
+
 	opts := []remote.Option{registry.WithAuthFromMultiKeychain(), remote.WithJobs(jobs)}
 	p, err := remote.NewPusher(opts...)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "warning: failed to create persistent pusher: %v\n", err)
-		return &deployWorkerHandler{jobs: jobs, diskCachePath: os.Getenv("IMG_DISK_CACHE")}
 	}
-	return &deployWorkerHandler{pusher: p, jobs: jobs, diskCachePath: os.Getenv("IMG_DISK_CACHE")}
+	return &deployWorkerHandler{pusher: p, jobs: jobs, baseBuilder: baseBuilder}
 }
 
 func (h *deployWorkerHandler) HandleRequest(ctx context.Context, req persistentworker.WorkRequest) persistentworker.WorkResponse {
@@ -69,7 +75,7 @@ func (h *deployWorkerHandler) processRequest(ctx context.Context, req persistent
 		return "", fmt.Errorf("unmarshalling deploy manifest: %w", err)
 	}
 
-	vfsBuilder := deployvfs.Builder(dm).WithContainerRegistryOption(registry.WithAuthFromMultiKeychain())
+	vfsBuilder := h.baseBuilder.Clone().WithDeployManifest(dm)
 	for _, layoutPath := range opts.ociLayouts {
 		vfsBuilder = vfsBuilder.WithOCILayout(layoutPath)
 	}
@@ -78,9 +84,6 @@ func (h *deployWorkerHandler) processRequest(ctx context.Context, req persistent
 	}
 	if opts.runfilesPrefix != "" {
 		vfsBuilder = vfsBuilder.WithRunfilesRootSymlinksPrefix(opts.runfilesPrefix)
-	}
-	if h.diskCachePath != "" {
-		vfsBuilder = vfsBuilder.WithDiskCache(h.diskCachePath)
 	}
 	vfs, err := vfsBuilder.Build()
 	if err != nil {
