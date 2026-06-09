@@ -52,3 +52,32 @@ func TestKeychainFromEnvironmentPrefersConfiguredCredentialHelper(t *testing.T) 
 		t.Fatalf("expected user/pass from credential helper, got %q/%q", authConfig.Username, authConfig.Password)
 	}
 }
+
+func TestKeychainFromEnvironmentIgnoresEmptyCredentialHelper(t *testing.T) {
+	t.Setenv("IMG_CREDENTIAL_HELPER", "")
+
+	dockerConfigDir := t.TempDir()
+	dockerConfig := []byte(`{"auths":{"registry.example.com":{"auth":"dXNlcjpwYXNz"}}}`)
+	if err := os.WriteFile(filepath.Join(dockerConfigDir, "config.json"), dockerConfig, 0o600); err != nil {
+		t.Fatalf("failed to write Docker config: %v", err)
+	}
+	t.Setenv("DOCKER_CONFIG", dockerConfigDir)
+
+	ref, err := name.ParseReference("registry.example.com/project/image:tag")
+	if err != nil {
+		t.Fatalf("failed to parse registry reference: %v", err)
+	}
+
+	authenticator, err := keychainFromEnvironment().Resolve(ref.Context().Registry)
+	if err != nil {
+		t.Fatalf("empty credential helper should fall through to Docker config: %v", err)
+	}
+
+	authConfig, err := authenticator.Authorization()
+	if err != nil {
+		t.Fatalf("failed to resolve auth config: %v", err)
+	}
+	if authConfig.Username != "user" || authConfig.Password != "pass" {
+		t.Fatalf("expected user/pass from Docker config, got %q/%q", authConfig.Username, authConfig.Password)
+	}
+}

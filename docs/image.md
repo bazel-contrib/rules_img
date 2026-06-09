@@ -59,8 +59,10 @@ image_index(
 
 Output groups:
 - `digest`: Digest of the image (sha256:...)
+- `root_blob`: The index JSON blob file
 - `oci_layout`: Complete OCI layout directory with all platform blobs
 - `oci_tarball`: OCI layout packaged as a tar file for downstream use
+- `sparse_oci_layout`: Sparse OCI layout directory (without layer blobs, only layer descriptors)
 
 **ATTRIBUTES**
 
@@ -87,8 +89,8 @@ Output groups:
 load("@rules_img//img:image.bzl", "image_manifest")
 
 image_manifest(<a href="#image_manifest-name">name</a>, <a href="#image_manifest-annotations">annotations</a>, <a href="#image_manifest-annotations_file">annotations_file</a>, <a href="#image_manifest-artifact_type">artifact_type</a>, <a href="#image_manifest-base">base</a>, <a href="#image_manifest-build_settings">build_settings</a>, <a href="#image_manifest-cmd">cmd</a>,
-               <a href="#image_manifest-config_fragment">config_fragment</a>, <a href="#image_manifest-config_media_type">config_media_type</a>, <a href="#image_manifest-created">created</a>, <a href="#image_manifest-entrypoint">entrypoint</a>, <a href="#image_manifest-env">env</a>, <a href="#image_manifest-label_files">label_files</a>, <a href="#image_manifest-labels">labels</a>,
-               <a href="#image_manifest-layers">layers</a>, <a href="#image_manifest-load_specs">load_specs</a>, <a href="#image_manifest-platform">platform</a>, <a href="#image_manifest-push_specs">push_specs</a>, <a href="#image_manifest-stamp">stamp</a>, <a href="#image_manifest-stop_signal">stop_signal</a>, <a href="#image_manifest-subject">subject</a>, <a href="#image_manifest-user">user</a>,
+               <a href="#image_manifest-config_fragment">config_fragment</a>, <a href="#image_manifest-config_media_type">config_media_type</a>, <a href="#image_manifest-created">created</a>, <a href="#image_manifest-entrypoint">entrypoint</a>, <a href="#image_manifest-env">env</a>, <a href="#image_manifest-env_file">env_file</a>, <a href="#image_manifest-label_files">label_files</a>,
+               <a href="#image_manifest-labels">labels</a>, <a href="#image_manifest-layers">layers</a>, <a href="#image_manifest-load_specs">load_specs</a>, <a href="#image_manifest-platform">platform</a>, <a href="#image_manifest-push_specs">push_specs</a>, <a href="#image_manifest-stamp">stamp</a>, <a href="#image_manifest-stop_signal">stop_signal</a>, <a href="#image_manifest-subject">subject</a>, <a href="#image_manifest-user">user</a>,
                <a href="#image_manifest-working_dir">working_dir</a>)
 </pre>
 
@@ -124,8 +126,10 @@ image_manifest(
 Output groups:
 - `descriptor`: OCI descriptor JSON file
 - `digest`: Digest of the image (sha256:...)
+- `root_blob`: The manifest JSON blob file
 - `oci_layout`: Complete OCI layout directory with blobs
 - `oci_tarball`: OCI layout packaged as a tar file for downstream use
+- `sparse_oci_layout`: Sparse OCI layout directory (without layer blobs, only layer descriptors)
 
 **ATTRIBUTES**
 
@@ -144,6 +148,7 @@ Output groups:
 | <a id="image_manifest-created"></a>created |  Optional file containing a datetime string (RFC 3339 format) for when the image was created.<br><br>This is commonly used with Bazel's stamping mechanism to embed the build timestamp.   | <a href="https://bazel.build/concepts/labels">Label</a> | optional |  `None`  |
 | <a id="image_manifest-entrypoint"></a>entrypoint |  A list of arguments to use as the command to execute when the container starts. These values act as defaults and may be replaced by an entrypoint specified when creating a container.   | List of strings | optional |  `[]`  |
 | <a id="image_manifest-env"></a>env |  Default environment variables to set when starting a container based on this image.<br><br>Subject to [template expansion](/docs/templating.md).   | <a href="https://bazel.build/rules/lib/core/dict">Dictionary: String -> String</a> | optional |  `{}`  |
+| <a id="image_manifest-env_file"></a>env_file |  File containing newline-delimited KEY=VALUE enviroment variables to set when starting a container based on this image.   | <a href="https://bazel.build/concepts/labels">Label</a> | optional |  `None`  |
 | <a id="image_manifest-label_files"></a>label_files |  Files containing newline-delimited KEY=VALUE labels for the image config.<br><br>Each file should contain one label per line in KEY=VALUE format. Empty lines are ignored. Labels from these files are merged together, and then merged with labels specified via the `labels` attribute. Values from files take precedence over the `labels` attribute for matching keys.<br><br>Example file content: <pre><code>org.opencontainers.image.version=1.0.0&#10;org.opencontainers.image.authors=team@example.com</code></pre><br><br>Each label value is subject to [template expansion](/docs/templating.md).   | <a href="https://bazel.build/concepts/labels">List of labels</a> | optional |  `[]`  |
 | <a id="image_manifest-labels"></a>labels |  This field contains arbitrary metadata for the container.<br><br>Subject to [template expansion](/docs/templating.md).   | <a href="https://bazel.build/rules/lib/core/dict">Dictionary: String -> String</a> | optional |  `{}`  |
 | <a id="image_manifest-layers"></a>layers |  Layers to include in the image. Either a LayersInfo provider or a DefaultInfo with tar files.   | <a href="https://bazel.build/concepts/labels">List of labels</a> | optional |  `[]`  |
@@ -157,6 +162,46 @@ Output groups:
 | <a id="image_manifest-working_dir"></a>working_dir |  Sets the current working directory of the entrypoint process in the container. This value acts as a default and may be replaced by a working directory specified when creating a container.   | String | optional |  `""`  |
 
 
+<a id="image_optimize"></a>
+
+## image_optimize
+
+<pre>
+load("@rules_img//img:image.bzl", "image_optimize")
+
+image_optimize(<a href="#image_optimize-name">name</a>, <a href="#image_optimize-compress">compress</a>, <a href="#image_optimize-estargz">estargz</a>, <a href="#image_optimize-image">image</a>)
+</pre>
+
+Rewrites every available layer in an image manifest or image index.
+
+This rule applies image-wide layer transformations, such as recompressing every
+layer as eStargz. It is intentionally explicit because it requires every input
+layer blob to be available to Bazel. Images that were pulled shallowly will fail
+analysis instead of downloading missing base-image layers.
+
+Example:
+
+```python
+load("@rules_img//img:image.bzl", "image_optimize")
+
+image_optimize(
+    name = "base_estargz",
+    image = "@ubuntu//:image",
+    estargz = "enabled",
+)
+```
+
+**ATTRIBUTES**
+
+
+| Name  | Description | Type | Mandatory | Default |
+| :------------- | :------------- | :------------- | :------------- | :------------- |
+| <a id="image_optimize-name"></a>name |  A unique name for this target.   | <a href="https://bazel.build/concepts/labels#target-names">Name</a> | required |  |
+| <a id="image_optimize-compress"></a>compress |  Compression algorithm to use for rewritten layers. If set to 'auto', uses the global default compression setting.   | String | optional |  `"auto"`  |
+| <a id="image_optimize-estargz"></a>estargz |  Whether to rewrite layers using eStargz. If set to 'auto', uses the global default eStargz setting.   | String | optional |  `"auto"`  |
+| <a id="image_optimize-image"></a>image |  Image manifest or image index to optimize. All layer blobs must be available.   | <a href="https://bazel.build/concepts/labels">Label</a> | required |  |
+
+
 <a id="image_from_binary"></a>
 
 ## image_from_binary
@@ -166,11 +211,11 @@ load("@rules_img//img:image.bzl", "image_from_binary")
 
 image_from_binary(*, <a href="#image_from_binary-name">name</a>, <a href="#image_from_binary-annotations">annotations</a>, <a href="#image_from_binary-annotations_file">annotations_file</a>, <a href="#image_from_binary-artifact_type">artifact_type</a>, <a href="#image_from_binary-aspect_hints">aspect_hints</a>, <a href="#image_from_binary-base">base</a>, <a href="#image_from_binary-binary">binary</a>,
                   <a href="#image_from_binary-build_settings">build_settings</a>, <a href="#image_from_binary-cmd">cmd</a>, <a href="#image_from_binary-compatible_with">compatible_with</a>, <a href="#image_from_binary-config_fragment">config_fragment</a>, <a href="#image_from_binary-config_media_type">config_media_type</a>, <a href="#image_from_binary-created">created</a>,
-                  <a href="#image_from_binary-deprecation">deprecation</a>, <a href="#image_from_binary-entrypoint">entrypoint</a>, <a href="#image_from_binary-env">env</a>, <a href="#image_from_binary-exec_compatible_with">exec_compatible_with</a>, <a href="#image_from_binary-exec_group_compatible_with">exec_group_compatible_with</a>,
-                  <a href="#image_from_binary-exec_properties">exec_properties</a>, <a href="#image_from_binary-features">features</a>, <a href="#image_from_binary-include_runfiles">include_runfiles</a>, <a href="#image_from_binary-kind">kind</a>, <a href="#image_from_binary-label_files">label_files</a>, <a href="#image_from_binary-labels">labels</a>,
-                  <a href="#image_from_binary-layer_budget">layer_budget</a>, <a href="#image_from_binary-layers">layers</a>, <a href="#image_from_binary-load_specs">load_specs</a>, <a href="#image_from_binary-package_metadata">package_metadata</a>, <a href="#image_from_binary-path">path</a>, <a href="#image_from_binary-platforms">platforms</a>, <a href="#image_from_binary-push_specs">push_specs</a>,
-                  <a href="#image_from_binary-restricted_to">restricted_to</a>, <a href="#image_from_binary-stamp">stamp</a>, <a href="#image_from_binary-stop_signal">stop_signal</a>, <a href="#image_from_binary-subject">subject</a>, <a href="#image_from_binary-tags">tags</a>, <a href="#image_from_binary-target_compatible_with">target_compatible_with</a>, <a href="#image_from_binary-testonly">testonly</a>,
-                  <a href="#image_from_binary-toolchains">toolchains</a>, <a href="#image_from_binary-user">user</a>, <a href="#image_from_binary-visibility">visibility</a>, <a href="#image_from_binary-working_dir">working_dir</a>)
+                  <a href="#image_from_binary-deprecation">deprecation</a>, <a href="#image_from_binary-entrypoint">entrypoint</a>, <a href="#image_from_binary-env">env</a>, <a href="#image_from_binary-env_file">env_file</a>, <a href="#image_from_binary-exec_compatible_with">exec_compatible_with</a>,
+                  <a href="#image_from_binary-exec_group_compatible_with">exec_group_compatible_with</a>, <a href="#image_from_binary-exec_properties">exec_properties</a>, <a href="#image_from_binary-features">features</a>, <a href="#image_from_binary-include_runfiles">include_runfiles</a>, <a href="#image_from_binary-kind">kind</a>,
+                  <a href="#image_from_binary-label_files">label_files</a>, <a href="#image_from_binary-labels">labels</a>, <a href="#image_from_binary-layer_budget">layer_budget</a>, <a href="#image_from_binary-layers">layers</a>, <a href="#image_from_binary-load_specs">load_specs</a>, <a href="#image_from_binary-package_metadata">package_metadata</a>, <a href="#image_from_binary-path">path</a>,
+                  <a href="#image_from_binary-platforms">platforms</a>, <a href="#image_from_binary-push_specs">push_specs</a>, <a href="#image_from_binary-restricted_to">restricted_to</a>, <a href="#image_from_binary-stamp">stamp</a>, <a href="#image_from_binary-stop_signal">stop_signal</a>, <a href="#image_from_binary-subject">subject</a>, <a href="#image_from_binary-tags">tags</a>,
+                  <a href="#image_from_binary-target_compatible_with">target_compatible_with</a>, <a href="#image_from_binary-testonly">testonly</a>, <a href="#image_from_binary-toolchains">toolchains</a>, <a href="#image_from_binary-user">user</a>, <a href="#image_from_binary-visibility">visibility</a>, <a href="#image_from_binary-working_dir">working_dir</a>)
 </pre>
 
 Packages a *_binary target into a container image.
@@ -262,6 +307,7 @@ Targets created:
 | <a id="image_from_binary-deprecation"></a>deprecation |  <a href="https://bazel.build/reference/be/common-definitions#common.deprecation">Inherited rule attribute</a>   | String; <a href="https://bazel.build/reference/be/common-definitions#configurable-attributes">nonconfigurable</a> | optional |  `None`  |
 | <a id="image_from_binary-entrypoint"></a>entrypoint |  A list of arguments to use as the command to execute when the container starts. These values act as defaults and may be replaced by an entrypoint specified when creating a container.   | List of strings | optional |  `None`  |
 | <a id="image_from_binary-env"></a>env |  Default environment variables to set when starting a container based on this image.<br><br>Subject to [template expansion](/docs/templating.md).   | <a href="https://bazel.build/rules/lib/core/dict">Dictionary: String -> String</a> | optional |  `None`  |
+| <a id="image_from_binary-env_file"></a>env_file |  File containing newline-delimited KEY=VALUE enviroment variables to set when starting a container based on this image.   | <a href="https://bazel.build/concepts/labels">Label</a> | optional |  `None`  |
 | <a id="image_from_binary-exec_compatible_with"></a>exec_compatible_with |  <a href="https://bazel.build/reference/be/common-definitions#common.exec_compatible_with">Inherited rule attribute</a>   | <a href="https://bazel.build/concepts/labels">List of labels</a>; <a href="https://bazel.build/reference/be/common-definitions#configurable-attributes">nonconfigurable</a> | optional |  `None`  |
 | <a id="image_from_binary-exec_group_compatible_with"></a>exec_group_compatible_with |  <a href="https://bazel.build/reference/be/common-definitions#common.exec_group_compatible_with">Inherited rule attribute</a>   | Dictionary: String -> List of labels; <a href="https://bazel.build/reference/be/common-definitions#configurable-attributes">nonconfigurable</a> | optional |  `None`  |
 | <a id="image_from_binary-exec_properties"></a>exec_properties |  <a href="https://bazel.build/reference/be/common-definitions#common.exec_properties">Inherited rule attribute</a>   | <a href="https://bazel.build/rules/lib/core/dict">Dictionary: String -> String</a> | optional |  `None`  |

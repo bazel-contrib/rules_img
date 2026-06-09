@@ -32,15 +32,15 @@ func Run(ctx context.Context, args []string) {
 
 	flagSet := flag.NewFlagSet("bes", flag.ExitOnError)
 	flagSet.Usage = func() {
-		fmt.Fprintf(flagSet.Output(), "Serve a Build Event Service gRPC server\n\n")
-		fmt.Fprintf(flagSet.Output(), "Usage: bes [OPTIONS]\n")
+		fmt.Fprint(flagSet.Output(), "Serve a Build Event Service gRPC server\n\n")
+		fmt.Fprint(flagSet.Output(), "Usage: bes [OPTIONS]\n")
 		flagSet.PrintDefaults()
 		examples := []string{
 			"bes --cas-endpoint grpcs://remote.buildbuddy.io",
 			"bes --address 0.0.0.0 --port 9090 --cas-endpoint grpcs://remote.buildbuddy.io",
 			"bes --commit-mode per-stream --credential-helper tweag-credential-helper --cas-endpoint grpcs://remote.buildbuddy.io",
 		}
-		fmt.Fprintf(flagSet.Output(), "\nExamples:\n")
+		fmt.Fprint(flagSet.Output(), "\nExamples:\n")
 		for _, example := range examples {
 			fmt.Fprintf(flagSet.Output(), "  $ %s\n", example)
 		}
@@ -53,7 +53,7 @@ func Run(ctx context.Context, args []string) {
 	flagSet.StringVar(&credentialHelperPath, "credential-helper", "", "Path to credential helper binary (optional, defaults to no helper)")
 
 	if err := flagSet.Parse(args[1:]); err != nil {
-		fmt.Fprintf(os.Stderr, err.Error())
+		fmt.Fprint(os.Stderr, err.Error())
 		flagSet.Usage()
 		os.Exit(1)
 	}

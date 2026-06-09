@@ -6,34 +6,43 @@ import (
 	"fmt"
 	"slices"
 	"sort"
-	"sync"
+
+	"golang.org/x/sync/errgroup"
 
 	"github.com/malt3/go-containerregistry/pkg/name"
 	registryv1 "github.com/malt3/go-containerregistry/pkg/v1"
 	"github.com/malt3/go-containerregistry/pkg/v1/remote"
 
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/api"
-	"github.com/bazel-contrib/rules_img/img_tool/pkg/progress"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/proto/blobcache"
 	blobcache_proto "github.com/bazel-contrib/rules_img/img_tool/pkg/proto/blobcache"
 	remoteexecution_proto "github.com/bazel-contrib/rules_img/img_tool/pkg/proto/remote-apis/build/bazel/remote/execution/v2"
 )
 
+const defaultJobs = 16
+
 type builder struct {
 	blobcacheClient    blobcache.BlobsClient
 	vfs                vfs
+	pusher             *remote.Pusher
 	overrideRegistry   string
 	overrideRepository string
 	extraTags          []string
 	remoteOptions      []remote.Option
+	jobs               int
 }
 
 func NewBuilder(vfs vfs) *builder {
-	return &builder{vfs: vfs}
+	return &builder{vfs: vfs, jobs: defaultJobs}
 }
 
 func (b *builder) WithBlobcacheClient(client blobcache.BlobsClient) *builder {
 	b.blobcacheClient = client
+	return b
+}
+
+func (b *builder) WithPusher(p *remote.Pusher) *builder {
+	b.pusher = p
 	return b
 }
 
@@ -57,24 +66,35 @@ func (b *builder) WithRemoteOptions(opts ...remote.Option) *builder {
 	return b
 }
 
+func (b *builder) WithJobs(jobs int) *builder {
+	if jobs > 0 {
+		b.jobs = jobs
+	}
+	return b
+}
+
 func (b *builder) Build() *uploader {
 	return &uploader{
 		blobcacheClient:    b.blobcacheClient,
 		vfs:                b.vfs,
+		pusher:             b.pusher,
 		overrideRegistry:   b.overrideRegistry,
 		overrideRepository: b.overrideRepository,
 		extraTags:          b.extraTags,
 		remoteOptions:      b.remoteOptions,
+		jobs:               b.jobs,
 	}
 }
 
 type uploader struct {
 	blobcacheClient    blobcache.BlobsClient
 	vfs                vfs
+	pusher             *remote.Pusher
 	overrideRegistry   string
 	overrideRepository string
 	extraTags          []string
 	remoteOptions      []remote.Option
+	jobs               int
 }
 
 func (u *uploader) PushAll(ctx context.Context, ops []api.IndexedPushDeployOperation, strategy string) (tags []string, retErr error) {
@@ -84,7 +104,12 @@ func (u *uploader) PushAll(ctx context.Context, ops []api.IndexedPushDeployOpera
 	if err := u.strategyPreHooks(ctx, ops, strategy); err != nil {
 		return nil, err
 	}
-	todo := make(map[name.Reference]remote.Taggable)
+
+	type pushItem struct {
+		ref      name.Reference
+		taggable remote.Taggable
+	}
+	var items []pushItem
 	var allTags []string
 
 	// collect all operations
@@ -102,46 +127,39 @@ func (u *uploader) PushAll(ctx context.Context, ops []api.IndexedPushDeployOpera
 			return nil, err
 		}
 		for _, ref := range refs {
-			todo[ref] = taggable
-		}
-		for _, ref := range refs {
+			items = append(items, pushItem{ref: ref, taggable: taggable})
 			allTags = append(allTags, ref.String())
 		}
 	}
 
-	// Setup progress tracking if possible
-	ctx, stopProgress := progress.InitProgress(ctx, "push complete")
-
-	prog := progress.NewIndeterminate(ctx, "pushing")
-	progCh := make(chan registryv1.Update, 16) // buffer so we don't block writes
-
-	wg := &sync.WaitGroup{}
-	wg.Add(1)
-	defer wg.Wait()
-	go func() {
-		defer wg.Done()
-		defer stopProgress()
+	pusher := u.pusher
+	if pusher == nil {
 		var err error
-		for update := range progCh {
-			prog.SetTotal(update.Total)
-			prog.SetComplete(update.Complete)
-			if update.Error != nil {
-				err = update.Error
-			}
+		pusher, err = remote.NewPusher(append(u.remoteOptions, remote.WithJobs(u.jobs))...)
+		if err != nil {
+			return nil, fmt.Errorf("creating pusher: %w", err)
 		}
-		prog.Done(err)
-	}()
+	}
 
-	// push all collected tags in parallel
-	opts := append(u.remoteOptions, remote.WithProgress(progCh))
-	return allTags, remote.MultiWrite(todo, opts...)
+	g, ctx := errgroup.WithContext(ctx)
+	g.SetLimit(u.jobs)
+
+	for _, item := range items {
+		item := item
+		g.Go(func() error {
+			return pusher.Push(ctx, item.ref, item.taggable)
+		})
+	}
+
+	if err := g.Wait(); err != nil {
+		return nil, err
+	}
+
+	return allTags, nil
 }
 
 // tags returns the list of tags to push for the given operation, applying any overrides and extra tags.
 func (u *uploader) tags(op api.IndexedPushDeployOperation) ([]name.Reference, error) {
-	// base reference:
-	// - registry
-	// - repository
 	registry := op.Registry
 	if u.overrideRegistry != "" {
 		registry = u.overrideRegistry
@@ -225,17 +243,12 @@ type vfs interface {
 	SizeOf(digest registryv1.Hash) (int64, error)
 }
 
-// deduplicateAndSort removes duplicates and sorts a slice of strings
 func deduplicateAndSort(tags []string) []string {
 	if len(tags) == 0 {
 		return tags
 	}
-
-	// Sort first, then compact to remove consecutive duplicates
 	sort.Strings(tags)
 	tags = slices.Compact(tags)
-
-	// Remove empty tags
 	var outTags []string
 	for _, tag := range tags {
 		if tag != "" {

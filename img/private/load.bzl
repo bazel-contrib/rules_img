@@ -233,6 +233,8 @@ Output groups:
 - `tarball`: "docker save" compatible tarball with OCI layout (available for both single and multi-platform images).
   For multi-platform images, the first manifest is used as the default in `manifest.json`,
   and all manifests are included in `index.json`.
+  Alternatively, setting `daemon = "tar"` (or `--@rules_img//img/settings:load_daemon=tar`)
+  produces the same format on-the-fly by streaming it to stdout at runtime.
 
 Example:
 
@@ -282,14 +284,19 @@ bazel run //path/to:load_multiarch -- --platform linux/arm64
 
 # Build Docker save tarball
 bazel build //path/to:load_app --output_groups=tarball
+
+# Stream tar to stdout (e.g., pipe to another tool)
+bazel run //path/to:load_app --@rules_img//img/settings:load_daemon=tar
 ```
 
 Performance notes:
 - When Docker uses containerd storage (Docker 23.0+), images are loaded directly
   into containerd for better performance if the containerd socket is accessible.
-- For older Docker versions, falls back to `docker load` which requires building
+- For older Docker versions, falls back to `docker image load` which requires building
   a tar file (slower and limited to single-platform images)
 - The `--platform` flag filters which platforms are loaded from multi-platform images
+- The `tar` daemon streams a unified OCI+Docker tar to stdout without loading into any daemon
+- The `containerization` daemon uses Apple's Containerization framework via `container image load`
 """,
     attrs = dict(
         COMMON_LOAD_ATTRS,

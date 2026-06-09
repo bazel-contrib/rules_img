@@ -45,7 +45,6 @@ filegroup(
 
 download_blobs(
     name = "blob",
-    credential_helper = {credential_helper},
     docker_config_path = {docker_config_path},
     digests = ["{digest_filename}"],
     sources = {sources},
@@ -55,7 +54,6 @@ download_blobs(
 """.format(
                 digest_filename = digest_filename,
                 blob_name = repr(rctx.attr.downloaded_file_path),
-                credential_helper = repr(rctx.attr.credential_helper),
                 docker_config_path = repr(rctx.attr.docker_config_path),
                 sources = json.encode_indent(
                     rctx.attr.sources,

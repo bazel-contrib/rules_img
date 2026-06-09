@@ -1,0 +1,15 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "sparseocilayout",
+    srcs = [
+        "flags.go",
+        "sparseocilayout.go",
+    ],
+    importpath = "github.com/bazel-contrib/rules_img/img_tool/cmd/sparseocilayout",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//cmd/ocilayout",
+        "@com_github_malt3_go_containerregistry//pkg/v1:pkg",
+    ],
+)

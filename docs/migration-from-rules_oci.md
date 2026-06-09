@@ -284,7 +284,8 @@ image_manifest(
 | `entrypoint` | `entrypoint` | ✅ Same |
 | `cmd` | `cmd` | ✅ Same |
 | `created` | `created` | ✅ Same |
-| `env` | `env` | ✅ Same |
+| `env` (dict) | `env` | ✅ Same |
+| `env` (label to file) | `env_file` | ⚠️ In rules_oci, `env` accepts either a dict or a label pointing to a file of `KEY=VALUE` lines. In rules_img, use the separate `env_file` attribute for file-based env vars. Values from `env` take precedence over `env_file` entries. |
 | `labels` | `labels` | ✅ Same |
 | `annotations` | `annotations` | ✅ Same |
 | `user` | `user` | ✅ Same |
@@ -705,18 +706,11 @@ container_structure_test(
 
 ```starlark
 load("@container_structure_test//:defs.bzl", "container_structure_test")
-load("@rules_img//img:load.bzl", "image_load")
-
-image_load(
-    name = "load_image",
-    image = ":app_image",
-    tag = "test:latest",
-)
 
 container_structure_test(
     name = "structure_test_docker",
     driver = "docker",
-    image = ":load_image",
+    image = ":app_image",
     configs = ["test_config.yaml"],
 )
 ```
@@ -1079,6 +1073,7 @@ Use this checklist to track your migration:
 - [ ] Convert `oci_image` to `image_manifest`
   - [ ] Rename `tars` → `layers`
   - [ ] Rename `workdir` → `working_dir`
+  - [ ] If `env` was a file label, use `env_file` instead
   - [ ] Move unsupported attributes to `config_fragment` if needed
 - [ ] Convert `oci_image_index` to `image_index`
 - [ ] Use output groups:

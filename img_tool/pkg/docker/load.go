@@ -7,42 +7,36 @@ import (
 	"os/exec"
 )
 
-// Load pipes the tar stream to docker load
-func Load(tarReader io.Reader) error {
-	loaderBinary, ok := os.LookupEnv("LOADER_BINARY")
-	if !ok {
-		loaderBinary = "docker"
-	}
-	return loadWithBinary(tarReader, loaderBinary)
-}
-
-// LoadWithDaemon pipes the tar stream to the specified daemon (docker, podman, or generic)
+// LoadWithDaemon pipes the tar stream to the specified daemon's "image load" command.
 func LoadWithDaemon(tarReader io.Reader, daemon string) error {
 	loaderBinary, ok := os.LookupEnv("LOADER_BINARY")
 	if !ok {
-		// For generic daemon, LOADER_BINARY must be set by the user
-		if daemon == "generic" {
+		switch daemon {
+		case "generic":
 			return fmt.Errorf("generic daemon requires LOADER_BINARY environment variable to be set")
+		case "containerization":
+			loaderBinary = "container"
+		default:
+			loaderBinary = daemon
 		}
-		loaderBinary = daemon
 	}
-	return loadWithBinary(tarReader, loaderBinary)
+	return loadWithBinaryArgs(tarReader, loaderBinary, []string{"image", "load"})
 }
 
-func loadWithBinary(tarReader io.Reader, loaderBinary string) error {
+func loadWithBinaryArgs(tarReader io.Reader, loaderBinary string, args []string) error {
 	if _, err := exec.LookPath(loaderBinary); err != nil {
 		return fmt.Errorf("%s not found in PATH: %w", loaderBinary, err)
 	}
 
 	fmt.Fprintf(os.Stderr, "Using %s as loader binary\n", loaderBinary)
 
-	cmd := exec.Command(loaderBinary, "load")
+	cmd := exec.Command(loaderBinary, args...)
 	cmd.Stdin = tarReader
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("%s load failed: %w", loaderBinary, err)
+		return fmt.Errorf("%s %v failed: %w", loaderBinary, args, err)
 	}
 
 	return nil

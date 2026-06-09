@@ -160,7 +160,6 @@ def _pull_impl(rctx):
         maybe_lazy_layer_download = """
 download_blobs(
     name = "layers",
-    credential_helper = {credential_helper},
     docker_config_path = {docker_config_path},
     digests = {layer_digests},
     sources = {sources},
@@ -177,7 +176,6 @@ download_blobs(
                 prefix = "    ",
                 indent = "    ",
             ),
-            credential_helper = repr(rctx.attr.credential_helper),
             docker_config_path = repr(rctx.attr.docker_config_path),
         )
 
