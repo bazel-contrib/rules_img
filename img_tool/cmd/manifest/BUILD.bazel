@@ -1,4 +1,4 @@
-load("@rules_go//go:def.bzl", "go_library")
+load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "manifest",
@@ -14,4 +14,10 @@ go_library(
         "@com_github_opencontainers_image_spec//specs-go",
         "@com_github_opencontainers_image_spec//specs-go/v1:specs-go",
     ],
+)
+
+go_test(
+    name = "manifest_test",
+    srcs = ["manifest_test.go"],
+    embed = [":manifest"],
 )
