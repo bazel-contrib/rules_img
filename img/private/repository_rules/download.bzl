@@ -3,6 +3,15 @@
 load("@pull_hub_repo//:defs.bzl", "tool_for_repository_os")
 load(":registry.bzl", "get_registries", "get_sources_list")
 
+_MANIFEST_ACCEPT_HEADERS = {
+    "Accept": ",".join([
+        "application/vnd.oci.image.index.v1+json",
+        "application/vnd.docker.distribution.manifest.list.v2+json",
+        "application/vnd.oci.image.manifest.v1+json",
+        "application/vnd.docker.distribution.manifest.v2+json",
+    ]),
+}
+
 def learn_digest_from_tag(rctx, *, tag, downloader, sources):
     """Learn the digest of an image from its tag by downloading manifest headers.
 
@@ -32,6 +41,7 @@ def learn_digest_from_tag(rctx, *, tag, downloader, sources):
         result = rctx.download(
             url = urls,
             output = "temp_manifest_for_digest_learning.json",
+            headers = _MANIFEST_ACCEPT_HEADERS,
         )
 
         # The digest is the SHA256 of the downloaded manifest
@@ -339,6 +349,7 @@ def download_manifest_bazel(rctx, *, reference, sha256, have_valid_digest, sourc
 
     manifest_result = rctx.download(
         url = urls,
+        headers = _MANIFEST_ACCEPT_HEADERS,
         **kwargs
     )
     if have_valid_digest and manifest_result.sha256 != sha256:
