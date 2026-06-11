@@ -59,7 +59,8 @@ type AssertionSpec struct {
 }
 
 type DebugSpec struct {
-	TarFiles []string // List of tar files to print contents for debugging
+	TarFiles   []string // List of tar files to print contents for debugging
+	PrintFiles []string // List of plain files to print contents for debugging
 }
 
 type TestFramework struct {
@@ -167,6 +168,8 @@ func (tf *TestFramework) LoadTestCase(filename string) (*TestCase, error) {
 			key, value := parseKeyValue(line)
 			if key == "tar_debug" {
 				testCase.Debug.TarFiles = append(testCase.Debug.TarFiles, value)
+			} else if key == "print_file" {
+				testCase.Debug.PrintFiles = append(testCase.Debug.PrintFiles, value)
 			}
 		case "command":
 			key, value := parseKeyValue(line)
@@ -1271,6 +1274,17 @@ func (tf *TestFramework) RunTestCase(ctx context.Context, testCase *TestCase) er
 		for _, tarFile := range testCase.Debug.TarFiles {
 			if err := tf.PrintTarContents(tarFile); err != nil {
 				t.Logf("Warning: could not print tar contents for %s: %v", tarFile, err)
+			}
+		}
+
+		// Print plain file contents for debugging if requested
+		for _, file := range testCase.Debug.PrintFiles {
+			fullPath := filepath.Join(tf.tempDir, file)
+			content, err := os.ReadFile(fullPath)
+			if err != nil {
+				t.Logf("Warning: could not read file %s: %v", file, err)
+			} else {
+				t.Logf("Contents of %s:\n%s", file, string(content))
 			}
 		}
 
