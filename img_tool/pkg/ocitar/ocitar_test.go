@@ -8,8 +8,8 @@ import (
 	"io"
 	"testing"
 
-	v1 "github.com/malt3/go-containerregistry/pkg/v1"
-	"github.com/malt3/go-containerregistry/pkg/v1/types"
+	v1 "github.com/google/go-containerregistry/pkg/v1"
+	"github.com/google/go-containerregistry/pkg/v1/types"
 )
 
 type memBlobSource struct {

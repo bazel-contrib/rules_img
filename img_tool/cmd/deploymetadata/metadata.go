@@ -12,7 +12,7 @@ import (
 	"strconv"
 	"strings"
 
-	registryv1 "github.com/malt3/go-containerregistry/pkg/v1"
+	registryv1 "github.com/google/go-containerregistry/pkg/v1"
 
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/api"
 )

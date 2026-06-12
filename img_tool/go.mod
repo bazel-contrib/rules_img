@@ -12,11 +12,11 @@ require (
 	github.com/containerd/containerd/api v1.11.1
 	github.com/containerd/platforms v1.0.0-rc.4
 	github.com/containerd/stargz-snapshotter/estargz v0.18.2
+	github.com/google/go-containerregistry v0.21.6
 	github.com/google/uuid v1.6.0
 	github.com/jedib0t/go-pretty/v6 v6.8.1
 	github.com/klauspost/compress v1.18.6
 	github.com/klauspost/pgzip v1.2.6
-	github.com/malt3/go-containerregistry v0.0.0-20260417112622-6e740c37a969
 	github.com/opencontainers/go-digest v1.0.0
 	github.com/opencontainers/image-spec v1.1.1
 	golang.org/x/sync v0.21.0

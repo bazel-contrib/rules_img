@@ -8,9 +8,9 @@ import (
 
 	ecr "github.com/awslabs/amazon-ecr-credential-helper/ecr-login"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/auth/credential"
-	"github.com/malt3/go-containerregistry/pkg/authn"
-	"github.com/malt3/go-containerregistry/pkg/v1/google"
-	"github.com/malt3/go-containerregistry/pkg/v1/remote"
+	"github.com/google/go-containerregistry/pkg/authn"
+	"github.com/google/go-containerregistry/pkg/v1/google"
+	"github.com/google/go-containerregistry/pkg/v1/remote"
 )
 
 // amazonKeychain authenticates to Amazon ECR registries using the
