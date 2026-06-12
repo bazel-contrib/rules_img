@@ -1,0 +1,8 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "and",
+    srcs = ["and_closer.go"],
+    importpath = "github.com/bazel-contrib/rules_img/img_tool/pkg/registry/internal/and",
+    visibility = ["//pkg/registry:__subpackages__"],
+)

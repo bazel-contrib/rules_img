@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/malt3/go-containerregistry/pkg/name"
-	"github.com/malt3/go-containerregistry/pkg/v1/remote"
+	"github.com/google/go-containerregistry/pkg/name"
+	"github.com/google/go-containerregistry/pkg/v1/remote"
 
 	reg "github.com/bazel-contrib/rules_img/img_tool/pkg/auth/registry"
 )

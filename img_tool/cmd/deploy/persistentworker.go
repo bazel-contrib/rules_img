@@ -9,9 +9,9 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
-	"github.com/malt3/go-containerregistry/pkg/name"
-	registryv1 "github.com/malt3/go-containerregistry/pkg/v1"
-	"github.com/malt3/go-containerregistry/pkg/v1/remote"
+	"github.com/google/go-containerregistry/pkg/name"
+	registryv1 "github.com/google/go-containerregistry/pkg/v1"
+	"github.com/google/go-containerregistry/pkg/v1/remote"
 
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/api"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/auth/registry"
