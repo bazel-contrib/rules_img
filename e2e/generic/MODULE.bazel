@@ -80,42 +80,42 @@ pull = use_repo_rule("@rules_img//img:pull.bzl", "pull")
 
 pull(
     name = "alpine",
-    digest = "sha256:51183f2cfa6320055da30872f211093f9ff1d3cf06f39a0bdb212314c5dc7375",
+    digest = "sha256:a2d49ea686c2adfe3c992e47dc3b5e7fa6e6b5055609400dc2acaeb241c829f4",
     layer_handling = "lazy",
     registries = [
         "mirror.gcr.io",
         "index.docker.io",
     ],
     repository = "library/alpine",
-    tag = "3.23",
+    tag = "3.24",
 )
 
 pull(
     name = "cuda",
-    digest = "sha256:198208c45877a84c8fb35a06956e7fbef4ffabfa36f9c82148dc7bac454ba02a",
+    digest = "sha256:1f1d0dac55c5ed0bfc27fb0a1471defdf19000967bd6cd829068f7135ffd259d",
     registries = [
         "mirror.gcr.io",
         "index.docker.io",
     ],
     repository = "nvidia/cuda",
-    tag = "13.0.0-tensorrt-runtime-ubuntu24.04",
+    tag = "13.3.0-tensorrt-runtime-ubuntu24.04",
 )
 
 # image that contains a manifest without explicit mediaType field
 pull(
     name = "envoy",
-    digest = "sha256:d68fc27a15a17ae3b13df8c8631523a2fe1192b39ec867dffe870b666c55c2dd",
+    digest = "sha256:af7c3dfdbe10de65cb2db5839ce1adf8904ee41c9d372076d62acab43af6ec41",
     repository = "envoyproxy/envoy",
-    tag = "v1.36.3",
+    tag = "v1.38.2",
 )
 
 pull(
     name = "neo4j",
-    digest = "sha256:5bd040cfe84b953a893c943cf3be4e4dc3b2758c154c192a6196de9d1e31b11b",
+    digest = "sha256:a2d0536cfa551894cad0d6db3273c5f39acb66c13600c2a1778a0febbdafab26",
     layer_handling = "lazy",
     registry = "index.docker.io",
     repository = "library/neo4j",
-    tag = "5.26.18-ubi9",
+    tag = "5.26.24-ubi9",
 )
 
 # Example of pulling from GCR by tag without digest
@@ -132,7 +132,7 @@ pull(
 
 pull(
     name = "distroless_static",
-    digest = "sha256:3f2b64ef97bd285e36132c684e6b2ae8f2723293d09aae046196cca64251acac",
+    digest = "sha256:3592aa8171c77482f62bbc4164e6a2d141c6122554ace66e5cc910cadb961ff0",
     layer_handling = "eager",
     registry = "gcr.io",
     repository = "distroless/static",
@@ -148,7 +148,7 @@ pull(
 images = use_extension("@rules_img//img:extensions.bzl", "images")
 images.pull(
     name = "nginx",
-    digest = "sha256:029d4461bd98f124e531380505ceea2072418fdf28752aa73b7b273ba3048903",
+    digest = "sha256:608a100c71651bf5b773c89083b4a1ad7ef4b2bd05d7a7e552271e03123692ad",
     registries = [
         "mirror.gcr.io",
         "index.docker.io",
