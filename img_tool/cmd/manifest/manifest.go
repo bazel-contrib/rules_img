@@ -665,7 +665,7 @@ func readCreatedTimestamp(filePath string) (*time.Time, error) {
 func annotationsFromBaseImageDescriptorFile(filePath string, annotations map[string]string) (map[string]string, error) {
 	if len(filePath) == 0 {
 		// We may not have a base image.
-		return nil, nil
+		return annotations, nil
 	}
 	data, err := os.ReadFile(filePath)
 	if err != nil {

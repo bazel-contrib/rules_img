@@ -15,10 +15,10 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/malt3/go-containerregistry/pkg/name"
-	v1 "github.com/malt3/go-containerregistry/pkg/v1"
-	"github.com/malt3/go-containerregistry/pkg/v1/remote"
-	"github.com/malt3/go-containerregistry/pkg/v1/types"
+	"github.com/google/go-containerregistry/pkg/name"
+	v1 "github.com/google/go-containerregistry/pkg/v1"
+	"github.com/google/go-containerregistry/pkg/v1/remote"
+	"github.com/google/go-containerregistry/pkg/v1/types"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/api"

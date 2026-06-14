@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/malt3/go-containerregistry/pkg/name"
+	"github.com/google/go-containerregistry/pkg/name"
 )
 
 func TestMain(m *testing.M) {
