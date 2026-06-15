@@ -45,6 +45,7 @@ filegroup(
 
 download_blobs(
     name = "blob",
+    docker_config_path = {docker_config_path},
     digests = ["{digest_filename}"],
     sources = {sources},
     tags = ["requires-network"],
@@ -53,6 +54,7 @@ download_blobs(
 """.format(
                 digest_filename = digest_filename,
                 blob_name = repr(rctx.attr.downloaded_file_path),
+                docker_config_path = repr(rctx.attr.docker_config_path),
                 sources = json.encode_indent(
                     rctx.attr.sources,
                     prefix = "    ",
@@ -143,6 +145,16 @@ If a registry list is empty, it defaults to Docker Hub (index.docker.io).""",
 
 * **`bazel`**: Uses Bazel's native HTTP capabilities for downloading manifests and blobs.
 """,
+        ),
+        "credential_helper": attr.string(
+            doc = """Credential helper to use for registry authentication when this repository rule runs the pull tool.
+
+If omitted, the pull tool inherits `$IMG_CREDENTIAL_HELPER` when present.""",
+        ),
+        "docker_config_path": attr.string(
+            doc = """Path to Docker-compatible registry authentication config.
+
+If omitted, the pull tool inherits `$REGISTRY_AUTH_FILE` when present.""",
         ),
     },
 )
@@ -243,6 +255,16 @@ If not specified, defaults to "tgz".""",
 
 * **`bazel`**: Uses Bazel's native HTTP capabilities for downloading manifests and blobs.
 """,
+        ),
+        "credential_helper": attr.string(
+            doc = """Credential helper to use for registry authentication when this repository rule runs the pull tool.
+
+If omitted, the pull tool inherits `$IMG_CREDENTIAL_HELPER` when present.""",
+        ),
+        "docker_config_path": attr.string(
+            doc = """Path to Docker-compatible registry authentication config.
+
+If omitted, the pull tool inherits `$REGISTRY_AUTH_FILE` when present.""",
         ),
     },
 )
@@ -357,6 +379,16 @@ Only used if `digest` is not specified. It's recommended to use a digest for rep
 
 * **`bazel`**: Uses Bazel's native HTTP capabilities for downloading manifests and blobs.
 """,
+        ),
+        "credential_helper": attr.string(
+            doc = """Credential helper to use for registry authentication when this repository rule runs the pull tool.
+
+If omitted, the pull tool inherits `$IMG_CREDENTIAL_HELPER` when present.""",
+        ),
+        "docker_config_path": attr.string(
+            doc = """Path to Docker-compatible registry authentication config.
+
+If omitted, the pull tool inherits `$REGISTRY_AUTH_FILE` when present.""",
         ),
     },
 )

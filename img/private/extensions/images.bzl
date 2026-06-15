@@ -26,6 +26,8 @@ def _images_impl(ctx):
 
     # Determine downloader to use for root module
     downloader = "img_tool"
+    credential_helper = None
+    docker_config_path = None
     expose_hub_repo = "auto"
     expose_image_repos = "auto"
     for mod in ctx.modules:
@@ -34,6 +36,8 @@ def _images_impl(ctx):
                 continue
 
             downloader = settings.downloader
+            credential_helper = settings.credential_helper
+            docker_config_path = settings.docker_config_path
             expose_hub_repo = settings.hub_repo
             expose_image_repos = settings.image_repos
 
@@ -68,7 +72,14 @@ def _images_impl(ctx):
                 root_module_images_by_name[normalize_repository_name(img.name, img.repository)] = digest
 
     # Sync OCI reference graph by downloading manifests
-    oci_ref_graph = sync_oci_ref_graph(ctx, images_by_digest, facts, downloader)
+    oci_ref_graph = sync_oci_ref_graph(
+        ctx,
+        images_by_digest,
+        facts,
+        downloader,
+        credential_helper = credential_helper,
+        docker_config_path = docker_config_path,
+    )
 
     # Build reverse mappings from blobs to top-level images for fast lookups
     file_blob_to_images, manifest_blob_to_images = build_reverse_blob_mappings(oci_ref_graph, images_by_digest)
@@ -91,6 +102,8 @@ def _images_impl(ctx):
             sources = sources,
             digest = digest,
             downloader = downloader,
+            credential_helper = credential_helper,
+            docker_config_path = docker_config_path,
         )
 
     # Create blob repositories for config/layer blobs (deduplicated, eager)
@@ -110,6 +123,8 @@ def _images_impl(ctx):
             downloaded_file_path = "blob",
             handling = "eager",
             downloader = downloader,
+            credential_helper = credential_helper,
+            docker_config_path = docker_config_path,
         )
 
     # Create blob repositories for lazy layer blobs (deduplicated, lazy)
@@ -129,6 +144,8 @@ def _images_impl(ctx):
             downloaded_file_path = "blob",
             handling = "lazy",
             downloader = downloader,
+            credential_helper = credential_helper,
+            docker_config_path = docker_config_path,
         )
 
     # Create image repositories for each top-level image
@@ -339,6 +356,16 @@ _settings_tag = tag_class(
 
 * **`disabled`**: Do not create the hub repository.
 """,
+        ),
+        "credential_helper": attr.string(
+            doc = """Credential helper to use for registry authentication when the module extension runs the pull tool.
+
+If omitted, the pull tool inherits `$IMG_CREDENTIAL_HELPER` when present.""",
+        ),
+        "docker_config_path": attr.string(
+            doc = """Path to Docker-compatible registry authentication config.
+
+If omitted, the pull tool inherits `$REGISTRY_AUTH_FILE` when present.""",
         ),
         "image_repos": attr.string(
             default = "auto",
