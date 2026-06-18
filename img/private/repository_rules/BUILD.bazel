@@ -17,7 +17,7 @@ bzl_library(
         "//img/private/platforms",
         "//img/private/platforms:constraints",
         "@bazel_skylib//lib:sets",
-        "@pull_hub_repo//:defs",
+        "@img_toolchain//:defs",
     ],
 )
 
@@ -27,7 +27,7 @@ bzl_library(
     visibility = ["//img:__subpackages__"],
     deps = [
         ":download",
-        "@pull_hub_repo//:defs",
+        "@img_toolchain//:defs",
     ],
 )
 
@@ -37,7 +37,7 @@ bzl_library(
     visibility = ["//img:__subpackages__"],
     deps = [
         ":registry",
-        "@pull_hub_repo//:defs",
+        "@img_toolchain//:defs",
     ],
 )
 
