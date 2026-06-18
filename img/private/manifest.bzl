@@ -647,7 +647,19 @@ Subject to [template expansion](/docs/templating.md).
         ),
         "env_file": attr.label(
             allow_single_file = True,
-            doc = """File containing newline-delimited KEY=VALUE enviroment variables to set when starting a container based on this image.""",
+            doc = """File containing environment variables to set when starting a container based on this image.
+
+The file may be JSON or newline-delimited text, auto-detected from its contents:
+
+- JSON object with string values: `{"KEY": "value"}`
+- JSON object with list values: `{"KEY": ["value1", "value2"]}` (the last value wins)
+- JSON array of `KEY=VALUE` strings: `["KEY=value"]`
+- newline-delimited `KEY=VALUE` text (one per line; blank lines and `#` comments are ignored)
+
+Values in JSON objects are used verbatim and may contain `=`, spaces, or newlines.
+The `KEY=VALUE` forms split on the first `=` and trim surrounding whitespace.
+
+Values from the `env` attribute (or expanded templates) take precedence over the file.""",
         ),
         "entrypoint": attr.string_list(
             doc = "A list of arguments to use as the command to execute when the container starts. These values act as defaults and may be replaced by an entrypoint specified when creating a container.",
@@ -668,9 +680,19 @@ Subject to [template expansion](/docs/templating.md).
             default = {},
         ),
         "label_files": attr.label_list(
-            doc = """Files containing newline-delimited KEY=VALUE labels for the image config.
+            doc = """Files containing labels for the image config, as JSON or newline-delimited text.
 
-Each file should contain one label per line in KEY=VALUE format. Empty lines are ignored.
+Each file is parsed in one of the following formats, auto-detected from its contents:
+
+- JSON object with string values: `{"key": "value"}`
+- JSON object with list values: `{"key": ["value1", "value2"]}` (the last value wins)
+- JSON array of `KEY=VALUE` strings: `["key=value"]`
+- newline-delimited `KEY=VALUE` text (one per line; blank lines and `#` comments are ignored)
+
+Values in JSON objects are used verbatim, so they can encode arbitrary strings including
+values that contain `=`, spaces, or newlines. The `KEY=VALUE` forms (JSON array and text)
+split on the first `=` and trim surrounding whitespace from the key and value.
+
 Labels from these files are merged together, and then merged with labels specified via
 the `labels` attribute. Values from files take precedence over the `labels` attribute
 for matching keys.
@@ -694,10 +716,21 @@ Subject to [template expansion](/docs/templating.md).
             default = {},
         ),
         "annotations_file": attr.label(
-            doc = """File containing newline-delimited KEY=VALUE annotations for the manifest.
+            doc = """File containing annotations for the manifest, as JSON or newline-delimited text.
 
-The file should contain one annotation per line in KEY=VALUE format. Empty lines are ignored.
-Annotations from this file are merged with annotations specified via the `annotations` attribute.
+The file is parsed in one of the following formats, auto-detected from its contents:
+
+- JSON object with string values: `{"key": "value"}`
+- JSON object with list values: `{"key": ["value1", "value2"]}` (the last value wins)
+- JSON array of `KEY=VALUE` strings: `["key=value"]`
+- newline-delimited `KEY=VALUE` text (one per line; blank lines and `#` comments are ignored)
+
+Values in JSON objects are used verbatim, so they can encode arbitrary strings including
+values that contain `=`, spaces, or newlines. The `KEY=VALUE` forms (JSON array and text)
+split on the first `=` and trim surrounding whitespace from the key and value.
+
+Annotations from this file are merged with annotations specified via the `annotations`
+attribute. Values from the file take precedence over the `annotations` attribute for matching keys.
 
 Example file content:
 ```
