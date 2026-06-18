@@ -13,6 +13,12 @@ bzl_library(
 )
 
 bzl_library(
+    name = "deploy_tool_info",
+    srcs = ["deploy_tool_info.bzl"],
+    visibility = ["//img:__subpackages__"],
+)
+
+bzl_library(
     name = "image_toolchain_info",
     srcs = ["image_toolchain_info.bzl"],
     visibility = ["//img:__subpackages__"],
@@ -25,14 +31,20 @@ bzl_library(
 )
 
 bzl_library(
-    name = "single_layer_info",
-    srcs = ["single_layer_info.bzl"],
+    name = "layer_config_info",
+    srcs = ["layer_config_info.bzl"],
     visibility = ["//img:__subpackages__"],
 )
 
 bzl_library(
     name = "layers_info",
     srcs = ["layers_info.bzl"],
+    visibility = ["//img:__subpackages__"],
+)
+
+bzl_library(
+    name = "load_config_info",
+    srcs = ["load_config_info.bzl"],
     visibility = ["//img:__subpackages__"],
 )
 
@@ -61,37 +73,25 @@ bzl_library(
 )
 
 bzl_library(
-    name = "push_settings_info",
-    srcs = ["push_settings_info.bzl"],
-    visibility = ["//img:__subpackages__"],
-)
-
-bzl_library(
-    name = "stamp_setting_info",
-    srcs = ["stamp_setting_info.bzl"],
-    visibility = ["//img:__subpackages__"],
-)
-
-bzl_library(
-    name = "deploy_tool_info",
-    srcs = ["deploy_tool_info.bzl"],
-    visibility = ["//img:__subpackages__"],
-)
-
-bzl_library(
-    name = "layer_config_info",
-    srcs = ["layer_config_info.bzl"],
-    visibility = ["//img:__subpackages__"],
-)
-
-bzl_library(
     name = "push_config_info",
     srcs = ["push_config_info.bzl"],
     visibility = ["//img:__subpackages__"],
 )
 
 bzl_library(
-    name = "load_config_info",
-    srcs = ["load_config_info.bzl"],
+    name = "push_settings_info",
+    srcs = ["push_settings_info.bzl"],
+    visibility = ["//img:__subpackages__"],
+)
+
+bzl_library(
+    name = "single_layer_info",
+    srcs = ["single_layer_info.bzl"],
+    visibility = ["//img:__subpackages__"],
+)
+
+bzl_library(
+    name = "stamp_setting_info",
+    srcs = ["stamp_setting_info.bzl"],
     visibility = ["//img:__subpackages__"],
 )

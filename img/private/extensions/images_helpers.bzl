@@ -1,7 +1,7 @@
 """Helper functions for the images module extension."""
 
 load("@bazel_skylib//lib:sets.bzl", "sets")
-load("@pull_hub_repo//:defs.bzl", "tool_for_repository_os")
+load("@img_toolchain//:defs.bzl", "tool_for_repository_os")
 load("//img/private:manifest_media_type.bzl", "get_media_type", manifest_kind = "kind")
 load("//img/private/repository_rules:download.bzl", "auth_environment", "download_manifest")
 
@@ -587,7 +587,7 @@ def sync_oci_ref_graph(ctx, images_by_digest, facts, downloader, credential_help
     ctx.report_progress("Syncing OCI reference graph...")
     oci_ref_graph = {}
 
-    # Use pull_tool to prefetch the full OCI ref graph in parallel
+    # Use the img tool to prefetch the full OCI ref graph in parallel
     if downloader == "img_tool":
         # Prepare facts JSON (convert facts to a format expected by the tool)
         facts_json_content = json.encode(reachable_facts_to_dict(images_by_digest, facts))

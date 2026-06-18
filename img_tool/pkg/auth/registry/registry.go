@@ -22,7 +22,6 @@ var amazonKeychain authn.Keychain = authn.NewKeychainFromHelper(ecr.NewECRHelper
 // If `IMG_CREDENTIAL_HELPER` is set in the environment, the Bazel credential helper
 // is checked before the default Docker, Google, and Amazon ECR keychains.
 // If `IMG_AUTH_DEBUG` is set, each keychain resolution is logged to stderr.
-// WARNING: keep in sync with the same function in pull_tool/pkg/auth/registry/registry.go.
 func WithAuthFromMultiKeychain() remote.Option {
 	return remote.WithAuthFromKeychain(keychainFromEnvironment())
 }

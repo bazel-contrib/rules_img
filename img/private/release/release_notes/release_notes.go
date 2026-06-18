@@ -99,12 +99,9 @@ rules_img_dependencies()
 load("@bazel_features//:deps.bzl", "bazel_features_deps")
 
 # Register prebuilt toolchains
-load("@rules_img//img:repositories.bzl", "img_register_prebuilt_toolchains", "pull_tool_register_prebuilt_repositories")
+load("@rules_img//img:repositories.bzl", "img_register_prebuilt_toolchains")
 img_register_prebuilt_toolchains()
 register_toolchains("@img_toolchain//:all")
-
-# Register prebuilt pull_tool repositories (for pull functionality)
-pull_tool_register_prebuilt_repositories()
 
 # Example: Pull a base image
 load("@rules_img//img:pull.bzl", "pull")

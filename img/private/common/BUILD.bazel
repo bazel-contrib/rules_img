@@ -21,30 +21,6 @@ filegroup(
 )
 
 bzl_library(
-    name = "build",
-    srcs = ["build.bzl"],
-    visibility = ["//img:__subpackages__"],
-)
-
-bzl_library(
-    name = "media_types",
-    srcs = ["media_types.bzl"],
-    visibility = ["//img:__subpackages__"],
-)
-
-bzl_library(
-    name = "transitions",
-    srcs = ["transitions.bzl"],
-    visibility = ["//img:__subpackages__"],
-)
-
-bzl_library(
-    name = "default_deploy_tool",
-    srcs = ["default_deploy_tool.bzl"],
-    visibility = ["//img:__subpackages__"],
-)
-
-bzl_library(
     name = "layer_attrs",
     srcs = ["layer_attrs.bzl"],
     visibility = ["//img:__subpackages__"],
@@ -98,4 +74,28 @@ bzl_library(
         "//img/private/providers:single_layer_info",
         "@bazel_skylib//rules:common_settings",
     ],
+)
+
+bzl_library(
+    name = "build",
+    srcs = ["build.bzl"],
+    visibility = ["//img:__subpackages__"],
+)
+
+bzl_library(
+    name = "default_deploy_tool",
+    srcs = ["default_deploy_tool.bzl"],
+    visibility = ["//img:__subpackages__"],
+)
+
+bzl_library(
+    name = "media_types",
+    srcs = ["media_types.bzl"],
+    visibility = ["//img:__subpackages__"],
+)
+
+bzl_library(
+    name = "transitions",
+    srcs = ["transitions.bzl"],
+    visibility = ["//img:__subpackages__"],
 )

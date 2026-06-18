@@ -17,6 +17,13 @@ go_sdk.from_file(
     go_mod = "//:go.mod",
 )
 
+# Known to exist since it is instantiated by rules_go itself.
+# Used by the img_bootstrap repository rule to locate the host Go toolchain.
+use_repo(
+    go_sdk,
+    "go_host_compatible_sdk_label",
+)
+
 go_deps = use_extension("@gazelle//:extensions.bzl", "go_deps")
 go_deps.from_file(go_mod = "//:go.mod")
 use_repo(
@@ -45,6 +52,20 @@ use_repo(
     "org_golang_x_term",
 )
 
+# Bootstrap a host binary of the img tool from source. This is used by
+# repository rules (image pulling) that need the tool at fetch time, before
+# any build action can run.
+img_bootstrap = use_repo_rule("//bootstrap:bootstrap.bzl", "img_bootstrap")
+
+img_bootstrap(
+    name = "img_bootstrap",
+    go_mod = "//:go.mod",
+    go_sum = "//:go.sum",
+)
+
 # inject the source built img tool into the prebuilt_img_tool module extension.
 prebuilt_img_tool = use_extension("@rules_img//img/private/prebuilt:prebuilt.bzl", "prebuilt_img_tool")
 prebuilt_img_tool.source_built(target = "@rules_img_tool//cmd/img")
+
+# inject the source-bootstrapped host binary for use in repository rules.
+prebuilt_img_tool.host_tool(binary = "@img_bootstrap//:img.exe")

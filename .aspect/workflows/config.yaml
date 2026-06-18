@@ -10,7 +10,6 @@ tasks:
           targets:
               - "//..."
               - "@rules_img_tool//..."
-              - "@rules_img_pull_tool//..."
     - test:
           name: Integration Tests
           id: integration-tests
