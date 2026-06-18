@@ -7,6 +7,7 @@ source files into the repository for consistency with the project's build system
 """
 
 load("@bazel_lib//lib:write_source_files.bzl", "write_source_files")
+load("@bazel_skylib//rules:diff_test.bzl", "diff_test")
 load("@rules_go//proto:def.bzl", _go_proto_library = "go_proto_library")
 
 _grpc_compiler = Label("@rules_go//proto:go_grpc_v2")
@@ -65,6 +66,25 @@ def go_proto_library(*, name, compilers, filenames = [], **kwargs):
         files = generated_files,
         diff_test = False,
     )
+
+    # Assert the checked-in .pb.go files are up to date. We use bazel_skylib's
+    # diff_test (rather than write_source_files' built-in diff_test) because the
+    # latter resolves the source file label against the main repository, which
+    # breaks when this module is consumed as a bazel_dep. Package-relative labels
+    # below resolve against this module's repository as intended.
+    for out_file, generated_target in generated_files.items():
+        diff_test(
+            name = "{}_check".format(_target_name_from_filename(name, out_file)),
+            file1 = ":" + out_file,
+            file2 = ":" + generated_target,
+            failure_message = (
+                "Generated file {} is out of date. ".format(out_file) +
+                "Run `bazel run //{}:{}.write_source_files` to update it.".format(
+                    native.package_name(),
+                    name,
+                )
+            ),
+        )
 
 def _generated_pb_files(ctx):
     output_groups = ctx.attr.go_proto_library[OutputGroupInfo]

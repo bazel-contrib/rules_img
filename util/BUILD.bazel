@@ -4,6 +4,12 @@ load("@rules_go//go:def.bzl", "TOOLS_NOGO", "nogo")
 
 # gazelle:exclude_from_release
 
+# stardoc.bzl loads @stardoc//stardoc:stardoc.bzl, which the bzl gazelle plugin
+# mis-resolves to a non-existent @stardoc//stardoc:stardoc target. Exclude it so
+# gazelle doesn't generate a broken bzl_library; the file is consumed directly
+# via load() from //docs, not through a bzl_library target.
+# gazelle:exclude stardoc.bzl
+
 buildifier(
     name = "buildifier.fix",
     diff_command = "diff",

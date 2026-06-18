@@ -1,6 +1,6 @@
 """Repository rules for downloading container image components."""
 
-load("@pull_hub_repo//:defs.bzl", "tool_for_repository_os")
+load("@img_toolchain//:defs.bzl", "tool_for_repository_os")
 load(":registry.bzl", "get_registries", "get_sources_list")
 
 def _configured_attr(ctx, name):

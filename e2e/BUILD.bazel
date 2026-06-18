@@ -10,6 +10,7 @@ load(
 # gazelle:exclude generic
 # gazelle:exclude js
 # gazelle:exclude python
+# gazelle:exclude sbom
 # gazelle:exclude workspace
 # gazelle:exclude_from_release
 

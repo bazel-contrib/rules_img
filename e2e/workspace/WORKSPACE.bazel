@@ -10,7 +10,7 @@ local_repository(
 
 # Load rules_img dependencies and prebuilt toolchains
 load("@rules_img//img:dependencies.bzl", "rules_img_dependencies")
-load("@rules_img//img:repositories.bzl", "img_register_prebuilt_toolchains", "pull_tool_register_prebuilt_repositories")
+load("@rules_img//img:repositories.bzl", "img_register_prebuilt_toolchains")
 
 rules_img_dependencies()
 
@@ -23,9 +23,6 @@ bazel_features_deps()
 img_register_prebuilt_toolchains()
 
 register_toolchains("@img_toolchain//:all")
-
-# Register prebuilt pull_tool repositories for WORKSPACE mode
-pull_tool_register_prebuilt_repositories()
 
 # Pull Alpine Linux as base image for WORKSPACE mode test
 load("@rules_img//img:pull.bzl", "pull")

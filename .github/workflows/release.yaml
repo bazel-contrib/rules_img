@@ -25,13 +25,9 @@ jobs:
       release_files: |
         dist/rules_img-*.tar.gz
         dist/rules_img_tool-*.tar.gz
-        dist/rules_img_pull_tool-*.tar.gz
         dist/img_linux_*
         dist/img_darwin_*
         dist/img_windows_*.exe
-        dist/pull_tool_linux_*
-        dist/pull_tool_darwin_*
-        dist/pull_tool_windows_*.exe
         dist/*.docs.tar.gz
       prerelease: false
       tag_name: ${{ inputs.tag_name || github.ref_name }}
@@ -49,10 +45,9 @@ jobs:
     needs: release
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
-      - name: Create img_tool and pull_tool tags
+      - name: Create img_tool tag
         env:
           TAG_NAME: ${{ inputs.tag_name || github.ref_name }}
         run: |
           git tag "img_tool/${TAG_NAME}" "${TAG_NAME}"
-          git tag "pull_tool/${TAG_NAME}" "${TAG_NAME}"
-          git push origin "img_tool/${TAG_NAME}" "pull_tool/${TAG_NAME}"
+          git push origin "img_tool/${TAG_NAME}"

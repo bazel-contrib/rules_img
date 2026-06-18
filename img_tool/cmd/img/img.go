@@ -12,6 +12,7 @@ import (
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/deploymetadata"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/dockersave"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/downloadblob"
+	"github.com/bazel-contrib/rules_img/img_tool/cmd/downloadmanifest"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/expandtemplate"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/hash"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/index"
@@ -21,7 +22,9 @@ import (
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/manifestfromocilayout"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/ocilayout"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/optimize"
+	"github.com/bazel-contrib/rules_img/img_tool/cmd/pull"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/sparseocilayout"
+	"github.com/bazel-contrib/rules_img/img_tool/cmd/syncocirefgraph"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/validate"
 )
 
@@ -34,6 +37,7 @@ Commands:
   compress                 (re-)compresses a layer
   docker-save              assembles a Docker save compatible directory or tarball
   download-blob            downloads a single blob from a registry
+  download-manifest        downloads a manifest by digest or tag from a registry
   expand-template          expands Go templates in push request JSON
   hash                     computes file hashes and layer metadata (supports persistent worker mode)
   index                    creates a multi-platform image index
@@ -43,7 +47,9 @@ Commands:
   manifest-from-oci-layout converts an OCI layout to an image manifest
   oci-layout               assembles an OCI layout directory from manifest and layers
   optimize                 rewrites image metadata after layer optimization
+  pull                     pulls an image from a registry
   sparse-oci-layout        assembles a sparse OCI layout (without layer blobs) from manifest and layers
+  sync-oci-ref-graph       syncs OCI reference graph by downloading manifests in parallel
   validate                 validates layers and images
   deploy                   pushes an image to a registry or loads it into a local container runtime
   deploy-metadata          calculates metadata for deploying an image (push/load)
@@ -86,6 +92,12 @@ func Run(ctx context.Context, args []string) {
 		dockersave.DockerSaveProcess(ctx, args[2:])
 	case "download-blob":
 		downloadblob.DownloadBlobProcess(ctx, args[2:])
+	case "download-manifest":
+		downloadmanifest.DownloadManifestProcess(ctx, args[2:])
+	case "pull":
+		pull.PullProcess(ctx, args[2:])
+	case "sync-oci-ref-graph":
+		syncocirefgraph.SyncOCIRefGraphProcess(ctx, args[2:])
 	case "hash":
 		hash.HashProcess(ctx, args[2:])
 	case "oci-layout":

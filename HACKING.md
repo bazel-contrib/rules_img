@@ -130,16 +130,15 @@ cd e2e/go && bazel run //:push
 
 ### Development with Source-Built Tools
 
-When developing rules_img, you can use source-built versions of the Go tools (`img` and `pull_tool`) instead of prebuilt binaries. This is useful for testing changes to the tool implementations or applying patches.
+When developing rules_img, you can use a source-built version of the Go `img` tool instead of prebuilt binaries. This is useful for testing changes to the tool implementation or applying patches. The `img` tool now also provides the image-pulling functionality used by repository rules, so there is a single tool module (`rules_img_tool`) to override.
 
 #### Setting Up Development Dependencies
 
-Add dependencies on the tool modules and register the source-built toolchains in your `MODULE.bazel`:
+Add a dependency on the tool module and register the source-built toolchain in your `MODULE.bazel`:
 
 ```starlark
-# Add dependencies on the tool modules
+# Add a dependency on the tool module
 bazel_dep(name = "rules_img_tool", version = "<version>", dev_dependency = True)
-bazel_dep(name = "rules_img_pull_tool", version = "<version>", dev_dependency = True)
 
 # Register source-built toolchain
 register_toolchains(
@@ -150,7 +149,7 @@ register_toolchains(
 
 #### Module Override Options
 
-You can override the tool modules using various Bazel module override mechanisms:
+You can override the tool module using various Bazel module override mechanisms:
 
 ##### Local Development Override
 
@@ -161,11 +160,6 @@ For local development with modifications:
 local_path_override(
     module_name = "rules_img_tool",
     path = "../img_tool",  # Path to your local checkout
-)
-
-local_path_override(
-    module_name = "rules_img_pull_tool",
-    path = "../pull_tool",
 )
 ```
 
@@ -182,13 +176,6 @@ git_override(
     commit = "abc123def456",  # Specific commit
     # Or use: branch = "feature-branch"
 )
-
-git_override(
-    module_name = "rules_img_pull_tool",
-    remote = "https://github.com/your-fork/rules_img.git",
-    strip_prefix = "pull_tool",
-    commit = "abc123def456",
-)
 ```
 
 ##### Archive Override
@@ -202,13 +189,6 @@ archive_override(
     integrity = "sha256-...",
     strip_prefix = "rules_img-abc123def456/img_tool",  # Note: includes img_tool subdirectory
 )
-
-archive_override(
-    module_name = "rules_img_pull_tool",
-    urls = ["https://github.com/your-fork/rules_img/archive/abc123def456.tar.gz"],
-    integrity = "sha256-...",
-    strip_prefix = "rules_img-abc123def456/pull_tool",  # Note: includes pull_tool subdirectory
-)
 ```
 
 ##### Single Version Override with Patches
@@ -220,12 +200,6 @@ single_version_override(
     module_name = "rules_img_tool",
     patches = ["//patches:img_tool_performance.patch"],
     patch_strip = 2,  # For patches created from rules_img root (strips img_tool/ prefix)
-)
-
-single_version_override(
-    module_name = "rules_img_pull_tool",
-    patches = ["//patches:pull_tool_auth_fix.patch"],
-    patch_strip = 2,  # For patches created from rules_img root (strips pull_tool/ prefix)
 )
 ```
 
