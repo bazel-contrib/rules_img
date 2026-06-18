@@ -18,6 +18,7 @@ import (
 	specv1 "github.com/opencontainers/image-spec/specs-go/v1"
 
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/api"
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/kvfile"
 )
 
 var (
@@ -80,7 +81,7 @@ func ManifestProcess(_ context.Context, args []string) {
 	flagSet.StringVar(&digestOutput, "digest", "", `The (optional) output file for the digest of the manifest. This is useful for postprocessing.`)
 	flagSet.StringVar(&user, "user", "", `The username or UID which the process in the container should run as.`)
 	flagSet.Var(&env, "env", `Environment variables to set in the container (can be specified multiple times as key=value).`)
-	flagSet.StringVar(&envFile, "env-file", "", `A file containing newline-delimited KEY=VALUE environment variables. Blank lines and lines starting with '#' are ignored. Values from --env take precedence over the file.`)
+	flagSet.StringVar(&envFile, "env-file", "", `A file containing environment variables, as JSON ({"KEY":"value"}, {"KEY":["v1","v2"]}, or ["KEY=value"]) or newline-delimited KEY=VALUE text (blank lines and lines starting with '#' are ignored). Values from --env take precedence over the file.`)
 	flagSet.Var(&entrypoint, "entrypoint", `Command to execute when the container starts (can be specified multiple times).`)
 	flagSet.Var(&cmd, "cmd", `Default arguments to the entrypoint (can be specified multiple times).`)
 	flagSet.StringVar(&workingDir, "working-dir", "", `Working directory inside the container.`)
@@ -616,28 +617,15 @@ func readConfigTemplates(filePath string) (*ConfigTemplates, error) {
 	return &templates, nil
 }
 
-// readEnvFile reads a file containing newline-delimited KEY=VALUE environment
-// variables. Blank lines and lines starting with '#' are ignored.
+// readEnvFile reads a file containing environment variables in JSON or
+// newline-delimited KEY=VALUE form (see the kvfile package). Duplicate keys
+// keep the last value.
 func readEnvFile(filePath string) (map[string]string, error) {
-	content, err := os.ReadFile(filePath)
+	pairs, err := kvfile.ParseFile(filePath)
 	if err != nil {
 		return nil, fmt.Errorf("reading env file: %w", err)
 	}
-
-	envVars := make(map[string]string)
-	for i, line := range strings.Split(string(content), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		key, value, found := strings.Cut(line, "=")
-		if !found {
-			return nil, fmt.Errorf("invalid env file line %d: %q (should be KEY=VALUE)", i+1, line)
-		}
-		envVars[key] = value
-	}
-
-	return envVars, nil
+	return kvfile.Flatten(pairs), nil
 }
 
 // readCreatedTimestamp reads a file containing a timestamp string and parses it as RFC 3339

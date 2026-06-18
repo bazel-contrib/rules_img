@@ -321,10 +321,21 @@ The target must provide either ImageManifestInfo or ImageIndexInfo.
 Subject to [template expansion](/docs/templating.md).""",
         ),
         "annotations_file": attr.label(
-            doc = """File containing newline-delimited KEY=VALUE annotations for the image index.
+            doc = """File containing annotations for the image index, as JSON or newline-delimited text.
 
-The file should contain one annotation per line in KEY=VALUE format. Empty lines are ignored.
-Annotations from this file are merged with annotations specified via the `annotations` attribute.
+The file is parsed in one of the following formats, auto-detected from its contents:
+
+- JSON object with string values: `{"key": "value"}`
+- JSON object with list values: `{"key": ["value1", "value2"]}` (the last value wins)
+- JSON array of `KEY=VALUE` strings: `["key=value"]`
+- newline-delimited `KEY=VALUE` text (one per line; blank lines and `#` comments are ignored)
+
+Values in JSON objects are used verbatim, so they can encode arbitrary strings including
+values that contain `=`, spaces, or newlines. The `KEY=VALUE` forms (JSON array and text)
+split on the first `=` and trim surrounding whitespace from the key and value.
+
+Annotations from this file are merged with annotations specified via the `annotations`
+attribute. Values from the file take precedence over the `annotations` attribute for matching keys.
 
 Example file content:
 ```

@@ -13,6 +13,8 @@ import (
 	"slices"
 	"strings"
 	"text/template"
+
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/kvfile"
 )
 
 // stringOrStrings is a JSON type that unmarshals from either a single string or an array of strings.
@@ -443,124 +445,97 @@ func readStampFile(path string, data buildSettings) error {
 	return nil
 }
 
-// readNewlineDelimitedFile reads a file with newline-delimited strings
-func readNewlineDelimitedFile(path string) ([]string, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return nil, fmt.Errorf("opening file: %w", err)
-	}
-	defer file.Close()
-
-	var lines []string
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		// Skip empty lines
-		if line != "" {
-			lines = append(lines, line)
-		}
-	}
-
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("reading file: %w", err)
-	}
-
-	return lines, nil
-}
-
-// mergeNewlineDelimitedFiles reads newline-delimited list files and merges them into templates
+// mergeNewlineDelimitedFiles reads label/annotation/tag files and merges them
+// into the matching template values. Each file may be JSON or newline-delimited
+// text; see the kvfile package for the recognized formats.
 func mergeNewlineDelimitedFiles(req *request) error {
+	if len(req.NewlineDelimitedListsFiles) > 0 && req.Templates == nil {
+		req.Templates = make(map[string]json.RawMessage)
+	}
 	for key, filePaths := range req.NewlineDelimitedListsFiles {
-		// Read all files and collect lines
-		var lines []string
+		// Parse every file for this key. Files holding KEY=VALUE pairs and
+		// files holding a plain list cannot be mixed for the same key.
+		sawKeyValue, sawList := false, false
+		mergedPairs := make(map[string][]string)
+		var mergedList []string
 		for _, filePath := range filePaths {
-			fileLines, err := readNewlineDelimitedFile(filePath)
+			data, err := os.ReadFile(filePath)
 			if err != nil {
 				return fmt.Errorf("reading file %s for key %q: %w", filePath, key, err)
 			}
-			lines = append(lines, fileLines...)
+			parsed, err := kvfile.ParseFlexible(data)
+			if err != nil {
+				return fmt.Errorf("parsing file %s for key %q: %w", filePath, key, err)
+			}
+			switch parsed.Kind {
+			case kvfile.KindKeyValue:
+				sawKeyValue = true
+				for k, values := range parsed.Pairs {
+					mergedPairs[k] = append(mergedPairs[k], values...)
+				}
+			case kvfile.KindList:
+				sawList = true
+				mergedList = append(mergedList, parsed.List...)
+			}
+		}
+		if sawKeyValue && sawList {
+			return fmt.Errorf("files for key %q mix KEY=VALUE pairs and plain list entries", key)
+		}
+		if !sawKeyValue && !sawList {
+			// Only empty files were provided: leave any existing value as-is.
+			continue
 		}
 
-		// Get existing template value for this key
 		existingRaw, exists := req.Templates[key]
 
-		// Check if lines contain KEY=VALUE pairs
-		isKeyValue := false
-		if len(lines) > 0 {
-			for _, line := range lines {
-				if strings.Contains(line, "=") {
-					isKeyValue = true
-					break
-				}
-			}
-		}
-
-		if isKeyValue {
-			// Handle as KEY=VALUE map
+		if sawKeyValue {
+			// Handle as KEY=VALUE map. Values from files take precedence over
+			// the existing template value for matching keys.
 			finalMap := make(map[string]string)
-
-			// If existing value exists, try to unmarshal as map
 			if exists {
 				var existingMap map[string]string
-				if err := json.Unmarshal(existingRaw, &existingMap); err == nil {
-					// Merge with existing map
-					maps.Copy(finalMap, existingMap)
-				} else {
+				if err := json.Unmarshal(existingRaw, &existingMap); err != nil {
 					return fmt.Errorf("template value for key %q is not a map, but file contains KEY=VALUE pairs", key)
 				}
+				maps.Copy(finalMap, existingMap)
 			}
+			maps.Copy(finalMap, kvfile.Flatten(mergedPairs))
 
-			// Parse KEY=VALUE lines and merge
-			for _, line := range lines {
-				parts := strings.SplitN(line, "=", 2)
-				if len(parts) != 2 {
-					return fmt.Errorf("invalid KEY=VALUE format in line: %q", line)
-				}
-				finalMap[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
-			}
-
-			// Marshal back to JSON and update the template
 			marshaled, err := json.Marshal(finalMap)
 			if err != nil {
 				return fmt.Errorf("marshaling merged map for key %q: %w", key, err)
 			}
 			req.Templates[key] = json.RawMessage(marshaled)
-		} else {
-			// Handle as list of strings
-			var finalList []string
-
-			if exists {
-				// Try to unmarshal as a list first
-				var existingList []string
-				if err := json.Unmarshal(existingRaw, &existingList); err == nil {
-					// Merge with existing list
-					finalList = append(finalList, existingList...)
-					finalList = append(finalList, lines...)
-				} else {
-					// Try as a single string
-					var existingStr string
-					if err := json.Unmarshal(existingRaw, &existingStr); err == nil {
-						// Convert to list and merge
-						if existingStr != "" {
-							finalList = append(finalList, existingStr)
-						}
-						finalList = append(finalList, lines...)
-					} else {
-						return fmt.Errorf("template value for key %q is neither a string nor list of strings", key)
-					}
-				}
-			} else {
-				// No existing value, just use the lines from file
-				finalList = lines
-			}
-
-			// Marshal back to JSON and update the template
-			marshaled, err := json.Marshal(finalList)
-			if err != nil {
-				return fmt.Errorf("marshaling merged list for key %q: %w", key, err)
-			}
-			req.Templates[key] = json.RawMessage(marshaled)
+			continue
 		}
+
+		// Handle as list of strings, appending file entries to any existing value.
+		var finalList []string
+		if exists {
+			var existingList []string
+			if err := json.Unmarshal(existingRaw, &existingList); err == nil {
+				finalList = append(finalList, existingList...)
+				finalList = append(finalList, mergedList...)
+			} else {
+				var existingStr string
+				if err := json.Unmarshal(existingRaw, &existingStr); err == nil {
+					if existingStr != "" {
+						finalList = append(finalList, existingStr)
+					}
+					finalList = append(finalList, mergedList...)
+				} else {
+					return fmt.Errorf("template value for key %q is neither a string nor list of strings", key)
+				}
+			}
+		} else {
+			finalList = mergedList
+		}
+
+		marshaled, err := json.Marshal(finalList)
+		if err != nil {
+			return fmt.Errorf("marshaling merged list for key %q: %w", key, err)
+		}
+		req.Templates[key] = json.RawMessage(marshaled)
 	}
 
 	return nil
