@@ -23,7 +23,7 @@ go_library(
         "//cmd/optimize",
         "//cmd/sparseocilayout",
         "//cmd/validate",
-        "@rules_go//go/runfiles",
+        "@com_github_google_go_containerregistry//pkg/logs",
     ],
 )
 
