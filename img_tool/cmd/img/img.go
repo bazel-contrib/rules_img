@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/google/go-containerregistry/pkg/logs"
+
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/compress"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/deploy"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/deploymetadata"
@@ -24,6 +26,9 @@ import (
 )
 
 const usage = `Usage: img [COMMAND] [ARGS...]
+
+Global flags (accepted by any command):
+  --verbose                enables debug logging
 
 Commands:
   compress                 (re-)compresses a layer
@@ -45,6 +50,11 @@ Commands:
   deploy-merge             merges multiple deploy manifests into a single deployment`
 
 func Run(ctx context.Context, args []string) {
+	// Handle the global --verbose flag for all subcommands. We strip it from
+	// the arguments before dispatching so each subcommand's own flag parser
+	// doesn't have to know about it.
+	args = handleVerbose(args)
+
 	if len(args) < 2 {
 		fmt.Fprintln(os.Stderr, usage)
 		os.Exit(1)
@@ -95,4 +105,24 @@ func Run(ctx context.Context, args []string) {
 func main() {
 	ctx := context.Background()
 	Run(ctx, os.Args)
+}
+
+// handleVerbose looks for a global --verbose (or -verbose) flag anywhere in
+// args. If present, it enables debug logging to stderr and returns args with
+// the flag removed so the individual subcommand flag parsers don't see it.
+func handleVerbose(args []string) []string {
+	filtered := make([]string, 0, len(args))
+	verbose := false
+	for _, arg := range args {
+		switch arg {
+		case "--verbose", "-verbose":
+			verbose = true
+			continue
+		}
+		filtered = append(filtered, arg)
+	}
+	if verbose {
+		logs.Debug.SetOutput(os.Stderr)
+	}
+	return filtered
 }
