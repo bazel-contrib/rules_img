@@ -69,7 +69,7 @@ bazel run //path/to:load_target -- --platform linux/amd64
 load("@rules_img//img:load.bzl", "image_load")
 
 image_load(<a href="#image_load-name">name</a>, <a href="#image_load-build_settings">build_settings</a>, <a href="#image_load-daemon">daemon</a>, <a href="#image_load-deploy_tool">deploy_tool</a>, <a href="#image_load-image">image</a>, <a href="#image_load-stamp">stamp</a>, <a href="#image_load-strategy">strategy</a>, <a href="#image_load-tag">tag</a>, <a href="#image_load-tag_file">tag_file</a>,
-           <a href="#image_load-tag_list">tag_list</a>, <a href="#image_load-tool_cfg">tool_cfg</a>)
+           <a href="#image_load-tag_list">tag_list</a>, <a href="#image_load-tool_cfg">tool_cfg</a>, <a href="#image_load-tracks_content">tracks_content</a>)
 </pre>
 
 Loads container images into a local daemon (Docker, containerd, or Podman).
@@ -171,6 +171,7 @@ Performance notes:
 | <a id="image_load-tag_file"></a>tag_file |  File containing newline-delimited tags to apply when loading the image.<br><br>The file should contain one tag per line. Empty lines are ignored. Tags from this file are merged with tags specified via `tag` or `tag_list` attributes.<br><br>Example file content: <pre><code>latest&#10;v1.0.0&#10;stable</code></pre><br><br>Can be combined with `tag` or `tag_list` to merge tags from multiple sources. Each tag is subject to [template expansion](/docs/templating.md).   | <a href="https://bazel.build/concepts/labels">Label</a> | optional |  `None`  |
 | <a id="image_load-tag_list"></a>tag_list |  List of tags to apply when loading the image.<br><br>Useful for applying multiple tags in a single load:<br><br><pre><code class="language-python">tag_list = ["latest", "v1.0.0", "stable"]</code></pre><br><br>Cannot be used together with `tag`. Can be combined with `tag_file` to merge tags from both sources. Each tag is subject to [template expansion](/docs/templating.md).   | List of strings | optional |  `[]`  |
 | <a id="image_load-tool_cfg"></a>tool_cfg |  **Experimental**: This attribute may be removed if we find a way to automatically select the correct loader platform based on the context of use. Configuration of the loader executable. By default, the loader executable is always chosen for the host platform, regardless of the value of `--platforms`. Setting this attribute to 'target' makes the loader match the target platform instead. The `"target"` option is useful when the "image_load" target is used as a data dependency of an integration test.<br><br>Available options: - **`host`** (default): Loader executable matches the host platform. - **`target`**: Loader executable matches the target platform(s) specified via `--platforms`.   | String | optional |  `"host"`  |
+| <a id="image_load-tracks_content"></a>tracks_content |  When True, the template expansion action depends on the image digest.<br><br>A template string built from a volatile stamp value (e.g. `{{.BUILD_TIMESTAMP}}`) normally freezes on the first build, because Bazel excludes the volatile workspace-status file from the action cache key. With this enabled, the image descriptor becomes an input to the tag-expansion action, so the tag re-stamps whenever the image content (digest) changes, while unchanged content keeps the cached tag.<br><br>The digest is exposed to the `tag` templates as `{{.digest}}`. Referencing the digest in the tag is optional: the re-stamp behavior applies whether or not the tag contains it.   | Boolean | optional |  `False`  |
 
 
 <a id="image_load_spec"></a>
@@ -180,7 +181,8 @@ Performance notes:
 <pre>
 load("@rules_img//img:load.bzl", "image_load_spec")
 
-image_load_spec(<a href="#image_load_spec-name">name</a>, <a href="#image_load_spec-build_settings">build_settings</a>, <a href="#image_load_spec-daemon">daemon</a>, <a href="#image_load_spec-stamp">stamp</a>, <a href="#image_load_spec-strategy">strategy</a>, <a href="#image_load_spec-tag">tag</a>, <a href="#image_load_spec-tag_file">tag_file</a>, <a href="#image_load_spec-tag_list">tag_list</a>)
+image_load_spec(<a href="#image_load_spec-name">name</a>, <a href="#image_load_spec-build_settings">build_settings</a>, <a href="#image_load_spec-daemon">daemon</a>, <a href="#image_load_spec-stamp">stamp</a>, <a href="#image_load_spec-strategy">strategy</a>, <a href="#image_load_spec-tag">tag</a>, <a href="#image_load_spec-tag_file">tag_file</a>, <a href="#image_load_spec-tag_list">tag_list</a>,
+                <a href="#image_load_spec-tracks_content">tracks_content</a>)
 </pre>
 
 Defines load configuration for container images without referencing a specific image.
@@ -245,5 +247,6 @@ multi_deploy(
 | <a id="image_load_spec-tag"></a>tag |  Tag to apply when loading the image.<br><br>Optional - if omitted, the image is loaded without a tag.<br><br>Subject to [template expansion](/docs/templating.md).   | String | optional |  `""`  |
 | <a id="image_load_spec-tag_file"></a>tag_file |  File containing newline-delimited tags to apply when loading the image.<br><br>The file should contain one tag per line. Empty lines are ignored. Tags from this file are merged with tags specified via `tag` or `tag_list` attributes.<br><br>Example file content: <pre><code>latest&#10;v1.0.0&#10;stable</code></pre><br><br>Can be combined with `tag` or `tag_list` to merge tags from multiple sources. Each tag is subject to [template expansion](/docs/templating.md).   | <a href="https://bazel.build/concepts/labels">Label</a> | optional |  `None`  |
 | <a id="image_load_spec-tag_list"></a>tag_list |  List of tags to apply when loading the image.<br><br>Useful for applying multiple tags in a single load:<br><br><pre><code class="language-python">tag_list = ["latest", "v1.0.0", "stable"]</code></pre><br><br>Cannot be used together with `tag`. Can be combined with `tag_file` to merge tags from both sources. Each tag is subject to [template expansion](/docs/templating.md).   | List of strings | optional |  `[]`  |
+| <a id="image_load_spec-tracks_content"></a>tracks_content |  When True, the template expansion action depends on the image digest.<br><br>A template string built from a volatile stamp value (e.g. `{{.BUILD_TIMESTAMP}}`) normally freezes on the first build, because Bazel excludes the volatile workspace-status file from the action cache key. With this enabled, the image descriptor becomes an input to the tag-expansion action, so the tag re-stamps whenever the image content (digest) changes, while unchanged content keeps the cached tag.<br><br>The digest is exposed to the `tag` templates as `{{.digest}}`. Referencing the digest in the tag is optional: the re-stamp behavior applies whether or not the tag contains it.   | Boolean | optional |  `False`  |
 
 

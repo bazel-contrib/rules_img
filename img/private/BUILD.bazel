@@ -291,6 +291,7 @@ bzl_library(
         ":layer_path_hints",
         ":stamp",
         "//img/private/common:build",
+        "//img/private/common:deploy_helpers",
         "//img/private/providers:deploy_info",
         "//img/private/providers:load_config_info",
         "//img/private/providers:push_config_info",

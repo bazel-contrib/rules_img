@@ -8,7 +8,7 @@ load("//img/private:stamp.bzl", "expand_or_write")
 load("//img/private/common:build.bzl", "TOOLCHAINS")
 load("//img/private/common:default_deploy_tool.bzl", "default_deploy_tool")
 load("//img/private/common:deploy_attrs.bzl", "COMMON_PUSH_ATTRS")
-load("//img/private/common:deploy_helpers.bzl", "extract_cross_mount_from", "extract_referrers", "get_image_providers", "get_tags", "image_target_vars", "resolve_push_registry", "resolve_push_strategy")
+load("//img/private/common:deploy_helpers.bzl", "content_tracking_json_vars", "extract_cross_mount_from", "extract_referrers", "get_image_providers", "get_tags", "image_target_vars", "resolve_push_registry", "resolve_push_strategy")
 load("//img/private/common:transitions.bzl", "reset_platform_transition")
 load("//img/private/providers:deploy_info.bzl", "DeployInfo")
 load("//img/private/providers:deploy_tool_info.bzl", "DeployToolInfo")
@@ -82,6 +82,13 @@ def _image_push_impl(ctx):
         tag_file = ctx.attr.tag_file.files.to_list()[0]
         newline_delimited_lists_files = {"tags": tag_file}
 
+    # When tracks_content is set, expose the image descriptor as a json-var.
+    # The descriptor file becomes an action input (so the tag re-stamps when the
+    # digest changes) and is available to templates as {{.digest}}.
+    json_vars, json_path_to_root = content_tracking_json_vars(
+        image_provider.descriptor if ctx.attr.tracks_content else None,
+    )
+
     # Either expand templates or write directly
     configuration_json = expand_or_write(
         ctx = ctx,
@@ -89,6 +96,8 @@ def _image_push_impl(ctx):
         output_name = ctx.label.name + ".configuration.json",
         newline_delimited_lists_files = newline_delimited_lists_files,
         extra_build_settings = image_target_vars(ctx.attr.image.label),
+        json_vars = json_vars,
+        json_path_to_root = json_path_to_root,
     )
 
     deploy_metadata, layer_hints = _compute_push_metadata(
