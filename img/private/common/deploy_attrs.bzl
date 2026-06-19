@@ -186,6 +186,21 @@ See [template expansion](/docs/templating.md) for available stamp variables.
         default = "auto",
         values = ["auto", "force", "disabled"],
     ),
+    tracks_content = attr.bool(
+        doc = """When True, the template expansion action depends on the image digest.
+
+A template string built from a volatile stamp value (e.g. `{{.BUILD_TIMESTAMP}}`) normally
+freezes on the first build, because Bazel excludes the volatile workspace-status
+file from the action cache key. With this enabled, the image descriptor becomes
+an input to the tag-expansion action, so the tag re-stamps whenever the image
+content (digest) changes, while unchanged content keeps the cached tag.
+
+The digest is exposed to the `registry`, `repository`, and `tag` templates
+as `{{.digest}}`. Referencing the digest in the tag is optional: the re-stamp
+behavior applies whether or not the tag contains it.
+""",
+        default = False,
+    ),
     _push_settings = attr.label(
         default = Label("//img/private/settings:push"),
         providers = [PushSettingsInfo],
@@ -302,6 +317,21 @@ See [template expansion](/docs/templating.md) for available stamp variables.
 """,
         default = "auto",
         values = ["auto", "force", "disabled"],
+    ),
+    tracks_content = attr.bool(
+        doc = """When True, the template expansion action depends on the image digest.
+
+A template string built from a volatile stamp value (e.g. `{{.BUILD_TIMESTAMP}}`) normally
+freezes on the first build, because Bazel excludes the volatile workspace-status
+file from the action cache key. With this enabled, the image descriptor becomes
+an input to the tag-expansion action, so the tag re-stamps whenever the image
+content (digest) changes, while unchanged content keeps the cached tag.
+
+The digest is exposed to the `tag` templates as `{{.digest}}`. Referencing the
+digest in the tag is optional: the re-stamp behavior applies whether or not the
+tag contains it.
+""",
+        default = False,
     ),
     _load_settings = attr.label(
         default = Label("//img/private/settings:load"),

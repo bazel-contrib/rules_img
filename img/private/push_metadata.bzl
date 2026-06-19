@@ -7,6 +7,7 @@ can also compute deploy metadata when they have push_specs/load_specs attached.
 load("//img/private:layer_path_hints.bzl", "layer_hints_for_deploy_metadata")
 load("//img/private:stamp.bzl", "expand_or_write")
 load("//img/private/common:build.bzl", "TOOLCHAIN")
+load("//img/private/common:deploy_helpers.bzl", "content_tracking_json_vars")
 load("//img/private/providers:deploy_info.bzl", "DeployInfo")
 load("//img/private/providers:load_config_info.bzl", "LoadConfigInfo")
 load("//img/private/providers:push_config_info.bzl", "PushConfigInfo")
@@ -377,6 +378,12 @@ def process_deploy_specs(
         if push_config.tag_file:
             newline_delimited_lists_files = {"tags": push_config.tag_file}
 
+        # When tracks_content is set, expose the image descriptor as a json-var so
+        # the tag re-stamps when the digest changes and {{.digest}} is available.
+        json_vars, json_path_to_root = content_tracking_json_vars(
+            image_info.descriptor if push_config.tracks_content else None,
+        )
+
         configuration_json = expand_or_write(
             ctx = ctx,
             templates = templates,
@@ -386,6 +393,8 @@ def process_deploy_specs(
             stamp_override = push_config.stamp,
             stamp_settings_override = push_config.stamp_settings,
             extra_build_settings = image_target_vars,
+            json_vars = json_vars,
+            json_path_to_root = json_path_to_root,
         )
 
         manifest_tags_expanded = []
@@ -432,6 +441,12 @@ def process_deploy_specs(
         if load_config.tag_file:
             newline_delimited_lists_files = {"tags": load_config.tag_file}
 
+        # When tracks_content is set, expose the image descriptor as a json-var so
+        # the tag re-stamps when the digest changes and {{.digest}} is available.
+        json_vars, json_path_to_root = content_tracking_json_vars(
+            image_info.descriptor if load_config.tracks_content else None,
+        )
+
         configuration_json = expand_or_write(
             ctx = ctx,
             templates = templates,
@@ -441,6 +456,8 @@ def process_deploy_specs(
             stamp_override = load_config.stamp,
             stamp_settings_override = load_config.stamp_settings,
             extra_build_settings = image_target_vars,
+            json_vars = json_vars,
+            json_path_to_root = json_path_to_root,
         )
 
         deploy_metadata, layer_hints = compute_load_metadata(
