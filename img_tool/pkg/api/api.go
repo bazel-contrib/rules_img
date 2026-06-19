@@ -5,6 +5,7 @@ import (
 	"io"
 	"io/fs"
 	"iter"
+	"time"
 )
 
 type (
@@ -65,6 +66,25 @@ var (
 	Symlink     = FileType{"l"}
 )
 
+// History describes the history of a layer.
+// This is a re-export of the oci spec v1 History structure to avoid taking a dep on it
+type History struct {
+	// Created is the combined date and time at which the layer was created, formatted as defined by RFC 3339, section 5.6.
+	Created *time.Time `json:"created,omitempty"`
+
+	// CreatedBy is the command which created the layer.
+	CreatedBy string `json:"created_by,omitempty"`
+
+	// Author is the author of the build point.
+	Author string `json:"author,omitempty"`
+
+	// Comment is a custom message set when creating the layer.
+	Comment string `json:"comment,omitempty"`
+
+	// EmptyLayer is used to mark if the history item created a filesystem diff.
+	EmptyLayer bool `json:"empty_layer,omitempty"`
+}
+
 type Descriptor struct {
 	Name        string            `json:"name,omitempty"`
 	DiffID      string            `json:"diff_id,omitempty"`
@@ -72,6 +92,7 @@ type Descriptor struct {
 	Digest      string            `json:"digest"`
 	Size        int64             `json:"size"`
 	Annotations map[string]string `json:"annotations,omitempty"`
+	History     History           `json:"history"`
 }
 
 type AppenderState struct {

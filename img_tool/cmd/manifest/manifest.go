@@ -338,6 +338,15 @@ func prepareConfig(layers []api.Descriptor, templatesData *ConfigTemplates, crea
 	if createdTime != nil {
 		config.Created = createdTime
 	}
+	for _, layer := range layers {
+		config.History = append(config.History, specv1.History{
+			Created:    layer.History.Created,
+			CreatedBy:  layer.History.CreatedBy,
+			Author:     layer.History.Author,
+			Comment:    layer.History.Comment,
+			EmptyLayer: layer.History.EmptyLayer,
+		})
+	}
 
 	return config, nil
 }

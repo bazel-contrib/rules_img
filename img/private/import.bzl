@@ -52,6 +52,13 @@ def _write_layer_info(ctx, manifest, config, layer_index, index_position = None)
             config.get("architecture", "unknown"),
             layer_index,
         )
+
+    # History is stored in the config, with one entry per layer
+    config_history = config.get("history")
+    if config_history and len(config_history) > layer_index:
+        layer_history = config_history[layer_index]
+    else:
+        layer_history = None
     metadata = dict(
         name = name,
         diff_id = diff_id,
@@ -59,6 +66,7 @@ def _write_layer_info(ctx, manifest, config, layer_index, index_position = None)
         digest = digest,
         size = size,
         annotations = layer.get("annotations", {}),
+        history = layer_history,
     )
     index_position_str = "" if index_position == None else str(index_position) + "_"
     layer_metadata = ctx.actions.declare_file(ctx.attr.name + "_{}{}_layer_metadata.json".format(index_position_str, layer_index))
