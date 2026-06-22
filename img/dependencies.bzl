@@ -43,9 +43,9 @@ def rules_img_dependencies():
 
     http_archive(
         name = "bazel_features",
-        sha256 = "5f7f87f50584df12bbfe5e461d358b16a8e15d245a7e596011bf39aaee5f58a9",
-        strip_prefix = "bazel_features-1.47.0",
-        url = "https://github.com/bazel-contrib/bazel_features/releases/download/v1.47.0/bazel_features-v1.47.0.tar.gz",
+        sha256 = "094367e732ece23f334eaf84089a720b861d053beeba6a6a68356d3aee1dc32b",
+        strip_prefix = "bazel_features-1.50.0",
+        url = "https://github.com/bazel-contrib/bazel_features/releases/download/v1.50.0/bazel_features-v1.50.0.tar.gz",
     )
 
     http_archive(
