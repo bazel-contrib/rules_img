@@ -184,7 +184,25 @@ func DeployWithExtras(ctx context.Context, rawRequest []byte, opts DeployOptions
 	}
 
 	vfsBuilder := deployvfs.NewBuilder(req).WithContainerRegistryOption(registry.WithAuthFromMultiKeychain())
-	vfsBuilder, err := configureBuilderFromEnv(vfsBuilder)
+	hasLazyStrategy := false
+	baseOps, err := req.BaseOperations()
+	if err != nil {
+		return fmt.Errorf("checking operations for lazy strategy: %w", err)
+	}
+	for _, op := range baseOps {
+		var strategy string
+		switch op.Command {
+		case "push":
+			strategy = req.Settings.PushStrategy
+		case "load":
+			strategy = req.Settings.LoadStrategy
+		}
+		if strategy == "lazy" {
+			hasLazyStrategy = true
+			break
+		}
+	}
+	vfsBuilder, err = configureBuilderFromEnv(vfsBuilder, hasLazyStrategy)
 	if err != nil {
 		return err
 	}
@@ -427,25 +445,27 @@ func credentialHelperInstance() credential.Helper {
 	return credential.NopHelper()
 }
 
-func configureBuilderFromEnv(builder *deployvfs.Builder) (*deployvfs.Builder, error) {
+func configureBuilderFromEnv(builder *deployvfs.Builder, needsCAS bool) (*deployvfs.Builder, error) {
 	diskCachePath := os.Getenv("IMG_DISK_CACHE")
 	if diskCachePath != "" {
 		builder = builder.WithDiskCache(diskCachePath)
 	}
 
-	reapiEndpoint := os.Getenv("IMG_REAPI_ENDPOINT")
-	if reapiEndpoint != "" {
-		reapiInstanceName := os.Getenv("IMG_REAPI_INSTANCE_NAME")
-		credHelper := credentialHelperInstance()
-		grpcConn, err := protohelper.Client(reapiEndpoint, credHelper)
-		if err != nil {
-			return nil, fmt.Errorf("creating gRPC client for REAPI: %w", err)
+	if needsCAS {
+		reapiEndpoint := os.Getenv("IMG_REAPI_ENDPOINT")
+		if reapiEndpoint != "" {
+			reapiInstanceName := os.Getenv("IMG_REAPI_INSTANCE_NAME")
+			credHelper := credentialHelperInstance()
+			grpcConn, err := protohelper.Client(reapiEndpoint, credHelper)
+			if err != nil {
+				return nil, fmt.Errorf("creating gRPC client for REAPI: %w", err)
+			}
+			casReader, err := cas.New(grpcConn, cas.WithInstanceName(reapiInstanceName))
+			if err != nil {
+				return nil, fmt.Errorf("creating CAS client: %w", err)
+			}
+			builder = builder.WithCASReader(casReader)
 		}
-		casReader, err := cas.New(grpcConn, cas.WithInstanceName(reapiInstanceName))
-		if err != nil {
-			return nil, fmt.Errorf("creating CAS client: %w", err)
-		}
-		builder = builder.WithCASReader(casReader)
 	}
 
 	return builder, nil
