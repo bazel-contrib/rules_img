@@ -1,0 +1,14 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "argfile",
+    srcs = ["argfile.go"],
+    importpath = "github.com/bazel-contrib/rules_img/img_tool/pkg/argfile",
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "argfile_test",
+    srcs = ["argfile_test.go"],
+    embed = [":argfile"],
+)
