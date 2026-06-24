@@ -30,7 +30,10 @@ type deployWorkerHandler struct {
 func newDeployWorkerHandler(jobs int) *deployWorkerHandler {
 	baseBuilder := deployvfs.NewBuilder(api.DeployManifest{}).
 		WithContainerRegistryOption(registry.WithAuthFromMultiKeychain())
-	baseBuilder, err := configureBuilderFromEnv(baseBuilder)
+	// We set needsCAS to true unconditionally.
+	// The reason is that we just cannot know in advance whether a future work request
+	// wants to connect to the remote cache or not.
+	baseBuilder, err := configureBuilderFromEnv(baseBuilder, true /* needsCAS */)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "warning: failed to configure VFS from environment: %v\n", err)
 	}
