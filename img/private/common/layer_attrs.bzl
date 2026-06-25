@@ -43,6 +43,9 @@ If set to 'auto', uses the global default from --@rules_img//img/settings:layer_
 Whether to include runfiles for executable targets.
 When True (default), executables in srcs will include their runfiles tree.
 When False, only the executable file itself is included, without runfiles.
+
+Either way, any additional default outputs of the target (the rest of `DefaultInfo.files`
+beyond the executable) are copied into the layer, placed relative to the executable.
 """,
     ),
     annotations = attr.string_dict(

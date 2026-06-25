@@ -27,6 +27,7 @@ func LayerProcess(ctx context.Context, args []string) {
 	var annotationsFile string
 	var addFiles addFiles
 	var addFromFile addFromFileArgs
+	var placeFilesFlags placeFilesArgs
 	var importTarFlags importTars
 	var runfilesFlags runfilesForExecutables
 	var executableFlags executables
@@ -69,6 +70,7 @@ func LayerProcess(ctx context.Context, args []string) {
 	flagSet.Var(&addFromFile, "add-from-file", `Add all files listed in the parameter file to the image layer. The parameter file is usually written by Bazel.
 The file contains one line per file, where each line contains a path in the image and a path in the host filesystem, separated by a a null byte and a single character indicating the type of the file.
 The type is either 'f' for regular files, 'd' for directories. The parameter file is usually written by Bazel.`)
+	flagSet.Var(&placeFilesFlags, "place-files", `Add files described by a self-describing placement parameter file. The first line is a header (mode, dest, anchor, skip; null-separated) carrying per-target placement context; each following line is a file in the same encoding as --add-from-file but keyed by rebased short_path. Used to lazily place a target's default outputs relative to its executable or package. The parameter file is usually written by Bazel.`)
 	flagSet.Var(&importTarFlags, "import-tar", `Import all files from the given tar file into the image layer while deduplicating the contents.`)
 	flagSet.Var(&executableFlags, "executable", `Add the executable file at the specified path in the image. This should be combined with the --runfiles flag to include the runfiles of the executable.`)
 	flagSet.Var(&runfilesFlags, "runfiles", `Add the runfiles of an executable file. The runfiles are read from the specified parameter file with the same encoding used by --add-from-file. The parameter file is usually written by Bazel.`)
@@ -170,6 +172,17 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 			os.Exit(1)
 		}
 		addFiles = append(addFiles, addFileOpsFromParamFile...)
+	}
+
+	// read the placeFiles parameter files (self-describing placement specs) and
+	// resolve them into add operations.
+	for _, paramFile := range placeFilesFlags {
+		placedOps, err := readPlaceFilesParamFile(paramFile)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error reading placement parameter file: %v\n", err)
+			os.Exit(1)
+		}
+		addFiles = append(addFiles, placedOps...)
 	}
 
 	// read the symlinksFromFile parameter file and create a list of operations

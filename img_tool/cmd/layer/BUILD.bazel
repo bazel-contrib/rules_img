@@ -7,6 +7,7 @@ go_library(
         "layer.go",
         "metadata.go",
         "paramfile.go",
+        "placement.go",
     ],
     importpath = "github.com/bazel-contrib/rules_img/img_tool/cmd/layer",
     visibility = ["//visibility:public"],

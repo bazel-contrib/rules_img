@@ -5,8 +5,11 @@ load("//img/private/common:layer_attrs.bzl", "layer_attrs")
 load(
     "//img/private/common:tar_layer.bzl",
     "create_tar_layer",
+    "file_type",
     "files_arg",
     "get_repo_mapping_manifest",
+    "place_extra_executable_files",
+    "place_non_executable_files",
     "resolve_layer_settings",
     "root_symlinks_arg",
     "symlinks_arg",
@@ -42,42 +45,50 @@ def _image_layer_impl(ctx):
         default_info = files[DefaultInfo]
         files_to_run = default_info.files_to_run
         extra_inputs.append(default_info.files)
-        if ctx.attr.include_runfiles and files_to_run != None and files_to_run.executable != None and not files_to_run.executable.is_source:
-            # This is an executable.
-            # Add the executable with the runfiles tree, but ignore any other files.
+        is_executable = files_to_run != None and files_to_run.executable != None and not files_to_run.executable.is_source
+        if is_executable:
+            # This is an executable. Place the executable at path_in_image and any
+            # other default outputs relative to it. When include_runfiles is True,
+            # also add the runfiles tree.
             executable = files_to_run.executable
-            runfiles = default_info.default_runfiles
-            extra_args.append("--executable={}={}".format(path_in_image, executable.path))
-            executable_runfiles_args = ctx.actions.args()
-            executable_runfiles_args.set_param_file_format("multiline")
-            executable_runfiles_args.use_param_file("--runfiles={}=%s".format(executable.path), use_always = True)
-            executable_runfiles_args.add_all(runfiles.files, map_each = to_short_path_pair, expand_directories = False, uniquify = True)
-            executable_runfiles_args.add_all(runfiles.symlinks, map_each = symlinks_arg)
-            executable_runfiles_args.add_all(runfiles.root_symlinks, map_each = root_symlinks_arg)
-            extra_args.append(executable_runfiles_args)
-            extra_inputs.append(runfiles.files)
-            symlink_inputs = []
-            symlink_inputs.extend([symlink_entry.target_file for symlink_entry in runfiles.symlinks.to_list()])
-            symlink_inputs.extend([symlink_entry.target_file for symlink_entry in runfiles.root_symlinks.to_list()])
-            if len(symlink_inputs) > 0:
-                extra_inputs.append(depset(symlink_inputs))
-            empty_files_args = ctx.actions.args()
-            empty_files_args.set_param_file_format("multiline")
-            empty_files_args.use_param_file("--empty-files-from-file=%s", use_always = True)
-            empty_files_args.add_all(runfiles.empty_filenames, format_each = "{}.runfiles/%s".format(path_in_image))
-            extra_args.append(empty_files_args)
-            repo_mapping_manifest = get_repo_mapping_manifest(files)
-            if repo_mapping_manifest != None:
-                extra_inputs.append(depset([repo_mapping_manifest]))
-                files_args.add_all([repo_mapping_manifest], map_each = files_arg, format_each = "{}.repo_mapping\0%s".format(path_in_image), expand_directories = False)
-                files_args.add_all([repo_mapping_manifest], map_each = files_arg, format_each = "{}.runfiles/_repo_mapping\0%s".format(path_in_image), expand_directories = False)
+            if ctx.attr.include_runfiles:
+                runfiles = default_info.default_runfiles
+                extra_args.append("--executable={}={}".format(path_in_image, executable.path))
+                executable_runfiles_args = ctx.actions.args()
+                executable_runfiles_args.set_param_file_format("multiline")
+                executable_runfiles_args.use_param_file("--runfiles={}=%s".format(executable.path), use_always = True)
+                executable_runfiles_args.add_all(runfiles.files, map_each = to_short_path_pair, expand_directories = False, uniquify = True)
+                executable_runfiles_args.add_all(runfiles.symlinks, map_each = symlinks_arg)
+                executable_runfiles_args.add_all(runfiles.root_symlinks, map_each = root_symlinks_arg)
+                extra_args.append(executable_runfiles_args)
+                extra_inputs.append(runfiles.files)
+                symlink_inputs = []
+                symlink_inputs.extend([symlink_entry.target_file for symlink_entry in runfiles.symlinks.to_list()])
+                symlink_inputs.extend([symlink_entry.target_file for symlink_entry in runfiles.root_symlinks.to_list()])
+                if len(symlink_inputs) > 0:
+                    extra_inputs.append(depset(symlink_inputs))
+                empty_files_args = ctx.actions.args()
+                empty_files_args.set_param_file_format("multiline")
+                empty_files_args.use_param_file("--empty-files-from-file=%s", use_always = True)
+                empty_files_args.add_all(runfiles.empty_filenames, format_each = "{}.runfiles/%s".format(path_in_image))
+                extra_args.append(empty_files_args)
+                repo_mapping_manifest = get_repo_mapping_manifest(files)
+                if repo_mapping_manifest != None:
+                    extra_inputs.append(depset([repo_mapping_manifest]))
+                    files_args.add_all([repo_mapping_manifest], map_each = files_arg, format_each = "{}.repo_mapping\0%s".format(path_in_image), expand_directories = False)
+                    files_args.add_all([repo_mapping_manifest], map_each = files_arg, format_each = "{}.runfiles/_repo_mapping\0%s".format(path_in_image), expand_directories = False)
+            else:
+                # Only the executable itself, without runfiles.
+                files_args.add_all(["{}\0{}{}".format(path_in_image, file_type(executable), executable.path)])
+
+            # Copy any additional default outputs (beyond the executable), placed
+            # relative to the executable's location.
+            place_extra_executable_files(ctx, default_info.files, executable, path_in_image, extra_args, extra_inputs)
             continue
 
-        # This isn't an executable (or include_runfiles is False).
-        # Let's add all files instead.
-        if default_info.files == None:
-            fail("Expected {} ({}) to contain an executable or files, got None".format(path_in_image, files))
-        files_args.add_all(default_info.files, map_each = files_arg, format_each = "{}\0%s".format(path_in_image), expand_directories = False)
+        # This isn't an executable. Add all default outputs, placing them according
+        # to multi_file_layout when the target produces more than one output.
+        place_non_executable_files(ctx, default_info.files, files.label, path_in_image, ctx.attr.multi_file_layout, extra_args, extra_inputs)
 
     if len(ctx.attr.symlinks) > 0:
         symlink_args = ctx.actions.args()
@@ -97,7 +108,7 @@ This rule packages files into a layer that can be used in container images. It s
 - Adding files at specific paths in the image
 - Setting file permissions and ownership
 - Creating symlinks
-- Including executables with their runfiles
+- Including executables with their runfiles and any additional default outputs
 - Compression (gzip, zstd) and eStargz optimization
 
 Example:
@@ -146,12 +157,32 @@ image_layer(
     attrs = {
         "srcs": attr.string_keyed_label_dict(
             doc = """Files to include in the layer. Keys are paths in the image (e.g., "/app/bin/server"),
-values are labels to files or executables. Executables automatically include their runfiles unless include_runfiles is set to False.""",
+values are labels to files or executables.
+
+When a value is an executable, the executable is placed at the path key and its runfiles tree is
+included (unless include_runfiles is set to False). Any additional default outputs of the target
+(the rest of `DefaultInfo.files` beyond the executable) are also copied, each placed at the same
+location relative to the executable that it has in the source tree.
+
+When a value is a non-executable target that produces more than one default output, the path key is
+treated as a directory and the outputs are placed inside it according to `multi_file_layout`.""",
             allow_files = True,
         ),
         "symlinks": attr.string_dict(
             doc = """Symlinks to create in the layer. Keys are symlink paths in the image,
 values are the targets they point to.""",
+        ),
+        "multi_file_layout": attr.string(
+            default = "package_relative",
+            values = ["package_relative", "flatten"],
+            doc = """How to place a non-executable src that produces MORE THAN ONE default output.
+
+- `"package_relative"` (default): treat the path key as a directory and place each file inside it,
+  preserving its path relative to the producing target's package.
+- `"flatten"`: place each file directly in the directory by basename (restores the older behavior).
+
+A src that produces a single output is always placed exactly at its path key, regardless of this
+setting.""",
         ),
         "default_metadata": attr.string(
             default = "",
