@@ -28,23 +28,9 @@ func readParamFile(paramFile string) (addFiles, error) {
 		if err != nil {
 			return nil, fmt.Errorf("parsing parameter file: %w", err)
 		}
-		var typ api.FileType
-		switch typeOfFile {
-		case "f":
-			typ = api.RegularFile
-			// Bazel's is_directory attribute doesn't work for source directories,
-			// so source directories are marked as "f" in the args file even though
-			// they're actually directories. We need to check the actual filesystem
-			// type to handle this edge case.
-			if fileInfo, err := os.Stat(file); err == nil && fileInfo.IsDir() {
-				typ = api.Directory
-			}
-		case "d":
-			typ = api.Directory
-		case "l":
-			typ = api.Symlink
-		default:
-			return nil, fmt.Errorf("invalid type for line: %s", line)
+		typ, err := parseFileType(typeOfFile, file)
+		if err != nil {
+			return nil, fmt.Errorf("parsing parameter file: %w", err)
 		}
 		files = append(files, addFile{
 			PathInImage: pathInImage,
@@ -56,6 +42,26 @@ func readParamFile(paramFile string) (addFiles, error) {
 		return nil, fmt.Errorf("reading parameter file: %w", err)
 	}
 	return files, nil
+}
+
+// parseFileType maps the single-character type prefix used in parameter files to
+// an api.FileType. Bazel's is_directory attribute doesn't work for source
+// directories, so source directories are marked as "f" even though they're
+// actually directories; we check the actual filesystem type to handle this.
+func parseFileType(typeOfFile, file string) (api.FileType, error) {
+	switch typeOfFile {
+	case "f":
+		if fileInfo, err := os.Stat(file); err == nil && fileInfo.IsDir() {
+			return api.Directory, nil
+		}
+		return api.RegularFile, nil
+	case "d":
+		return api.Directory, nil
+	case "l":
+		return api.Symlink, nil
+	default:
+		return api.FileType{}, fmt.Errorf("invalid type %q", typeOfFile)
+	}
 }
 
 func splitParamFileLine(line string) (string, string, string, error) {

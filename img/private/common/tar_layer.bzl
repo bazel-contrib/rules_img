@@ -1,5 +1,6 @@
 """Reusable functions for creating tar-based container image layers."""
 
+load("@bazel_skylib//lib:paths.bzl", "paths")
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("//img/private/common:build.bzl", "TOOLCHAIN")
 load("//img/private/common:layer_helper.bzl", "compression_tuning_args")
@@ -39,6 +40,93 @@ def root_symlinks_arg(x):
 def symlinks_arg(x):
     type = file_type(x.target_file)
     return "_main/{}\0{}{}".format(x.path, type, x.target_file.path)
+
+def _rebase_short_path(f):
+    """Rebase a File's short_path into the unified runfiles-tree namespace.
+
+    Main-repo files are placed under "_main/", external-repo files (whose
+    short_path starts with "../") keep their repo name. This mirrors the layout
+    produced by to_short_path_pair for runfiles.
+    """
+    if f.short_path.startswith("../"):
+        return f.short_path[3:]
+    return "_main/{}".format(f.short_path)
+
+def _place_files_header(mode, dest, anchor, skip):
+    """Build the header line for a --place-files parameter file.
+
+    The header carries the per-target placement context that the Go tool needs
+    to resolve each file's final path. It cannot be baked into the per-file
+    lines because those are produced lazily by a map_each callback, which may
+    not capture rule context. Fields are null-separated: mode, dest, anchor,
+    skip. See placement.go for the consuming side.
+    """
+    return "{}\0{}\0{}\0{}".format(mode, dest, anchor, skip)
+
+def place_extra_executable_files(ctx, files, exe, path_in_image, extra_args, extra_inputs):
+    """Lazily place a target's default outputs other than the executable.
+
+    Each file is placed at the same offset it has relative to the executable's
+    directory, so that with the executable anchored at path_in_image, sidecar
+    files keep their relative layout. The executable itself is skipped. Files
+    above the executable's directory are allowed as long as they stay under the
+    image root (enforced by the Go tool at execution time).
+
+    The depset is streamed via add_all(map_each=...) and never flattened in
+    Starlark.
+
+    Args:
+        ctx: rule context.
+        files: depset of File objects (the target's default outputs).
+        exe: the executable File, anchored at path_in_image.
+        path_in_image: normalized (no leading "/") tar path of the executable.
+        extra_args: list to append the ctx.actions.args() object to.
+        extra_inputs: list of depsets; `files` is appended so the outputs are
+            available to the action.
+    """
+    args = ctx.actions.args()
+    args.set_param_file_format("multiline")
+    args.use_param_file("--place-files=%s", use_always = True)
+    args.add(_place_files_header(
+        "relative",
+        paths.dirname(path_in_image),
+        paths.dirname(_rebase_short_path(exe)),
+        _rebase_short_path(exe),
+    ))
+    args.add_all(files, map_each = to_short_path_pair, expand_directories = False, uniquify = True)
+    extra_args.append(args)
+    extra_inputs.append(files)
+
+def place_non_executable_files(ctx, files, label, path_in_image, layout, extra_args, extra_inputs):
+    """Lazily place a non-executable target's default outputs.
+
+    A single output is placed exactly at path_in_image. Multiple outputs treat
+    path_in_image as a directory: "package_relative" preserves each file's path
+    relative to the producing target's package, while "flatten" places each file
+    directly in the directory by basename. The single-output case is resolved by
+    the Go tool, so the depset is never flattened in Starlark.
+
+    Args:
+        ctx: rule context.
+        files: depset of File objects (the target's default outputs).
+        label: the Label of the producing target (used as the package anchor).
+        path_in_image: normalized (no leading "/") tar path.
+        layout: "package_relative" or "flatten".
+        extra_args: list to append the ctx.actions.args() object to.
+        extra_inputs: list of depsets; `files` is appended so the outputs are
+            available to the action.
+    """
+    pkg_anchor = "_main" if label.workspace_name == "" else label.workspace_name
+    if label.package:
+        pkg_anchor = "{}/{}".format(pkg_anchor, label.package)
+    mode = "flatten" if layout == "flatten" else "package_relative"
+    args = ctx.actions.args()
+    args.set_param_file_format("multiline")
+    args.use_param_file("--place-files=%s", use_always = True)
+    args.add(_place_files_header(mode, path_in_image, pkg_anchor, ""))
+    args.add_all(files, map_each = to_short_path_pair, expand_directories = False, uniquify = True)
+    extra_args.append(args)
+    extra_inputs.append(files)
 
 def get_files_to_run_provider(src):
     """Retrieve FilesToRunProvider from a target.

@@ -14,8 +14,10 @@ load(
     "//img/private/common:tar_layer.bzl",
     "create_tar_layer",
     "create_tar_single_layer",
+    "file_type",
     "files_arg",
     "get_repo_mapping_manifest",
+    "place_extra_executable_files",
     "resolve_layer_settings",
     "root_symlinks_arg",
     "symlinks_arg",
@@ -170,7 +172,16 @@ def _find_executable_group_index(ordered_groups):
             return i
     return -1
 
-def _append_binary_args(ctx, exe, path_in_image, ordered_groups, runfiles, runfiles_config, content_prefix, extra_args, extra_inputs):
+def _append_extra_default_files(ctx, default_files, exe, path_in_image, extra_args, extra_inputs):
+    """Append additional default outputs (beyond the executable) as tar entries.
+
+    Files are placed relative to the executable (anchored at path_in_image),
+    using the shared place_extra_executable_files helper. The depset is streamed
+    lazily and never flattened in Starlark.
+    """
+    place_extra_executable_files(ctx, default_files, exe, _normalize_path(path_in_image), extra_args, extra_inputs)
+
+def _append_binary_args(ctx, exe, path_in_image, ordered_groups, runfiles, runfiles_config, content_prefix, extra_args, extra_inputs, default_files):
     """Append binary executable, symlinks, and repo mapping args to a layer."""
     binary_args = ctx.actions.args()
     binary_args.set_param_file_format("multiline")
@@ -214,6 +225,8 @@ def _append_binary_args(ctx, exe, path_in_image, ordered_groups, runfiles, runfi
             _normalize_path(runfiles_config.runfiles_symlink_path) if runfiles_config.shared else content_prefix,
         ), expand_directories = False)
         extra_args.append(repo_mapping_args)
+
+    _append_extra_default_files(ctx, default_files, exe, path_in_image, extra_args, extra_inputs)
 
 def _create_grouped_layers(ctx, settings, exe, path_in_image, ordered_groups, runfiles_config, executable_group_index):
     """Create multiple layers from RunfilesGroupInfo groups.
@@ -260,8 +273,7 @@ def _create_grouped_layers(ctx, settings, exe, path_in_image, ordered_groups, ru
         extra_args.append(empty_args)
 
         if i == executable_group_index:
-            extra_inputs.append(default_info.files)
-            _append_binary_args(ctx, exe, path_in_image, ordered_groups, None, runfiles_config, content_prefix, extra_args, extra_inputs)
+            _append_binary_args(ctx, exe, path_in_image, ordered_groups, None, runfiles_config, content_prefix, extra_args, extra_inputs, default_info.files)
 
         layer_info, out, metadata = create_tar_single_layer(ctx, settings, layer_name, extra_args, extra_inputs)
         all_layers.append(layer_info)
@@ -271,8 +283,8 @@ def _create_grouped_layers(ctx, settings, exe, path_in_image, ordered_groups, ru
     if executable_group_index < 0:
         bin_layer_name = "{}_{}".format(ctx.attr.name, len(ordered_groups))
         bin_extra_args = []
-        bin_extra_inputs = [default_info.files]
-        _append_binary_args(ctx, exe, path_in_image, ordered_groups, default_info.default_runfiles, runfiles_config, content_prefix, bin_extra_args, bin_extra_inputs)
+        bin_extra_inputs = []
+        _append_binary_args(ctx, exe, path_in_image, ordered_groups, default_info.default_runfiles, runfiles_config, content_prefix, bin_extra_args, bin_extra_inputs, default_info.files)
 
         layer_info, out, metadata = create_tar_single_layer(ctx, settings, bin_layer_name, bin_extra_args, bin_extra_inputs)
         all_layers.append(layer_info)
@@ -453,12 +465,15 @@ def _layer_from_binary_impl(ctx):
                         _normalize_path(runfiles_config.runfiles_symlink_path) if runfiles_config.shared else content_prefix,
                     ), expand_directories = False)
                     extra_args.append(repo_mapping_args)
+
+            _append_extra_default_files(ctx, default_info.files, exe, path_in_image, extra_args, extra_inputs)
         else:
             binary_file_args = ctx.actions.args()
             binary_file_args.set_param_file_format("multiline")
             binary_file_args.use_param_file("--add-from-file=%s", use_always = True)
-            binary_file_args.add_all(default_info.files, map_each = files_arg, format_each = "{}\0%s".format(path_in_image), expand_directories = False)
+            binary_file_args.add_all(["{}\0{}{}".format(_normalize_path(path_in_image), file_type(exe), exe.path)])
             extra_args.append(binary_file_args)
+            _append_extra_default_files(ctx, default_info.files, exe, path_in_image, extra_args, extra_inputs)
 
         result = create_tar_layer(ctx, settings, extra_args = extra_args, extra_inputs = extra_inputs)
 
@@ -483,6 +498,10 @@ image with Dockerfile-like semantics.
 The binary's `args` attribute becomes the image `cmd`, its `env` attribute (or
 RunEnvironmentInfo provider) becomes `env`, and the binary path becomes the `entrypoint`.
 When include_runfiles is True (default), the working directory is set to the runfiles root.
+
+In addition to the executable and its runfiles, any other default outputs of the binary
+target (the rest of `DefaultInfo.files`) are copied into the layer, each placed at the same
+location relative to the executable that it has in the source tree.
 
 If the binary provides RunfilesGroupInfo (from rules_runfiles_group), the runfiles are split
 into separate layers based on the groups. This allows for better caching: stable layers

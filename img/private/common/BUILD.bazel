@@ -72,6 +72,7 @@ bzl_library(
         ":layer_helper",
         "//img/private/providers:layers_info",
         "//img/private/providers:single_layer_info",
+        "@bazel_skylib//lib:paths",
         "@bazel_skylib//rules:common_settings",
     ],
 )
