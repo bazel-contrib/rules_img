@@ -1,0 +1,8 @@
+{"name":"etc/","typeflag":"5","size":0,"mode":493,"uid":0,"gid":0,"modtime":"1970-01-01T00:00:00Z"}
+{"name":"etc/app/","typeflag":"5","size":0,"mode":493,"uid":0,"gid":0,"modtime":"1970-01-01T00:00:00Z"}
+{"name":"etc/app/config.txt","typeflag":"0","size":17,"mode":493,"uid":0,"gid":0,"modtime":"1970-01-01T00:00:00Z","sha256":"31efeb783903a3a459a07f0fc59c900bc2f77a49297e5f4cadf89d7e1fc7fc16"}
+{"name":"usr/","typeflag":"5","size":0,"mode":493,"uid":0,"gid":0,"modtime":"1970-01-01T00:00:00Z"}
+{"name":"usr/share/","typeflag":"5","size":0,"mode":493,"uid":0,"gid":0,"modtime":"1970-01-01T00:00:00Z"}
+{"name":"usr/share/data/","typeflag":"5","size":0,"mode":493,"uid":0,"gid":0,"modtime":"1970-01-01T00:00:00Z"}
+{"name":"usr/share/data/deep.txt","typeflag":"0","size":14,"mode":493,"uid":0,"gid":0,"modtime":"1970-01-01T00:00:00Z","sha256":"1d7f354272f99ff6eeb96238c43d92a99a6d84f18976b8b0b420679e8d95d3ba"}
+{"name":"etc/app/current.txt","typeflag":"2","linkname":"/etc/app/config.txt","size":0,"mode":0,"uid":0,"gid":0,"modtime":"1970-01-01T00:00:00Z"}

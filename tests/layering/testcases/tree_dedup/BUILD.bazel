@@ -1,0 +1,24 @@
+load("@rules_img//img:layer.bzl", "image_layer")
+load("//tests/layering:defs.bzl", "layer_contents_test")
+
+# gazelle:exclude_from_release
+
+# The same tree artifact embedded at three paths with
+# tree_artifact_handling = "deduplicate_symlink": the first occurrence stores the
+# full tree, and the later occurrences become symlinks to it.
+image_layer(
+    name = "layer",
+    srcs = {
+        "/srv/first": "//tests/layering/testcases:tree_artifact",
+        "/srv/second": "//tests/layering/testcases:tree_artifact",
+        "/srv/third": "//tests/layering/testcases:tree_artifact",
+    },
+    tree_artifact_handling = "deduplicate_symlink",
+)
+
+layer_contents_test(
+    name = "test",
+    size = "small",
+    layer = ":layer",
+    manifests = ["expected.ndjson"],
+)

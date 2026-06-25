@@ -1,0 +1,6 @@
+{"name":"app/bin/tool.repo_mapping","typeflag":"0","size":17,"mode":493,"uid":0,"gid":0,"modtime":"1970-01-01T00:00:00Z","sha256":"42641ae8c7f398e8c6a588e69c19b5134f7f4d9380293a9495644886ffb530ab"}
+{"name":"app/bin/tool","typeflag":"0","size":21,"mode":493,"uid":0,"gid":0,"modtime":"1970-01-01T00:00:00Z","sha256":"bfdeaeb08cffb6a36438bcd12dda25417e3cdd36f1e7e482a2849d539225288b"}
+{"name":"app/bin/tool.runfiles/_main/tests/layering/testcases/runfiles_symlink_tool.data.txt","typeflag":"0","size":13,"mode":493,"uid":0,"gid":0,"modtime":"1970-01-01T00:00:00Z","sha256":"9f0a66850a0baca50803adca190927174485fc1ddaaa277583a25e31b2c08794"}
+{"name":"app/bin/tool.runfiles/_repo_mapping","typeflag":"1","linkname":"app/bin/tool.repo_mapping","size":0,"mode":493,"uid":0,"gid":0,"modtime":"1970-01-01T00:00:00Z"}
+{"name":"app/bin/tool.runfiles/_main/tests/layering/testcases/runfiles_symlink_tool.runfiles_link","typeflag":"2","linkname":"data/target.txt","size":0,"mode":0,"uid":0,"gid":0,"modtime":"1970-01-01T00:00:00Z"}
+{"name":"app/bin/tool.runfiles/_main/tests/layering/testcases/runfiles_symlink_tool","typeflag":"1","linkname":"app/bin/tool","size":0,"mode":493,"uid":0,"gid":0,"modtime":"1970-01-01T00:00:00Z"}

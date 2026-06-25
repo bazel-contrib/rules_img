@@ -1,0 +1,2 @@
+{"name":"opt/pkg/symlink_files.txt","typeflag":"0","size":23,"mode":493,"uid":0,"gid":0,"modtime":"1970-01-01T00:00:00Z","sha256":"12f88e9df02542b3a88bcad98fcb5606be6d02643186481313ce03e148ccee61"}
+{"name":"opt/pkg/symlink_files.link","typeflag":"2","linkname":"target.txt","size":0,"mode":0,"uid":0,"gid":0,"modtime":"1970-01-01T00:00:00Z"}

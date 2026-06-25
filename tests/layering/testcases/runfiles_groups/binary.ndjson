@@ -1,0 +1,4 @@
+{"name":"app/bin/launcher","typeflag":"0","size":21,"mode":493,"uid":0,"gid":0,"modtime":"1970-01-01T00:00:00Z","sha256":"bfdeaeb08cffb6a36438bcd12dda25417e3cdd36f1e7e482a2849d539225288b"}
+{"name":"app/bin/launcher.repo_mapping","typeflag":"0","size":17,"mode":493,"uid":0,"gid":0,"modtime":"1970-01-01T00:00:00Z","sha256":"42641ae8c7f398e8c6a588e69c19b5134f7f4d9380293a9495644886ffb530ab"}
+{"name":"app/bin/launcher.runfiles/_repo_mapping","typeflag":"1","linkname":"app/bin/launcher.repo_mapping","size":0,"mode":493,"uid":0,"gid":0,"modtime":"1970-01-01T00:00:00Z"}
+{"name":"app/bin/launcher.runfiles/_main","typeflag":"2","linkname":"../../../.shared_runfiles/_main","size":0,"mode":0,"uid":0,"gid":0,"modtime":"1970-01-01T00:00:00Z"}

@@ -1,0 +1,27 @@
+load("@rules_img//img:layer.bzl", "layer_from_tar")
+load("//tests/layering:defs.bzl", "layer_contents_test")
+
+# gazelle:exclude_from_release
+
+# Reused by the //tests/layering/testcases/from_tar_optimize case.
+exports_files(
+    ["source.tar.zst"],
+    visibility = ["//tests/layering/testcases:__subpackages__"],
+)
+
+# layer_from_tar over a hand-crafted zstd-compressed tar holding a broad range of
+# entry types: a directory, regular files with assorted modes/owners, an empty
+# file, relative and absolute symlinks, a hardlink, and a PAX xattr record. With
+# compress = "auto" the existing zstd compression is kept and the tar is passed
+# through verbatim, so the layer contents equal the source tar.
+layer_from_tar(
+    name = "layer",
+    src = "source.tar.zst",
+)
+
+layer_contents_test(
+    name = "test",
+    size = "small",
+    layer = ":layer",
+    manifests = ["expected.ndjson"],
+)

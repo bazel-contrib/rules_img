@@ -1,0 +1,30 @@
+load("@rules_img//img:layer.bzl", "image_layer")
+load("//tests/layering:defs.bzl", "layer_contents_test")
+
+# gazelle:exclude_from_release
+
+exports_files(
+    ["expected.ndjson"],
+    visibility = ["//tests/layering/testcases:__subpackages__"],
+)
+
+# Regular files at various paths, a hardlink-deduplicated copy, and a symlink.
+image_layer(
+    name = "layer",
+    srcs = {
+        "/etc/app/config.txt": "//tests/layering/testcases:config_txt",
+        "/etc/app/config_copy.txt": "//tests/layering/testcases:config_dup_txt",
+        "/usr/share/data/deep.txt": "//tests/layering/testcases:deep_txt",
+    },
+    symlinks = {
+        "/etc/app/current.txt": "/etc/app/config.txt",
+    },
+    visibility = ["//tests/layering/testcases:__subpackages__"],
+)
+
+layer_contents_test(
+    name = "test",
+    size = "small",
+    layer = ":layer",
+    manifests = ["expected.ndjson"],
+)

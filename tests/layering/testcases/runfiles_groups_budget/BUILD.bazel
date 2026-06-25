@@ -1,0 +1,21 @@
+load("@rules_img//img:layer.bzl", "layer_from_binary")
+load("//tests/layering:defs.bzl", "layer_contents_test")
+
+# gazelle:exclude_from_release
+
+# layer_budget = 1 caps the binary at a single layer, forcing the RunfilesGroupInfo
+# groups (and the executable) to all be merged together into one layer.
+layer_from_binary(
+    name = "layer",
+    binary = "//tests/layering/testcases:runfiles_groups_tool",
+    layer_budget = 1,
+    path = "/app/bin/launcher",
+)
+
+# Everything collapses into a single layer: the executable and all runfiles.
+layer_contents_test(
+    name = "test",
+    size = "small",
+    layer = ":layer",
+    manifests = ["expected.ndjson"],
+)

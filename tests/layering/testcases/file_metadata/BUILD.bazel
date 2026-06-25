@@ -1,0 +1,43 @@
+load("@rules_img//img:layer.bzl", "file_metadata", "image_layer")
+load("//tests/layering:defs.bzl", "layer_contents_test")
+
+# gazelle:exclude_from_release
+
+# image_layer exercising every file_metadata setting (mode, uid, gid, uname,
+# gname, mtime, pax_records): once as default_metadata applied to all entries,
+# and once as a per-file override. The override is layered on top of the
+# defaults, so the overridden file merges both sets of PAX records.
+image_layer(
+    name = "layer",
+    srcs = {
+        "/etc/app/config.txt": "//tests/layering/testcases:config_txt",
+        "/etc/app/special.txt": "//tests/layering/testcases:deep_txt",
+    },
+    default_metadata = file_metadata(
+        gid = 1000,
+        gname = "devs",
+        mode = "0644",
+        mtime = "2023-01-01T00:00:00Z",
+        pax_records = {"SCHILY.xattr.user.team": "infra"},
+        uid = 1000,
+        uname = "alice",
+    ),
+    file_metadata = {
+        "/etc/app/special.txt": file_metadata(
+            gid = 4243,
+            gname = "svcgrp",
+            mode = "0600",
+            mtime = "2024-12-31T23:59:59Z",
+            pax_records = {"SCHILY.xattr.user.secret": "yes"},
+            uid = 4242,
+            uname = "svc",
+        ),
+    },
+)
+
+layer_contents_test(
+    name = "test",
+    size = "small",
+    layer = ":layer",
+    manifests = ["expected.ndjson"],
+)

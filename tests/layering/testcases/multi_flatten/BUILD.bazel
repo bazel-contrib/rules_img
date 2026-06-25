@@ -1,0 +1,43 @@
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@rules_img//img:layer.bzl", "image_layer")
+load("//tests/layering:defs.bzl", "layer_contents_test")
+
+# gazelle:exclude_from_release
+
+write_file(
+    name = "a",
+    out = "a.txt",
+    content = ["a\n"],
+)
+
+write_file(
+    name = "b",
+    out = "nested/b.txt",
+    content = ["b\n"],
+)
+
+filegroup(
+    name = "files",
+    srcs = [
+        ":a",
+        ":b",
+    ],
+)
+
+# multi_file_layout = "flatten": every output of a multi-output src is placed
+# directly under the directory key by basename, so the nested "nested/b.txt"
+# collapses to "b.txt" (contrast with the default package_relative layout).
+image_layer(
+    name = "layer",
+    srcs = {
+        "/opt/data": ":files",
+    },
+    multi_file_layout = "flatten",
+)
+
+layer_contents_test(
+    name = "test",
+    size = "small",
+    layer = ":layer",
+    manifests = ["expected.ndjson"],
+)
