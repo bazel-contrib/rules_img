@@ -1,0 +1,2 @@
+{"name":".shared_runfiles/_main/tests/layering/testcases/runfiles_groups_tool.stdlib/libfoo.so","typeflag":"0","size":8,"mode":493,"uid":0,"gid":0,"modtime":"1970-01-01T00:00:00Z","sha256":"118e49e6b85452ed209d8608a4ebaaada7777ebb3274e4ade258175ec6371b9c"}
+{"name":".shared_runfiles/_main/tests/layering/testcases/runfiles_groups_tool.stdlib/libbar.so","typeflag":"0","size":8,"mode":493,"uid":0,"gid":0,"modtime":"1970-01-01T00:00:00Z","sha256":"168f2ba1dbdf5d08d226677062c22f9f314ee83c2e70c6a0e4fbec92be24cb58"}

@@ -1,0 +1,19 @@
+load("@rules_img//img:layer.bzl", "layer_from_binary")
+load("//tests/layering:defs.bzl", "layer_contents_test")
+
+# gazelle:exclude_from_release
+
+# Same executable without runfiles: only the executable and its extra outputs.
+layer_from_binary(
+    name = "layer",
+    binary = "//tests/layering/testcases:tool",
+    include_runfiles = False,
+    path = "/app/bin/launcher",
+)
+
+layer_contents_test(
+    name = "test",
+    size = "small",
+    layer = ":layer",
+    manifests = ["expected.ndjson"],
+)

@@ -1,0 +1,11 @@
+{"name":"mixed/","typeflag":"5","size":0,"mode":493,"uid":0,"gid":0,"modtime":"2023-11-14T22:13:20Z"}
+{"name":"mixed/regular.txt","typeflag":"0","size":8,"mode":420,"uid":1000,"gid":1000,"uname":"alice","gname":"devs","modtime":"2023-11-14T22:13:20Z","sha256":"7f44ae7d5074b592265a407f5495aa1207ff15f60353d71b3a085588f90ffe95"}
+{"name":"mixed/script.sh","typeflag":"0","size":18,"mode":493,"uid":0,"gid":0,"modtime":"2023-11-14T22:13:20Z","sha256":"299001868fb8c02fd431c336c6d058f5558c5dff5b5af5e6fe04b870a6a9cbba"}
+{"name":"mixed/empty","typeflag":"0","size":0,"mode":420,"uid":0,"gid":0,"modtime":"2023-11-14T22:13:20Z","sha256":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}
+{"name":"mixed/readonly","typeflag":"0","size":7,"mode":256,"uid":1000,"gid":1000,"modtime":"2023-11-14T22:13:20Z","sha256":"b37e50cedcd3e3f1ff64f4afc0422084ae694253cf399326868e07a35f4a45fb"}
+{"name":"mixed/sub/","typeflag":"5","size":0,"mode":488,"uid":0,"gid":0,"modtime":"2023-11-14T22:13:20Z"}
+{"name":"mixed/sub/nested.txt","typeflag":"0","size":7,"mode":420,"uid":0,"gid":0,"modtime":"2023-11-14T22:13:20Z","sha256":"370a8c04b8a65bb4494275eec227f1b694db04c76da6b0b8ae88ed1ab19790a3"}
+{"name":"mixed/relsym","typeflag":"2","linkname":"regular.txt","size":0,"mode":511,"uid":0,"gid":0,"modtime":"2023-11-14T22:13:20Z"}
+{"name":"mixed/abssym","typeflag":"2","linkname":"/etc/hosts","size":0,"mode":511,"uid":0,"gid":0,"modtime":"2023-11-14T22:13:20Z"}
+{"name":"mixed/hardlink","typeflag":"1","linkname":"mixed/regular.txt","size":0,"mode":420,"uid":0,"gid":0,"modtime":"2023-11-14T22:13:20Z"}
+{"name":"mixed/xattr.txt","typeflag":"0","size":10,"mode":420,"uid":0,"gid":0,"modtime":"2023-11-14T22:13:20Z","pax_records":{"SCHILY.xattr.user.greeting":"hi"},"sha256":"b5cad3926a1e0d95e7f52773f36ecb9d82ffb2ccea93f919c3e7e40613b1dbd8"}

@@ -1,0 +1,20 @@
+load("@rules_img//img:layer.bzl", "layer_from_binary")
+load("//tests/layering:defs.bzl", "layer_contents_test")
+
+# gazelle:exclude_from_release
+
+# create_parent_directories for layer_from_binary: covers the executable and the
+# full runfiles directory chain.
+layer_from_binary(
+    name = "layer",
+    binary = "//tests/layering/testcases:tool",
+    create_parent_directories = "enabled",
+    path = "/app/bin/launcher",
+)
+
+layer_contents_test(
+    name = "test",
+    size = "small",
+    layer = ":layer",
+    manifests = ["expected.ndjson"],
+)

@@ -1,0 +1,25 @@
+load("@rules_img//img:layer.bzl", "image_layer")
+load("//tests/layering:defs.bzl", "layer_contents_test")
+
+# gazelle:exclude_from_release
+
+exports_files(
+    ["expected.ndjson"],
+    visibility = ["//tests/layering/testcases:__subpackages__"],
+)
+
+# A tree artifact (directory).
+image_layer(
+    name = "layer",
+    srcs = {
+        "/srv/assets": "//tests/layering/testcases:tree_artifact",
+    },
+    visibility = ["//tests/layering/testcases:__subpackages__"],
+)
+
+layer_contents_test(
+    name = "test",
+    size = "small",
+    layer = ":layer",
+    manifests = ["expected.ndjson"],
+)

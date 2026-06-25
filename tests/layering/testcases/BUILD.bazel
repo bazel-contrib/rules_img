@@ -1,0 +1,68 @@
+load("@bazel_skylib//rules:copy_directory.bzl", "copy_directory")
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("//tests/layering:defs.bzl", "binary_with_extra_outputs", "binary_with_runfiles_groups", "binary_with_runfiles_symlink", "files_with_symlink")
+
+# gazelle:exclude_from_release
+
+# Shared fixtures for the layering test cases. Each test case lives in its own
+# subdirectory and holds a single layer_contents_test. The fixtures are defined
+# here (not per-case) so their package path stays stable; the golden manifests
+# encode runfiles/source paths and would otherwise depend on which case uses them.
+
+package(default_visibility = ["//tests/layering/testcases:__subpackages__"])
+
+write_file(
+    name = "config_txt",
+    out = "config.txt",
+    content = ["server.port=8080\n"],
+)
+
+# Identical content to config.txt: the layer tool deduplicates identical content
+# into a hardlink, so the second entry must be recorded as a hardlink.
+write_file(
+    name = "config_dup_txt",
+    out = "config_dup.txt",
+    content = ["server.port=8080\n"],
+)
+
+write_file(
+    name = "deep_txt",
+    out = "deep.txt",
+    content = ["deeply nested\n"],
+)
+
+write_file(
+    name = "script_sh",
+    out = "script.sh",
+    content = ["#!/bin/sh\necho hello\n"],
+    is_executable = True,
+)
+
+copy_directory(
+    name = "tree_artifact",
+    src = "tree_src",
+    out = "tree_out",
+)
+
+binary_with_extra_outputs(
+    name = "tool",
+    binary = ":script_sh",
+)
+
+# A regular file and a Bazel-native (declare_symlink) symlink in DefaultInfo.
+files_with_symlink(
+    name = "symlink_files",
+)
+
+# An executable whose runfiles contain a Bazel-native (declare_symlink) symlink.
+binary_with_runfiles_symlink(
+    name = "runfiles_symlink_tool",
+    binary = ":script_sh",
+)
+
+# An executable providing RunfilesGroupInfo, so layer_from_binary splits its
+# runfiles into multiple layers.
+binary_with_runfiles_groups(
+    name = "runfiles_groups_tool",
+    binary = ":script_sh",
+)
