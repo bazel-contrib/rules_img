@@ -54,8 +54,7 @@ def _compute_multi_deploy_metadata(*, ctx):
     # Add layer hints inputs and output if any exist
     layer_hints_out = None
     if layer_hints_files:
-        for layer_hints_file in layer_hints_files:
-            merge_args.add("--layer-hints-input", layer_hints_file)
+        merge_args.add_all(layer_hints_files, before_each = "--layer-hints-input")
         layer_hints_out = ctx.actions.declare_file(ctx.label.name + ".layer_hints")
         merge_args.add("--layer-hints-output", layer_hints_out)
 
