@@ -33,9 +33,11 @@ import (
 //     an executable's extra default outputs, anchored at the executable.
 //   - "package_relative": like "relative", but if the spec resolves to exactly
 //     one file that file is placed directly at dest (the path key is the file
-//     path, not a directory).
+//     path, not a directory). If dest ends with "/" it is treated as a
+//     directory and the single file is placed inside it by basename.
 //   - "flatten": each file is placed directly under dest by basename; but if
-//     the spec resolves to exactly one file it is placed directly at dest.
+//     the spec resolves to exactly one file it is placed directly at dest
+//     (or, when dest ends with "/", inside it by basename).
 //   - dest is the normalized (no leading slash) destination directory (or, for
 //     the single-file collapse, the destination path) in the image.
 //   - anchor is the rebased short_path prefix that files are placed relative to.
@@ -144,8 +146,13 @@ func parsePlaceFilesHeader(line string) (placeFilesSpec, error) {
 // (after skips), used by the single-file collapse modes.
 func (s placeFilesSpec) place(shortPath string, count int) (string, error) {
 	// In the collapse modes, a single output is placed directly at dest (the
-	// path key is the file path, not a directory).
+	// path key is the file path, not a directory) — unless dest is a directory
+	// key (trailing slash), in which case the file is placed inside it by
+	// basename, matching the multi-file directory semantics.
 	if count == 1 && (s.Mode == "package_relative" || s.Mode == "flatten") {
+		if strings.HasSuffix(s.Dest, "/") {
+			return path.Join(s.Dest, path.Base(shortPath)), nil
+		}
 		return s.Dest, nil
 	}
 	if s.Mode == "flatten" {
