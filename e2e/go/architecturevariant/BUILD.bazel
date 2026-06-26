@@ -28,6 +28,6 @@ go_library(
         "architecturevariant_armv6.go",
         "architecturevariant_armv7.go",
     ],
-    importpath = "github.com/tweag/rules_img/e2e/go/architecturevariant",
+    importpath = "github.com/bazel-contrib/rules_img/e2e/go/architecturevariant",
     visibility = ["//visibility:public"],
 )
