@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"slices"
 	"sort"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/api"
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/progress"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/proto/blobcache"
 	blobcache_proto "github.com/bazel-contrib/rules_img/img_tool/pkg/proto/blobcache"
 	remoteexecution_proto "github.com/bazel-contrib/rules_img/img_tool/pkg/proto/remote-apis/build/bazel/remote/execution/v2"
@@ -24,7 +26,7 @@ const defaultJobs = 16
 type builder struct {
 	blobcacheClient    blobcache.BlobsClient
 	vfs                vfs
-	pusher             *remote.Pusher
+	pusher             pusher
 	overrideRegistry   string
 	overrideRepository string
 	extraTags          []string
@@ -89,7 +91,7 @@ func (b *builder) Build() *uploader {
 type uploader struct {
 	blobcacheClient    blobcache.BlobsClient
 	vfs                vfs
-	pusher             *remote.Pusher
+	pusher             pusher
 	overrideRegistry   string
 	overrideRepository string
 	extraTags          []string
@@ -144,15 +146,25 @@ func (u *uploader) PushAll(ctx context.Context, ops []api.IndexedPushDeployOpera
 	g, ctx := errgroup.WithContext(ctx)
 	g.SetLimit(u.jobs)
 
+	logPlainProgress := progress.WantPlainProgress()
+	if logPlainProgress {
+		fmt.Fprintf(os.Stderr, "push: starting %d refs with jobs=%d\n", len(items), u.jobs)
+	}
 	for _, item := range items {
 		item := item
 		g.Go(func() error {
-			return pusher.Push(ctx, item.ref, item.taggable)
+			if err := pusher.Push(ctx, item.ref, item.taggable); err != nil {
+				return fmt.Errorf("pushing %s: %w", item.ref.String(), err)
+			}
+			return nil
 		})
 	}
 
 	if err := g.Wait(); err != nil {
 		return nil, err
+	}
+	if logPlainProgress {
+		fmt.Fprintf(os.Stderr, "push: completed %d refs\n", len(items))
 	}
 
 	return allTags, nil
@@ -241,6 +253,10 @@ type vfs interface {
 	Taggable(digest registryv1.Hash) (remote.Taggable, error)
 	Digests() ([]registryv1.Hash, error)
 	SizeOf(digest registryv1.Hash) (int64, error)
+}
+
+type pusher interface {
+	Push(context.Context, name.Reference, remote.Taggable) error
 }
 
 func deduplicateAndSort(tags []string) []string {
