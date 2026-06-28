@@ -20,7 +20,7 @@ def _digest_to_file(ctx, digest):
         fail("invalid number of files for digest: {}".format(digest))
     return files[0]
 
-def _write_layer_info(ctx, manifest, config, layer_index, index_position = None):
+def _write_layer_info(ctx, manifest, config, history, layer_index, index_position = None):
     """Write layer info to file and return SingleLayerInfo provider."""
     layers = manifest.get("layers", [])
     if layer_index >= len(layers):
@@ -53,12 +53,10 @@ def _write_layer_info(ctx, manifest, config, layer_index, index_position = None)
             layer_index,
         )
 
-    # History is stored in the config, with one entry per layer
-    config_history = config.get("history")
-    if config_history and len(config_history) > layer_index:
-        layer_history = config_history[layer_index]
+    if history and layer_index < len(history):
+        layer_history = history[layer_index]
     else:
-        layer_history = None
+        layer_history = []
     metadata = dict(
         name = name,
         diff_id = diff_id,
@@ -123,8 +121,20 @@ def _build_manifest_info(ctx, digest, descriptor = None, index_position = None, 
 
     missing_blobs = []
     layers = []
+
+    # Assign each history entry to an actual non-empty layer. This preserves the full image
+    # history across our layer splitting.
+    history_by_layer = []
+    current_layer = []
+    for hist_entry in config.get("history", []):
+        current_layer.append(hist_entry)
+        if not hist_entry.get("empty_layer", False):
+            history_by_layer.append(current_layer)
+            current_layer = []
+    if current_layer and history_by_layer:
+        history_by_layer[-1].extend(current_layer)
     for (layer_index, layer) in enumerate(manifest.get("layers", [])):
-        layer_info = _write_layer_info(ctx, manifest, config, layer_index, index_position)
+        layer_info = _write_layer_info(ctx, manifest, config, history_by_layer, layer_index, index_position)
         if layer_info.blob == None:
             missing_blobs.append(layer["digest"].removeprefix("sha256:"))
         layers.append(layer_info)

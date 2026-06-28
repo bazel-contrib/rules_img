@@ -92,7 +92,7 @@ type Descriptor struct {
 	Digest      string            `json:"digest"`
 	Size        int64             `json:"size"`
 	Annotations map[string]string `json:"annotations,omitempty"`
-	History     History           `json:"history"`
+	History     []History         `json:"history,omitempty"`
 }
 
 type AppenderState struct {

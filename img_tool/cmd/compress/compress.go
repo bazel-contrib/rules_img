@@ -234,6 +234,12 @@ func writeMetadata(compressorState api.AppenderState, annotations map[string]str
 		mergedAnnotations[k] = v
 	}
 
+	// Preserve history from the source layer if it exists
+	history := []api.History{{CreatedBy: layerName}}
+	if sourceMetadata != nil && len(sourceMetadata.History) > 0 {
+		history = sourceMetadata.History
+	}
+
 	metadata := api.Descriptor{
 		Name:        layerName,
 		DiffID:      fmt.Sprintf("sha256:%x", compressorState.ContentHash),
@@ -241,6 +247,7 @@ func writeMetadata(compressorState api.AppenderState, annotations map[string]str
 		Digest:      fmt.Sprintf("sha256:%x", compressorState.OuterHash),
 		Size:        compressorState.CompressedSize,
 		Annotations: mergedAnnotations,
+		History:     history,
 	}
 
 	json.NewEncoder(outputFile).SetIndent("", "  ")

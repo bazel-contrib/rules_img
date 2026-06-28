@@ -40,7 +40,7 @@ func WriteLayerMetadata(
 		Digest:      digest,
 		Size:        size,
 		Annotations: mergedAnnotations,
-		History:     api.History{CreatedBy: name},
+		History:     []api.History{{CreatedBy: name}},
 	}
 
 	encoder := json.NewEncoder(outputFile)
