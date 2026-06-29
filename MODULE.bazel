@@ -40,7 +40,6 @@ bazel_dep(name = "bazel_skylib_gazelle_plugin", version = "1.9.0", dev_dependenc
 bazel_dep(name = "buildifier_prebuilt", version = "8.5.1.2", dev_dependency = True)
 bazel_dep(name = "gazelle", version = "0.51.3", dev_dependency = True)
 bazel_dep(name = "protobuf", version = "35.1", dev_dependency = True)
-bazel_dep(name = "rules_android", version = "0.7.3", dev_dependency = True)  # only exists to upgrade this transitive dep to a versions that loads CcInfo
 bazel_dep(name = "rules_bazel_integration_test", version = "0.37.1", dev_dependency = True)
 bazel_dep(name = "rules_go", version = "0.61.1", dev_dependency = True)
 bazel_dep(name = "rules_img_tool", version = "0.3.14", dev_dependency = True)
