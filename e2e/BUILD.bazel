@@ -54,7 +54,7 @@ bazel_integration_tests(
     name = "js",
     bazel_versions = [
         "8.7.0",
-        "9.0.2",
+        "9.1.1",
     ],
     tags = TAGS,
     target_compatible_with = select({
@@ -84,7 +84,7 @@ bazel_integration_tests(
     name = "python",
     bazel_versions = [
         "8.7.0",
-        "9.0.2",
+        "9.1.1",
     ],
     tags = TAGS,
     target_compatible_with = select({
@@ -106,7 +106,7 @@ bazel_integration_tests(
     # Supply chain security tooling is still WIP.
     # It doesn't make sense to target older
     # Bazel versions.
-    bazel_versions = ["9.0.2"],
+    bazel_versions = ["9.1.1"],
     tags = TAGS,
     test_runner = "//img/private/integration_test_runner",
     workspace_files = integration_test_utils.glob_workspace_files("sbom") + [
@@ -145,18 +145,18 @@ test_suite(
         "js",
         [
             "8.7.0",
-            "9.0.2",
+            "9.1.1",
         ],
     ) + integration_test_utils.bazel_integration_test_names(
         "python",
         [
             "8.7.0",
-            "9.0.2",
+            "9.1.1",
         ],
     ) + integration_test_utils.bazel_integration_test_names(
         "sbom",
         [
-            "9.0.2",
+            "9.1.1",
         ],
     ) + integration_test_utils.bazel_integration_test_names(
         "workspace",
