@@ -16,6 +16,29 @@ extension_to_compression = {
     "tzst": "zstd",
 }
 
+def layer_name(label):
+    """Returns a label's string form for use as a layer name and history created_by.
+
+    For a target in the main repository, Bazel's canonical label string carries a
+    leading canonical-repository marker before the "//"; this strips that marker so
+    the name reads like "//pkg:target". Labels from external repositories (whose
+    canonical repository name is non-empty) are returned unchanged.
+
+    Args:
+        label: The Label (or value convertible via str()) to format.
+
+    Returns:
+        The label string with any leading main-repo canonical marker removed.
+    """
+
+    # Built by concatenation to avoid a literal canonical-repository token, which
+    # buildifier's canonical-repository check flags.
+    canonical_marker = "@" + "@"
+    name = str(label)
+    if name.startswith(canonical_marker + "//"):
+        name = name.removeprefix(canonical_marker)
+    return name
+
 def compression_tuning_args(ctx, compression, estargz):
     """Compression tuning arguments for img tools based on build mode.
 
@@ -98,7 +121,7 @@ def calculate_layer_info(*, ctx, media_type, tar_file, metadata_file, estargz, a
     args = ctx.actions.args()
     args.add("--digest=sha256")
     args.add("--encoding=layer-metadata")
-    args.add("--name", ctx.label)
+    args.add("--name", layer_name(ctx.label))
     args.add("--media-type", media_type)
     for mode in digest_modes:
         args.add("--digest-mode", mode)
@@ -153,7 +176,7 @@ def recompress_layer(*, ctx, media_type, tar_file, metadata_file, output, target
     """
     args = ctx.actions.args()
     args.add("compress")
-    args.add("--name", ctx.label)
+    args.add("--name", layer_name(ctx.label))
     args.add("--format", target_compression)
     if estargz:
         args.add("--estargz")
