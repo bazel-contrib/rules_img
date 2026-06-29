@@ -577,6 +577,9 @@ func writeLayer(recorder tree.Recorder, addFiles addFiles, importTars importTars
 }
 
 func writeMetadata(name string, compressionAlgorithm api.CompressionAlgorithm, useEstargz bool, mediaTypeOverride string, annotations map[string]string, compressorState api.AppenderState, outputFile io.Writer) error {
+	// Record history from the user-provided --name; a missing name becomes
+	// "history missing" (BazelLayerHistory), independent of the Name fallback below.
+	history := api.BazelLayerHistory(name)
 	if len(name) == 0 {
 		name = fmt.Sprintf("sha256:%x", compressorState.OuterHash)
 	}
@@ -614,7 +617,7 @@ func writeMetadata(name string, compressionAlgorithm api.CompressionAlgorithm, u
 		fmt.Sprintf("sha256:%x", compressorState.OuterHash),
 		compressorState.CompressedSize,
 		mergedAnnotations,
-		nil,
+		history,
 		outputFile,
 	)
 }

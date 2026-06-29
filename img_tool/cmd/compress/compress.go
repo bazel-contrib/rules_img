@@ -202,6 +202,9 @@ func readSourceMetadata(filePath string) (*api.Descriptor, error) {
 }
 
 func writeMetadata(compressorState api.AppenderState, annotations map[string]string, mediaType string, outputFile io.Writer, sourceMetadata *api.Descriptor) error {
+	// Capture the user-provided --name before applying the digest/source fallback,
+	// so a missing name is recorded as "history missing" rather than a digest.
+	rawName := layerName
 	if len(layerName) == 0 {
 		if sourceMetadata != nil && sourceMetadata.Name != "" {
 			layerName = sourceMetadata.Name
@@ -234,8 +237,9 @@ func writeMetadata(compressorState api.AppenderState, annotations map[string]str
 		mergedAnnotations[k] = v
 	}
 
-	// Preserve history from the source layer if it exists
-	history := []api.History{{CreatedBy: layerName}}
+	// Preserve history from the source layer if it exists, otherwise record that
+	// this layer was produced by a Bazel build.
+	history := api.BazelLayerHistory(rawName)
 	if sourceMetadata != nil && len(sourceMetadata.History) > 0 {
 		history = sourceMetadata.History
 	}
