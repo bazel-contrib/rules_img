@@ -20,6 +20,21 @@ def _digest_to_file(ctx, digest):
         fail("invalid number of files for digest: {}".format(digest))
     return files[0]
 
+def _normalize_history_entry(entry):
+    """Copy only the known OCI history fields.
+
+    Imported image configs may contain non-standard keys in their history
+    entries. The layer metadata JSON is later decoded by the manifest tool with
+    DisallowUnknownFields (recursively), so forwarding unexpected keys would make
+    the build fail. Keeping only the spec'd fields avoids that.
+    See https://github.com/opencontainers/image-spec/blob/main/config.md#properties.
+    """
+    normalized = {}
+    for field in ("created", "created_by", "author", "comment", "empty_layer"):
+        if field in entry:
+            normalized[field] = entry[field]
+    return normalized
+
 def _write_layer_info(ctx, manifest, config, history, layer_index, index_position = None):
     """Write layer info to file and return SingleLayerInfo provider."""
     layers = manifest.get("layers", [])
@@ -127,12 +142,19 @@ def _build_manifest_info(ctx, digest, descriptor = None, index_position = None, 
     history_by_layer = []
     current_layer = []
     for hist_entry in config.get("history", []):
-        current_layer.append(hist_entry)
+        current_layer.append(_normalize_history_entry(hist_entry))
         if not hist_entry.get("empty_layer", False):
             history_by_layer.append(current_layer)
             current_layer = []
-    if current_layer and history_by_layer:
-        history_by_layer[-1].extend(current_layer)
+
+    # Bundle any trailing empty-layer entries with the last non-empty layer so they
+    # aren't lost. If the history had no non-empty entries at all, attach them to the
+    # first layer (when one exists) rather than dropping them.
+    if current_layer:
+        if history_by_layer:
+            history_by_layer[-1].extend(current_layer)
+        elif manifest.get("layers", []):
+            history_by_layer.append(current_layer)
     for (layer_index, layer) in enumerate(manifest.get("layers", [])):
         layer_info = _write_layer_info(ctx, manifest, config, history_by_layer, layer_index, index_position)
         if layer_info.blob == None:

@@ -329,6 +329,10 @@ func convertManifest(manifestDesc *specv1.Descriptor, manifestIdx int, arch, ope
 		return specv1.Descriptor{}, fmt.Errorf("layer count mismatch: OCI layout has %d layers, but %d layer media types specified", len(manifest.Layers), layerCount)
 	}
 
+	// Distribute the source config's history across layers so it is preserved
+	// when this converted image is used as a base (mirrors the image_import rule).
+	perLayerHistory := metadata.SplitHistoryPerLayer(config.History, len(manifest.Layers))
+
 	// Copy/hardlink each layer blob and create metadata JSONs
 	for i := range manifest.Layers {
 		targetMediaType, ok := layerMediaTypes.Get(manifestIdx, i)
@@ -374,6 +378,7 @@ func convertManifest(manifestDesc *specv1.Descriptor, manifestIdx int, arch, ope
 			manifest.Layers[i].Digest.String(),
 			manifest.Layers[i].Size,
 			manifest.Layers[i].Annotations,
+			perLayerHistory[i],
 			metadataFile,
 		); err != nil {
 			return specv1.Descriptor{}, fmt.Errorf("writing metadata for layer %d: %w", i, err)
