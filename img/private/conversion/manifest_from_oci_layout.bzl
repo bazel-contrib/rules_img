@@ -56,6 +56,9 @@ def _image_manifest_from_oci_layout(ctx):
             estargz = False,
             media_type = layer_media_types[i],
             metadata = metadata_jsons[i],
+            compact_stream = None,
+            layer_input_files = None,
+            layer_input_files_cas = None,
         )
         for i in range(len(layer_media_types))
     ]

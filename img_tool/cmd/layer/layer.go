@@ -5,12 +5,15 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math"
+
 	"os"
 	"path/filepath"
 	"runtime"
 	"strconv"
 
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/api"
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/compactstream"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/compress"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/contentmanifest"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/digestfs"
@@ -47,6 +50,9 @@ func LayerProcess(ctx context.Context, args []string) {
 	var compressionLevelFlag int
 	var createParentDirectoriesFlag bool
 	var treeArtifactHandlingFlag string
+	var compactStreamOutputFlag string
+	var compactStreamOnlyFlag bool
+	var compactStreamInlineThresholdFlag uint64
 	fileMetadataFlags := make(fileMetadataFlag)
 
 	flagSet := flag.NewFlagSet("layer", flag.ExitOnError)
@@ -93,18 +99,33 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 	flagSet.Var(&fileMetadataFlags, "file-metadata", `Per-file metadata override in the format path=json. Can be specified multiple times. Overrides any defaults from --default-metadata.`)
 	flagSet.BoolVar(&createParentDirectoriesFlag, "create-parent-directories", false, `Create parent directory entries in the tar file for all files. Default is false.`)
 	flagSet.StringVar(&treeArtifactHandlingFlag, "layer-tree-artifact-handling", "full", `How to handle duplicate tree artifacts. "full" stores each tree at its path. "deduplicate_symlink" replaces duplicates with symlinks.`)
+	flagSet.StringVar(&compactStreamOutputFlag, "compact-stream", "", `Write a compact stream representation of the layer alongside the tar output. The compact stream records raw tar headers with content digests in an optionally zstd-compressed format, enabling bit-for-bit tar reconstruction from a content-addressed store.`)
+	flagSet.BoolVar(&compactStreamOnlyFlag, "compact-stream-only", false, `Only produce the compact stream and metadata; do not write the tar output file. Requires --compact-stream.`)
+	flagSet.Uint64Var(&compactStreamInlineThresholdFlag, "compact-stream-inline-threshold", 0, `Maximum file size (in bytes) to store inline in the compact stream. Files smaller than this threshold have their content stored directly in the byte stream instead of as a CAS reference. 0 disables inlining.`)
 
 	if err := flagSet.Parse(args); err != nil {
 		flagSet.Usage()
 		os.Exit(1)
 	}
 
-	if flagSet.NArg() != 1 {
-		flagSet.Usage()
+	if compactStreamOnlyFlag && compactStreamOutputFlag == "" {
+		fmt.Fprintf(os.Stderr, "Error: --compact-stream-only requires --compact-stream\n")
 		os.Exit(1)
 	}
 
-	outputFilePath := flagSet.Arg(0)
+	if !compactStreamOnlyFlag && flagSet.NArg() != 1 {
+		flagSet.Usage()
+		os.Exit(1)
+	}
+	if compactStreamOnlyFlag && flagSet.NArg() > 0 {
+		fmt.Fprintf(os.Stderr, "Error: --compact-stream-only does not accept a positional output argument\n")
+		os.Exit(1)
+	}
+
+	var outputFilePath string
+	if !compactStreamOnlyFlag {
+		outputFilePath = flagSet.Arg(0)
+	}
 
 	// Read annotations from file if provided
 	if annotationsFile != "" {
@@ -125,7 +146,9 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 	var compressionAlgorithm api.CompressionAlgorithm
 	switch formatFlag {
 	case "":
-		if filepath.Ext(outputFilePath) == ".tar" {
+		if compactStreamOnlyFlag {
+			compressionAlgorithm = api.Gzip
+		} else if filepath.Ext(outputFilePath) == ".tar" {
 			compressionAlgorithm = api.Uncompressed
 		} else if filepath.Ext(outputFilePath) == ".tgz" || filepath.Ext(outputFilePath) == ".gz" {
 			compressionAlgorithm = api.Gzip
@@ -145,17 +168,23 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 		os.Exit(1)
 	}
 
-	outputFile, err := os.OpenFile(outputFilePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error opening output file: %v\n", err)
-		os.Exit(1)
-	}
-	defer func() {
-		if err := outputFile.Close(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error closing output file: %v\n", err)
+	var outputFile io.Writer
+	if compactStreamOnlyFlag {
+		outputFile = io.Discard
+	} else {
+		f, err := os.OpenFile(outputFilePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error opening output file: %v\n", err)
 			os.Exit(1)
 		}
-	}()
+		defer func() {
+			if err := f.Close(); err != nil {
+				fmt.Fprintf(os.Stderr, "Error closing output file: %v\n", err)
+				os.Exit(1)
+			}
+		}()
+		outputFile = f
+	}
 
 	// Parse layer metadata
 	layerMetadata, err := ParseLayerMetadata(defaultMetadataFlag, fileMetadataFlags)
@@ -264,6 +293,7 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 		casImporter, casExporter, outputFile, layerMetadata,
 		compressorJobsFlag, compressionLevelFlag, createParentDirectoriesFlag,
 		treeArtifactHandlingFlag,
+		compactStreamOutputFlag, compactStreamInlineThresholdFlag,
 	)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Writing layer: %v\n", err)
@@ -290,11 +320,62 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 	}
 }
 
+// resolveCompressorJobs maps the --compressor-jobs flag to a concrete worker
+// count the way the compress factory interprets it: "nproc" and any negative
+// value mean NumCPU, a positive integer is used verbatim, and anything else
+// (empty or unparseable) means the default single-threaded path.
+func resolveCompressorJobs(flag string) int {
+	if flag == "nproc" {
+		return runtime.NumCPU()
+	}
+	if n, err := strconv.Atoi(flag); err == nil {
+		if n < 0 {
+			return runtime.NumCPU()
+		}
+		return n
+	}
+	return 0
+}
+
+// recordedCompressorJobs is the compressor-jobs value stored in the compact
+// stream header. The header field is a single byte and the gzip factory only
+// distinguishes parallel (>1, pgzip) from single-threaded (stdlib); pgzip output
+// is independent of the exact worker count, so we clamp to 255 to prevent uint8
+// truncation from flipping the pgzip/stdlib decision at reconstruction time
+// (e.g. NumCPU 256 must not truncate to 0). resolveCompressorJobs mirrors how
+// the compress factory interprets the --compressor-jobs flag the build used, so
+// the recorded value selects the same gzip implementation at reconstruction.
+func recordedCompressorJobs(flag string) uint8 {
+	resolved := resolveCompressorJobs(flag)
+	switch {
+	case resolved <= 1:
+		return 1
+	case resolved > 255:
+		return 255
+	default:
+		return uint8(resolved)
+	}
+}
+
+// compactStreamCompressionLevel converts a compression level to the int8 field
+// stored in the compact stream header, hard-failing if it does not fit. The
+// header reserves a single signed byte; real gzip (0-9) and zstd levels are
+// tiny, so this only rejects nonsensical input. Truncating instead would make
+// reconstruction recompress at a different level and fail the compressed-stream
+// digest check.
+func compactStreamCompressionLevel(level int) (int8, error) {
+	if level > math.MaxInt8 || level < math.MinInt8 {
+		return 0, fmt.Errorf("compression level %d is out of range for the compact stream format (must be between %d and %d)", level, math.MinInt8, math.MaxInt8)
+	}
+	return int8(level), nil
+}
+
 func handleLayerState(
 	compressionAlgorithm api.CompressionAlgorithm, useEstargz bool, addFiles addFiles, importTars importTars, addExecutables executables, addSymlinks symlinks, emptyFiles []string,
 	casImporter api.CASStateSupplier, casExporter api.CASStateExporter, outputFile io.Writer, layerMetadata *LayerMetadata,
 	compressorJobsFlag string, compressionLevelFlag int, createParentDirectories bool,
 	treeArtifactHandling string,
+	compactStreamPath string, compactStreamInlineThreshold uint64,
 ) (compressorState api.AppenderState, err error) {
 	// Create shared digestfs with precaching
 	digestFS := digestfs.New(&tarcas.SHA256Helper{})
@@ -322,26 +403,96 @@ func handleLayerState(
 	if err != nil {
 		return compressorState, fmt.Errorf("creating compressor: %w", err)
 	}
+
+	var tarcasOpts []tarcas.Option
+	tarcasOpts = append(tarcasOpts,
+		tarcas.CreateParentDirectories(createParentDirectories),
+		tarcas.DeduplicateTreeArtifacts(treeArtifactHandling == "deduplicate_symlink"),
+	)
+
+	var csFile *os.File
+	var csWriter *compactstream.Writer
+	if compactStreamPath != "" {
+		// Validate the compression level before creating any file, so an
+		// out-of-range level fails fast without leaving a zero-length output.
+		csLevel, levelErr := compactStreamCompressionLevel(compressionLevelFlag)
+		if levelErr != nil {
+			return compressorState, levelErr
+		}
+
+		csFile, err = os.OpenFile(compactStreamPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+		if err != nil {
+			return compressorState, fmt.Errorf("opening compact stream output file: %w", err)
+		}
+
+		var origComp uint8
+		switch compressionAlgorithm {
+		case api.Gzip:
+			origComp = compactstream.OriginalCompressionGzip
+		case api.Zstd:
+			origComp = compactstream.OriginalCompressionZstd
+		default:
+			origComp = compactstream.OriginalCompressionNone
+		}
+
+		var inlineThreshold int64
+		if compactStreamInlineThreshold > 0 {
+			inlineThreshold = int64(compactStreamInlineThreshold)
+		}
+
+		csWriter = compactstream.NewWriter(
+			csFile,
+			compactstream.HashAlgoSHA256,
+			uint16(api.SHA256.Len()),
+			compactstream.StreamCompressionZstd,
+			compactstream.OriginalCompressionInfo{
+				Compression:      origComp,
+				Seekable:         useEstargz,
+				CompressionLevel: csLevel,
+				CompressorJobs:   recordedCompressorJobs(compressorJobsFlag),
+			},
+			inlineThreshold,
+		)
+		tarcasOpts = append(tarcasOpts, tarcas.WithCompactStreamWriter{Writer: csWriter})
+	}
+
+	tw, err := tarcas.CASFactoryWithDigestFS("sha256", compressor, digestFS, tarcasOpts...)
+	if err != nil {
+		return compressorState, fmt.Errorf("creating Content-addressable storage inside tar file: %w", err)
+	}
+	// Finalization runs in this deferred closure so it executes on every exit
+	// path, and in a specific order: close the tar writer (flushing all tar data
+	// into the compressor and feeding the index observer), then finalize the
+	// compressor to obtain the compressed-stream digest and size, then record
+	// that information on the index and emit it. The index is written last
+	// because its compressed-stream digest is only known once the compressor has
+	// been finalized.
 	defer func() {
+		if err := tw.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error closing tar writer: %v\n", err)
+			os.Exit(1)
+		}
+
 		var compressorCloseErr error
 		compressorState, compressorCloseErr = compressor.Finalize()
 		if compressorCloseErr != nil {
 			fmt.Fprintf(os.Stderr, "Error closing compressor: %v\n", compressorCloseErr)
 			os.Exit(1)
 		}
-	}()
 
-	tw, err := tarcas.CASFactoryWithDigestFS("sha256", compressor, digestFS,
-		tarcas.CreateParentDirectories(createParentDirectories),
-		tarcas.DeduplicateTreeArtifacts(treeArtifactHandling == "deduplicate_symlink"),
-	)
-	if err != nil {
-		return compressorState, fmt.Errorf("creating Content-addressable storage inside tar file: %w", err)
-	}
-	defer func() {
-		if err := tw.Close(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error closing tar writer: %v\n", err)
-			os.Exit(1)
+		if csWriter != nil {
+			if err := csWriter.SetCompressedStreamInfo(compressorState.OuterHash, uint64(compressorState.CompressedSize)); err != nil {
+				fmt.Fprintf(os.Stderr, "Error recording compressed stream info on compact stream: %v\n", err)
+				os.Exit(1)
+			}
+			if err := csWriter.Close(); err != nil {
+				fmt.Fprintf(os.Stderr, "Error writing compact stream: %v\n", err)
+				os.Exit(1)
+			}
+			if err := csFile.Close(); err != nil {
+				fmt.Fprintf(os.Stderr, "Error closing index file: %v\n", err)
+				os.Exit(1)
+			}
 		}
 	}()
 	if err := tw.Import(casImporter); err != nil {

@@ -18,4 +18,7 @@ layer_contents_test(
     size = "small",
     layer = ":layer",
     manifests = ["expected.ndjson"],
+    # layer_from_tar (even with optimize) goes through the layer helper path,
+    # which never emits a compact stream, so there is nothing to reconstruct.
+    test_compact_stream = False,
 )

@@ -1,4 +1,4 @@
-load("@bazel_skylib//rules:common_settings.bzl", "string_flag")
+load("@bazel_skylib//rules:common_settings.bzl", "int_flag", "string_flag")
 
 string_flag(
     name = "compress",
@@ -187,4 +187,20 @@ string_flag(
     name = "destination_registry",
     build_setting_default = "",
     visibility = ["//img/private:__subpackages__"],
+)
+
+string_flag(
+    name = "experimental_compact_layers",
+    build_setting_default = "disabled",
+    values = [
+        "enabled",
+        "disabled",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+int_flag(
+    name = "experimental_compact_layers_inline_threshold",
+    build_setting_default = 4096,
+    visibility = ["//visibility:public"],
 )

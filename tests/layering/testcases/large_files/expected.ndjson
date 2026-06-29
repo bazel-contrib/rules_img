@@ -1,0 +1,6 @@
+{"name":"opt/app/bin/app","typeflag":"0","size":50000,"mode":493,"uid":0,"gid":0,"modtime":"1970-01-01T00:00:00Z","sha256":"84d4b017fea145931824e998411526dfbf9bcc2015e03bdef0072d8d5b71d20a"}
+{"name":"opt/app/lib/libfoo.so","typeflag":"0","size":8192,"mode":493,"uid":0,"gid":0,"modtime":"1970-01-01T00:00:00Z","sha256":"51bf7e8f0756cd78e4bd5d058ad336654ab18e079c356980ae3d0254720faef2"}
+{"name":"opt/app/share/asset_a.dat","typeflag":"0","size":3000,"mode":493,"uid":0,"gid":0,"modtime":"1970-01-01T00:00:00Z","sha256":"2b7be809a6ecca82d296f5b7aa6a3534c1eeee1bf8e7337d386e6fd1a37fe219"}
+{"name":"etc/app/boundary.dat","typeflag":"0","size":513,"mode":493,"uid":0,"gid":0,"modtime":"1970-01-01T00:00:00Z","sha256":"59dc24c5de972448418ebfb10f96344f7250652092d60e608ae4bf3e8c722a7c"}
+{"name":"etc/app/small.txt","typeflag":"0","size":37,"mode":493,"uid":0,"gid":0,"modtime":"1970-01-01T00:00:00Z","sha256":"400c1bb633275e1593a8a0aa0d01072a369211074a0a72dbaec2a543919f98d4"}
+{"name":"opt/app/share/asset_b.dat","typeflag":"1","linkname":"opt/app/share/asset_a.dat","size":0,"mode":493,"uid":0,"gid":0,"modtime":"1970-01-01T00:00:00Z"}

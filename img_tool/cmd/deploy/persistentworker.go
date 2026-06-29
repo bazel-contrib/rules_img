@@ -78,7 +78,7 @@ func (h *deployWorkerHandler) processRequest(ctx context.Context, req persistent
 		return "", fmt.Errorf("unmarshalling deploy manifest: %w", err)
 	}
 
-	vfsBuilder := h.baseBuilder.Clone().WithDeployManifest(dm)
+	vfsBuilder := h.baseBuilder.Clone().WithDeployManifest(dm).WithContext(ctx)
 	for _, layoutPath := range opts.ociLayouts {
 		vfsBuilder = vfsBuilder.WithOCILayout(layoutPath)
 	}

@@ -18,6 +18,7 @@ Supports both **Bzlmod** and **WORKSPACE** setups. For WORKSPACE setup instructi
 - 🔧 **Bazel Native** - No Docker daemon required, fully hermetic builds
 - 🌍 **Multi-Platform** - Native cross-platform support through Bazel transitions
 - ⚡ **eStargz Support** - Lazy pulling optimization for faster container starts
+- 🗜️ **Cache-efficient layers** - Skip storing layer tarballs in the Bazel remote cache. Layer rules emit a compact [stream representation](docs/compact-stream.md) instead, and the full layer tar is reconstructed on demand only at push/load time
 - 🪶 **Smaller layers** - Deduplicates files using hardlinks
 - 🎯 **Shallow Base Images** - Avoid downloading layers from huge base images like CUDA
 - 🏢 **Enterprise Ready** - Remote Build Execution and Content Addressable Storage integration
@@ -115,6 +116,19 @@ common --@rules_img//img/settings:credential_helper=tweag-credential-helper
 # when downloading image layers during build time (e.g., for lazy base image pulling).
 # Typically set to ~/.docker/config.json or similar.
 common --@rules_img//img/settings:docker_config_path=/home/user/.docker/config.json
+
+# [Experimental] Store layers compactly instead of as full tarballs.
+# When enabled, layer rules no longer produce the layer tar as a file output, so
+# layer blobs are never written to (or fetched from) the Bazel remote cache.
+# Each layer is instead represented by a compact stream, and the full layer tar is
+# reconstructed on demand at push/load time, only when it is actually needed.
+common --@rules_img//img/settings:experimental_compact_layers=enabled
+
+# [Experimental] Inline small files directly into the compact stream instead of
+# storing them as separate content-addressed references. Files smaller than this
+# size (in bytes) are embedded inline; larger files become CAS references. Set to
+# 0 to disable inlining. Only has an effect when compact layers are enabled.
+common --@rules_img//img/settings:experimental_compact_layers_inline_threshold=4096
 ```
 
 </details>
@@ -412,6 +426,7 @@ This results in a more complex implementation, but also allows for interesting o
     - [`oras_file_layer`](docs/oras.md#oras_file_layer) - Create oras artifact layers from individual files
     - [`oras_layer`](docs/oras.md#oras_layer) - Create oras tree layers from files and directories
 - [Platforms Guide](docs/platforms.md) - Working with Bazel platforms, architecture variants, and multi-platform builds
+- [Compact Stream Representation](docs/compact-stream.md) - On-disk format behind the experimental cache-efficient layers (`experimental_compact_layers`)
 - [Migration Guide from rules_oci](docs/migration-from-rules_oci.md)
 
 ## Key Differences Explained
