@@ -614,6 +614,7 @@ func writeMetadata(name string, compressionAlgorithm api.CompressionAlgorithm, u
 		fmt.Sprintf("sha256:%x", compressorState.OuterHash),
 		compressorState.CompressedSize,
 		mergedAnnotations,
+		nil,
 		outputFile,
 	)
 }

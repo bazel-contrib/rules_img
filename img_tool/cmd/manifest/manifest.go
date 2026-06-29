@@ -338,6 +338,17 @@ func prepareConfig(layers []api.Descriptor, templatesData *ConfigTemplates, crea
 	if createdTime != nil {
 		config.Created = createdTime
 	}
+	for _, layer := range layers {
+		for _, historyEntry := range layer.History {
+			config.History = append(config.History, specv1.History{
+				Created:    historyEntry.Created,
+				CreatedBy:  historyEntry.CreatedBy,
+				Author:     historyEntry.Author,
+				Comment:    historyEntry.Comment,
+				EmptyLayer: historyEntry.EmptyLayer,
+			})
+		}
+	}
 
 	return config, nil
 }
@@ -386,9 +397,9 @@ func overlayConfigFromFile(config *specv1.Image, filePath string, isBase bool) e
 	if configFragment.Architecture != "" {
 		config.Architecture = configFragment.Architecture
 	}
-	if len(configFragment.History) > 0 {
-		config.History = append(config.History, configFragment.History...)
-	}
+	// History is reconstructed from per-layer metadata in prepareConfig; the base
+	// config's redundant copy is intentionally not merged here, otherwise base
+	// layers would be counted twice (history longer than rootfs.diff_ids).
 
 	// merge config.Config
 	if configFragment.Config.User != "" {

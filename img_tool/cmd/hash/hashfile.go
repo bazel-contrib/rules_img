@@ -275,6 +275,7 @@ func writeLayerMetadata(compressedHash []byte, meta *layerMetadata, req *hashReq
 		Digest:      fmt.Sprintf("sha256:%x", compressedHash),
 		Size:        meta.compressedSize,
 		Annotations: mergedAnnotations,
+		History:     []api.History{{CreatedBy: layerName}},
 	}
 
 	// Write JSON output
