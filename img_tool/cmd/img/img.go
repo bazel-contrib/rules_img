@@ -7,6 +7,8 @@ import (
 
 	"github.com/google/go-containerregistry/pkg/logs"
 
+	"github.com/bazel-contrib/rules_img/img_tool/cmd/casdir"
+	compactstreamcmd "github.com/bazel-contrib/rules_img/img_tool/cmd/compactstream"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/compress"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/deploy"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/deploymetadata"
@@ -49,6 +51,8 @@ Commands:
   optimize                 rewrites image metadata after layer optimization
   pull                     pulls an image from a registry
   sparse-oci-layout        assembles a sparse OCI layout (without layer blobs) from manifest and layers
+  compact-stream           inspects or reconstructs a compact stream (subcommands: reconstruct, list)
+  cas-dir                  builds a content-addressed directory (sha256/<hex>) from input files
   sync-oci-ref-graph       syncs OCI reference graph by downloading manifests in parallel
   validate                 validates layers and images
   deploy                   pushes an image to a registry or loads it into a local container runtime
@@ -106,6 +110,10 @@ func Run(ctx context.Context, args []string) {
 		optimize.OptimizeProcess(ctx, args[2:])
 	case "sparse-oci-layout":
 		sparseocilayout.SparseOCILayoutProcess(ctx, args[2:])
+	case "compact-stream":
+		compactstreamcmd.CompactStreamProcess(ctx, args[2:])
+	case "cas-dir":
+		casdir.CASDirProcess(ctx, args[2:])
 	case "expand-template":
 		expandtemplate.ExpandTemplateProcess(ctx, args[2:])
 	default:

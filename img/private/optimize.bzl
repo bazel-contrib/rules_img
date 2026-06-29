@@ -93,6 +93,9 @@ def _optimize_layer(ctx, layer, settings, manifest_position, layer_position):
         metadata = metadata,
         media_type = settings.media_type,
         estargz = settings.estargz,
+        compact_stream = None,
+        layer_input_files = None,
+        layer_input_files_cas = None,
     )
 
 def _optimize_layers(ctx, manifest, settings, manifest_position):

@@ -14,10 +14,13 @@ File containing metadata about the layer blob as a JSON file with the following 
 """
 
 FIELDS = dict(
-    blob = "File containing the raw layer or None (for shallow base images).",
+    blob = "File containing the raw layer or None (for shallow base images or compact-stream-only mode).",
     metadata = _metadata_doc,
     media_type = "The media type of the layer as a string. Example: application/vnd.oci.image.layer.v1.tar+gzip.",
     estargz = "Boolean indicating whether the layer is an estargz layer.",
+    compact_stream = "File containing the compact stream (.cstream) for the layer, or None.",
+    layer_input_files = "Depset of files that went into this layer, or None.",
+    layer_input_files_cas = "Tree artifact (directory) with the layer's input files content-addressed at sha256/<hex>, used to reconstruct the layer from its compact stream, or None.",
 )
 
 SingleLayerInfo = provider(

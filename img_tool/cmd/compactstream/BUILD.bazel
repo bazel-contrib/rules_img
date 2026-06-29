@@ -1,0 +1,21 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "compactstream",
+    srcs = [
+        "compactstream.go",
+        "list.go",
+        "reconstruct.go",
+    ],
+    importpath = "github.com/bazel-contrib/rules_img/img_tool/cmd/compactstream",
+    visibility = ["//visibility:public"],
+    deps = ["//pkg/compactstream"],
+)
+
+go_test(
+    name = "compactstream_test",
+    size = "small",
+    srcs = ["compactstream_test.go"],
+    embed = [":compactstream"],
+    deps = ["//pkg/compactstream"],
+)

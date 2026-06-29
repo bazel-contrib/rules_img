@@ -26,10 +26,11 @@ import (
 // Stats tracks statistics about blob access in the VFS.
 // All fields are accessed atomically for thread safety.
 type Stats struct {
-	BlobsFromLocalDisk   atomic.Uint64 // Blobs opened from local disk (runfiles, OCI layouts, explicit layers)
-	BlobsFromDiskCache   atomic.Uint64 // Blobs opened from Bazel disk cache
-	BlobsFromRegistry    atomic.Uint64 // Blobs opened from container registry
-	BlobsFromRemoteCache atomic.Uint64 // Blobs opened from Bazel remote cache (RE API)
+	BlobsFromLocalDisk     atomic.Uint64 // Blobs opened from local disk (runfiles, OCI layouts, explicit layers)
+	BlobsFromDiskCache     atomic.Uint64 // Blobs opened from Bazel disk cache
+	BlobsFromRegistry      atomic.Uint64 // Blobs opened from container registry
+	BlobsFromRemoteCache   atomic.Uint64 // Blobs opened from Bazel remote cache (RE API)
+	BlobsFromCompactStream atomic.Uint64 // Blobs reconstructed from compact stream
 }
 
 // BlobSourceErrorKind categorizes why a blob source lookup failed.
@@ -313,6 +314,12 @@ type Builder struct {
 	explicitLayers             map[string]string   // digest -> file path
 	layerHints                 map[string][]string // digest -> []paths
 	stats                      *Stats
+	// ctx scopes long-running, lazily-triggered work created by the resulting
+	// VFS — notably on-demand compact-stream reconstruction, which may fetch CAS
+	// blobs from the remote cache. It is captured into blob openers so that
+	// cancelling the surrounding deploy aborts those fetches. nil means
+	// context.Background().
+	ctx context.Context
 }
 
 func NewBuilder(dm api.DeployManifest) *Builder {
@@ -350,6 +357,23 @@ func (b *Builder) WithCASReader(br casReader) *Builder {
 func (b *Builder) WithDiskCache(path string) *Builder {
 	b.diskCachePath = path
 	return b
+}
+
+// WithContext sets the context used to scope lazily-triggered work performed by
+// the resulting VFS (e.g. on-demand compact-stream reconstruction and its CAS
+// blob fetches). Pass the deploy/load operation's context so cancellation
+// propagates to that work.
+func (b *Builder) WithContext(ctx context.Context) *Builder {
+	b.ctx = ctx
+	return b
+}
+
+// context returns the configured context, defaulting to context.Background().
+func (b *Builder) context() context.Context {
+	if b.ctx != nil {
+		return b.ctx
+	}
+	return context.Background()
 }
 
 func (b *Builder) WithContainerRegistryOption(o remote.Option) *Builder {
@@ -556,11 +580,12 @@ func (b *Builder) layerBlob(operationIndex int, manifestIndex int, layerIndex in
 	// 1. OCI layouts (--oci-layout flags, supports both sparse and standard formats)
 	// 2. explicit layer files (--layer flags)
 	// 3. runfiles tree
-	// 4. registry of base image (if base image is shallow, blob was marked as "missing blob" (exists remotely) and strategy allows it)
-	// 5. layer hints (local paths from BUILD_WORKSPACE_DIRECTORY, populated by lazy builds)
-	// 6. bazel disk cache (if configured via IMG_DISK_CACHE)
-	// 7. bazel remote cache (if configured via IMG_REAPI_ENDPOINT)
-	// 8. stub blob (cas_registry strategy where all blobs are assumed to already be in the remote CAS)
+	// 4. compact stream in runfiles (.cstream + .inputfilecas content-addressed directory)
+	// 5. registry of base image (if base image is shallow, blob was marked as "missing blob" (exists remotely) and strategy allows it)
+	// 6. layer hints (local paths from BUILD_WORKSPACE_DIRECTORY, populated by lazy builds)
+	// 7. bazel disk cache (if configured via IMG_DISK_CACHE)
+	// 8. bazel remote cache (if configured via IMG_REAPI_ENDPOINT)
+	// 9. stub blob (cas_registry strategy where all blobs are assumed to already be in the remote CAS)
 
 	var sourceErrors []*BlobSourceError
 
@@ -575,6 +600,11 @@ func (b *Builder) layerBlob(operationIndex int, manifestIndex int, layerIndex in
 		sourceErrors = append(sourceErrors, err.(*BlobSourceError))
 	}
 	if entry, err := b.layerFromFile(operationIndex, manifestIndex, layerIndex, desc); err == nil {
+		return entry, nil
+	} else {
+		sourceErrors = append(sourceErrors, err.(*BlobSourceError))
+	}
+	if entry, err := b.layerFromRunfilesCompactStream(operationIndex, manifestIndex, layerIndex, desc); err == nil {
 		return entry, nil
 	} else {
 		sourceErrors = append(sourceErrors, err.(*BlobSourceError))
@@ -789,7 +819,7 @@ func stubBlob(desc api.Descriptor) blobEntry {
 
 type blobEntry struct {
 	api.Descriptor
-	Location string // "file", "registry", "remote_cache", "stub"
+	Location string // "file", "registry", "remote_cache", "compact_stream", "stub"
 	Opener   func() (io.ReadCloser, error)
 	stats    *Stats // reference to VFS stats for tracking
 }

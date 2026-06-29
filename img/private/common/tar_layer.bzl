@@ -203,6 +203,9 @@ def resolve_layer_settings(ctx):
     if ctx.attr.media_type:
         media_type = ctx.attr.media_type
 
+    compact_layers = ctx.attr._experimental_compact_layers[BuildSettingInfo].value == "enabled"
+    compact_layers_inline_threshold = ctx.attr._experimental_compact_layers_inline_threshold[BuildSettingInfo].value
+
     return struct(
         compression = compression,
         estargz = estargz_enabled,
@@ -210,6 +213,8 @@ def resolve_layer_settings(ctx):
         tree_artifact_handling = tree_artifact_handling,
         media_type = media_type,
         out_ext = out_ext,
+        compact_layers = compact_layers,
+        compact_layers_inline_threshold = compact_layers_inline_threshold,
     )
 
 def create_tar_single_layer(ctx, settings, name, extra_args = [], extra_inputs = []):
@@ -228,10 +233,16 @@ def create_tar_single_layer(ctx, settings, name, extra_args = [], extra_inputs =
         extra_inputs: list of depset objects to merge with base inputs.
 
     Returns:
-        tuple of (SingleLayerInfo, out_file, metadata_file).
+        tuple of (SingleLayerInfo, out_file_or_None, metadata_file, compact_stream_file_or_None).
     """
-    out = ctx.actions.declare_file(name + settings.out_ext)
     metadata_out = ctx.actions.declare_file(name + "_metadata.json")
+    out = None
+    compact_stream_out = None
+    layer_input_files_cas = None
+    if settings.compact_layers:
+        compact_stream_out = ctx.actions.declare_file(name + settings.out_ext + ".cstream")
+    else:
+        out = ctx.actions.declare_file(name + settings.out_ext)
 
     args = ["layer", "--name", str(ctx.label), "--metadata", metadata_out.path, "--format", settings.compression]
     if ctx.attr.media_type:
@@ -246,33 +257,100 @@ def create_tar_single_layer(ctx, settings, name, extra_args = [], extra_inputs =
         args.extend(["--annotation", "{}={}".format(key, value)])
     if ctx.attr.annotations_file != None:
         args.extend(["--annotations-file", ctx.file.annotations_file.path])
+    if compact_stream_out:
+        args.extend(["--compact-stream", compact_stream_out.path])
+        args.append("--compact-stream-only")
+        if settings.compact_layers_inline_threshold > 0:
+            args.extend(["--compact-stream-inline-threshold", str(settings.compact_layers_inline_threshold)])
 
     args.extend(extra_args)
-    args.append(out.path)
+    if out:
+        args.append(out.path)
 
     inputs = []
     if ctx.attr.annotations_file != None:
         inputs.append(depset([ctx.file.annotations_file]))
     inputs.extend(extra_inputs)
 
+    outputs = [metadata_out]
+    if out:
+        outputs.append(out)
+    if compact_stream_out:
+        outputs.append(compact_stream_out)
+
     img_toolchain_info = ctx.toolchains[TOOLCHAIN].imgtoolchaininfo
     ctx.actions.run(
-        outputs = [out, metadata_out],
+        outputs = outputs,
         inputs = depset(transitive = inputs),
         executable = img_toolchain_info.tool_exe,
         arguments = args,
         mnemonic = "LayerTar",
     )
+
+    layer_input_files = depset(transitive = extra_inputs) if settings.compact_layers else None
+
+    # In compact-stream mode, the layer blob is not materialized. Build a parallel,
+    # content-addressed directory of the layer's input files so the tar can be
+    # reconstructed from the index by resolving CAS references against it.
+    if settings.compact_layers:
+        layer_input_files_cas = _build_input_files_cas(ctx, name, extra_inputs)
+
     return (
         SingleLayerInfo(
             blob = out,
             metadata = metadata_out,
             media_type = settings.media_type,
             estargz = settings.estargz,
+            compact_stream = compact_stream_out,
+            layer_input_files = layer_input_files,
+            layer_input_files_cas = layer_input_files_cas,
         ),
         out,
         metadata_out,
+        compact_stream_out,
     )
+
+def _input_file_cas_arg(f):
+    """map_each for the cas-dir input file list.
+
+    Returns an empty string for pure symlinks (which carry no content blob and
+    are never referenced by the index); `args.add_all` skips empty strings. All
+    other files (including expanded tree-artifact contents) are passed by path.
+    Using map_each keeps the depset lazy (no analysis-time flattening).
+    """
+    if hasattr(f, "is_symlink") and f.is_symlink:
+        return ""
+    return f.path
+
+def _build_input_files_cas(ctx, name, extra_inputs):
+    """Build a content-addressed directory (sha256/<hex>) of layer input files.
+
+    Runs `img cas-dir` over everything in `extra_inputs` (the files that make up
+    the layer), expanding tree artifacts and skipping pure symlinks (which carry
+    no content blob). The resulting tree artifact lets a layer be reconstructed
+    from its compact stream without materializing the layer blob.
+    """
+    output_dir = ctx.actions.declare_directory(name + ".inputfilecas")
+    input_files = depset(transitive = extra_inputs)
+
+    content_args = ctx.actions.args()
+    content_args.set_param_file_format("multiline")
+    content_args.use_param_file("--from-file=%s", use_always = True)
+    content_args.add_all(input_files, map_each = _input_file_cas_arg, expand_directories = True)
+
+    args = ctx.actions.args()
+    args.add("cas-dir")
+    args.add("--output", output_dir.path)
+
+    img_toolchain_info = ctx.toolchains[TOOLCHAIN].imgtoolchaininfo
+    ctx.actions.run(
+        outputs = [output_dir],
+        inputs = input_files,
+        executable = img_toolchain_info.tool_exe,
+        arguments = [args, content_args],
+        mnemonic = "LayerInputFilesCAS",
+    )
+    return output_dir
 
 def create_tar_layer(ctx, settings, extra_args = [], extra_inputs = []):
     """Create a tar layer using 'img layer' and return providers.
@@ -291,12 +369,17 @@ def create_tar_layer(ctx, settings, extra_args = [], extra_inputs = []):
     Returns:
         list of [DefaultInfo, OutputGroupInfo, LayersInfo].
     """
-    layer_info, out, metadata_out = create_tar_single_layer(ctx, settings, ctx.attr.name, extra_args, extra_inputs)
+    layer_info, out, metadata_out, compact_stream_out = create_tar_single_layer(ctx, settings, ctx.attr.name, extra_args, extra_inputs)
+    output_groups = dict(
+        metadata = depset([metadata_out]),
+    )
+    if out:
+        output_groups["layer"] = depset([out])
+    if compact_stream_out:
+        output_groups["experimental_compact_stream"] = depset([compact_stream_out])
+    default_file = out if out else compact_stream_out
     return [
-        DefaultInfo(files = depset([out])),
-        OutputGroupInfo(
-            layer = depset([out]),
-            metadata = depset([metadata_out]),
-        ),
+        DefaultInfo(files = depset([default_file])),
+        OutputGroupInfo(**output_groups),
         LayersInfo(layers = [layer_info]),
     ]

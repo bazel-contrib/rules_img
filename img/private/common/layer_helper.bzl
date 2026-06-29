@@ -130,6 +130,9 @@ def calculate_layer_info(*, ctx, media_type, tar_file, metadata_file, estargz, a
         metadata = metadata_file,
         media_type = media_type,
         estargz = estargz,
+        compact_stream = None,
+        layer_input_files = None,
+        layer_input_files_cas = None,
     )
 
 def recompress_layer(*, ctx, media_type, tar_file, metadata_file, output, target_compression, estargz, annotations):
@@ -173,6 +176,9 @@ def recompress_layer(*, ctx, media_type, tar_file, metadata_file, output, target
         metadata = metadata_file,
         media_type = media_type,
         estargz = estargz,
+        compact_stream = None,
+        layer_input_files = None,
+        layer_input_files_cas = None,
     )
 
 def optimize_layer(*, ctx, media_type, tar_file, metadata_file, output, target_compression, estargz, annotations):
@@ -217,4 +223,7 @@ def optimize_layer(*, ctx, media_type, tar_file, metadata_file, output, target_c
         metadata = metadata_file,
         media_type = media_type,
         estargz = estargz,
+        compact_stream = None,
+        layer_input_files = None,
+        layer_input_files_cas = None,
     )

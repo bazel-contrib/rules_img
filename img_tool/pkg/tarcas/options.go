@@ -1,6 +1,10 @@
 package tarcas
 
-import "archive/tar"
+import (
+	"archive/tar"
+
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/compactstream"
+)
 
 type Option interface {
 	apply(*options)
@@ -35,6 +39,8 @@ type options struct {
 	writeHeaderCallbackFilter WriteHeaderCallbackFilter
 	createParentDirectories   bool
 	deduplicateTreeArtifacts  bool
+	compactStreamWriter       *compactstream.Writer
+	observer                  EntryObserver
 }
 
 type CreateParentDirectories bool
@@ -50,3 +56,11 @@ func (c CreateParentDirectories) apply(opts *options) { opts.createParentDirecto
 type DeduplicateTreeArtifacts bool
 
 func (d DeduplicateTreeArtifacts) apply(opts *options) { opts.deduplicateTreeArtifacts = bool(d) }
+
+type WithCompactStreamWriter struct{ Writer *compactstream.Writer }
+
+func (w WithCompactStreamWriter) apply(opts *options) { opts.compactStreamWriter = w.Writer }
+
+type WithEntryObserver struct{ Observer EntryObserver }
+
+func (w WithEntryObserver) apply(opts *options) { opts.observer = w.Observer }

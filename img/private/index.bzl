@@ -106,6 +106,9 @@ def _build_sparse_oci_layout(ctx, format, index_out, manifests):
         for layer in manifest.layers:
             args.add("--layer", layer.metadata.path)
             inputs.append(layer.metadata)
+            if layer.compact_stream != None:
+                args.add("--layer-compact-stream", "{}={}".format(layer.metadata.path, layer.compact_stream.path))
+                inputs.append(layer.compact_stream)
 
     img_toolchain_info = ctx.toolchains[TOOLCHAIN].imgtoolchaininfo
     ctx.actions.run(
