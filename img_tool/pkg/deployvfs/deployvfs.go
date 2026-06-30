@@ -769,19 +769,28 @@ func (b *Builder) layerFromHints(desc api.Descriptor) (blobEntry, error) {
 	if len(hintPaths) == 0 {
 		return blobEntry{}, &BlobSourceError{Source: "layer hints", Digest: desc.Digest, Kind: BlobSourceBlobMissing, Message: "digest not in layer hints"}
 	}
+	var foundPath string
+	for _, localPath := range hintPaths {
+		if _, err := os.Stat(localPath); err == nil {
+			foundPath = localPath
+			break
+		}
+	}
+	if foundPath == "" {
+		return blobEntry{}, &BlobSourceError{Source: "layer hints", Digest: desc.Digest, Kind: BlobSourceBlobMissing, Message: "digest not in layer hints"}
+	}
 	stats := b.stats
 	return blobEntry{
 		Descriptor: desc,
 		Location:   "file",
 		stats:      stats,
 		Opener: func() (io.ReadCloser, error) {
-			for _, localPath := range hintPaths {
-				if file, err := os.Open(localPath); err == nil {
-					stats.BlobsFromLocalDisk.Add(1)
-					return file, nil
-				}
+			file, err := os.Open(foundPath)
+			if err != nil {
+				return nil, fmt.Errorf("layer %s not found in hint path: %w", desc.Digest, err)
 			}
-			return nil, fmt.Errorf("layer %s not found in any hint path", desc.Digest)
+			stats.BlobsFromLocalDisk.Add(1)
+			return file, nil
 		},
 	}, nil
 }
