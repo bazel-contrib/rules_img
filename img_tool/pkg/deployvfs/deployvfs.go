@@ -800,16 +800,19 @@ func (b *Builder) layerFromCAS(desc api.Descriptor) (blobEntry, error) {
 	if b.casReader == nil {
 		return blobEntry{}, &BlobSourceError{Source: "remote CAS", Digest: desc.Digest, Kind: BlobSourceUnconfigured, Message: "no CAS reader configured"}
 	}
+	digest, err := digestFromDescriptor(desc)
+	if err != nil {
+		return blobEntry{}, &BlobSourceError{Source: "remote CAS", Digest: desc.Digest, Kind: BlobSourceBlobMissing, Err: err}
+	}
+	if missing, err := b.casReader.FindMissingBlobs(context.TODO(), []cas.Digest{digest}); err == nil && len(missing) > 0 {
+		return blobEntry{}, &BlobSourceError{Source: "remote CAS", Digest: desc.Digest, Kind: BlobSourceBlobMissing, Message: "blob not found in remote CAS"}
+	}
 	stats := b.stats
 	return blobEntry{
 		Descriptor: desc,
 		Location:   "remote_cache",
 		stats:      stats,
 		Opener: func() (io.ReadCloser, error) {
-			digest, err := digestFromDescriptor(desc)
-			if err != nil {
-				return nil, err
-			}
 			stats.BlobsFromRemoteCache.Add(1)
 			return b.casReader.ReaderForBlob(context.TODO(), digest)
 		},
@@ -884,16 +887,19 @@ func (b *Builder) blobFromCAS(desc api.Descriptor) (blobEntry, error) {
 	if b.casReader == nil {
 		return blobEntry{}, &BlobSourceError{Source: "remote CAS", Digest: desc.Digest, Kind: BlobSourceUnconfigured, Message: "no CAS reader configured"}
 	}
+	digest, err := digestFromDescriptor(desc)
+	if err != nil {
+		return blobEntry{}, &BlobSourceError{Source: "remote CAS", Digest: desc.Digest, Kind: BlobSourceBlobMissing, Err: err}
+	}
+	if missing, err := b.casReader.FindMissingBlobs(context.TODO(), []cas.Digest{digest}); err == nil && len(missing) > 0 {
+		return blobEntry{}, &BlobSourceError{Source: "remote CAS", Digest: desc.Digest, Kind: BlobSourceBlobMissing, Message: "blob not found in remote CAS"}
+	}
 	stats := b.stats
 	return blobEntry{
 		Descriptor: desc,
 		Location:   "remote_cache",
 		stats:      stats,
 		Opener: func() (io.ReadCloser, error) {
-			digest, err := digestFromDescriptor(desc)
-			if err != nil {
-				return nil, err
-			}
 			stats.BlobsFromRemoteCache.Add(1)
 			return b.casReader.ReaderForBlob(context.TODO(), digest)
 		},
