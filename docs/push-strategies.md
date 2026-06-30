@@ -61,6 +61,7 @@ The lazy push strategy optimizes uploads by checking the registry first and only
 ### Cons
 - ❌ Requires a Bazel remote cache
 - ❌ Slightly more complex than eager push
+- ❌ Push fails if required blobs are evicted from the CAS before the push runs (see [Remote Cache Eviction](#remote-cache-eviction))
 
 ### Setup Guide
 1. Ensure you have a Bazel remote cache configured:
@@ -215,6 +216,20 @@ common --@rules_img//img/settings:push_strategy=bes
 # Just build - no need to run push targets!
 bazel build //your:image_target
 ```
+
+## Remote Cache Eviction
+
+The lazy and CAS registry push strategies stream blobs directly from Bazel's
+remote cache (CAS). If a blob is evicted from the CAS before the push runs, the
+push will fail and the layer bytes cannot be recovered.
+
+The eager push strategy is immune to this failure case.
+It adds all required blobs to the runfiles of the push target, so the push works
+fully offline even if the remote cache is unavailable.
+
+The safest approach is to use `bazel run` on the push target directly — the push
+happens immediately after the Bazel invocation, so all required blobs are probably
+present. If the push happens later, make sure to consume the blobs soon after the build.
 
 ## Choosing the Right Strategy
 

@@ -469,3 +469,24 @@ into the compact stream's byte stream instead of referencing them: the
 [Usage](#usage). Files below the threshold travel inside the compact stream itself,
 so they need no CAS lookup at reconstruction time.
 
+**What happens if blobs are evicted from the remote cache before the layer is pushed or loaded?**
+
+With the default **eager** push strategy there is no risk: the eager strategy
+adds all layer inputs to the runfiles of the push/load target, so the layer tar
+is reconstructed entirely from local files and the remote cache is not required.
+
+With the **lazy** push strategy, the layer tar is
+reconstructed on demand from CAS references at push/load time. If a referenced
+blob has been evicted from the remote cache by then, reconstruction will fail and
+the layer bytes cannot be recovered.
+
+The safest approach is to use `bazel run` on the push/load target directly —
+the push happens immediately after the Bazel invocation, so all CAS
+references are guaranteed to be resolvable. If the push runs in a separate
+invocation, consume the blobs soon after the build.
+
+Note that this risk is not introduced by compact layers specifically — it applies
+equally when full layer tarballs are stored in the CAS. See
+[Remote Cache Eviction](push-strategies.md#remote-cache-eviction) in the push
+strategies guide for more detail and strategy-level trade-offs.
+
