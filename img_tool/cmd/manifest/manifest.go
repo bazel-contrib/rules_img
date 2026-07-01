@@ -48,7 +48,16 @@ var (
 	created               string
 	artifactType          string
 	subjectDescriptor     string
+	configOverridesFile   string
 )
+
+// inheritFromBase is the sentinel value used by the image_manifest rule to
+// distinguish a config field that was left untouched (inherit the base image's
+// value) from one explicitly set to an empty value (unset the field). It matches
+// INHERIT_FROM_BASE in img/private/common/inherit.bzl and is forwarded through
+// the --config-overrides JSON file (its trailing NUL byte cannot travel through a
+// command line).
+const inheritFromBase = "<inherit from base>\x00"
 
 func ManifestProcess(_ context.Context, args []string) {
 	flagSet := flag.NewFlagSet("manifest", flag.ExitOnError)
@@ -91,6 +100,7 @@ func ManifestProcess(_ context.Context, args []string) {
 	flagSet.StringVar(&created, "created", "", `A file containing a datetime string (RFC 3339 format) for when the image was created.`)
 	flagSet.StringVar(&artifactType, "artifact-type", "", `Optional IANA media type of the artifact when the manifest is used for an artifact (e.g. application/vnd.cncf.helm.chart.v1, application/spdx+json).`)
 	flagSet.StringVar(&subjectDescriptor, "subject-descriptor", "", `A JSON file containing the descriptor of the subject manifest or index.`)
+	flagSet.StringVar(&configOverridesFile, "config-overrides", "", `A JSON file with image config value overrides (user, workingDir, stopSignal, entrypoint, cmd) that support inheriting from / unsetting the base image config. Takes precedence over the individual --user/--entrypoint/--cmd/--working-dir/--stop-signal flags for the fields it provides.`)
 
 	if err := flagSet.Parse(args); err != nil {
 		flagSet.Usage()
@@ -145,11 +155,22 @@ func ManifestProcess(_ context.Context, args []string) {
 		createdTime = ct
 	}
 
+	// Read image config value overrides if provided
+	var overrides *configOverrides
+	if configOverridesFile != "" {
+		var err error
+		overrides, err = readConfigOverrides(configOverridesFile)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to read config overrides: %v\n", err)
+			os.Exit(1)
+		}
+	}
+
 	var configRaw []byte
 	if configMediaType == "" {
 		configMediaType = specv1.MediaTypeImageConfig
 
-		config, err := prepareConfig(layers, templatesData, createdTime)
+		config, err := prepareConfig(layers, templatesData, createdTime, overrides)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to prepare config: %v\n", err)
 			os.Exit(1)
@@ -313,7 +334,7 @@ func ManifestProcess(_ context.Context, args []string) {
 	}
 }
 
-func prepareConfig(layers []api.Descriptor, templatesData *ConfigTemplates, createdTime *time.Time) (specv1.Image, error) {
+func prepareConfig(layers []api.Descriptor, templatesData *ConfigTemplates, createdTime *time.Time, overrides *configOverrides) (specv1.Image, error) {
 	// first, read the base config
 	// then, layer the config fragment on top of it
 	// finally, add our own stuff
@@ -330,7 +351,7 @@ func prepareConfig(layers []api.Descriptor, templatesData *ConfigTemplates, crea
 		}
 	}
 
-	if err := overlayNewConfigValues(&config, layers, templatesData); err != nil {
+	if err := overlayNewConfigValues(&config, layers, templatesData, overrides); err != nil {
 		return config, fmt.Errorf("overlaying new config values: %w", err)
 	}
 
@@ -484,7 +505,7 @@ func overlayConfigFromFile(config *specv1.Image, filePath string, isBase bool) e
 	return nil
 }
 
-func overlayNewConfigValues(config *specv1.Image, layers []api.Descriptor, templatesData *ConfigTemplates) error {
+func overlayNewConfigValues(config *specv1.Image, layers []api.Descriptor, templatesData *ConfigTemplates, overrides *configOverrides) error {
 	if config.OS != "" && operatingSystem != "" && config.OS != operatingSystem {
 		return fmt.Errorf("OS mismatch: %s != %s", config.OS, operatingSystem)
 	}
@@ -511,10 +532,21 @@ func overlayNewConfigValues(config *specv1.Image, layers []api.Descriptor, templ
 		config.RootFS.DiffIDs[i] = digest.Digest(layer.DiffID)
 	}
 
-	// Apply command-line config values
-	if user != "" {
-		config.Config.User = user
+	// Resolve config value overrides. When an override field is present it uses
+	// three-way inherit/unset/set semantics; otherwise the legacy individual flag
+	// is used with its historical two-way (empty == inherit) semantics.
+	var userOv, workingDirOv, stopSignalOv *string
+	var entrypointOv, cmdOv *[]string
+	if overrides != nil {
+		userOv = overrides.User
+		workingDirOv = overrides.WorkingDir
+		stopSignalOv = overrides.StopSignal
+		entrypointOv = overrides.Entrypoint
+		cmdOv = overrides.Cmd
 	}
+
+	// Apply command-line config values
+	applyStringOverride(&config.Config.User, userOv, user)
 
 	// Apply environment variables from config templates or command line
 	envToApply := env
@@ -564,18 +596,42 @@ func overlayNewConfigValues(config *specv1.Image, layers []api.Descriptor, templ
 	// See: https://github.com/bazel-contrib/rules_img/issues/368
 	// See: https://github.com/bazel-contrib/rules_oci/issues/649
 	// See: https://github.com/google/go-containerregistry/blob/c3d1dcc932076c15b65b8b9acfff1d47ded2ebf9/cmd/crane/cmd/mutate.go#L107
-	if len(entrypoint) > 0 {
+	//
+	// Capture the inherited (base + fragment) entrypoint and cmd before either is
+	// modified, so a sentinel item can be expanded to the original base value even
+	// when setting the entrypoint has already cleared the inherited cmd.
+	baseEntrypoint := slices.Clone(config.Config.Entrypoint)
+	baseCmd := slices.Clone(config.Config.Cmd)
+
+	if entrypointOv != nil {
+		switch {
+		case isPureInherit(*entrypointOv):
+			// inherit: leave the base entrypoint (and cmd) untouched
+		case len(*entrypointOv) == 0:
+			config.Config.Entrypoint = nil // unset; leave cmd to its own resolution
+		default:
+			config.Config.Entrypoint = expandInherit(*entrypointOv, baseEntrypoint)
+			config.Config.Cmd = nil
+		}
+	} else if len(entrypoint) > 0 {
 		config.Config.Entrypoint = []string(entrypoint)
 		config.Config.Cmd = nil
 	}
 
-	if len(cmd) > 0 {
+	if cmdOv != nil {
+		switch {
+		case isPureInherit(*cmdOv):
+			// inherit: leave cmd as-is (base value, or cleared by setting entrypoint)
+		case len(*cmdOv) == 0:
+			config.Config.Cmd = nil // unset
+		default:
+			config.Config.Cmd = expandInherit(*cmdOv, baseCmd)
+		}
+	} else if len(cmd) > 0 {
 		config.Config.Cmd = []string(cmd)
 	}
 
-	if workingDir != "" {
-		config.Config.WorkingDir = workingDir
-	}
+	applyStringOverride(&config.Config.WorkingDir, workingDirOv, workingDir)
 
 	// Apply labels from config templates or command line
 	labelsToApply := labels
@@ -598,9 +654,7 @@ func overlayNewConfigValues(config *specv1.Image, layers []api.Descriptor, templ
 		}
 	}
 
-	if stopSignal != "" {
-		config.Config.StopSignal = stopSignal
-	}
+	applyStringOverride(&config.Config.StopSignal, stopSignalOv, stopSignal)
 
 	return nil
 }
@@ -610,6 +664,79 @@ type ConfigTemplates struct {
 	Env         map[string]string `json:"env"`
 	Labels      map[string]string `json:"labels"`
 	Annotations map[string]string `json:"annotations"`
+}
+
+// configOverrides represents the structure of the --config-overrides JSON file
+// written by the image_manifest rule. A nil pointer means the field was not
+// provided (fall back to the legacy flag); a non-nil pointer carries the raw
+// value, which may be the inheritFromBase sentinel or empty (see the field-level
+// semantics in overlayNewConfigValues).
+type configOverrides struct {
+	User       *string   `json:"user"`
+	WorkingDir *string   `json:"workingDir"`
+	StopSignal *string   `json:"stopSignal"`
+	Entrypoint *[]string `json:"entrypoint"`
+	Cmd        *[]string `json:"cmd"`
+}
+
+// readConfigOverrides reads and parses the config overrides JSON file.
+func readConfigOverrides(filePath string) (*configOverrides, error) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("opening config overrides file: %w", err)
+	}
+	defer file.Close()
+
+	var overrides configOverrides
+	if err := json.NewDecoder(file).Decode(&overrides); err != nil {
+		return nil, fmt.Errorf("decoding config overrides file: %w", err)
+	}
+
+	return &overrides, nil
+}
+
+// applyStringOverride resolves a scalar config string field.
+//
+// When ov is non-nil, three-way semantics apply: the inheritFromBase sentinel
+// leaves the inherited (base) value in place, an empty string unsets the field,
+// and any other value overrides it. When ov is nil, the legacy flag value is used
+// with its historical two-way semantics (empty inherits, non-empty overrides).
+func applyStringOverride(field *string, ov *string, flagValue string) {
+	if ov != nil {
+		switch *ov {
+		case inheritFromBase:
+			// inherit: leave the base value in place
+		case "":
+			*field = "" // unset
+		default:
+			*field = *ov
+		}
+		return
+	}
+	if flagValue != "" {
+		*field = flagValue
+	}
+}
+
+// isPureInherit reports whether a list is exactly the inheritFromBase sentinel,
+// i.e. a plain "inherit from base" with no additional items. Such a list is a
+// no-op so that inheriting the base entrypoint does not clear an inherited cmd.
+func isPureInherit(list []string) bool {
+	return len(list) == 1 && list[0] == inheritFromBase
+}
+
+// expandInherit returns list with every inheritFromBase sentinel item replaced,
+// in place, by the items of base. A sentinel with no base expands to nothing.
+func expandInherit(list, base []string) []string {
+	out := make([]string, 0, len(list))
+	for _, item := range list {
+		if item == inheritFromBase {
+			out = append(out, base...)
+		} else {
+			out = append(out, item)
+		}
+	}
+	return out
 }
 
 // readConfigTemplates reads and parses the config templates JSON file
