@@ -50,6 +50,12 @@ var (
 	subjectDescriptor     string
 )
 
+// inheritFromBase is the sentinel value used by the image_manifest rule to
+// distinguish a config field that was left untouched (inherit the base image's
+// value) from one explicitly set to an empty value (unset the field). It matches
+// INHERIT_FROM_BASE in img/private/common/inherit.bzl.
+const inheritFromBase = "<inherit from base>"
+
 func ManifestProcess(_ context.Context, args []string) {
 	flagSet := flag.NewFlagSet("manifest", flag.ExitOnError)
 	flagSet.Usage = func() {
@@ -511,10 +517,10 @@ func overlayNewConfigValues(config *specv1.Image, layers []api.Descriptor, templ
 		config.RootFS.DiffIDs[i] = digest.Digest(layer.DiffID)
 	}
 
-	// Apply command-line config values
-	if user != "" {
-		config.Config.User = user
-	}
+	// Apply the image config value from the --user flag with three-way semantics:
+	// the INHERIT_FROM_BASE sentinel inherits the base value, an empty string
+	// unsets it, and any other value overrides it.
+	applyStringConfig(&config.Config.User, user)
 
 	// Apply environment variables from config templates or command line
 	envToApply := env
@@ -564,18 +570,38 @@ func overlayNewConfigValues(config *specv1.Image, layers []api.Descriptor, templ
 	// See: https://github.com/bazel-contrib/rules_img/issues/368
 	// See: https://github.com/bazel-contrib/rules_oci/issues/649
 	// See: https://github.com/google/go-containerregistry/blob/c3d1dcc932076c15b65b8b9acfff1d47ded2ebf9/cmd/crane/cmd/mutate.go#L107
-	if len(entrypoint) > 0 {
-		config.Config.Entrypoint = []string(entrypoint)
+	//
+	// Capture the inherited (base + fragment) entrypoint and cmd before either is
+	// modified, so a sentinel item can be expanded to the original base value even
+	// when setting the entrypoint has already cleared the inherited cmd.
+	baseEntrypoint := slices.Clone(config.Config.Entrypoint)
+	baseCmd := slices.Clone(config.Config.Cmd)
+
+	// entrypoint and cmd use three-way semantics driven by the flag values:
+	// a lone sentinel is a no-op (inherit), so inheriting the entrypoint does not
+	// clear an inherited cmd; an empty list unsets the field; any other list is
+	// set after expanding sentinel items against the captured base value. Setting
+	// the entrypoint clears cmd (Docker semantics), matching the historical rule.
+	switch {
+	case isPureInherit(entrypoint):
+		// inherit: leave the base entrypoint (and cmd) untouched
+	case len(entrypoint) == 0:
+		config.Config.Entrypoint = nil // unset; leave cmd to its own resolution
+	default:
+		config.Config.Entrypoint = expandInherit(entrypoint, baseEntrypoint)
 		config.Config.Cmd = nil
 	}
 
-	if len(cmd) > 0 {
-		config.Config.Cmd = []string(cmd)
+	switch {
+	case isPureInherit(cmd):
+		// inherit: leave cmd as-is (base value, or cleared by setting entrypoint)
+	case len(cmd) == 0:
+		config.Config.Cmd = nil // unset
+	default:
+		config.Config.Cmd = expandInherit(cmd, baseCmd)
 	}
 
-	if workingDir != "" {
-		config.Config.WorkingDir = workingDir
-	}
+	applyStringConfig(&config.Config.WorkingDir, workingDir)
 
 	// Apply labels from config templates or command line
 	labelsToApply := labels
@@ -598,9 +624,7 @@ func overlayNewConfigValues(config *specv1.Image, layers []api.Descriptor, templ
 		}
 	}
 
-	if stopSignal != "" {
-		config.Config.StopSignal = stopSignal
-	}
+	applyStringConfig(&config.Config.StopSignal, stopSignal)
 
 	return nil
 }
@@ -610,6 +634,42 @@ type ConfigTemplates struct {
 	Env         map[string]string `json:"env"`
 	Labels      map[string]string `json:"labels"`
 	Annotations map[string]string `json:"annotations"`
+}
+
+// applyStringConfig resolves a scalar config string field from its flag value
+// with three-way semantics: the inheritFromBase sentinel leaves the inherited
+// (base) value in place, an empty string unsets the field, and any other value
+// overrides it.
+func applyStringConfig(field *string, value string) {
+	switch value {
+	case inheritFromBase:
+		// inherit: leave the base value in place
+	case "":
+		*field = "" // unset
+	default:
+		*field = value
+	}
+}
+
+// isPureInherit reports whether a list is exactly the inheritFromBase sentinel,
+// i.e. a plain "inherit from base" with no additional items. Such a list is a
+// no-op so that inheriting the base entrypoint does not clear an inherited cmd.
+func isPureInherit(list []string) bool {
+	return len(list) == 1 && list[0] == inheritFromBase
+}
+
+// expandInherit returns list with every inheritFromBase sentinel item replaced,
+// in place, by the items of base. A sentinel with no base expands to nothing.
+func expandInherit(list, base []string) []string {
+	out := make([]string, 0, len(list))
+	for _, item := range list {
+		if item == inheritFromBase {
+			out = append(out, base...)
+		} else {
+			out = append(out, item)
+		}
+	}
+	return out
 }
 
 // readConfigTemplates reads and parses the config templates JSON file

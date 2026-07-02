@@ -5,6 +5,7 @@ load("//img/private:annotations_util.bzl", "extract_annotations_from_pull_info")
 load("//img/private:push_metadata.bzl", "process_deploy_specs")
 load("//img/private:stamp.bzl", "expand_or_write")
 load("//img/private/common:build.bzl", "TOOLCHAIN", "TOOLCHAINS")
+load("//img/private/common:inherit.bzl", "INHERIT_FROM_BASE")
 load("//img/private/common:layer_helper.bzl", "allow_tar_files", "calculate_layer_info", "extension_to_compression")
 load("//img/private/common:transitions.bzl", "normalize_layer_transition", "single_platform_transition")
 load("//img/private/config:defs.bzl", "TargetPlatformInfo")
@@ -388,9 +389,28 @@ def _image_manifest_impl(ctx):
 
     merged_env = dict(layer_env)
     merged_env.update(ctx.attr.env)
-    effective_entrypoint = ctx.attr.entrypoint if len(ctx.attr.entrypoint) > 0 else (layer_entrypoint if layer_entrypoint != None else [])
-    effective_cmd = ctx.attr.cmd if len(ctx.attr.cmd) > 0 else (layer_cmd if layer_cmd != None else [])
-    effective_working_dir = ctx.attr.working_dir if ctx.attr.working_dir else (layer_working_dir if layer_working_dir != None else "")
+
+    # entrypoint, cmd, and working_dir support three states, distinguished by the
+    # INHERIT_FROM_BASE sentinel (which is also their default value):
+    #   * left at the sentinel default -> defer to a non-empty layer-provided config
+    #     value if any, otherwise forward the sentinel so the tool inherits from the
+    #     base. (An empty layer value carries no opinion and inherits, matching the
+    #     historical behavior.)
+    #   * explicitly set (including to an empty value) -> forward verbatim, so an
+    #     empty value unsets the field and a value containing the sentinel expands
+    #     the base value in place (see img/private/common/inherit.bzl).
+    if ctx.attr.entrypoint == [INHERIT_FROM_BASE]:
+        effective_entrypoint = layer_entrypoint if layer_entrypoint else [INHERIT_FROM_BASE]
+    else:
+        effective_entrypoint = ctx.attr.entrypoint
+    if ctx.attr.cmd == [INHERIT_FROM_BASE]:
+        effective_cmd = layer_cmd if layer_cmd else [INHERIT_FROM_BASE]
+    else:
+        effective_cmd = ctx.attr.cmd
+    if ctx.attr.working_dir == INHERIT_FROM_BASE:
+        effective_working_dir = layer_working_dir if layer_working_dir else INHERIT_FROM_BASE
+    else:
+        effective_working_dir = ctx.attr.working_dir
 
     args.add("--os", os)
     args.add("--architecture", arch)
@@ -489,17 +509,20 @@ def _image_manifest_impl(ctx):
         inputs.append(ctx.file.env_file)
         args.add("--env-file", ctx.file.env_file.path)
 
-    # Add other image config attributes
-    if ctx.attr.user:
-        args.add("--user", ctx.attr.user)
+    # Image config value overrides (user, working_dir, stop_signal, entrypoint,
+    # cmd). The scalar flags are always passed -- even when empty -- so the tool
+    # can distinguish the INHERIT_FROM_BASE sentinel (inherit) from an explicit
+    # empty value (unset). For the list flags, the sentinel default emits a single
+    # --entrypoint/--cmd carrying the sentinel (inherit), while an explicit empty
+    # list emits no flags at all (unset); the tool applies the inherit/unset/expand
+    # semantics against the base image config (see cmd/manifest).
+    args.add("--user", ctx.attr.user)
     for entry in effective_entrypoint:
         args.add("--entrypoint", entry)
     for entry in effective_cmd:
         args.add("--cmd", entry)
-    if effective_working_dir:
-        args.add("--working-dir", effective_working_dir)
-    if ctx.attr.stop_signal:
-        args.add("--stop-signal", ctx.attr.stop_signal)
+    args.add("--working-dir", effective_working_dir)
+    args.add("--stop-signal", ctx.attr.stop_signal)
 
     structured_config = dict(
         architecture = arch,
@@ -639,7 +662,11 @@ image_manifest(
         ),
         "user": attr.string(
             doc = """The username or UID which is a platform-specific structure that allows specific control over which user the process run as.
-This acts as a default value to use when the value is not specified when creating a container.""",
+This acts as a default value to use when the value is not specified when creating a container.
+
+Defaults to `INHERIT_FROM_BASE`: the value is inherited from the base image. Set it to
+an explicit value to override, or to `""` to unset it (do not inherit from the base).""",
+            default = INHERIT_FROM_BASE,
         ),
         "env": attr.string_dict(
             doc = """Default environment variables to set when starting a container based on this image.
@@ -665,15 +692,30 @@ The `KEY=VALUE` forms split on the first `=` and trim surrounding whitespace.
 Values from the `env` attribute (or expanded templates) take precedence over the file.""",
         ),
         "entrypoint": attr.string_list(
-            doc = "A list of arguments to use as the command to execute when the container starts. These values act as defaults and may be replaced by an entrypoint specified when creating a container.",
-            default = [],
+            doc = """A list of arguments to use as the command to execute when the container starts. These values act as defaults and may be replaced by an entrypoint specified when creating a container.
+
+Defaults to `[INHERIT_FROM_BASE]`: the entrypoint is inherited from the base image (or,
+for `image_from_binary`, from the packaged binary). Set it to an explicit list to override,
+or to `[]` to unset it. An `INHERIT_FROM_BASE` item inside the list is replaced in place by
+the base image's entrypoint, so `[INHERIT_FROM_BASE, "--flag"]` appends `"--flag"` to it.""",
+            default = [INHERIT_FROM_BASE],
         ),
         "cmd": attr.string_list(
-            doc = "Default arguments to the entrypoint of the container. These values act as defaults and may be replaced by any specified when creating a container. If an Entrypoint value is not specified, then the first entry of the Cmd array SHOULD be interpreted as the executable to run.",
-            default = [],
+            doc = """Default arguments to the entrypoint of the container. These values act as defaults and may be replaced by any specified when creating a container. If an Entrypoint value is not specified, then the first entry of the Cmd array SHOULD be interpreted as the executable to run.
+
+Defaults to `[INHERIT_FROM_BASE]`: the value is inherited from the base image (or, for
+`image_from_binary`, from the packaged binary's `args`). Set it to an explicit list to
+override, or to `[]` to unset it. An `INHERIT_FROM_BASE` item inside the list is replaced in
+place by the base image's cmd, so `[INHERIT_FROM_BASE, "--flag"]` appends `"--flag"` to it.""",
+            default = [INHERIT_FROM_BASE],
         ),
         "working_dir": attr.string(
-            doc = "Sets the current working directory of the entrypoint process in the container. This value acts as a default and may be replaced by a working directory specified when creating a container.",
+            doc = """Sets the current working directory of the entrypoint process in the container. This value acts as a default and may be replaced by a working directory specified when creating a container.
+
+Defaults to `INHERIT_FROM_BASE`: the value is inherited from the base image (or, for
+`image_from_binary`, from the packaged binary). Set it to an explicit value to override, or
+to `""` to unset it (do not inherit from the base).""",
+            default = INHERIT_FROM_BASE,
         ),
         "labels": attr.string_dict(
             doc = """This field contains arbitrary metadata for the container.
@@ -747,7 +789,11 @@ Each annotation is subject to [template expansion](/docs/templating.md).
             allow_single_file = True,
         ),
         "stop_signal": attr.string(
-            doc = "This field contains the system call signal that will be sent to the container to exit. The signal can be a signal name in the format SIGNAME, for instance SIGKILL or SIGRTMIN+3.",
+            doc = """This field contains the system call signal that will be sent to the container to exit. The signal can be a signal name in the format SIGNAME, for instance SIGKILL or SIGRTMIN+3.
+
+Defaults to `INHERIT_FROM_BASE`: the value is inherited from the base image. Set it to an
+explicit value to override, or to `""` to unset it (do not inherit from the base).""",
+            default = INHERIT_FROM_BASE,
         ),
         "config_fragment": attr.label(
             doc = """Optional JSON file containing a partial OCI image config, which will be used as a base for the final image config.

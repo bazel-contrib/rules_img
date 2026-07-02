@@ -134,6 +134,7 @@ bzl_library(
         ":push_metadata",
         ":stamp",
         "//img/private/common:build",
+        "//img/private/common:inherit",
         "//img/private/common:layer_helper",
         "//img/private/common:transitions",
         "//img/private/config:defs",
