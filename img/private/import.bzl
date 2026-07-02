@@ -84,6 +84,7 @@ def _write_layer_info(ctx, manifest, config, history, layer_index, index_positio
     index_position_str = "" if index_position == None else str(index_position) + "_"
     layer_metadata = ctx.actions.declare_file(ctx.attr.name + "_{}{}_layer_metadata.json".format(index_position_str, layer_index))
     ctx.actions.write(layer_metadata, json.encode(metadata))
+
     return SingleLayerInfo(
         blob = _digest_to_file(ctx, digest),
         metadata = layer_metadata,
@@ -92,6 +93,7 @@ def _write_layer_info(ctx, manifest, config, history, layer_index, index_positio
         compact_stream = None,
         layer_input_files = None,
         layer_input_files_cas = None,
+        mtree = None,
     )
 
 def _write_manifest_descriptor(ctx, digest, manifest, platform, descriptor = None, index_position = None):

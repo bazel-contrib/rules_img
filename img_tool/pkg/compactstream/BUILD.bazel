@@ -19,6 +19,7 @@ go_test(
     name = "compactstream_test",
     srcs = [
         "reader_test.go",
+        "reconstruct_uncompressed_test.go",
         "writer_test.go",
     ],
     embed = [":compactstream"],

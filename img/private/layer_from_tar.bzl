@@ -2,7 +2,7 @@
 
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("//img/private/common:build.bzl", "TOOLCHAINS")
-load("//img/private/common:layer_helper.bzl", "allow_tar_files", "calculate_layer_info", "extension_to_compression", "optimize_layer", "recompress_layer")
+load("//img/private/common:layer_helper.bzl", "allow_tar_files", "build_layer_mtree", "calculate_layer_info", "extension_to_compression", "optimize_layer", "recompress_layer")
 load("//img/private/providers:layers_info.bzl", "LayersInfo")
 
 def _layer_from_tar_impl(ctx):
@@ -40,7 +40,8 @@ def _layer_from_tar_impl(ctx):
         fail("Unsupported compression algorithm: {}".format(target_compression))
 
     if not needs_rewrite:
-        # here, we can simply calculate the layer info (size, digest, etc.) and return
+        # here, we can simply calculate the layer info (size, digest, etc.) and return.
+        # The blob is the source tar as-is, so build its mtree here and pass it in.
         layer_info = calculate_layer_info(
             ctx = ctx,
             media_type = media_type,
@@ -48,9 +49,11 @@ def _layer_from_tar_impl(ctx):
             metadata_file = metadata_file,
             estargz = estargz_enabled,
             annotations = ctx.attr.annotations,
+            mtree = build_layer_mtree(ctx, ctx.attr.name, tar_blob = ctx.file.src),
         )
     elif not optimize:
         # here, we recompress the tar file and calculate the layer info
+        # (recompress_layer builds the mtree from the recompressed blob).
         layer_info = recompress_layer(
             ctx = ctx,
             media_type = media_type,
@@ -62,8 +65,8 @@ def _layer_from_tar_impl(ctx):
             annotations = ctx.attr.annotations,
         )
     else:
-        # here, we optimize, recompress the tar file,
-        # and calculate the layer info
+        # here, we optimize, recompress the tar file, and calculate the layer info
+        # (optimize_layer builds the mtree from the optimized blob).
         layer_info = optimize_layer(
             ctx = ctx,
             media_type = media_type,
@@ -82,6 +85,7 @@ def _layer_from_tar_impl(ctx):
         OutputGroupInfo(
             layer = depset([layer_info.blob]),
             metadata = depset([layer_info.metadata]),
+            mtree = depset([layer_info.mtree]),
         ),
         LayersInfo(layers = [layer_info]),
     ]
@@ -127,6 +131,10 @@ layer_from_tar(
     },
 )
 ```
+
+### Output groups
+
+- `mtree`: a single [mtree](https://man.freebsd.org/cgi/man.cgi?mtree(5)) text file
 """,
     attrs = {
         "src": attr.label(
@@ -171,6 +179,18 @@ When enabled, the layer will be optimized for lazy pulling and will be compatibl
         ),
         "_compression_level": attr.label(
             default = Label("//img/settings:compression_level"),
+            providers = [BuildSettingInfo],
+        ),
+        "_mtree_path_prefix": attr.label(
+            default = Label("//img/settings:mtree_path_prefix"),
+            providers = [BuildSettingInfo],
+        ),
+        "_mtree_options": attr.label(
+            default = Label("//img/settings:mtree_options"),
+            providers = [BuildSettingInfo],
+        ),
+        "_mtree_layer_layout": attr.label(
+            default = Label("//img/settings:mtree_layer_layout"),
             providers = [BuildSettingInfo],
         ),
     },

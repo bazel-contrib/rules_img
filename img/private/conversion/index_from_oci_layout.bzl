@@ -109,6 +109,7 @@ def _image_index_from_oci_layout(ctx):
                 compact_stream = None,
                 layer_input_files = None,
                 layer_input_files_cas = None,
+                mtree = None,
             )
             for i in range(len(layer_media_types))
         ]

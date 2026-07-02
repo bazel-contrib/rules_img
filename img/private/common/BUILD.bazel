@@ -4,7 +4,11 @@ bzl_library(
     name = "layer_helper",
     srcs = ["layer_helper.bzl"],
     visibility = ["//img:__subpackages__"],
-    deps = ["//img:providers"],
+    deps = [
+        ":build",
+        "//img:providers",
+        "@bazel_skylib//rules:common_settings",
+    ],
 )
 
 bzl_library(

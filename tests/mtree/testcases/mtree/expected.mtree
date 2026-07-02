@@ -1,0 +1,5 @@
+#mtree v2.0
+./etc/app/config.txt type=file size=17 mode=0644 uid=1000 uname=alice gid=1000 gname=devs sha256digest=31efeb783903a3a459a07f0fc59c900bc2f77a49297e5f4cadf89d7e1fc7fc16 time=1672531200 nlink=2
+./etc/app/special.txt type=file size=14 mode=0600 uid=4242 uname=svc gid=4243 gname=svcgrp sha256digest=1d7f354272f99ff6eeb96238c43d92a99a6d84f18976b8b0b420679e8d95d3ba time=1735689599 nlink=1
+./etc/app/config_dup.txt type=file size=17 mode=0644 uid=1000 uname=alice gid=1000 gname=devs sha256digest=31efeb783903a3a459a07f0fc59c900bc2f77a49297e5f4cadf89d7e1fc7fc16 time=1672531200 nlink=2
+./etc/app/current.txt type=link size=19 mode=0 uid=0 gid=0 time=0 link=/etc/app/config.txt nlink=1

@@ -21,6 +21,7 @@ FIELDS = dict(
     compact_stream = "File containing the compact stream (.cstream) for the layer, or None.",
     layer_input_files = "Depset of files that went into this layer, or None.",
     layer_input_files_cas = "Tree artifact (directory) with the layer's input files content-addressed at sha256/<hex>, used to reconstruct the layer from its compact stream, or None.",
+    mtree = "File containing an mtree(8) description of the layer's tar metadata, or None (for non-tar layers or shallow layers whose blob is unavailable).",
 )
 
 SingleLayerInfo = provider(

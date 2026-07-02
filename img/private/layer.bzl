@@ -153,6 +153,10 @@ image_layer(
     },
 )
 ```
+
+### Output groups
+
+- `mtree`: a single [mtree](https://man.freebsd.org/cgi/man.cgi?mtree(5)) text file
 """,
     attrs = {
         "srcs": attr.string_keyed_label_dict(

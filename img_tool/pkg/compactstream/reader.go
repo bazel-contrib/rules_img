@@ -124,6 +124,207 @@ func Reconstruct(ctx context.Context, index io.Reader, store BlobStore, output i
 	return nil
 }
 
+// ReconstructingReader is an io.Reader over the *uncompressed* layer tar
+// reconstructed from a compact stream: it interleaves the decompressed byte
+// stream (tar headers, inlined small files, and block padding) with the blobs
+// supplied by store at their recorded offsets. Pair it with NullBlobStore to
+// zero-fill the CAS-referenced content when the content store is unavailable, so
+// a standard archive/tar reader can still walk every header.
+//
+// It additionally tracks the current output offset and can report the digest a
+// compact stream recorded for a file's content, which lets a consumer attach
+// content digests to tar entries without a content store: for a CAS-referenced
+// file, RefDigestAt returns the recorded digest (the sha256 of the file content);
+// for an inlined file the content is present verbatim in the stream and can be
+// hashed by reading it through this reader.
+type ReconstructingReader struct {
+	ctx           context.Context
+	stream        io.Reader
+	streamCloser  io.Closer
+	refs          []CASReference
+	refByOffset   map[uint64]CASReference
+	store         BlobStore
+	outputPos     uint64
+	refIdx        int
+	blob          io.ReadCloser
+	blobRemaining int64
+	err           error
+}
+
+// NewReconstructingReader reads and validates the compact stream header and CAS
+// reference table from index, leaving index positioned at the byte stream, and
+// returns a reader that reconstructs the uncompressed tar on demand.
+func NewReconstructingReader(ctx context.Context, index io.Reader, store BlobStore) (*ReconstructingReader, error) {
+	header, err := ReadHeader(index)
+	if err != nil {
+		return nil, err
+	}
+	refs, err := readRefTable(index, header)
+	if err != nil {
+		return nil, err
+	}
+	stream, err := streamReader(index, header.StreamCompression)
+	if err != nil {
+		return nil, err
+	}
+	refByOffset := make(map[uint64]CASReference, len(refs))
+	for _, ref := range refs {
+		refByOffset[ref.Offset] = ref
+	}
+	r := &ReconstructingReader{
+		ctx:         ctx,
+		stream:      stream,
+		refs:        refs,
+		refByOffset: refByOffset,
+		store:       store,
+	}
+	if closer, ok := stream.(io.Closer); ok {
+		r.streamCloser = closer
+	}
+	return r, nil
+}
+
+// Offset returns the number of reconstructed (uncompressed) tar bytes produced so
+// far. After archive/tar's Reader.Next() returns, it equals the byte offset of
+// the current entry's content in the uncompressed tar, which is the key against
+// which RefDigestAt is queried.
+func (r *ReconstructingReader) Offset() int64 { return int64(r.outputPos) }
+
+// RefDigestAt reports the digest a CAS reference recorded for the content range
+// starting at offset and spanning size bytes, if such a reference exists. The
+// digest is the sha256 of the file content. It returns (nil, false) when the
+// content is not CAS-referenced (e.g. an inlined small file), in which case the
+// caller should hash the content read through this reader instead.
+func (r *ReconstructingReader) RefDigestAt(offset, size int64) ([]byte, bool) {
+	ref, ok := r.refByOffset[uint64(offset)]
+	if !ok || int64(ref.Size) != size {
+		return nil, false
+	}
+	return ref.Digest, true
+}
+
+func (r *ReconstructingReader) Read(p []byte) (int, error) {
+	if r.err != nil {
+		return 0, r.err
+	}
+	if len(p) == 0 {
+		return 0, nil
+	}
+
+	// Continue serving the current CAS blob region, if any.
+	if r.blobRemaining > 0 {
+		want := int64(len(p))
+		if want > r.blobRemaining {
+			want = r.blobRemaining
+		}
+		n, err := r.blob.Read(p[:want])
+		r.outputPos += uint64(n)
+		r.blobRemaining -= int64(n)
+		if r.blobRemaining == 0 {
+			closeErr := r.blob.Close()
+			r.blob = nil
+			if err == io.EOF {
+				err = nil
+			}
+			if err == nil {
+				err = closeErr
+			}
+		} else if err != nil {
+			if err == io.EOF {
+				err = fmt.Errorf("blob ended %d bytes short of its recorded size", r.blobRemaining)
+			}
+			r.err = err
+		}
+		return n, err
+	}
+
+	// Start serving a CAS blob if a reference begins at the current offset.
+	if r.refIdx < len(r.refs) && r.refs[r.refIdx].Offset == r.outputPos {
+		ref := r.refs[r.refIdx]
+		r.refIdx++
+		blob, err := r.store.ReaderForBlob(r.ctx, ref.Digest, int64(ref.Size))
+		if err != nil {
+			r.err = err
+			return 0, err
+		}
+		r.blob = blob
+		r.blobRemaining = int64(ref.Size)
+		return r.Read(p)
+	}
+
+	// Serve inline byte-stream bytes, capped so we stop exactly at the next
+	// reference boundary.
+	want := int64(len(p))
+	if r.refIdx < len(r.refs) {
+		if gap := int64(r.refs[r.refIdx].Offset - r.outputPos); gap >= 0 && gap < want {
+			want = gap
+		}
+	}
+	n, err := r.stream.Read(p[:want])
+	r.outputPos += uint64(n)
+	return n, err
+}
+
+// Close releases the byte-stream decoder and any in-flight CAS blob reader.
+func (r *ReconstructingReader) Close() error {
+	var err error
+	if r.blob != nil {
+		err = r.blob.Close()
+		r.blob = nil
+	}
+	if r.streamCloser != nil {
+		if cerr := r.streamCloser.Close(); err == nil {
+			err = cerr
+		}
+	}
+	return err
+}
+
+// ReconstructUncompressed rebuilds the *uncompressed* layer tar from a compact
+// stream by interleaving the decompressed byte stream with the blobs supplied
+// by store, writing the raw tar bytes to output. Unlike Reconstruct it performs
+// no re-compression and does not validate the compressed-stream digest: the
+// output is the plain tar, not the original compressed file.
+//
+// Pair it with NullBlobStore to recover only the tar structure (all headers,
+// any inlined small files, and tar block padding) when the content-addressed
+// blobs are unavailable; the omitted blob ranges are then filled with the right
+// number of zero bytes, so a standard archive/tar reader can walk every header
+// (skipping the zeroed bodies) without access to the content store.
+func ReconstructUncompressed(ctx context.Context, index io.Reader, store BlobStore, output io.Writer) error {
+	r, err := NewReconstructingReader(ctx, index, store)
+	if err != nil {
+		return err
+	}
+	defer r.Close()
+	_, err = io.Copy(output, r)
+	return err
+}
+
+// NullBlobStore is a BlobStore that returns an equal-length run of NUL bytes for
+// every requested blob, ignoring the digest. It lets ReconstructUncompressed
+// recover the tar structure from a compact stream alone, without the
+// content-addressed store: each omitted blob is replaced by zeros of the same
+// size, yielding a valid tar whose file bodies are zeroed. This is sufficient to
+// read all metadata (headers, link targets, sizes, modes, ...) with archive/tar,
+// but the file contents are not recoverable.
+type NullBlobStore struct{}
+
+func (NullBlobStore) ReaderForBlob(_ context.Context, _ []byte, size int64) (io.ReadCloser, error) {
+	return io.NopCloser(io.LimitReader(zeroReader{}, size)), nil
+}
+
+// zeroReader is an infinite source of NUL bytes. It zeroes the caller's buffer
+// (which may hold stale data from a previous read) and reports it fully read.
+type zeroReader struct{}
+
+func (zeroReader) Read(p []byte) (int, error) {
+	for i := range p {
+		p[i] = 0
+	}
+	return len(p), nil
+}
+
 // writeReconstructed writes the reconstructed (uncompressed) byte stream to dst
 // by interleaving the on-disk byte-stream gaps with the CAS-referenced blobs in
 // offset order. It streams the result: memory use is O(copy buffer), so it never

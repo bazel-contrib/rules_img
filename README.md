@@ -129,6 +129,23 @@ common --@rules_img//img/settings:experimental_compact_layers=enabled
 # size (in bytes) are embedded inline; larger files become CAS references. Set to
 # 0 to disable inlining. Only has an effect when compact layers are enabled.
 common --@rules_img//img/settings:experimental_compact_layers_inline_threshold=4096
+
+# Path prefix for entries in the layer `mtree` output group. "./" makes every
+# entry an unambiguous full-path entry (recommended); "" emits bare tar paths and
+# gives directory entries a trailing "/" so they still parse as full-path entries.
+common --@rules_img//img/settings:mtree_path_prefix=./
+
+# Comma-separated, ordered list of fields to include in the layer `mtree` output
+# group, on a best-effort basis. Supported: type, size, mode, uid, uname, gid,
+# gname, sha256, time, link, nlink, xattr.
+common --@rules_img//img/settings:mtree_options=type,size,mode,uid,uname,gid,gname,sha256,time,link,nlink
+
+# How the layer `mtree` output group is laid out. "tar" emits one entry per tar
+# entry in exact tar order (whiteouts kept, no synthesized directories).
+# "oci_layer_filesystem_applied_changeset" applies the layer as an OCI changeset
+# to an empty filesystem (synthesizing missing parent directories and applying
+# whiteouts) and serializes the resulting tree in a stable, sorted order.
+common --@rules_img//img/settings:mtree_layer_layout=tar
 ```
 
 </details>
