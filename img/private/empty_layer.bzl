@@ -30,6 +30,7 @@ def _empty_layer_impl(ctx):
             compact_stream = None,
             layer_input_files = None,
             layer_input_files_cas = None,
+            mtree = None,
         )]),
     ]
 

@@ -1,0 +1,24 @@
+load("@rules_img//img:layer.bzl", "layer_from_tar")
+load("//tests/mtree:defs.bzl", "mtree_changeset_golden_test")
+
+# gazelle:exclude_from_release
+
+exports_files(["layer.tar"])
+
+# layer.tar is a hand-crafted tar (see README.md) exercising every metadata field
+# and every structural feature a layer can carry. layer_from_tar passes it through
+# verbatim (compress = "none"), and mtree_changeset_golden_test builds the layer's
+# `mtree` output group with the layer layout pinned (via a transition) to
+# "oci_layer_filesystem_applied_changeset" and every field enabled, then diffs it
+# against expected.mtree.
+layer_from_tar(
+    name = "layer",
+    src = "layer.tar",
+    compress = "none",
+)
+
+mtree_changeset_golden_test(
+    name = "test",
+    golden = "expected.mtree",
+    layer = ":layer",
+)

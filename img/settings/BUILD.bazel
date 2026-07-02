@@ -204,3 +204,42 @@ int_flag(
     build_setting_default = 4096,
     visibility = ["//visibility:public"],
 )
+
+# Path prefix for entries in the layer `mtree` output group. "./" makes every
+# entry an unambiguous full-path entry (recommended). "" emits bare tar paths;
+# in that mode directory entries are given a trailing "/" so they still contain
+# a slash and are not parsed as relative entries.
+string_flag(
+    name = "mtree_path_prefix",
+    build_setting_default = "./",
+    values = [
+        "./",
+        "",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+# Comma-separated list of fields to include in the layer `mtree` output group, in
+# order, on a best-effort basis. Supported: type, size, mode, uid, uname, gid,
+# gname, sha256, time, link, nlink, xattr.
+string_flag(
+    name = "mtree_options",
+    build_setting_default = "type,size,mode,uid,uname,gid,gname,sha256,time,link,nlink",
+    visibility = ["//visibility:public"],
+)
+
+# How the layer `mtree` output group is laid out. "tar" emits one entry per tar
+# entry in exact tar order (whiteouts kept, no synthesized directories).
+# "oci_layer_filesystem_applied_changeset" applies the layer as an OCI changeset
+# to an empty filesystem (synthesizing missing parent directories and applying
+# whiteouts / opaque whiteouts) and serializes the resulting tree in a stable
+# sorted order.
+string_flag(
+    name = "mtree_layer_layout",
+    build_setting_default = "tar",
+    values = [
+        "tar",
+        "oci_layer_filesystem_applied_changeset",
+    ],
+    visibility = ["//visibility:public"],
+)

@@ -96,6 +96,7 @@ def _optimize_layer(ctx, layer, settings, manifest_position, layer_position):
         compact_stream = None,
         layer_input_files = None,
         layer_input_files_cas = None,
+        mtree = None,
     )
 
 def _optimize_layers(ctx, manifest, settings, manifest_position):

@@ -3,7 +3,7 @@
 load("@bazel_skylib//lib:paths.bzl", "paths")
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("//img/private/common:build.bzl", "TOOLCHAIN")
-load("//img/private/common:layer_helper.bzl", "compression_tuning_args", "layer_name")
+load("//img/private/common:layer_helper.bzl", "build_layer_mtree", "compression_tuning_args", "layer_name")
 load("//img/private/providers:layers_info.bzl", "LayersInfo")
 load("//img/private/providers:single_layer_info.bzl", "SingleLayerInfo")
 
@@ -233,7 +233,7 @@ def create_tar_single_layer(ctx, settings, name, extra_args = [], extra_inputs =
         extra_inputs: list of depset objects to merge with base inputs.
 
     Returns:
-        tuple of (SingleLayerInfo, out_file_or_None, metadata_file, compact_stream_file_or_None).
+        tuple of (SingleLayerInfo, out_file_or_None, metadata_file, compact_stream_file_or_None, mtree_file).
     """
     metadata_out = ctx.actions.declare_file(name + "_metadata.json")
     out = None
@@ -295,6 +295,14 @@ def create_tar_single_layer(ctx, settings, name, extra_args = [], extra_inputs =
     if settings.compact_layers:
         layer_input_files_cas = _build_input_files_cas(ctx, name, extra_inputs)
 
+    # Produce the mtree metadata description from whichever layer artifact exists.
+    # The mtree is built from tar headers only, so the compact-stream case needs
+    # no content and yields output identical to the materialized blob.
+    if out:
+        mtree_out = build_layer_mtree(ctx, name, tar_blob = out)
+    else:
+        mtree_out = build_layer_mtree(ctx, name, compact_stream = compact_stream_out)
+
     return (
         SingleLayerInfo(
             blob = out,
@@ -304,10 +312,12 @@ def create_tar_single_layer(ctx, settings, name, extra_args = [], extra_inputs =
             compact_stream = compact_stream_out,
             layer_input_files = layer_input_files,
             layer_input_files_cas = layer_input_files_cas,
+            mtree = mtree_out,
         ),
         out,
         metadata_out,
         compact_stream_out,
+        mtree_out,
     )
 
 def _input_file_cas_arg(f):
@@ -369,9 +379,10 @@ def create_tar_layer(ctx, settings, extra_args = [], extra_inputs = []):
     Returns:
         list of [DefaultInfo, OutputGroupInfo, LayersInfo].
     """
-    layer_info, out, metadata_out, compact_stream_out = create_tar_single_layer(ctx, settings, ctx.attr.name, extra_args, extra_inputs)
+    layer_info, out, metadata_out, compact_stream_out, mtree_out = create_tar_single_layer(ctx, settings, ctx.attr.name, extra_args, extra_inputs)
     output_groups = dict(
         metadata = depset([metadata_out]),
+        mtree = depset([mtree_out]),
     )
     if out:
         output_groups["layer"] = depset([out])

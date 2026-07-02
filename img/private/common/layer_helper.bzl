@@ -100,7 +100,55 @@ def compression_tuning_args(ctx, compression, estargz):
         tuned_args.extend(["--compression-level", level])
     return tuned_args
 
-def calculate_layer_info(*, ctx, media_type, tar_file, metadata_file, estargz, annotations = {}, digest_modes = ["digest", "diff_id"]):
+def build_layer_mtree(ctx, name, *, tar_blob = None, compact_stream = None):
+    """Produce an mtree spec describing the metadata of a tar layer.
+
+    Runs `img mtree` over either a materialized (possibly compressed) tar blob or
+    a compact stream, writing a single mtree text file describing the tar entries.
+    The path layout, included fields, and layer layout are controlled by the
+    //img/settings:mtree_path_prefix, :mtree_options, and :mtree_layer_layout
+    build settings (read from ctx.attr, so the rule must expose the matching
+    _mtree_* hidden attributes).
+
+    Exactly one of tar_blob or compact_stream must be set.
+
+    Args:
+        ctx: Rule context.
+        name: Base name for the output file (the result is name + ".mtree").
+        tar_blob: A layer tar File (optionally gzip/zstd compressed).
+        compact_stream: A compact stream (.cstream) File.
+
+    Returns:
+        The generated mtree File.
+    """
+    if (tar_blob == None) == (compact_stream == None):
+        fail("build_layer_mtree requires exactly one of tar_blob or compact_stream")
+
+    mtree_out = ctx.actions.declare_file(name + ".mtree")
+    args = ctx.actions.args()
+    args.add("mtree")
+    if tar_blob != None:
+        args.add("--tar", tar_blob)
+        input = tar_blob
+    else:
+        args.add("--cstream", compact_stream)
+        input = compact_stream
+    args.add("--output", mtree_out)
+    args.add("--path-prefix", ctx.attr._mtree_path_prefix[BuildSettingInfo].value)
+    args.add("--options", ctx.attr._mtree_options[BuildSettingInfo].value)
+    args.add("--layout", ctx.attr._mtree_layer_layout[BuildSettingInfo].value)
+
+    img_toolchain_info = ctx.toolchains[TOOLCHAIN].imgtoolchaininfo
+    ctx.actions.run(
+        outputs = [mtree_out],
+        inputs = [input],
+        executable = img_toolchain_info.tool_exe,
+        arguments = [args],
+        mnemonic = "LayerMtree",
+    )
+    return mtree_out
+
+def calculate_layer_info(*, ctx, media_type, tar_file, metadata_file, estargz, annotations = {}, digest_modes = ["digest", "diff_id"], mtree = None):
     """Calculates the layer info for a file.
 
     Args:
@@ -114,6 +162,10 @@ def calculate_layer_info(*, ctx, media_type, tar_file, metadata_file, estargz, a
             "digest" - sha256 of the file as-is (the blob digest).
             "diff_id" - sha256 of the uncompressed content (the OCI diff ID).
             "diff_id_annotation:<name>" - same as diff_id but stored as annotation <name>.
+        mtree: Optional mtree File to record on the returned SingleLayerInfo. This
+            function does not build it, because the input may be an arbitrary
+            (non-tar) blob; tar-based callers build it (see build_layer_mtree) and
+            pass it here.
 
     Returns:
         SingleLayerInfo provider with blob, metadata, and media type.
@@ -156,6 +208,7 @@ def calculate_layer_info(*, ctx, media_type, tar_file, metadata_file, estargz, a
         compact_stream = None,
         layer_input_files = None,
         layer_input_files_cas = None,
+        mtree = mtree,
     )
 
 def recompress_layer(*, ctx, media_type, tar_file, metadata_file, output, target_compression, estargz, annotations):
@@ -202,6 +255,7 @@ def recompress_layer(*, ctx, media_type, tar_file, metadata_file, output, target
         compact_stream = None,
         layer_input_files = None,
         layer_input_files_cas = None,
+        mtree = build_layer_mtree(ctx, ctx.label.name, tar_blob = output),
     )
 
 def optimize_layer(*, ctx, media_type, tar_file, metadata_file, output, target_compression, estargz, annotations):
@@ -249,4 +303,5 @@ def optimize_layer(*, ctx, media_type, tar_file, metadata_file, output, target_c
         compact_stream = None,
         layer_input_files = None,
         layer_input_files_cas = None,
+        mtree = build_layer_mtree(ctx, ctx.label.name, tar_blob = output),
     )

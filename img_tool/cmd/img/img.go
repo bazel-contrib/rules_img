@@ -22,6 +22,7 @@ import (
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/layer"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/manifest"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/manifestfromocilayout"
+	mtreecmd "github.com/bazel-contrib/rules_img/img_tool/cmd/mtree"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/ocilayout"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/optimize"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/pull"
@@ -47,6 +48,7 @@ Commands:
   layer                    creates a layer from files
   manifest                 creates an image manifest and config from layers
   manifest-from-oci-layout converts an OCI layout to an image manifest
+  mtree                    writes an mtree spec of a layer's metadata and merges mtree files
   oci-layout               assembles an OCI layout directory from manifest and layers
   optimize                 rewrites image metadata after layer optimization
   pull                     pulls an image from a registry
@@ -78,6 +80,8 @@ func Run(ctx context.Context, args []string) {
 		manifest.ManifestProcess(ctx, args[2:])
 	case "manifest-from-oci-layout":
 		manifestfromocilayout.ManifestFromOCILayoutProcess(ctx, args[2:])
+	case "mtree":
+		mtreecmd.MtreeProcess(ctx, args[2:])
 	case "index":
 		index.IndexProcess(ctx, args[2:])
 	case "index-from-oci-layout":
