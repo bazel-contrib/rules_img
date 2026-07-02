@@ -47,6 +47,7 @@ bzl_library(
         "//img/private:index",
         "//img/private:manifest",
         "//img/private:optimize",
+        "//img/private/common:inherit",
     ],
 )
 
