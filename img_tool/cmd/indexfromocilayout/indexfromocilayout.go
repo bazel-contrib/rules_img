@@ -362,9 +362,6 @@ func convertManifest(manifestDesc *specv1.Descriptor, manifestIdx int, arch, ope
 		}
 
 		// Create the metadata JSON from the existing descriptor
-		// Use digest as the name for anonymous layers from OCI layout
-		layerName := manifest.Layers[i].Digest.String()
-
 		metadataFile, err := os.Create(layerMetadataPath)
 		if err != nil {
 			return specv1.Descriptor{}, fmt.Errorf("creating metadata file for layer %d: %w", i, err)
@@ -372,7 +369,6 @@ func convertManifest(manifestDesc *specv1.Descriptor, manifestIdx int, arch, ope
 		defer metadataFile.Close()
 
 		if err := metadata.WriteLayerMetadata(
-			layerName,
 			config.RootFS.DiffIDs[i].String(),
 			manifest.Layers[i].MediaType,
 			manifest.Layers[i].Digest.String(),

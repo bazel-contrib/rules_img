@@ -236,9 +236,6 @@ func processOCILayout() error {
 		}
 
 		// Create the metadata JSON from the existing descriptor
-		// Use digest as the name for anonymous layers from OCI layout
-		layerName := manifest.Layers[i].Digest.String()
-
 		metadataFile, err := os.Create(layerMetadataPath)
 		if err != nil {
 			return fmt.Errorf("creating metadata file for layer %d: %w", i, err)
@@ -246,7 +243,6 @@ func processOCILayout() error {
 		defer metadataFile.Close()
 
 		if err := metadata.WriteLayerMetadata(
-			layerName,
 			config.RootFS.DiffIDs[i].String(),
 			manifest.Layers[i].MediaType,
 			manifest.Layers[i].Digest.String(),

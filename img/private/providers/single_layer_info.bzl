@@ -6,11 +6,12 @@ Information about a single layer as a component of a container image.
 
 _metadata_doc = """\
 File containing metadata about the layer blob as a JSON file with the following keys:
-    - name: A human readable name for this layer. This includes the label of the layer or another descriptor (for anonymous layers, including those coming from pulled images).
     - diff_id: The diff ID of the layer as a string. Example: sha256:1234567890abcdef.
     - mediaType: The media type of the layer as a string. Example: application/vnd.oci.image.layer.v1.tar+gzip.
     - digest: The sha256 hash of the layer as a string. Example: sha256:1234567890abcdef.
     - size: The size of the layer in bytes as an int.
+    - annotations: Optional map of string annotations for the layer.
+    - history: Optional list of OCI history entries recording how the layer was produced.
 """
 
 FIELDS = dict(

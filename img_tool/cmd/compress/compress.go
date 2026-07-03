@@ -18,7 +18,7 @@ import (
 )
 
 var (
-	layerName          string
+	layerHistory       string
 	sourceFormat       string
 	format             string
 	estargzFlag        bool
@@ -33,7 +33,7 @@ func CompressProcess(ctx context.Context, args []string) {
 	flagSet := flag.NewFlagSet("compress", flag.ExitOnError)
 	flagSet.Usage = func() {
 		fmt.Fprintf(flagSet.Output(), "(Re-)compresses a layer to the chosen format.\n\n")
-		fmt.Fprintf(flagSet.Output(), "Usage: img compress [--name name] [--source-format format] [--format format] [--metadata=metadata_output_file] [input] [output]\n")
+		fmt.Fprintf(flagSet.Output(), "Usage: img compress [--history created_by] [--source-format format] [--format format] [--metadata=metadata_output_file] [input] [output]\n")
 		flagSet.PrintDefaults()
 		examples := []string{
 			"img compress --format gzip layer.tar layer.tgz",
@@ -45,7 +45,7 @@ func CompressProcess(ctx context.Context, args []string) {
 		}
 		os.Exit(1)
 	}
-	flagSet.StringVar(&layerName, "name", "", `Optional name of the layer. Defaults to digest.`)
+	flagSet.StringVar(&layerHistory, "history", "", `Optional created_by string recorded in the layer's history (e.g. "bazel build //pkg:target"). Defaults to a "history missing" marker. Ignored when --source-metadata carries history.`)
 	flagSet.StringVar(&sourceFormat, "source-format", "", `The format of the source layer. Can be "tar" or "gzip".`)
 	flagSet.StringVar(&format, "format", "", `The format of the output layer. Can be "tar" or "gzip".`)
 	flagSet.BoolVar(&estargzFlag, "estargz", false, `Use estargz format for compression. This creates seekable gzip streams optimized for lazy pulling.`)
@@ -53,7 +53,7 @@ func CompressProcess(ctx context.Context, args []string) {
 	flagSet.IntVar(&compressionLevelFlag, "compression-level", -1, `Compression level. For gzip: 0-9. If unset, use library default.`)
 	flagSet.Var(&annotations, "annotation", `Add an annotation as key=value. Can be specified multiple times.`)
 	flagSet.StringVar(&metadataOutputFile, "metadata", "", `Write the metadata to the specified file. The metadata is a JSON file containing info needed to use the layer as part of an OCI image.`)
-	flagSet.StringVar(&sourceMetadataFile, "source-metadata", "", `Read existing layer metadata and preserve its name and annotations in the output metadata.`)
+	flagSet.StringVar(&sourceMetadataFile, "source-metadata", "", `Read existing layer metadata and preserve its annotations and history in the output metadata.`)
 
 	if err := flagSet.Parse(args); err != nil {
 		flagSet.Usage()
@@ -202,17 +202,6 @@ func readSourceMetadata(filePath string) (*api.Descriptor, error) {
 }
 
 func writeMetadata(compressorState api.AppenderState, annotations map[string]string, mediaType string, outputFile io.Writer, sourceMetadata *api.Descriptor) error {
-	// Capture the user-provided --name before applying the digest/source fallback,
-	// so a missing name is recorded as "history missing" rather than a digest.
-	rawName := layerName
-	if len(layerName) == 0 {
-		if sourceMetadata != nil && sourceMetadata.Name != "" {
-			layerName = sourceMetadata.Name
-		} else {
-			layerName = fmt.Sprintf("sha256:%x", compressorState.OuterHash)
-		}
-	}
-
 	// Merge user annotations with layer annotations from the appender state
 	mergedAnnotations := make(map[string]string)
 	if sourceMetadata != nil {
@@ -237,15 +226,14 @@ func writeMetadata(compressorState api.AppenderState, annotations map[string]str
 		mergedAnnotations[k] = v
 	}
 
-	// Preserve history from the source layer if it exists, otherwise record that
-	// this layer was produced by a Bazel build.
-	history := api.BazelLayerHistory(rawName)
+	// Preserve history from the source layer if it exists, otherwise record the
+	// created_by from the user-provided --history.
+	history := api.LayerHistory(layerHistory)
 	if sourceMetadata != nil && len(sourceMetadata.History) > 0 {
 		history = sourceMetadata.History
 	}
 
 	metadata := api.Descriptor{
-		Name:        layerName,
 		DiffID:      fmt.Sprintf("sha256:%x", compressorState.ContentHash),
 		MediaType:   mediaType,
 		Digest:      fmt.Sprintf("sha256:%x", compressorState.OuterHash),

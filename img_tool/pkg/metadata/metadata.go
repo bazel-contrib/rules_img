@@ -12,12 +12,11 @@ import (
 )
 
 // WriteLayerMetadata writes layer metadata in the format expected by SingleLayerInfo provider.
-// The format includes: name, diff_id, mediaType, digest, size, annotations, and history.
+// The format includes: diff_id, mediaType, digest, size, annotations, and history.
 //
-// When history is empty, a synthetic single entry {created_by: name} is written so every
-// layer carries at least a created_by marker.
+// When history is empty, a synthetic single entry {created_by: "history missing"} is
+// written so every layer carries at least a created_by marker.
 func WriteLayerMetadata(
-	name string,
 	diffID string,
 	mediaType string,
 	digest string,
@@ -40,11 +39,10 @@ func WriteLayerMetadata(
 	}
 
 	if len(history) == 0 {
-		history = []api.History{{CreatedBy: name}}
+		history = api.LayerHistory("")
 	}
 
 	metadata := api.Descriptor{
-		Name:        name,
 		DiffID:      diffID,
 		MediaType:   mediaType,
 		Digest:      digest,

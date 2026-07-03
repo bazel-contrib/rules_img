@@ -17,7 +17,7 @@ extension_to_compression = {
 }
 
 def layer_name(label):
-    """Returns a label's string form for use as a layer name and history created_by.
+    """Returns a label's string form for use as a layer's history created_by.
 
     For a target in the main repository, Bazel's canonical label string carries a
     leading canonical-repository marker before the "//"; this strips that marker so
@@ -38,6 +38,21 @@ def layer_name(label):
     if name.startswith(canonical_marker + "//"):
         name = name.removeprefix(canonical_marker)
     return name
+
+def layer_history(name):
+    """Returns the created_by string recorded in a Bazel-built layer's history.
+
+    The img tool records the value of its `--history` flag verbatim as the layer's
+    history entry; the "bazel build" prefix is assembled here rather than in the
+    tool so the tool stays agnostic about how the layer was produced.
+
+    Args:
+        name: Human-readable layer name, typically `layer_name(ctx.label)`.
+
+    Returns:
+        The string "bazel build <name>".
+    """
+    return "bazel build " + name
 
 def compression_tuning_args(ctx, compression, estargz):
     """Compression tuning arguments for img tools based on build mode.
@@ -268,7 +283,7 @@ def calculate_layer_info(*, ctx, media_type, tar_file, metadata_file, estargz, a
     args = ctx.actions.args()
     args.add("--digest=sha256")
     args.add("--encoding=layer-metadata")
-    args.add("--name", layer_name(ctx.label))
+    args.add("--history", layer_history(layer_name(ctx.label)))
     args.add("--media-type", media_type)
     for mode in digest_modes:
         args.add("--digest-mode", mode)
@@ -325,7 +340,7 @@ def recompress_layer(*, ctx, media_type, tar_file, metadata_file, output, target
     """
     args = ctx.actions.args()
     args.add("compress")
-    args.add("--name", layer_name(ctx.label))
+    args.add("--history", layer_history(layer_name(ctx.label)))
     args.add("--format", target_compression)
     if estargz:
         args.add("--estargz")
@@ -374,7 +389,7 @@ def optimize_layer(*, ctx, media_type, tar_file, metadata_file, output, target_c
     inputs = [tar_file]
     args = ctx.actions.args()
     args.add("layer")
-    args.add("--name", ctx.attr.name)
+    args.add("--history", layer_history(ctx.attr.name))
     args.add("--format", target_compression)
     if estargz:
         args.add("--estargz")

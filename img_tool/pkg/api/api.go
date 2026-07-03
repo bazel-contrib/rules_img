@@ -85,19 +85,18 @@ type History struct {
 	EmptyLayer bool `json:"empty_layer,omitempty"`
 }
 
-// BazelLayerHistory returns the history for a layer produced by a Bazel build of
-// the given target, e.g. created_by "bazel build //pkg:target". When the target
-// name is empty (no --name was provided), it records a "history missing" marker.
-func BazelLayerHistory(target string) []History {
-	createdBy := "history missing"
-	if target != "" {
-		createdBy = "bazel build " + target
+// LayerHistory returns the history for a layer whose creating command is
+// createdBy (e.g. "bazel build //pkg:target", assembled by the caller). When
+// createdBy is empty (no --history was provided), it records a "history missing"
+// marker so every layer carries at least a created_by entry.
+func LayerHistory(createdBy string) []History {
+	if createdBy == "" {
+		createdBy = "history missing"
 	}
 	return []History{{CreatedBy: createdBy}}
 }
 
 type Descriptor struct {
-	Name        string            `json:"name,omitempty"`
 	DiffID      string            `json:"diff_id,omitempty"`
 	MediaType   string            `json:"mediaType"`
 	Digest      string            `json:"digest"`

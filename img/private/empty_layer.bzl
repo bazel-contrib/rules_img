@@ -7,7 +7,6 @@ def _empty_layer_impl(ctx):
     blob_data = "{}"
     media_type = "application/vnd.oci.empty.v1+json"
     metadata = dict(
-        name = "empty",
         mediaType = media_type,
         digest = "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         size = len(blob_data),
