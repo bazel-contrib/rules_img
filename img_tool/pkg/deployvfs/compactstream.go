@@ -7,11 +7,39 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/api"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/cas"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/compactstream"
 )
+
+// layerFromOCILayoutCompactStream reconstructs a layer from a compact stream stored
+// inside an explicit OCI layout directory (--oci-layout). The stream is looked up at
+// <layout>/blobs/<algo>/<hex>.cstream. CAS references embedded in the stream are
+// resolved against the same layout's blobs directory (blobs/sha256/<hex>) when the
+// referenced blob is present there, falling back to the disk cache / remote cache
+// (see casDirStore). This lets an OCI layout be a self-contained deploy source.
+func (b *Builder) layerFromOCILayoutCompactStream(desc api.Descriptor) (blobEntry, error) {
+	if len(b.ociLayouts) == 0 {
+		return blobEntry{}, &BlobSourceError{Source: "OCI layout compact stream", Digest: desc.Digest, Kind: BlobSourceUnconfigured, Message: "no OCI layouts configured"}
+	}
+	var checkedPaths []string
+	for _, layoutPath := range b.ociLayouts {
+		compactStreamPath := sparseLayoutBlobPathInDir(layoutPath, desc.Digest) + ".cstream"
+		checkedPaths = append(checkedPaths, compactStreamPath)
+		if _, err := os.Stat(compactStreamPath); err != nil {
+			continue
+		}
+		// The layout's blobs directory doubles as the content-addressed input
+		// directory: CAS references (addressed by sha256) are resolved from
+		// blobs/sha256/<hex> when present. casDirStore falls back to the disk /
+		// remote cache for blobs the layout does not ship.
+		casDirPath := filepath.Join(layoutPath, "blobs")
+		return b.layerFromCompactStream(compactStreamPath, casDirPath, desc), nil
+	}
+	return blobEntry{}, &BlobSourceError{Source: "OCI layout compact stream", Digest: desc.Digest, Kind: BlobSourceBlobMissing, Message: fmt.Sprintf("not found in %d OCI layout(s) (checked: %s)", len(b.ociLayouts), strings.Join(checkedPaths, ", "))}
+}
 
 // layerFromRunfilesCompactStream reconstructs a layer from its compact stream (the
 // .cstream in the runfiles sparse OCI layout). The layer's content-addressed input

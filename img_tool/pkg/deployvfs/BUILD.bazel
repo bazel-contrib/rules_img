@@ -29,5 +29,6 @@ go_test(
     deps = [
         "//pkg/api",
         "//pkg/cas",
+        "//pkg/compactstream",
     ],
 )
