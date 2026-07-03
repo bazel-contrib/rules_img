@@ -26,7 +26,7 @@ import (
 
 func LayerProcess(ctx context.Context, args []string) {
 	annotations := make(annotationsFlag)
-	var layerName string
+	var layerHistory string
 	var annotationsFile string
 	var addFiles addFiles
 	var addFromFile addFromFileArgs
@@ -71,7 +71,7 @@ func LayerProcess(ctx context.Context, args []string) {
 		}
 		os.Exit(1)
 	}
-	flagSet.StringVar(&layerName, "name", "", `Optional name of the layer. Defaults to digest.`)
+	flagSet.StringVar(&layerHistory, "history", "", `Optional created_by string recorded in the layer's history (e.g. "bazel build //pkg:target"). Defaults to a "history missing" marker.`)
 	flagSet.Var(&addFiles, "add", `Add a file to the image layer. The parameter is a string of the form <path_in_image>=<file> where <path_in_image> is the path in the image and <file> is the path in the host filesystem.`)
 	flagSet.Var(&addFromFile, "add-from-file", `Add all files listed in the parameter file to the image layer. The parameter file is usually written by Bazel.
 The file contains one line per file, where each line contains a path in the image and a path in the host filesystem, separated by a a null byte and a single character indicating the type of the file.
@@ -313,7 +313,7 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 			}
 		}()
 
-		if err := writeMetadata(layerName, compressionAlgorithm, estargzFlag, mediaTypeFlag, annotations, compressorState, metadataOutputFile); err != nil {
+		if err := writeMetadata(layerHistory, compressionAlgorithm, estargzFlag, mediaTypeFlag, annotations, compressorState, metadataOutputFile); err != nil {
 			fmt.Fprintf(os.Stderr, "Writing metadata: %v\n", err)
 			os.Exit(1)
 		}
@@ -576,13 +576,10 @@ func writeLayer(recorder tree.Recorder, addFiles addFiles, importTars importTars
 	return nil
 }
 
-func writeMetadata(name string, compressionAlgorithm api.CompressionAlgorithm, useEstargz bool, mediaTypeOverride string, annotations map[string]string, compressorState api.AppenderState, outputFile io.Writer) error {
-	// Record history from the user-provided --name; a missing name becomes
-	// "history missing" (BazelLayerHistory), independent of the Name fallback below.
-	history := api.BazelLayerHistory(name)
-	if len(name) == 0 {
-		name = fmt.Sprintf("sha256:%x", compressorState.OuterHash)
-	}
+func writeMetadata(history string, compressionAlgorithm api.CompressionAlgorithm, useEstargz bool, mediaTypeOverride string, annotations map[string]string, compressorState api.AppenderState, outputFile io.Writer) error {
+	// Record the created_by history from the user-provided --history; a missing
+	// value becomes "history missing" (LayerHistory).
+	layerHistory := api.LayerHistory(history)
 	var mediaType string
 	if mediaTypeOverride != "" {
 		mediaType = mediaTypeOverride
@@ -611,13 +608,12 @@ func writeMetadata(name string, compressionAlgorithm api.CompressionAlgorithm, u
 	}
 
 	return metadata.WriteLayerMetadata(
-		name,
 		fmt.Sprintf("sha256:%x", compressorState.ContentHash),
 		mediaType,
 		fmt.Sprintf("sha256:%x", compressorState.OuterHash),
 		compressorState.CompressedSize,
 		mergedAnnotations,
-		history,
+		layerHistory,
 		outputFile,
 	)
 }

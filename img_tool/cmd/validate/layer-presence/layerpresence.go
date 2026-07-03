@@ -81,12 +81,12 @@ func LayerPresenceProcess(_ context.Context, args []string) {
 		if ok {
 			continue
 		}
-		fmt.Fprintf(output, "layer[%d] %s:\n", layerPresence.index, layerPresence.metadata.Name)
+		fmt.Fprintf(output, "layer[%d] %s:\n", layerPresence.index, layerPresence.metadata.Digest)
 		for _, missing := range layerPresence.missingLayers {
-			fmt.Fprintf(output, "  depends on layer %s, which is missing from the image\n", missing.Name)
+			fmt.Fprintf(output, "  depends on layer %s, which is missing from the image\n", missing.Digest)
 		}
 		for _, misordered := range layerPresence.misorderedLayers {
-			fmt.Fprintf(output, "  depends on layer %s, which is present but needs to be placed earlier in the list of layers\n", misordered.Name)
+			fmt.Fprintf(output, "  depends on layer %s, which is present but needs to be placed earlier in the list of layers\n", misordered.Digest)
 		}
 	}
 	os.Exit(1)

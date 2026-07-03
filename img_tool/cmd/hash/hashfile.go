@@ -238,12 +238,6 @@ func writeHashOutput(hashBytes []byte, req *hashRequest, sandboxDir string, laye
 
 // writeLayerMetadata writes layer metadata to a JSON file using precomputed data.
 func writeLayerMetadata(compressedHash []byte, meta *layerMetadata, req *hashRequest, outputPath string) (retErr error) {
-	// Build layer name
-	layerName := req.name
-	if layerName == "" {
-		layerName = fmt.Sprintf("sha256:%x", compressedHash)
-	}
-
 	// Use override media type (e.g. for Helm charts) or infer from layer format
 	mediaType := req.mediaType
 	if mediaType == "" {
@@ -269,13 +263,12 @@ func writeLayerMetadata(compressedHash []byte, meta *layerMetadata, req *hashReq
 
 	// Create descriptor
 	descriptor := api.Descriptor{
-		Name:        layerName,
 		DiffID:      diffID,
 		MediaType:   mediaType,
 		Digest:      fmt.Sprintf("sha256:%x", compressedHash),
 		Size:        meta.compressedSize,
 		Annotations: mergedAnnotations,
-		History:     api.BazelLayerHistory(req.name),
+		History:     api.LayerHistory(req.history),
 	}
 
 	// Write JSON output

@@ -59,23 +59,11 @@ def _write_layer_info(ctx, manifest, config, history, layer_index, index_positio
     if not diff_id.startswith("sha256:"):
         fail("invalid diff_id: {}".format(diff_id))
 
-    if index_position == None:
-        name = """{} :: layer[{}]""".format(ctx.label, layer_index)
-    else:
-        name = """{} :: manifest[{}] < os = {}, architecture = {} > :: layer[{}]""".format(
-            ctx.label,
-            index_position,
-            config.get("os", "unknown"),
-            config.get("architecture", "unknown"),
-            layer_index,
-        )
-
     if history and layer_index < len(history):
         layer_history = history[layer_index]
     else:
         layer_history = []
     metadata = dict(
-        name = name,
         diff_id = diff_id,
         mediaType = media_type,
         digest = digest,
