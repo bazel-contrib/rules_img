@@ -30,6 +30,7 @@ This is populated for layers that originate from a pulled base image (see
 deploy time a missing blob can be fetched from its original source registry. It is
 an empty list for layers that are built locally and have no upstream origin.
 """,
+    mtree = "File containing an mtree(8) description of the layer's tar metadata, or None (for non-tar layers or shallow layers whose blob is unavailable).",
 )
 
 SingleLayerInfo = provider(

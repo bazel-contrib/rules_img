@@ -66,6 +66,10 @@ image_layer(
 )
 ```
 
+### Output groups
+
+- `mtree`: a single [mtree](https://man.freebsd.org/cgi/man.cgi?mtree(5)) text file
+
 **ATTRIBUTES**
 
 
@@ -158,6 +162,10 @@ layer_from_binary(
     include_runfiles = False,
 )
 ```
+
+### Output groups
+
+- `mtree`: one [mtree](https://man.freebsd.org/cgi/man.cgi?mtree(5)) text file per produced layer
 
 **ATTRIBUTES**
 
@@ -282,6 +290,10 @@ layer_from_tar(
     },
 )
 ```
+
+### Output groups
+
+- `mtree`: a single [mtree](https://man.freebsd.org/cgi/man.cgi?mtree(5)) text file
 
 **ATTRIBUTES**
 

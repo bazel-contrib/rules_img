@@ -1,0 +1,14 @@
+#mtree v2.0
+./etc type=dir
+./etc/app type=dir
+./etc/app/config.txt type=file size=17 mode=0644 uid=1000 uname=alice gid=1000 gname=devs sha256digest=31efeb783903a3a459a07f0fc59c900bc2f77a49297e5f4cadf89d7e1fc7fc16 time=1672531200 nlink=2
+./etc/app/config_dup.txt type=file size=17 mode=0644 uid=1000 uname=alice gid=1000 gname=devs sha256digest=31efeb783903a3a459a07f0fc59c900bc2f77a49297e5f4cadf89d7e1fc7fc16 time=1672531200 nlink=2
+./etc/app/current.txt type=link size=19 mode=0 uid=0 gid=0 time=0 link=/etc/app/config.txt nlink=1
+./etc/app/extra.txt type=file size=13 mode=0640 uid=2000 uname=svc gid=2000 gname=svc sha256digest=e0ca17f27199e4d63d2137bab37b43b829fe9783a1b3b1be81253c8b97776d20 time=1717200000 nlink=1
+./etc/app/shared.txt type=file size=18 mode=0640 uid=2000 uname=svc gid=2000 gname=svc sha256digest=09e3a0b90d3b626b0ca34faf8de5a3a42c97124a3a6787461ba011c69864319a time=1717200000 nlink=1
+./opt type=dir
+./opt/data.txt type=file size=13 mode=0640 uid=2000 uname=svc gid=2000 gname=svc sha256digest=65df5ea47c47fe2e1534835d36a1a98386bed25b197943ac80bf80aa9c41019a time=1717200000 nlink=1
+./usr type=dir
+./usr/local type=dir
+./usr/local/bin type=dir
+./usr/local/bin/tool type=file size=18 mode=0644 uid=1000 uname=alice gid=1000 gname=devs sha256digest=299001868fb8c02fd431c336c6d058f5558c5dff5b5af5e6fe04b870a6a9cbba time=1672531200 nlink=1

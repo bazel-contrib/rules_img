@@ -11,8 +11,10 @@ bzl_library(
         ":manifest_media_type",
         "//img:providers",
         "//img/private/common:build",
+        "//img/private/common:layer_helper",
         "//img/private/common:sparse_oci_layout",
         "//img/private/common:transitions",
+        "@bazel_skylib//rules:common_settings",
     ],
 )
 

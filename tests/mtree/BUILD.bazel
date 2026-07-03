@@ -1,0 +1,7 @@
+# gazelle:exclude_from_release
+
+filegroup(
+    name = "all_files",
+    srcs = glob(["**"]),
+    visibility = ["//img/private/release:__subpackages__"],
+)

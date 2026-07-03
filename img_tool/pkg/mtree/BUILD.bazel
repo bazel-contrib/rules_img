@@ -1,0 +1,20 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "mtree",
+    srcs = ["mtree.go"],
+    importpath = "github.com/bazel-contrib/rules_img/img_tool/pkg/mtree",
+    visibility = ["//visibility:public"],
+    deps = [
+        "@com_github_klauspost_compress//zstd",
+        "@com_github_vbatts_go_mtree//:go-mtree",
+        "@com_github_vbatts_go_mtree//pkg/govis",
+    ],
+)
+
+go_test(
+    name = "mtree_test",
+    srcs = ["mtree_test.go"],
+    embed = [":mtree"],
+    deps = ["@com_github_klauspost_compress//zstd"],
+)

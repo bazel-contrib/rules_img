@@ -99,6 +99,7 @@ def _optimize_layer(ctx, layer, settings, manifest_position, layer_position):
         # Recompression changes the blob digest, so the original upstream sources
         # no longer serve this blob.
         sources = [],
+        mtree = None,
     )
 
 def _optimize_layers(ctx, manifest, settings, manifest_position):

@@ -240,6 +240,7 @@ def _create_grouped_layers(ctx, settings, exe, path_in_image, ordered_groups, ru
     all_outs = []
     all_metadata = []
     all_compact_streams = []
+    all_mtrees = []
     default_info = ctx.attr.binary[DefaultInfo]
     content_prefix = _normalize_path(runfiles_config.runfiles_content_path)
 
@@ -276,13 +277,14 @@ def _create_grouped_layers(ctx, settings, exe, path_in_image, ordered_groups, ru
         if i == executable_group_index:
             _append_binary_args(ctx, exe, path_in_image, ordered_groups, None, runfiles_config, content_prefix, extra_args, extra_inputs, default_info.files)
 
-        layer_info, out, metadata, compact_stream = create_tar_single_layer(ctx, settings, layer_name, extra_args, extra_inputs)
+        layer_info, out, metadata, compact_stream, mtree = create_tar_single_layer(ctx, settings, layer_name, extra_args, extra_inputs)
         all_layers.append(layer_info)
         if out:
             all_outs.append(out)
         all_metadata.append(metadata)
         if compact_stream:
             all_compact_streams.append(compact_stream)
+        all_mtrees.append(mtree)
 
     if executable_group_index < 0:
         bin_layer_name = "{}_{}".format(ctx.attr.name, len(ordered_groups))
@@ -290,16 +292,18 @@ def _create_grouped_layers(ctx, settings, exe, path_in_image, ordered_groups, ru
         bin_extra_inputs = []
         _append_binary_args(ctx, exe, path_in_image, ordered_groups, default_info.default_runfiles, runfiles_config, content_prefix, bin_extra_args, bin_extra_inputs, default_info.files)
 
-        layer_info, out, metadata, compact_stream = create_tar_single_layer(ctx, settings, bin_layer_name, bin_extra_args, bin_extra_inputs)
+        layer_info, out, metadata, compact_stream, mtree = create_tar_single_layer(ctx, settings, bin_layer_name, bin_extra_args, bin_extra_inputs)
         all_layers.append(layer_info)
         if out:
             all_outs.append(out)
         all_metadata.append(metadata)
         if compact_stream:
             all_compact_streams.append(compact_stream)
+        all_mtrees.append(mtree)
 
     output_groups = dict(
         metadata = depset(all_metadata),
+        mtree = depset(all_mtrees),
     )
     if all_outs:
         output_groups["layer"] = depset(all_outs)
@@ -559,6 +563,10 @@ layer_from_binary(
     include_runfiles = False,
 )
 ```
+
+### Output groups
+
+- `mtree`: one [mtree](https://man.freebsd.org/cgi/man.cgi?mtree(5)) text file per produced layer
 """,
     attrs = {
         "binary": attr.label(
