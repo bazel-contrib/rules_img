@@ -1,0 +1,58 @@
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@rules_img//img:image.bzl", "image_manifest")
+load("@rules_img//img:layer.bzl", "file_metadata", "image_layer")
+load("//tests/mtree:defs.bzl", "image_mtree_golden_test")
+
+# gazelle:exclude_from_release
+
+# base_layer.tar is a raw tar (see README.md) exposed via a filegroup, so
+# `base_image` treats it as a DefaultInfo layer with a blob but no precomputed
+# mtree -- structurally identical to a layer of a *pulled* image.
+filegroup(
+    name = "raw_base_layer",
+    srcs = ["base_layer.tar"],
+)
+
+# base_image stands in for a pulled/imported base: its ImageManifestInfo carries a
+# layer that has a blob but no mtree.
+image_manifest(
+    name = "base_image",
+    layers = [":raw_base_layer"],
+)
+
+write_file(
+    name = "top_txt",
+    out = "top.txt",
+    content = ["top layer file\n"],
+)
+
+# A normal image_layer, which DOES carry its own mtree.
+image_layer(
+    name = "top_layer",
+    srcs = {"/usr/bin/top-tool": ":top_txt"},
+    default_metadata = file_metadata(
+        gid = 1000,
+        gname = "devs",
+        mode = "0644",
+        mtime = "2023-01-01T00:00:00Z",
+        uid = 1000,
+        uname = "alice",
+    ),
+)
+
+# The image under test: its base contributes a blob-only (no mtree) layer whose
+# mtree image_manifest renders on the fly, and its own top_layer contributes a
+# rule-built mtree. image_mtree_golden_test asserts the merged changeset contains
+# BOTH (base layer first, then the top layer), proving mtree works for pulled-style
+# base-image layers and that on-the-fly and rule mtrees merge together.
+image_manifest(
+    name = "image",
+    base = ":base_image",
+    layers = [":top_layer"],
+)
+
+image_mtree_golden_test(
+    name = "test",
+    golden = "expected.mtree",
+    image = ":image",
+)

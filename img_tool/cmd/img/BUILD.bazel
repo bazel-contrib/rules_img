@@ -22,6 +22,7 @@ go_library(
         "//cmd/layer",
         "//cmd/manifest",
         "//cmd/manifestfromocilayout",
+        "//cmd/mtree",
         "//cmd/ocilayout",
         "//cmd/optimize",
         "//cmd/pull",

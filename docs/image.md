@@ -135,6 +135,13 @@ Output groups:
 - `oci_layout`: Complete OCI layout directory with blobs
 - `oci_tarball`: OCI layout packaged as a tar file for downstream use
 - `sparse_oci_layout`: Sparse OCI layout directory (without layer blobs, only layer descriptors)
+- `mtree`: a single [mtree](https://man.freebsd.org/cgi/man.cgi?mtree(5)) text file describing the
+  image's filesystem, merged (in layer order) from per-layer mtrees. Layers built by rules_img layer
+  rules reuse their own `mtree`; for any other layer -- pulled/imported base-image layers, or raw
+  tars added directly via `DefaultInfo` -- an mtree is rendered on the fly from the layer's tar blob.
+  A layer is skipped on a best-effort basis only when its blob is unavailable (shallow/lazy layers)
+  or is not a tar (empty layers, non-tar artifact blobs), so a skipped layer means the merged mtree
+  reflects only a subset of the image. Only produced when at least one layer contributes an `mtree`.
 
 **ATTRIBUTES**
 

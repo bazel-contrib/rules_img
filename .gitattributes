@@ -1,0 +1,5 @@
+# mtree spec files are Unix text: always LF, never CRLF.
+# Without this, Windows git (core.autocrlf=true) converts golden files to
+# CRLF on checkout, breaking the binary diff against img-tool output (which
+# always writes LF in binary mode).
+*.mtree text eol=lf

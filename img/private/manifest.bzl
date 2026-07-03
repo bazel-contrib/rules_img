@@ -6,7 +6,7 @@ load("//img/private:push_metadata.bzl", "process_deploy_specs")
 load("//img/private:stamp.bzl", "expand_or_write")
 load("//img/private/common:build.bzl", "TOOLCHAIN", "TOOLCHAINS")
 load("//img/private/common:inherit.bzl", "INHERIT_FROM_BASE")
-load("//img/private/common:layer_helper.bzl", "allow_tar_files", "calculate_layer_info", "extension_to_compression")
+load("//img/private/common:layer_helper.bzl", "allow_tar_files", "build_image_mtree", "calculate_layer_info", "extension_to_compression", "image_layer_mtrees")
 load("//img/private/common:transitions.bzl", "normalize_layer_transition", "single_platform_transition")
 load("//img/private/config:defs.bzl", "TargetPlatformInfo")
 load("//img/private/providers:index_info.bzl", "ImageIndexInfo")
@@ -586,6 +586,18 @@ def _image_manifest_impl(ctx):
         oci_tarball = depset([_build_oci_layout(ctx, "tar", manifest_out, config_out, layers)]),
         sparse_oci_layout = depset([sparse_layout]),
     )
+
+    # Merge the per-layer mtree specs (in layer order) into a single image-level
+    # mtree, exposed as the `mtree` output group. Layers built by rules_img layer
+    # rules carry their own mtree; for other layers (pulled/imported base-image
+    # layers, raw tars added via DefaultInfo) an mtree is rendered on the fly from
+    # the layer's tar blob. This is best-effort: a layer with no blob (shallow/lazy)
+    # or a non-tar blob is skipped, and the output group is only produced when at
+    # least one layer contributes an mtree.
+    layer_mtrees = image_layer_mtrees(ctx, layers)
+    if len(layer_mtrees) > 0:
+        output_groups["mtree"] = depset([build_image_mtree(ctx, ctx.label.name, layer_mtrees)])
+
     if deploy_info != None:
         providers.append(deploy_info)
         output_groups["deploy_manifest"] = depset([deploy_info.deploy_manifest])
@@ -631,6 +643,13 @@ Output groups:
 - `oci_layout`: Complete OCI layout directory with blobs
 - `oci_tarball`: OCI layout packaged as a tar file for downstream use
 - `sparse_oci_layout`: Sparse OCI layout directory (without layer blobs, only layer descriptors)
+- `mtree`: a single [mtree](https://man.freebsd.org/cgi/man.cgi?mtree(5)) text file describing the
+  image's filesystem, merged (in layer order) from per-layer mtrees. Layers built by rules_img layer
+  rules reuse their own `mtree`; for any other layer -- pulled/imported base-image layers, or raw
+  tars added directly via `DefaultInfo` -- an mtree is rendered on the fly from the layer's tar blob.
+  A layer is skipped on a best-effort basis only when its blob is unavailable (shallow/lazy layers)
+  or is not a tar (empty layers, non-tar artifact blobs), so a skipped layer means the merged mtree
+  reflects only a subset of the image. Only produced when at least one layer contributes an `mtree`.
 """,
     attrs = {
         "base": attr.label(
@@ -889,6 +908,22 @@ See [template expansion](/docs/templating.md) for available stamp variables.
         "_stamp_settings": attr.label(
             default = Label("//img/private/settings:stamp"),
             providers = [StampSettingInfo],
+        ),
+        "_mtree_path_prefix": attr.label(
+            default = Label("//img/settings:mtree_path_prefix"),
+            providers = [BuildSettingInfo],
+        ),
+        "_mtree_options": attr.label(
+            default = Label("//img/settings:mtree_options"),
+            providers = [BuildSettingInfo],
+        ),
+        "_mtree_layer_layout": attr.label(
+            default = Label("//img/settings:mtree_layer_layout"),
+            providers = [BuildSettingInfo],
+        ),
+        "_mtree_image_layout": attr.label(
+            default = Label("//img/settings:mtree_image_layout"),
+            providers = [BuildSettingInfo],
         ),
         "push_specs": attr.label_list(
             doc = """Push configurations to produce DeployInfo for this image.

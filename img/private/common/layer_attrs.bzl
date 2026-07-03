@@ -127,6 +127,18 @@ Override the layer media type. By default, the media type is auto-detected from 
         default = Label("//img/settings:experimental_compact_layers_inline_threshold"),
         providers = [BuildSettingInfo],
     ),
+    _mtree_path_prefix = attr.label(
+        default = Label("//img/settings:mtree_path_prefix"),
+        providers = [BuildSettingInfo],
+    ),
+    _mtree_options = attr.label(
+        default = Label("//img/settings:mtree_options"),
+        providers = [BuildSettingInfo],
+    ),
+    _mtree_layer_layout = attr.label(
+        default = Label("//img/settings:mtree_layer_layout"),
+        providers = [BuildSettingInfo],
+    ),
 )
 
 layer_attrs = struct(

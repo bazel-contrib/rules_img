@@ -1,6 +1,8 @@
 """rule to import OCI images from a local directory."""
 
+load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("//img/private/common:build.bzl", "TOOLCHAIN")
+load("//img/private/common:layer_helper.bzl", "build_layer_mtree", "media_type_is_tar")
 load("//img/private/common:sparse_oci_layout.bzl", "build_sparse_oci_layout_for_index", "build_sparse_oci_layout_for_manifest")
 load("//img/private/common:transitions.bzl", "reset_platform_transition")
 load("//img/private/providers:index_info.bzl", "ImageIndexInfo")
@@ -85,6 +87,8 @@ def _write_layer_info(ctx, manifest, config, history, layer_index, index_positio
     layer_metadata = ctx.actions.declare_file(ctx.attr.name + "_{}{}_layer_metadata.json".format(index_position_str, layer_index))
     ctx.actions.write(layer_metadata, json.encode(metadata))
 
+    blob = _digest_to_file(ctx, digest)
+
     # Record where this layer can be fetched from upstream. Every registry mirror
     # of this image's repository is a candidate source for the blob (the blob is
     # content-addressed by its own digest). This is attached to all imported
@@ -94,8 +98,20 @@ def _write_layer_info(ctx, manifest, config, history, layer_index, index_positio
         struct(registry = registry, repository = ctx.attr.repository)
         for registry in ctx.attr.registries
     ]
+
+    # Render an mtree from the layer blob whenever we actually have it (an eagerly
+    # imported / pulled layer) and it is a tar. A shallow image whose layer blob is
+    # missing can't be described, so its mtree stays None.
+    mtree = None
+    if blob != None and media_type_is_tar(media_type):
+        mtree = build_layer_mtree(
+            ctx,
+            "{}_{}{}_layer".format(ctx.attr.name, index_position_str, layer_index),
+            tar_blob = blob,
+        )
+
     return SingleLayerInfo(
-        blob = _digest_to_file(ctx, digest),
+        blob = blob,
         metadata = layer_metadata,
         media_type = media_type,
         estargz = layer.get("annotations", {}).get(TOC_JSON_DIGEST_ANNOTATION) != None,
@@ -103,6 +119,7 @@ def _write_layer_info(ctx, manifest, config, history, layer_index, index_positio
         layer_input_files = None,
         layer_input_files_cas = None,
         sources = sources,
+        mtree = mtree,
     )
 
 def _write_manifest_descriptor(ctx, digest, manifest, platform, descriptor = None, index_position = None):
@@ -249,6 +266,18 @@ image_import = rule(
         ),
         "tag": attr.string(
             doc = "Tag of the image.",
+        ),
+        "_mtree_path_prefix": attr.label(
+            default = Label("//img/settings:mtree_path_prefix"),
+            providers = [BuildSettingInfo],
+        ),
+        "_mtree_options": attr.label(
+            default = Label("//img/settings:mtree_options"),
+            providers = [BuildSettingInfo],
+        ),
+        "_mtree_layer_layout": attr.label(
+            default = Label("//img/settings:mtree_layer_layout"),
+            providers = [BuildSettingInfo],
         ),
     },
     cfg = reset_platform_transition,

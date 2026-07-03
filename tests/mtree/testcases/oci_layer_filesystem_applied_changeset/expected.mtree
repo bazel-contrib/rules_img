@@ -1,0 +1,15 @@
+#mtree v2.0
+./etc type=dir mode=0755 uid=0 uname=root gid=0 gname=root time=1600000000 nlink=1
+./etc/config type=file size=7 mode=0640 uid=1000 uname=alice gid=1000 gname=devs sha256digest=f612b89bcdbc401379f644d7e48572e3470f77dcd4c39416405d80952ad7089e time=1600000000 nlink=2
+./etc/config.hard type=file size=7 mode=0640 uid=1000 uname=alice gid=1000 gname=devs sha256digest=f612b89bcdbc401379f644d7e48572e3470f77dcd4c39416405d80952ad7089e time=1600000000 nlink=2
+./etc/config.sym type=link size=6 mode=0 uid=1000 uname=alice gid=1000 gname=devs time=1600000000 link=config nlink=1
+./etc/secret type=file size=4 mode=0600 uid=0 uname=root gid=0 gname=root sha256digest=f7de2947c64cb6435e15fb2bef359d1ed5f6356b2aebb7b20535e3772904e6db time=1600000000 nlink=1 xattr.user.owner=YWxpY2U=
+./run type=dir
+./run/fifo type=fifo size=0 mode=0644 uid=0 uname=root gid=0 gname=root time=1600000000 nlink=1
+./srv type=dir mode=0755 uid=0 uname=root gid=0 gname=root time=1600000000 nlink=1
+./srv/keep type=file size=5 mode=0644 uid=0 gid=0 sha256digest=f660a7996deacfbc7560e4240054a8ad82eb02fe25a95064257e07084bcacb85 time=1600000000 nlink=1
+./usr type=dir
+./usr/local type=dir
+./usr/local/bin type=dir
+./usr/local/bin/tool type=file size=18 mode=0755 uid=0 uname=root gid=0 gname=root sha256digest=299001868fb8c02fd431c336c6d058f5558c5dff5b5af5e6fe04b870a6a9cbba time=1600000000 nlink=1
+./var type=dir
