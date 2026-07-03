@@ -133,34 +133,19 @@ def _image_index_impl(ctx):
     manifests = _get_manifests(ctx)
     manifest_infos = [manifest[ImageManifestInfo] for manifest in manifests]
 
-    # Find the first PullInfo where the ManifestInfo has non-empty missing_blobs
+    # Pick a representative PullInfo (base image identity) for index annotations and
+    # as an image-level source for cross-mounting. Per-layer sources
+    # (SingleLayerInfo.sources) now carry each layer's own upstream origin, so
+    # manifests based on different external images -- different registries or
+    # repositories, possibly shallow -- can be combined freely. We therefore no
+    # longer require a single PullInfo to cover every missing blob, and no longer
+    # fail when the manifests' base images disagree. Only image_import attaches
+    # PullInfo, so the first one found identifies a pulled base.
     pull_info = None
-    known_missing_blobs = []
     for manifest in manifests:
-        if not PullInfo in manifest:
-            continue
-        manifest_info = manifest[ImageManifestInfo]
-        if len(manifest_info.missing_blobs) > 0:
+        if PullInfo in manifest:
             pull_info = manifest[PullInfo]
-            known_missing_blobs.extend(manifest_info.missing_blobs)
             break
-
-    # Check for conflicting PullInfos
-    for manifest in manifests:
-        if not PullInfo in manifest:
-            continue
-        other = manifest[PullInfo]
-        other_manifest_info = manifest[ImageManifestInfo]
-        if pull_info != None and (other.registries != pull_info.registries or other.repository != pull_info.repository):
-            # Only fail if other has missing blobs not covered by known_missing_blobs
-            unknown_blobs = ["sha256:" + b for b in other_manifest_info.missing_blobs if b not in known_missing_blobs]
-            if len(unknown_blobs) > 0:
-                fail("index rule called with images based on different external images: {} and {}.\nMissing blobs from {} not covered by first image:\n    {}\nHint: you can work around this by pulling one or both of the base images via the \"eager\" layer handling method.".format(
-                    pull_info.repository,
-                    other.repository,
-                    other.repository,
-                    ", ".join(unknown_blobs),
-                ))
 
     # Prepare template data for annotations
     templates = {}

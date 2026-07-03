@@ -24,6 +24,7 @@ import (
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/api"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/auth/registry"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/cas"
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/compactstream"
 )
 
 // uploadJob represents a single blob upload task for the worker pool.
@@ -622,37 +623,54 @@ func (s *Syncer) queueBlobUpload(ctx context.Context, ref name.Repository, desc 
 // It creates a layer wrapper and uploads it to the registry using go-containerregistry.
 func (s *Syncer) uploadBlob(ctx context.Context, ref name.Repository, desc api.Descriptor, pushOp api.IndexedPushDeployOperation, remoteOpts []remote.Option) error {
 	digest := desc.Digest
-	digestAsMissingBlob := strings.TrimPrefix(digest, "sha256:")
 	uploadKey := makeUploadKey(digest, ref)
 
 	var layer v1.Layer
 
-	// Check if this is a missing blob from shallow base image pull
-	isMissing := false
-
-	allMissingBlobs := []string{}
+	// Look up per-layer deploy info for this digest: upstream sources (for base
+	// image layers) and the compact-stream reference (for layers whose compressed
+	// blob was never materialized and must be reconstructed from a .cstream in CAS).
+	var layerSources []api.LayerSource
+	var compactStream *api.Descriptor
 	for _, manifestInfo := range pushOp.Manifests {
-		allMissingBlobs = append(allMissingBlobs, manifestInfo.MissingBlobs...)
-	}
-	for _, missingDigest := range allMissingBlobs {
-		if missingDigest == digestAsMissingBlob {
-			isMissing = true
-			break
+		for _, lb := range manifestInfo.LayerBlobs {
+			if lb.Digest != digest {
+				continue
+			}
+			layerSources = append(layerSources, lb.Sources...)
+			if compactStream == nil && lb.CompactStream != nil {
+				cs := *lb.CompactStream
+				compactStream = &cs
+			}
 		}
 	}
 
-	if isMissing {
-		// Layer is from base image and not in CAS, stream from original registry
+	switch {
+	case compactStream != nil:
+		// Compact-stream layer: its compressed blob is not in CAS. Reconstruct it
+		// on the fly from the .cstream (fetched from CAS) and its input blobs.
+		layer = &compactStreamReconstructingLayer{
+			syncer:    s,
+			digest:    digest,
+			diffID:    desc.DiffID,
+			size:      desc.Size,
+			mediaType: desc.MediaType,
+			cstream:   *compactStream,
+		}
+	case len(layerSources) > 0:
+		// Layer is from a pulled base image; stream from an upstream registry.
+		// (Consistent with the deployvfs resolution order, which prefers the
+		// registry over the CAS for layers that record upstream sources.)
 		layer = &remoteStreamingLayer{
 			digest:    digest,
 			diffID:    desc.DiffID,
 			size:      desc.Size,
 			mediaType: desc.MediaType,
 			desc:      desc,
-			pullInfo:  pushOp.PullInfo,
+			sources:   layerSources,
 		}
-	} else {
-		// Layer is in CAS
+	default:
+		// Locally-built layer; stream from CAS.
 		layer = &casStreamingLayer{
 			syncer:    s,
 			digest:    digest,
@@ -1014,7 +1032,7 @@ type remoteStreamingLayer struct {
 	size      int64
 	mediaType string
 	desc      api.Descriptor
-	pullInfo  api.PullInfo
+	sources   []api.LayerSource
 }
 
 func (l *casStreamingLayer) Digest() (v1.Hash, error) {
@@ -1096,29 +1114,119 @@ func (l *remoteStreamingLayer) MediaType() (types.MediaType, error) {
 }
 
 func (l *remoteStreamingLayer) Compressed() (io.ReadCloser, error) {
-	// Stream from the original registry
-	if len(l.pullInfo.OriginalBaseImageRegistries) == 0 {
-		return nil, fmt.Errorf("no original registries provided for remote layer %s", l.digest)
+	// Fetch from one of the layer's upstream sources, trying each in order.
+	if len(l.sources) == 0 {
+		return nil, fmt.Errorf("no sources provided for remote layer %s", l.digest)
 	}
-
-	// Construct the reference to the blob in the original registry
-	ref, err := name.NewDigest(fmt.Sprintf("%s/%s@%s",
-		l.pullInfo.OriginalBaseImageRegistries[0],
-		l.pullInfo.OriginalBaseImageRepository,
-		l.digest))
-	if err != nil {
-		return nil, fmt.Errorf("creating blob reference: %w", err)
+	var attempts []string
+	for _, source := range l.sources {
+		ref, err := name.NewDigest(fmt.Sprintf("%s/%s@%s", source.Registry, source.Repository, l.digest))
+		if err != nil {
+			attempts = append(attempts, fmt.Sprintf("%s/%s: %v", source.Registry, source.Repository, err))
+			continue
+		}
+		layer, err := remote.Layer(ref, registry.WithAuthFromMultiKeychain())
+		if err != nil {
+			attempts = append(attempts, fmt.Sprintf("%s: %v", ref, err))
+			continue
+		}
+		rc, err := layer.Compressed()
+		if err != nil {
+			attempts = append(attempts, fmt.Sprintf("%s: %v", ref, err))
+			continue
+		}
+		return rc, nil
 	}
-
-	// Fetch the layer from the original registry
-	layer, err := remote.Layer(ref, registry.WithAuthFromMultiKeychain())
-	if err != nil {
-		return nil, fmt.Errorf("getting layer from original registry: %w", err)
-	}
-
-	return layer.Compressed()
+	return nil, fmt.Errorf("layer %s not found in any of its sources: %s", l.digest, strings.Join(attempts, "; "))
 }
 
 func (l *remoteStreamingLayer) Uncompressed() (io.ReadCloser, error) {
 	return nil, errors.New("layer data should not be accessed - blobs are already uploaded to registry")
+}
+
+// compactStreamReconstructingLayer implements the go-containerregistry v1.Layer
+// interface for compact-stream layers, whose compressed blob is never
+// materialized. It fetches the .cstream index from CAS and reconstructs the
+// compressed layer on the fly, resolving the input blobs referenced by the
+// stream from CAS by their digests.
+type compactStreamReconstructingLayer struct {
+	syncer    *Syncer
+	digest    string
+	diffID    string
+	size      int64
+	mediaType string
+	cstream   api.Descriptor
+}
+
+func (l *compactStreamReconstructingLayer) Digest() (v1.Hash, error) {
+	if !strings.HasPrefix(l.digest, "sha256:") {
+		return v1.Hash{}, fmt.Errorf("unsupported digest algorithm: %s", l.digest)
+	}
+	return v1.Hash{Algorithm: "sha256", Hex: l.digest[7:]}, nil
+}
+
+func (l *compactStreamReconstructingLayer) DiffID() (v1.Hash, error) {
+	if !strings.HasPrefix(l.diffID, "sha256:") {
+		return v1.Hash{}, fmt.Errorf("unsupported diff id algorithm: %s", l.diffID)
+	}
+	return v1.Hash{Algorithm: "sha256", Hex: l.diffID[7:]}, nil
+}
+
+func (l *compactStreamReconstructingLayer) Size() (int64, error) {
+	return l.size, nil
+}
+
+func (l *compactStreamReconstructingLayer) MediaType() (types.MediaType, error) {
+	return types.MediaType(l.mediaType), nil
+}
+
+func (l *compactStreamReconstructingLayer) Compressed() (io.ReadCloser, error) {
+	// Fetch the .cstream index from CAS by its own content digest.
+	casDigest, err := casDigestFromString(l.cstream.Digest, l.cstream.Size)
+	if err != nil {
+		return nil, fmt.Errorf("compact stream digest %s: %w", l.cstream.Digest, err)
+	}
+	cstreamReader, err := l.syncer.casClient.ReaderForBlob(context.Background(), casDigest)
+	if err != nil {
+		return nil, fmt.Errorf("fetching compact stream %s from CAS: %w", l.cstream.Digest, err)
+	}
+
+	// Reconstruct the compressed layer, streaming the result through a pipe. The
+	// .cstream header carries the compression parameters and validates the
+	// reconstructed output digest, so no extra parameters are needed here.
+	pr, pw := io.Pipe()
+	go func() {
+		defer cstreamReader.Close()
+		err := compactstream.Reconstruct(context.Background(), cstreamReader, &casBlobStore{syncer: l.syncer}, pw)
+		pw.CloseWithError(err)
+	}()
+	return pr, nil
+}
+
+func (l *compactStreamReconstructingLayer) Uncompressed() (io.ReadCloser, error) {
+	return nil, errors.New("layer data should not be accessed - blobs are already uploaded to registry")
+}
+
+// casBlobStore adapts the syncer's CAS client to the compactstream.BlobStore
+// interface, resolving the content-addressed input blobs referenced by a
+// compact stream.
+type casBlobStore struct {
+	syncer *Syncer
+}
+
+func (s *casBlobStore) ReaderForBlob(ctx context.Context, digest []byte, size int64) (io.ReadCloser, error) {
+	return s.syncer.casClient.ReaderForBlob(ctx, cas.SHA256(digest, size))
+}
+
+// casDigestFromString parses a "sha256:<hex>" digest string with the given size
+// into a cas.Digest.
+func casDigestFromString(digest string, size int64) (cas.Digest, error) {
+	if !strings.HasPrefix(digest, "sha256:") {
+		return cas.Digest{}, fmt.Errorf("unsupported digest algorithm in %s", digest)
+	}
+	hashBytes, err := hex.DecodeString(digest[len("sha256:"):])
+	if err != nil {
+		return cas.Digest{}, fmt.Errorf("invalid digest hex: %w", err)
+	}
+	return cas.SHA256(hashBytes, size), nil
 }

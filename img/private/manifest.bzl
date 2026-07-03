@@ -558,7 +558,6 @@ def _image_manifest_impl(ctx):
         os = os,
         variant = variant,
         layers = layers,
-        missing_blobs = base.missing_blobs if base != None else [],
         sparse_oci_layout = sparse_layout,
     )
     providers.extend([

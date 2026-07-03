@@ -175,7 +175,34 @@ type ManifestDeployInfo struct {
 	Descriptor Descriptor `json:"descriptor"`
 	// Descriptor of the config to push
 	Config Descriptor `json:"config"`
-	// Descriptor of the layers to push
-	LayerBlobs   []Descriptor `json:"layer_blobs"`
-	MissingBlobs []string     `json:"missing_blobs,omitempty"`
+	// Descriptor of the layers to push, each carrying its own upstream sources.
+	LayerBlobs []LayerBlob `json:"layer_blobs"`
+}
+
+// LayerBlob is the descriptor of a single layer together with the upstream
+// sources it can be fetched from. It embeds Descriptor so the layer's
+// mediaType/digest/size fields marshal inline; the extra "sources" field lists
+// the registry/repository combinations the blob is available from (e.g. the
+// shallow base image it was pulled from). Sources is empty for layers built
+// locally that have no upstream origin.
+type LayerBlob struct {
+	Descriptor
+	Sources []LayerSource `json:"sources,omitempty"`
+	// CompactStream, when set, marks this layer as a compact-stream layer whose
+	// compressed blob was never materialized. It holds the CAS digest and size of
+	// the .cstream index, from which the layer is reconstructed (the .cstream
+	// header carries the compression parameters and the expected output digest).
+	// The input blobs referenced by the .cstream are resolved from the CAS by the
+	// digests recorded in its reference table.
+	CompactStream *Descriptor `json:"compact_stream,omitempty"`
+}
+
+// LayerSource identifies one place a layer blob can be fetched from. The blob is
+// content-addressed, so only the registry and repository are needed; the digest
+// is the layer's own descriptor digest. A layer may list multiple sources (for
+// example the same repository mirrored across several registries, or the same
+// blob shared by base images from different repositories).
+type LayerSource struct {
+	Registry   string `json:"registry"`
+	Repository string `json:"repository"`
 }

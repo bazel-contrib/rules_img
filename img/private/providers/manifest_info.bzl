@@ -13,9 +13,6 @@ FIELDS = dict(
     os = "The operating system this image runs on.",
     variant = "The platform variant (e.g., 'v3' for amd64/v3, 'v8' for arm64/v8).",
     layers = "Layers of the image as list of SingleLayerInfo.",
-    missing_blobs = """List of hex-encoded sha256 hashes.
-Used to convey information lost during shallow image pulling, where the base image layers are referenced, but never materialized.
-""",
     sparse_oci_layout = "Tree artifact containing the sparse OCI layout for this manifest.",
 )
 

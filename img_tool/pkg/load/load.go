@@ -39,7 +39,6 @@ type ManifestRequest struct {
 	ManifestPath string   `json:"manifest"`
 	ConfigPath   string   `json:"config"`
 	Layers       []string `json:"layers"`
-	MissingBlobs []string `json:"missing_blobs,omitempty"`
 	api.PullInfo `json:",inline"`
 }
 
