@@ -2,72 +2,6 @@
 
 This guide provides instructions for developers working on rules_img.
 
-**Note**: As of v0.2.6, development has been simplified. You no longer need to manually manage lockfiles or build custom binaries. Instead, use Bazel module overrides to work with source-built versions of the Go tools. See [Development with Source-Built Tools](#development-with-source-built-tools) for details.
-
-## Development Environment
-
-### Prerequisites
-
-- [Nix](https://nixos.org/download.html) (recommended for reproducible development environment)
-- OR manually install:
-  - Bazel
-  - Go
-  - pre-commit
-
-### Setting up the Development Environment
-
-#### Option 1: Using Nix (Recommended)
-
-```bash
-# Enter the development shell
-nix develop
-
-# This provides:
-# - Bazel with proper configuration
-# - Go toolchain
-# - pre-commit hooks
-# - All other required tools
-```
-
-#### Option 2: Manual Setup
-
-If not using Nix, ensure you have all prerequisites installed and set up pre-commit:
-
-```bash
-# Install pre-commit hooks
-pre-commit install
-```
-
-## IDE Setup
-
-### Visual Studio Code
-
-For the best development experience with VSCode, especially when using Nix:
-
-```bash
-# The repository includes VSCode settings for Bazel+Nix development
-# Create a symlink to use them:
-ln -sf .vscode/settings-bazel-nix.json .vscode/settings.json
-
-# If not using Nix, you may need to adjust the GOPACKAGESDRIVER path
-# from gopackagesdriver-nix.sh to gopackagesdriver.sh
-```
-
-## Code Formatting and Linting
-
-### Pre-commit Hooks
-
-Pre-commit hooks run automatically on `git commit`. They ensure code quality and consistency.
-
-```bash
-# Run all pre-commit hooks manually
-pre-commit run --all-files
-
-# Run specific hooks
-pre-commit run buildifier --all-files
-pre-commit run trailing-whitespace --all-files
-```
-
 ### Starlark (Bazel) Files
 
 ```bash
@@ -80,10 +14,6 @@ bazel test //util:buildifier.check
 # Run Gazelle to update BUILD files
 bazel run //util:gazelle
 ```
-
-### Markdown Files
-
-Generated markdown files in `docs/` are excluded from trailing whitespace and end-of-file checks.
 
 ## Building and Testing
 
@@ -118,6 +48,9 @@ bazel test --test_output=all //...
 Integration tests are available in the `e2e/` directory:
 
 ```bash
+# Run all integration tests
+bazel test //e2e:integration_tests
+
 # Run C++ integration tests
 cd e2e/cc && bazel test //...
 
@@ -125,7 +58,7 @@ cd e2e/cc && bazel test //...
 cd e2e/go && bazel test //...
 
 # Test push functionality
-cd e2e/go && bazel run //:push
+cd e2e/go && bazel run //image:push
 ```
 
 ### Development with Source-Built Tools
