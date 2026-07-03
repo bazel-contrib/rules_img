@@ -18,19 +18,31 @@ import (
 )
 
 var (
-	command                 string
-	rootPath                string
-	rootKind                string
-	configurationPath       string
-	strategy                string
-	manifestPaths           []string
-	missingBlobsForManifest [][]string
-	originalRegistries      []string
-	originalRepository      string
-	orginalTag              string
-	originalDigest          string
-	layerHintsInputPath     string
-	layerHintsOutputPath    string
+	command              string
+	rootPath             string
+	rootKind             string
+	configurationPath    string
+	strategy             string
+	manifestPaths        []string
+	originalRegistries   []string
+	originalRepository   string
+	orginalTag           string
+	originalDigest       string
+	layerHintsInputPath  string
+	layerHintsOutputPath string
+	layerSourcesPath     string
+
+	// layerSourcesForManifest holds per-layer upstream sources, parsed from
+	// --layer-sources-file. Keyed by manifest index, then aligned with that
+	// manifest's layer order: layerSourcesForManifest[manifestIndex][layerIndex]
+	// is the list of sources for that layer.
+	layerSourcesForManifest map[int][][]api.LayerSource
+
+	// layerCompactStreams maps manifest index -> layer index -> path of that
+	// layer's .cstream file. Present for compact-stream layers under the "bes"
+	// strategy so the deploy metadata can record the .cstream's CAS digest and the
+	// syncer can reconstruct the layer from it.
+	layerCompactStreams *doubleIndexedStringFlag
 
 	crossMountStrategy         string
 	crossMountFromManifestPath string
@@ -39,18 +51,18 @@ var (
 
 	manifestTagFiles map[int]string
 
-	referrerRootPaths            *indexedStringFlag
-	referrerRootKinds            *indexedStringFlag
-	referrerManifestPaths        *doubleIndexedStringFlag
-	referrerMissingBlobsForManifest *doubleIndexedStringListFlag
+	referrerRootPaths     *indexedStringFlag
+	referrerRootKinds     *indexedStringFlag
+	referrerManifestPaths *doubleIndexedStringFlag
 )
 
 func DeployMetadataProcess(ctx context.Context, args []string) {
 	referrerRootPaths = newIndexedStringFlag()
 	referrerRootKinds = newIndexedStringFlag()
 	referrerManifestPaths = newDoubleIndexedStringFlag()
-	referrerMissingBlobsForManifest = newDoubleIndexedStringListFlag()
+	layerCompactStreams = newDoubleIndexedStringFlag()
 	manifestTagFiles = nil
+	layerSourcesForManifest = nil
 
 	flagSet := flag.NewFlagSet("deploy-metadata", flag.ExitOnError)
 	flagSet.Usage = func() {
@@ -84,6 +96,7 @@ func DeployMetadataProcess(ctx context.Context, args []string) {
 	flagSet.StringVar(&destinationFilePath, "destination-file", "", `(Optional) path to a file containing the push destination as "registry/repository". Mutually exclusive with registry/repository in the configuration file.`)
 	flagSet.StringVar(&layerHintsInputPath, "layer-hints-paths-file-input", "", `(Optional) path to file containing layer path hints (null-separated blob/metadata pairs).`)
 	flagSet.StringVar(&layerHintsOutputPath, "layer-hints-paths-output", "", `(Optional) path to write resolved layer hints output.`)
+	flagSet.StringVar(&layerSourcesPath, "layer-sources-file", "", `(Optional) path to a JSON file describing the upstream sources of each layer. Maps manifest index (as string) to a list (aligned with the manifest's layers) of source lists, each source being {"registry":..,"repository":..}.`)
 	flagSet.Func("manifest-path", `Path to a manifest file. Format: index=path (e.g., 0=foo.json). Can be specified multiple times.`, func(value string) error {
 		parts := strings.SplitN(value, "=", 2)
 		if len(parts) != 2 {
@@ -99,26 +112,6 @@ func DeployMetadataProcess(ctx context.Context, args []string) {
 			manifestPaths = append(manifestPaths, "")
 		}
 		manifestPaths[index] = path
-		return nil
-	})
-	flagSet.Func("missing-blobs-for-manifest", `Missing blobs for a manifest. Format: index=blob1,blob2,... (e.g., 0=sha256:abc,sha256:def). Can be specified multiple times.`, func(value string) error {
-		parts := strings.SplitN(value, "=", 2)
-		if len(parts) != 2 {
-			return fmt.Errorf("missing-blobs-for-manifest must be in format index=blob1,blob2,...")
-		}
-		index, err := strconv.Atoi(parts[0])
-		if err != nil {
-			return fmt.Errorf("invalid index in missing-blobs-for-manifest: %w", err)
-		}
-		blobs := strings.Split(parts[1], ",")
-		if len(blobs) == 1 && blobs[0] == "" {
-			blobs = nil // Handle empty case
-		}
-		// Expand slice if necessary
-		for len(missingBlobsForManifest) <= index {
-			missingBlobsForManifest = append(missingBlobsForManifest, nil)
-		}
-		missingBlobsForManifest[index] = blobs
 		return nil
 	})
 	flagSet.Func("manifest-tag-file", `(Optional) pre-expanded per-platform tags for a child of an image index. Format: manifest_index=path (e.g., 0=tags.json). The file must be a JSON object of the form {"manifest_tags": ["tag1", ...]} and is produced by Bazel's expand_or_write helper, so Go templates are already expanded. Can be specified multiple times. Only valid when --root-kind=index.`, func(value string) error {
@@ -139,7 +132,7 @@ func DeployMetadataProcess(ctx context.Context, args []string) {
 	flagSet.Var(referrerRootPaths, "referrer-root-path", `Path to a referrer root manifest or index file. Format: index=path (e.g., 0=referrer.json). Can be specified multiple times.`)
 	flagSet.Var(referrerRootKinds, "referrer-root-kind", `Kind of a referrer root. Format: index=kind (e.g., 0=manifest). Can be specified multiple times.`)
 	flagSet.Var(referrerManifestPaths, "referrer-manifest-path", `Path to a referrer child manifest file. Format: referrer_idx,manifest_idx=path (e.g., 0,0=manifest.json). Can be specified multiple times.`)
-	flagSet.Var(referrerMissingBlobsForManifest, "referrer-missing-blobs-for-manifest", `Missing blobs for a referrer manifest. Format: referrer_idx,manifest_idx=blob1,blob2,... Can be specified multiple times.`)
+	flagSet.Var(layerCompactStreams, "layer-compact-stream", `(Optional) compact-stream (.cstream) file for a layer. Format: manifest_idx,layer_idx=path. The file's CAS digest is recorded so the layer can be reconstructed from it (used by the bes strategy). Can be specified multiple times.`)
 
 	if err := flagSet.Parse(args); err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())
@@ -191,10 +184,74 @@ func DeployMetadataProcess(ctx context.Context, args []string) {
 			os.Exit(1)
 		}
 	}
+	if layerSourcesPath != "" {
+		if err := parseLayerSources(layerSourcesPath); err != nil {
+			fmt.Fprintf(os.Stderr, "Error parsing layer sources: %v\n", err)
+			os.Exit(1)
+		}
+	}
 	if err := WriteMetadata(ctx, outputPath); err != nil {
 		fmt.Fprintf(os.Stderr, "Error writing deploy metadata: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+// parseLayerSources reads the --layer-sources-file JSON and populates
+// layerSourcesForManifest. The file maps a manifest index (encoded as a string)
+// to a list aligned with that manifest's layers, where each element is the list
+// of upstream sources for that layer.
+func parseLayerSources(path string) error {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("reading layer sources file: %w", err)
+	}
+	byStringIndex := map[string][][]api.LayerSource{}
+	if err := json.Unmarshal(raw, &byStringIndex); err != nil {
+		return fmt.Errorf("unmarshalling layer sources file: %w", err)
+	}
+	layerSourcesForManifest = make(map[int][][]api.LayerSource, len(byStringIndex))
+	for key, perLayer := range byStringIndex {
+		idx, err := strconv.Atoi(key)
+		if err != nil {
+			return fmt.Errorf("invalid manifest index %q in layer sources file: %w", key, err)
+		}
+		layerSourcesForManifest[idx] = perLayer
+	}
+	return nil
+}
+
+// sourcesForLayer returns the upstream sources recorded for the given layer of a
+// manifest, or nil if none were provided.
+func sourcesForLayer(manifestIndex, layerIndex int) []api.LayerSource {
+	perLayer, ok := layerSourcesForManifest[manifestIndex]
+	if !ok || layerIndex >= len(perLayer) {
+		return nil
+	}
+	return perLayer[layerIndex]
+}
+
+// compactStreamForLayer returns the CAS descriptor of the .cstream for the given
+// layer (hashing the file), or nil if the layer is not a compact-stream layer.
+// The digest recorded here is the .cstream's own content digest, which is how it
+// is addressed in the CAS; the syncer fetches it to reconstruct the layer.
+func compactStreamForLayer(manifestIndex, layerIndex int) (*api.Descriptor, error) {
+	inner, ok := layerCompactStreams.values[manifestIndex]
+	if !ok {
+		return nil, nil
+	}
+	path, ok := inner[layerIndex]
+	if !ok || path == "" {
+		return nil, nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("reading compact stream file %s: %w", path, err)
+	}
+	sum := sha256.Sum256(data)
+	return &api.Descriptor{
+		Digest: fmt.Sprintf("sha256:%x", sum),
+		Size:   int64(len(data)),
+	}, nil
 }
 
 func WriteMetadata(ctx context.Context, outputPath string) error {
@@ -274,27 +331,29 @@ func WriteMetadata(ctx context.Context, outputPath string) error {
 			Size:      manifest.Config.Size,
 		}
 
-		// Extract layer descriptors
-		layerBlobs := make([]api.Descriptor, len(manifest.Layers))
+		// Extract layer descriptors, attaching per-layer upstream sources and, for
+		// compact-stream layers, the CAS reference of the .cstream to reconstruct from.
+		layerBlobs := make([]api.LayerBlob, len(manifest.Layers))
 		for j, layer := range manifest.Layers {
-			layerBlobs[j] = api.Descriptor{
-				MediaType: string(layer.MediaType),
-				Digest:    layer.Digest.String(),
-				Size:      layer.Size,
+			compactStream, err := compactStreamForLayer(i, j)
+			if err != nil {
+				return err
+			}
+			layerBlobs[j] = api.LayerBlob{
+				Descriptor: api.Descriptor{
+					MediaType: string(layer.MediaType),
+					Digest:    layer.Digest.String(),
+					Size:      layer.Size,
+				},
+				Sources:       sourcesForLayer(i, j),
+				CompactStream: compactStream,
 			}
 		}
 
-		// Get missing blobs for this manifest
-		var missingBlobs []string
-		if i < len(missingBlobsForManifest) && missingBlobsForManifest[i] != nil {
-			missingBlobs = missingBlobsForManifest[i]
-		}
-
 		manifests[i] = api.ManifestDeployInfo{
-			Descriptor:   manifestDescriptor,
-			Config:       configDescriptor,
-			LayerBlobs:   layerBlobs,
-			MissingBlobs: missingBlobs,
+			Descriptor: manifestDescriptor,
+			Config:     configDescriptor,
+			LayerBlobs: layerBlobs,
 		}
 	}
 
@@ -484,25 +543,21 @@ func processReferrers(knownDigests map[string]bool, config map[string]any) ([]js
 				Size:      manifest.Config.Size,
 			}
 
-			layerBlobs := make([]api.Descriptor, len(manifest.Layers))
+			layerBlobs := make([]api.LayerBlob, len(manifest.Layers))
 			for j, layer := range manifest.Layers {
-				layerBlobs[j] = api.Descriptor{
-					MediaType: string(layer.MediaType),
-					Digest:    layer.Digest.String(),
-					Size:      layer.Size,
+				layerBlobs[j] = api.LayerBlob{
+					Descriptor: api.Descriptor{
+						MediaType: string(layer.MediaType),
+						Digest:    layer.Digest.String(),
+						Size:      layer.Size,
+					},
 				}
 			}
 
-			var missingBlobs []string
-			if referrerMissingBlobsForManifest.values[refIdx] != nil {
-				missingBlobs = referrerMissingBlobsForManifest.values[refIdx][mIdx]
-			}
-
 			refManifests[i] = api.ManifestDeployInfo{
-				Descriptor:   manifestDescriptor,
-				Config:       configDescriptor,
-				LayerBlobs:   layerBlobs,
-				MissingBlobs: missingBlobs,
+				Descriptor: manifestDescriptor,
+				Config:     configDescriptor,
+				LayerBlobs: layerBlobs,
 			}
 		}
 

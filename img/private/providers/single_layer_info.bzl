@@ -21,6 +21,15 @@ FIELDS = dict(
     compact_stream = "File containing the compact stream (.cstream) for the layer, or None.",
     layer_input_files = "Depset of files that went into this layer, or None.",
     layer_input_files_cas = "Tree artifact (directory) with the layer's input files content-addressed at sha256/<hex>, used to reconstruct the layer from its compact stream, or None.",
+    sources = """List of upstream sources this layer's blob can be fetched from.
+
+Each entry is a `struct(registry = <string>, repository = <string>)`. The blob is
+content-addressed by its own digest, so only the registry/repository are recorded.
+This is populated for layers that originate from a pulled base image (see
+`image_import`) -- both shallow layers and eagerly downloaded ones -- so that at
+deploy time a missing blob can be fetched from its original source registry. It is
+an empty list for layers that are built locally and have no upstream origin.
+""",
 )
 
 SingleLayerInfo = provider(

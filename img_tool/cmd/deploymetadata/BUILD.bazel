@@ -19,7 +19,10 @@ go_library(
 
 go_test(
     name = "deploymetadata_test",
-    srcs = ["merge_test.go"],
+    srcs = [
+        "layersources_test.go",
+        "merge_test.go",
+    ],
     embed = [":deploymetadata"],
     deps = ["//pkg/api"],
 )

@@ -541,7 +541,7 @@ func (b *Builder) ingest() (map[string]blobEntry, map[string]blobEntry, map[stri
 			manifests[manifest.Descriptor.Digest] = b.resolveManifestBlob(i, manifest.Descriptor)
 			blobs[manifest.Config.Digest] = b.resolveConfigBlob(i, manifest.Config)
 			for layerIndex, layer := range manifest.LayerBlobs {
-				blob, err := b.layerBlob(i, manifestIndex, layerIndex, strategy, op.PullInfo, manifest, layer)
+				blob, err := b.layerBlob(i, manifestIndex, layerIndex, strategy, layer)
 				if err != nil {
 					return nil, nil, nil, fmt.Errorf("locating source for layer with digest %s with index %d in manifest %d of operation %d: %w", layer.Digest, layerIndex, manifestIndex, i, err)
 				}
@@ -575,18 +575,20 @@ func (b *Builder) ingest() (map[string]blobEntry, map[string]blobEntry, map[stri
 	return blobs, manifests, crossMountHints, nil
 }
 
-func (b *Builder) layerBlob(operationIndex int, manifestIndex int, layerIndex int, strategy string, pullInfo api.PullInfo, manifestInfo api.ManifestDeployInfo, desc api.Descriptor) (blobEntry, error) {
+func (b *Builder) layerBlob(operationIndex int, manifestIndex int, layerIndex int, strategy string, layer api.LayerBlob) (blobEntry, error) {
 	// we try the following sources, in order:
 	// 1. OCI layouts (--oci-layout flags, supports both sparse and standard formats)
 	// 2. explicit layer files (--layer flags)
 	// 3. runfiles tree
 	// 4. compact stream in an OCI layout (--oci-layout, <layout>/blobs/<algo>/<hex>.cstream)
 	// 5. compact stream in runfiles (.cstream + .inputfilecas content-addressed directory)
-	// 6. registry of base image (if base image is shallow, blob was marked as "missing blob" (exists remotely) and strategy allows it)
+	// 6. registry (if the layer records upstream sources, i.e. it came from a pulled base image)
 	// 7. layer hints (local paths from BUILD_WORKSPACE_DIRECTORY, populated by lazy builds)
 	// 8. bazel disk cache (if configured via IMG_DISK_CACHE)
 	// 9. bazel remote cache (if configured via IMG_REAPI_ENDPOINT)
 	// 10. stub blob (cas_registry strategy where all blobs are assumed to already be in the remote CAS)
+
+	desc := layer.Descriptor
 
 	var sourceErrors []*BlobSourceError
 
@@ -615,7 +617,7 @@ func (b *Builder) layerBlob(operationIndex int, manifestIndex int, layerIndex in
 	} else {
 		sourceErrors = append(sourceErrors, err.(*BlobSourceError))
 	}
-	if entry, err := b.layerFromRegistry(pullInfo, manifestInfo.MissingBlobs, desc); err == nil {
+	if entry, err := b.layerFromRegistry(layer.Sources, desc); err == nil {
 		return entry, nil
 	} else {
 		sourceErrors = append(sourceErrors, err.(*BlobSourceError))
@@ -722,47 +724,43 @@ func (b *Builder) layerFromFile(operationIndex int, manifestIndex int, layerInde
 	}, nil
 }
 
-// layerFromRegistry tries to find the layer in the registry of the base image.
-func (b *Builder) layerFromRegistry(pullInfo api.PullInfo, missingBlobs []string, desc api.Descriptor) (blobEntry, error) {
-	if len(pullInfo.OriginalBaseImageRegistries) == 0 {
-		return blobEntry{}, &BlobSourceError{Source: "base image registry", Digest: desc.Digest, Kind: BlobSourceUnconfigured, Message: "no base image registries configured"}
+// layerFromRegistry tries to fetch the layer from an upstream registry using the
+// per-layer sources recorded for it (the registry/repository combinations it was
+// pulled from). The blob is content-addressed, so it is fetched by its own digest.
+func (b *Builder) layerFromRegistry(sources []api.LayerSource, desc api.Descriptor) (blobEntry, error) {
+	if len(sources) == 0 {
+		return blobEntry{}, &BlobSourceError{Source: "base image registry", Digest: desc.Digest, Kind: BlobSourceUnconfigured, Message: "layer has no upstream sources (not from a pulled base image)"}
 	}
-
-	// get sha256 hex of desc.Digest
-	sha256Hex := strings.TrimPrefix(desc.Digest, "sha256:")
-	for _, missing := range missingBlobs {
-		if missing == sha256Hex {
-			// the layer is marked as missing, so it must exist in one of the original registries
-			stats := b.stats
-			return blobEntry{
-				Descriptor: desc,
-				Location:   "registry",
-				stats:      stats,
-				Opener: func() (io.ReadCloser, error) {
-					pullInfo := pullInfo
-					for _, registry := range pullInfo.OriginalBaseImageRegistries {
-						ref, err := registryname.NewDigest(fmt.Sprintf("%s/%s@%s", registry, pullInfo.OriginalBaseImageRepository, desc.Digest))
-						if err != nil {
-							continue
-						}
-						layer, err := remote.Layer(ref, b.containerRegistryOptions...)
-						if err != nil {
-							continue
-						}
-						rc, err := layer.Compressed()
-						if err != nil {
-							continue
-						}
-						stats.BlobsFromRegistry.Add(1)
-						return rc, nil
-					}
-					return nil, fmt.Errorf("layer %s not found in any of the original registries", desc.Digest)
-				},
-			}, nil
-		}
-	}
-
-	return blobEntry{}, &BlobSourceError{Source: "base image registry", Digest: desc.Digest, Kind: BlobSourceBlobMissing, Message: "digest not in missing blobs list (layer is not from a shallow base image)"}
+	stats := b.stats
+	opts := b.containerRegistryOptions
+	return blobEntry{
+		Descriptor: desc,
+		Location:   "registry",
+		stats:      stats,
+		Opener: func() (io.ReadCloser, error) {
+			var attempts []string
+			for _, source := range sources {
+				ref, err := registryname.NewDigest(fmt.Sprintf("%s/%s@%s", source.Registry, source.Repository, desc.Digest))
+				if err != nil {
+					attempts = append(attempts, fmt.Sprintf("%s/%s: %v", source.Registry, source.Repository, err))
+					continue
+				}
+				layer, err := remote.Layer(ref, opts...)
+				if err != nil {
+					attempts = append(attempts, fmt.Sprintf("%s: %v", ref, err))
+					continue
+				}
+				rc, err := layer.Compressed()
+				if err != nil {
+					attempts = append(attempts, fmt.Sprintf("%s: %v", ref, err))
+					continue
+				}
+				stats.BlobsFromRegistry.Add(1)
+				return rc, nil
+			}
+			return nil, fmt.Errorf("layer %s not found in any of its %d source(s): %s", desc.Digest, len(sources), strings.Join(attempts, "; "))
+		},
+	}, nil
 }
 
 // layerFromHints tries to find the layer from local paths provided by layer hints.

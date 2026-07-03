@@ -84,6 +84,16 @@ def _write_layer_info(ctx, manifest, config, history, layer_index, index_positio
     index_position_str = "" if index_position == None else str(index_position) + "_"
     layer_metadata = ctx.actions.declare_file(ctx.attr.name + "_{}{}_layer_metadata.json".format(index_position_str, layer_index))
     ctx.actions.write(layer_metadata, json.encode(metadata))
+
+    # Record where this layer can be fetched from upstream. Every registry mirror
+    # of this image's repository is a candidate source for the blob (the blob is
+    # content-addressed by its own digest). This is attached to all imported
+    # layers -- shallow and eager alike -- so a missing blob can later be fetched
+    # from its original source at deploy time.
+    sources = [
+        struct(registry = registry, repository = ctx.attr.repository)
+        for registry in ctx.attr.registries
+    ]
     return SingleLayerInfo(
         blob = _digest_to_file(ctx, digest),
         metadata = layer_metadata,
@@ -92,6 +102,7 @@ def _write_layer_info(ctx, manifest, config, history, layer_index, index_positio
         compact_stream = None,
         layer_input_files = None,
         layer_input_files_cas = None,
+        sources = sources,
     )
 
 def _write_manifest_descriptor(ctx, digest, manifest, platform, descriptor = None, index_position = None):
@@ -137,7 +148,6 @@ def _build_manifest_info(ctx, digest, descriptor = None, index_position = None, 
     if platform.get("architecture") == "arm64" and variant == "":
         variant = "v8"
 
-    missing_blobs = []
     layers = []
 
     # Assign each history entry to an actual non-empty layer. This preserves the full image
@@ -158,10 +168,8 @@ def _build_manifest_info(ctx, digest, descriptor = None, index_position = None, 
             history_by_layer[-1].extend(current_layer)
         elif manifest.get("layers", []):
             history_by_layer.append(current_layer)
-    for (layer_index, layer) in enumerate(manifest.get("layers", [])):
+    for layer_index in range(len(manifest.get("layers", []))):
         layer_info = _write_layer_info(ctx, manifest, config, history_by_layer, layer_index, index_position)
-        if layer_info.blob == None:
-            missing_blobs.append(layer["digest"].removeprefix("sha256:"))
         layers.append(layer_info)
 
     manifest_file = _digest_to_file(ctx, digest)
@@ -181,7 +189,6 @@ def _build_manifest_info(ctx, digest, descriptor = None, index_position = None, 
         os = platform.get("os", "unknown"),
         variant = variant,
         layers = layers,
-        missing_blobs = missing_blobs,
         sparse_oci_layout = sparse_layout,
     )
 

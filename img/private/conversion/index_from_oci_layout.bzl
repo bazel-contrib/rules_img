@@ -109,6 +109,7 @@ def _image_index_from_oci_layout(ctx):
                 compact_stream = None,
                 layer_input_files = None,
                 layer_input_files_cas = None,
+                sources = [],
             )
             for i in range(len(layer_media_types))
         ]
@@ -170,7 +171,6 @@ def _image_index_from_oci_layout(ctx):
             os = info["os"],
             variant = info["variant"],
             layers = all_layer_infos[idx_str],
-            missing_blobs = [],
             sparse_oci_layout = sparse_layout,
         ))
 

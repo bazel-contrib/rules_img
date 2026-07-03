@@ -304,6 +304,7 @@ def create_tar_single_layer(ctx, settings, name, extra_args = [], extra_inputs =
             compact_stream = compact_stream_out,
             layer_input_files = layer_input_files,
             layer_input_files_cas = layer_input_files_cas,
+            sources = [],
         ),
         out,
         metadata_out,

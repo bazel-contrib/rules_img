@@ -59,6 +59,7 @@ def _image_manifest_from_oci_layout(ctx):
             compact_stream = None,
             layer_input_files = None,
             layer_input_files_cas = None,
+            sources = [],
         )
         for i in range(len(layer_media_types))
     ]
@@ -119,7 +120,6 @@ def _image_manifest_from_oci_layout(ctx):
             os = os,
             variant = variant,
             layers = layer_infos,
-            missing_blobs = [],
             sparse_oci_layout = sparse_layout,
         ),
     ]

@@ -96,6 +96,9 @@ def _optimize_layer(ctx, layer, settings, manifest_position, layer_position):
         compact_stream = None,
         layer_input_files = None,
         layer_input_files_cas = None,
+        # Recompression changes the blob digest, so the original upstream sources
+        # no longer serve this blob.
+        sources = [],
     )
 
 def _optimize_layers(ctx, manifest, settings, manifest_position):
@@ -146,7 +149,6 @@ def _optimize_manifest(ctx, manifest, settings, manifest_position = None):
             os = manifest.os,
             variant = manifest.variant,
             layers = layers,
-            missing_blobs = [],
         ),
         descriptor = descriptor_out,
         digest = digest_out,

@@ -24,7 +24,10 @@ go_library(
 
 go_test(
     name = "deployvfs_test",
-    srcs = ["compactstream_test.go"],
+    srcs = [
+        "compactstream_test.go",
+        "layersource_test.go",
+    ],
     embed = [":deployvfs"],
     deps = [
         "//pkg/api",
