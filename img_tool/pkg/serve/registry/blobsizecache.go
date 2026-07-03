@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/registry"
 	registryv1 "github.com/google/go-containerregistry/pkg/v1"
@@ -16,27 +17,85 @@ import (
 )
 
 type BlobSizeCache struct {
-	cache map[string]int64
+	cache map[string]blobSizeCacheEntry
 	mux   sync.RWMutex
+	ttl   time.Duration
+	now   func() time.Time
 }
 
-func NewBlobSizeCache() *BlobSizeCache {
-	return &BlobSizeCache{
-		cache: make(map[string]int64),
+type blobSizeCacheEntry struct {
+	size      int64
+	expiresAt time.Time
+}
+
+type BlobSizeCacheOption func(*BlobSizeCache)
+
+func NewBlobSizeCache(opts ...BlobSizeCacheOption) *BlobSizeCache {
+	cache := &BlobSizeCache{
+		cache: make(map[string]blobSizeCacheEntry),
+		now:   time.Now,
+	}
+	for _, opt := range opts {
+		opt(cache)
+	}
+	return cache
+}
+
+// WithBlobSizeCacheTTL bounds blob-size hints learned from pushed manifests.
+// The cache is an optimization layer, so expiring an entry simply makes later
+// callers fall back to their configured blob stores instead of trusting old
+// process-local metadata.
+func WithBlobSizeCacheTTL(ttl time.Duration) BlobSizeCacheOption {
+	return func(b *BlobSizeCache) {
+		if ttl <= 0 {
+			b.ttl = 0
+			return
+		}
+		b.ttl = ttl
+	}
+}
+
+func withBlobSizeCacheClock(now func() time.Time) BlobSizeCacheOption {
+	return func(b *BlobSizeCache) {
+		if now != nil {
+			b.now = now
+		}
 	}
 }
 
 func (b *BlobSizeCache) Get(hash registryv1.Hash) (int64, bool) {
-	b.mux.RLock()
-	defer b.mux.RUnlock()
-	size, ok := b.cache[hash.String()]
-	return size, ok
+	b.mux.Lock()
+	defer b.mux.Unlock()
+
+	entry, ok := b.cache[hash.String()]
+	if !ok {
+		return 0, false
+	}
+	if b.expired(entry) {
+		delete(b.cache, hash.String())
+		return 0, false
+	}
+	return entry.size, true
 }
 
 func (b *BlobSizeCache) Set(hash registryv1.Hash, size int64) {
 	b.mux.Lock()
 	defer b.mux.Unlock()
-	b.cache[hash.String()] = size
+	b.cache[hash.String()] = blobSizeCacheEntry{
+		size:      size,
+		expiresAt: b.expiresAt(),
+	}
+}
+
+func (b *BlobSizeCache) expiresAt() time.Time {
+	if b.ttl <= 0 {
+		return time.Time{}
+	}
+	return b.now().Add(b.ttl)
+}
+
+func (b *BlobSizeCache) expired(entry blobSizeCacheEntry) bool {
+	return b.ttl > 0 && !entry.expiresAt.After(b.now())
 }
 
 type BlobSizeCacheCallback struct {

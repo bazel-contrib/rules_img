@@ -25,6 +25,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/types"
@@ -47,6 +48,9 @@ type manifest struct {
 type manifests struct {
 	// maps repo -> manifest tag/digest -> manifest
 	manifests      map[string]map[string]manifest
+	expires        map[string]map[string]time.Time
+	ttl            time.Duration
+	now            func() time.Time
 	putCallback    func(repo, target, contentType string, blob []byte) error
 	deleteCallback func(repo, target, contentType string, blob []byte) error
 	lock           sync.RWMutex
@@ -98,6 +102,8 @@ func (m *manifests) handle(resp http.ResponseWriter, req *http.Request) *regErro
 	elem = elem[1:]
 	target := elem[len(elem)-1]
 	repo := strings.Join(elem[1:len(elem)-2], "/")
+
+	m.evictExpired()
 
 	switch req.Method {
 	case http.MethodGet:
@@ -225,8 +231,11 @@ func (m *manifests) handle(resp http.ResponseWriter, req *http.Request) *regErro
 
 		// Allow future references by target (tag) and immutable digest.
 		// See https://docs.docker.com/engine/reference/commandline/pull/#pull-an-image-by-digest-immutable-identifier.
+		expiresAt := m.newExpiry()
 		m.manifests[repo][digest] = mf
 		m.manifests[repo][target] = mf
+		m.setExpiryLocked(repo, digest, expiresAt)
+		m.setExpiryLocked(repo, target, expiresAt)
 		resp.Header().Set("Docker-Content-Digest", digest)
 		resp.WriteHeader(http.StatusCreated)
 		return nil
@@ -262,6 +271,7 @@ func (m *manifests) handle(resp http.ResponseWriter, req *http.Request) *regErro
 		}
 
 		delete(m.manifests[repo], target)
+		m.deleteExpiryLocked(repo, target)
 		resp.WriteHeader(http.StatusAccepted)
 		return nil
 
@@ -280,6 +290,8 @@ func (m *manifests) handleTags(resp http.ResponseWriter, req *http.Request) *reg
 	repo := strings.Join(elem[1:len(elem)-2], "/")
 
 	if req.Method == "GET" {
+		m.evictExpired()
+
 		m.lock.RLock()
 		defer m.lock.RUnlock()
 
@@ -352,6 +364,8 @@ func (m *manifests) handleCatalog(resp http.ResponseWriter, req *http.Request) *
 	}
 
 	if req.Method == "GET" {
+		m.evictExpired()
+
 		m.lock.RLock()
 		defer m.lock.RUnlock()
 
@@ -409,6 +423,8 @@ func (m *manifests) handleReferrers(resp http.ResponseWriter, req *http.Request)
 			Message: "Target must be a valid digest",
 		}
 	}
+
+	m.evictExpired()
 
 	m.lock.RLock()
 	defer m.lock.RUnlock()
