@@ -24,13 +24,11 @@ This way we avoid contributors putting effort into work that is unlikely to be m
 ### Documentation
 
 - The [README](/README.md) contains user-facing documentation, including setup in your own Bazel project and configuring authentication for different services.
-- The [docs](/docs) directory contains detailed documentation on each rule, as well as a guide on choosing a [push strategy][push-strategies].
+- The [docs](/docs) directory contains detailed documentation on each rule, as well as a hand-written guides.
 
 ### People
 
-`rules_img` is maintained by [Tweag][tweag]. The current project steward is Malte Poll (@malt3).
-
-You can also [join our Discord][discord-join] server and talk to us directly.
+`rules_img` is maintained by Malte Poll (@malt3).
 
 ## Setting up a development environment
 
@@ -39,5 +37,3 @@ Please refer to [`HACKING.md`](/HACKING.md) to set up a development environment,
 [discussions]: https://github.com/bazel-contrib/rules_img/discussions
 [push-strategies]: /docs/push-strategies.md
 [new-issue-bug]: https://github.com/bazel-contrib/rules_img/issues/new?assignees=&labels=type%3A+bug&projects=&template=bug_report.md
-[discord-join]: https://discord.gg/vYDnJYBmax
-[tweag]: https://www.tweag.io/
