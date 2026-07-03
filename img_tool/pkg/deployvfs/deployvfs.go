@@ -580,12 +580,13 @@ func (b *Builder) layerBlob(operationIndex int, manifestIndex int, layerIndex in
 	// 1. OCI layouts (--oci-layout flags, supports both sparse and standard formats)
 	// 2. explicit layer files (--layer flags)
 	// 3. runfiles tree
-	// 4. compact stream in runfiles (.cstream + .inputfilecas content-addressed directory)
-	// 5. registry of base image (if base image is shallow, blob was marked as "missing blob" (exists remotely) and strategy allows it)
-	// 6. layer hints (local paths from BUILD_WORKSPACE_DIRECTORY, populated by lazy builds)
-	// 7. bazel disk cache (if configured via IMG_DISK_CACHE)
-	// 8. bazel remote cache (if configured via IMG_REAPI_ENDPOINT)
-	// 9. stub blob (cas_registry strategy where all blobs are assumed to already be in the remote CAS)
+	// 4. compact stream in an OCI layout (--oci-layout, <layout>/blobs/<algo>/<hex>.cstream)
+	// 5. compact stream in runfiles (.cstream + .inputfilecas content-addressed directory)
+	// 6. registry of base image (if base image is shallow, blob was marked as "missing blob" (exists remotely) and strategy allows it)
+	// 7. layer hints (local paths from BUILD_WORKSPACE_DIRECTORY, populated by lazy builds)
+	// 8. bazel disk cache (if configured via IMG_DISK_CACHE)
+	// 9. bazel remote cache (if configured via IMG_REAPI_ENDPOINT)
+	// 10. stub blob (cas_registry strategy where all blobs are assumed to already be in the remote CAS)
 
 	var sourceErrors []*BlobSourceError
 
@@ -600,6 +601,11 @@ func (b *Builder) layerBlob(operationIndex int, manifestIndex int, layerIndex in
 		sourceErrors = append(sourceErrors, err.(*BlobSourceError))
 	}
 	if entry, err := b.layerFromFile(operationIndex, manifestIndex, layerIndex, desc); err == nil {
+		return entry, nil
+	} else {
+		sourceErrors = append(sourceErrors, err.(*BlobSourceError))
+	}
+	if entry, err := b.layerFromOCILayoutCompactStream(desc); err == nil {
 		return entry, nil
 	} else {
 		sourceErrors = append(sourceErrors, err.(*BlobSourceError))

@@ -5,14 +5,17 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/api"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/cas"
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/compactstream"
 )
 
 type stubCASReader struct {
@@ -143,6 +146,137 @@ func TestCasDirStoreNotFound(t *testing.T) {
 	s := &casDirStore{} // no sources configured
 	if _, err := s.ReaderForBlob(context.Background(), d[:], int64(len(content))); err == nil {
 		t.Fatal("expected a not-found error when no source resolves the blob")
+	}
+}
+
+// buildOCILayoutCompactStream writes a compact stream to
+// <layout>/blobs/sha256/<hex>.cstream that reconstructs to prefix + casBlob + suffix
+// via a single CAS reference to casBlob. It returns the layer descriptor (whose digest
+// is the sha256 of the reconstructed bytes) and the reconstructed bytes.
+func buildOCILayoutCompactStream(t *testing.T, layout string, prefix, casBlob, suffix []byte) (api.Descriptor, []byte) {
+	t.Helper()
+	casDigest := sha256.Sum256(casBlob)
+
+	var buf bytes.Buffer
+	w := compactstream.NewWriter(&buf, compactstream.HashAlgoSHA256, 32, compactstream.StreamCompressionNone, compactstream.OriginalCompressionInfo{}, 0)
+	if err := w.WriteStreamBytes(prefix); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.WriteCASRef(casDigest[:], uint64(len(casBlob))); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.WriteStreamBytes(suffix); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	reconstructed := append(append(append([]byte(nil), prefix...), casBlob...), suffix...)
+	layerDigest := sha256.Sum256(reconstructed)
+	layerHex := hex.EncodeToString(layerDigest[:])
+	writeBlobFile(t, filepath.Join(layout, "blobs", "sha256", layerHex+".cstream"), buf.Bytes())
+
+	return api.Descriptor{Digest: "sha256:" + layerHex, Size: int64(len(reconstructed))}, reconstructed
+}
+
+// shipCASBlob writes casBlob into the layout's content-addressed blobs directory at
+// blobs/sha256/<hex-of-content>.
+func shipCASBlob(t *testing.T, layout string, casBlob []byte) {
+	t.Helper()
+	d := sha256.Sum256(casBlob)
+	writeBlobFile(t, filepath.Join(layout, "blobs", "sha256", hex.EncodeToString(d[:])), casBlob)
+}
+
+func mustOpen(t *testing.T, entry blobEntry) io.ReadCloser {
+	t.Helper()
+	rc, err := entry.Opener()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return rc
+}
+
+// TestLayerFromOCILayoutCompactStreamResolvesFromLayoutBlobs verifies that a .cstream
+// shipped inside an --oci-layout is discovered and that its CAS references resolve from
+// the same layout's content-addressed blobs directory (blobs/sha256/<hex>).
+func TestLayerFromOCILayoutCompactStreamResolvesFromLayoutBlobs(t *testing.T) {
+	layout := t.TempDir()
+	casBlob := []byte("referenced-input-file-content")
+	desc, want := buildOCILayoutCompactStream(t, layout, []byte("HDR-"), casBlob, []byte("-END"))
+	shipCASBlob(t, layout, casBlob)
+
+	b := NewBuilder(api.DeployManifest{}).WithOCILayout(layout)
+	entry, err := b.layerFromOCILayoutCompactStream(desc)
+	if err != nil {
+		t.Fatalf("layerFromOCILayoutCompactStream: %v", err)
+	}
+	if entry.Location != "compact_stream" {
+		t.Errorf("Location = %q, want compact_stream", entry.Location)
+	}
+	if got := readAllClose(t, mustOpen(t, entry)); !bytes.Equal(got, want) {
+		t.Fatalf("reconstructed = %q, want %q", got, want)
+	}
+	if n := b.stats.BlobsFromCompactStream.Load(); n != 1 {
+		t.Errorf("BlobsFromCompactStream = %d, want 1", n)
+	}
+}
+
+// TestLayerFromOCILayoutCompactStreamFallsBackToDiskCache verifies that when the layout
+// does not ship a referenced CAS blob, reconstruction still resolves it via the Bazel
+// disk cache (the casDirStore fallback).
+func TestLayerFromOCILayoutCompactStreamFallsBackToDiskCache(t *testing.T) {
+	layout := t.TempDir()
+	casBlob := []byte("blob-only-in-disk-cache")
+	desc, want := buildOCILayoutCompactStream(t, layout, []byte("A"), casBlob, []byte("Z"))
+
+	// The referenced blob is absent from the layout; only the disk cache has it.
+	diskCache := t.TempDir()
+	casDigest := sha256.Sum256(casBlob)
+	writeBlobFile(t, diskCacheBlobPath(diskCache, "sha256:"+hex.EncodeToString(casDigest[:])), casBlob)
+
+	b := NewBuilder(api.DeployManifest{}).WithOCILayout(layout).WithDiskCache(diskCache)
+	entry, err := b.layerFromOCILayoutCompactStream(desc)
+	if err != nil {
+		t.Fatalf("layerFromOCILayoutCompactStream: %v", err)
+	}
+	if got := readAllClose(t, mustOpen(t, entry)); !bytes.Equal(got, want) {
+		t.Fatalf("reconstructed = %q, want %q", got, want)
+	}
+}
+
+// TestLayerFromOCILayoutCompactStreamPrefersFirstMatch verifies the discovery scans
+// layouts in order and picks the first one that ships the .cstream.
+func TestLayerFromOCILayoutCompactStreamPrefersFirstMatch(t *testing.T) {
+	first := t.TempDir()
+	second := t.TempDir()
+	casBlob := []byte("input")
+	desc, want := buildOCILayoutCompactStream(t, first, []byte("<"), casBlob, []byte(">"))
+	shipCASBlob(t, first, casBlob)
+
+	// second is configured but empty; the stream must still be found in first.
+	b := NewBuilder(api.DeployManifest{}).WithOCILayout(second).WithOCILayout(first)
+	entry, err := b.layerFromOCILayoutCompactStream(desc)
+	if err != nil {
+		t.Fatalf("layerFromOCILayoutCompactStream: %v", err)
+	}
+	if got := readAllClose(t, mustOpen(t, entry)); !bytes.Equal(got, want) {
+		t.Fatalf("reconstructed = %q, want %q", got, want)
+	}
+}
+
+func TestLayerFromOCILayoutCompactStreamErrors(t *testing.T) {
+	desc := api.Descriptor{Digest: "sha256:" + strings.Repeat("a", 64)}
+
+	// No layouts configured -> unconfigured.
+	var bse *BlobSourceError
+	if _, err := NewBuilder(api.DeployManifest{}).layerFromOCILayoutCompactStream(desc); !errors.As(err, &bse) || bse.Kind != BlobSourceUnconfigured {
+		t.Fatalf("expected BlobSourceUnconfigured, got %v", err)
+	}
+
+	// Layout configured but no matching .cstream -> blob missing.
+	if _, err := NewBuilder(api.DeployManifest{}).WithOCILayout(t.TempDir()).layerFromOCILayoutCompactStream(desc); !errors.As(err, &bse) || bse.Kind != BlobSourceBlobMissing {
+		t.Fatalf("expected BlobSourceBlobMissing, got %v", err)
 	}
 }
 
