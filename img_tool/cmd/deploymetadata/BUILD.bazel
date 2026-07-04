@@ -1,4 +1,4 @@
-load("@rules_go//go:def.bzl", "go_library")
+load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "deploymetadata",
@@ -12,6 +12,17 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/api",
-        "@com_github_malt3_go_containerregistry//pkg/v1:pkg",
+        "//pkg/argfile",
+        "@com_github_google_go_containerregistry//pkg/v1:pkg",
     ],
+)
+
+go_test(
+    name = "deploymetadata_test",
+    srcs = [
+        "layersources_test.go",
+        "merge_test.go",
+    ],
+    embed = [":deploymetadata"],
+    deps = ["//pkg/api"],
 )

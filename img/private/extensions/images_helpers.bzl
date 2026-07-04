@@ -1,9 +1,9 @@
 """Helper functions for the images module extension."""
 
 load("@bazel_skylib//lib:sets.bzl", "sets")
-load("@pull_hub_repo//:defs.bzl", "tool_for_repository_os")
+load("@img_toolchain//:defs.bzl", "tool_for_repository_os")
 load("//img/private:manifest_media_type.bzl", "get_media_type", manifest_kind = "kind")
-load("//img/private/repository_rules:download.bzl", "download_manifest")
+load("//img/private/repository_rules:download.bzl", "auth_environment", "download_manifest")
 
 def pull_tag_to_struct(tag):
     """Convert a pull tag to a struct for easier attribute access.
@@ -204,7 +204,7 @@ def check_facts_for_manifest(facts, digest):
     """
     return facts.get("oci_ref_graph@{}".format(digest))
 
-def download_and_parse_manifest(ctx, digest, img, facts, downloader):
+def download_and_parse_manifest(ctx, digest, img, facts, downloader, credential_helper = None, docker_config_path = None):
     """Download a manifest and parse it into ref graph entry.
 
     Args:
@@ -213,6 +213,8 @@ def download_and_parse_manifest(ctx, digest, img, facts, downloader):
         img: Image struct with registry/repository info
         facts: Facts dictionary for caching structure (not blob data)
         downloader: Downloader to use
+        credential_helper: Optional credential helper path to pass to the img tool.
+        docker_config_path: Optional Docker-compatible auth config path to pass to the img tool.
 
     Returns:
         Tuple of (ref_graph_entry, manifest_data_string)
@@ -232,6 +234,8 @@ def download_and_parse_manifest(ctx, digest, img, facts, downloader):
             sha256 = digest[7:],
             have_valid_digest = True,
             sources = sources,
+            credential_helper = credential_helper,
+            docker_config_path = docker_config_path,
         )
         return (cached_ref_graph_entry, blob_info.data)
 
@@ -243,6 +247,8 @@ def download_and_parse_manifest(ctx, digest, img, facts, downloader):
         sha256 = digest[7:],  # Remove "sha256:" prefix
         have_valid_digest = True,
         sources = sources,
+        credential_helper = credential_helper,
+        docker_config_path = docker_config_path,
     )
 
     # Parse manifest
@@ -561,7 +567,7 @@ def normalize_repository_name(name, repository):
 
     return normalized
 
-def sync_oci_ref_graph(ctx, images_by_digest, facts, downloader):
+def sync_oci_ref_graph(ctx, images_by_digest, facts, downloader, credential_helper = None, docker_config_path = None):
     """Sync the OCI reference graph by downloading manifests.
 
     Uses parallel downloading with the img_tool, or falls back to sequential
@@ -572,6 +578,8 @@ def sync_oci_ref_graph(ctx, images_by_digest, facts, downloader):
         images_by_digest: Dictionary mapping digest to image struct
         facts: Facts dictionary from previous extension evaluation
         downloader: Downloader to use ("img_tool" or "bazel")
+        credential_helper: Optional credential helper path to pass to the img tool.
+        docker_config_path: Optional Docker-compatible auth config path to pass to the img tool.
 
     Returns:
         Dictionary mapping digest to ref_graph_entry
@@ -579,7 +587,7 @@ def sync_oci_ref_graph(ctx, images_by_digest, facts, downloader):
     ctx.report_progress("Syncing OCI reference graph...")
     oci_ref_graph = {}
 
-    # Use pull_tool to prefetch the full OCI ref graph in parallel
+    # Use the img tool to prefetch the full OCI ref graph in parallel
     if downloader == "img_tool":
         # Prepare facts JSON (convert facts to a format expected by the tool)
         facts_json_content = json.encode(reachable_facts_to_dict(images_by_digest, facts))
@@ -604,16 +612,23 @@ def sync_oci_ref_graph(ctx, images_by_digest, facts, downloader):
         tool = tool_for_repository_os(ctx)
         tool_path = ctx.path(tool)
 
-        result = ctx.execute([
-            tool_path,
-            "sync-oci-ref-graph",
-            "--facts",
-            "facts_input.json",
-            "--images",
-            "images_input.json",
-            "--output",
-            "facts_output.json",
-        ])
+        result = ctx.execute(
+            [
+                tool_path,
+                "sync-oci-ref-graph",
+                "--facts",
+                "facts_input.json",
+                "--images",
+                "images_input.json",
+                "--output",
+                "facts_output.json",
+            ],
+            environment = auth_environment(
+                ctx,
+                credential_helper = credential_helper,
+                docker_config_path = docker_config_path,
+            ),
+        )
 
         if result.return_code != 0:
             fail("Failed to sync OCI ref graph: {}{}".format(result.stdout, result.stderr))
@@ -632,7 +647,15 @@ def sync_oci_ref_graph(ctx, images_by_digest, facts, downloader):
     # Fallback to sequential downloading for "bazel" downloader
     # Download top-level manifests/indexes
     for digest, img in images_by_digest.items():
-        ref_graph_entry, _manifest_data = download_and_parse_manifest(ctx, digest, img, facts, downloader)
+        ref_graph_entry, _manifest_data = download_and_parse_manifest(
+            ctx,
+            digest,
+            img,
+            facts,
+            downloader,
+            credential_helper = credential_helper,
+            docker_config_path = docker_config_path,
+        )
         oci_ref_graph[digest] = ref_graph_entry
 
     # Download child manifests referenced by indexes
@@ -645,7 +668,15 @@ def sync_oci_ref_graph(ctx, images_by_digest, facts, downloader):
 
     for digest, index_digest in manifest_to_download_from_index.items():
         img = images_by_digest[index_digest]
-        ref_graph_entry, _manifest_data = download_and_parse_manifest(ctx, digest, img, facts, downloader)
+        ref_graph_entry, _manifest_data = download_and_parse_manifest(
+            ctx,
+            digest,
+            img,
+            facts,
+            downloader,
+            credential_helper = credential_helper,
+            docker_config_path = docker_config_path,
+        )
         if ref_graph_entry["kind"] != "manifest":
             fail("Expected manifest for digest '{}' but got '{}'.".format(digest, ref_graph_entry["kind"]))
         oci_ref_graph[digest] = ref_graph_entry

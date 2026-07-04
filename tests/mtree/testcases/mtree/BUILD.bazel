@@ -1,0 +1,66 @@
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@rules_img//img:layer.bzl", "file_metadata", "image_layer")
+load("//tests/mtree:defs.bzl", "mtree_golden_test")
+
+# gazelle:exclude_from_release
+
+# Fixtures. config.txt and config_dup.txt hold identical content, so the layer
+# tool deduplicates the second into a hardlink -- which the mtree renders as a
+# copy of the first (nlink=2, no link keyword).
+write_file(
+    name = "config_txt",
+    out = "config.txt",
+    content = ["server.port=8080\n"],
+)
+
+write_file(
+    name = "config_dup_txt",
+    out = "config_dup.txt",
+    content = ["server.port=8080\n"],
+)
+
+write_file(
+    name = "deep_txt",
+    out = "deep.txt",
+    content = ["deeply nested\n"],
+)
+
+# An image_layer exercising rich per-file metadata (ownership/mode/mtime), a
+# deduplicated identical file (hardlink), and a symlink. mtree_golden_test
+# asserts the `mtree` output group matches expected.mtree both when the layer is
+# a materialized tar blob (compact disabled) and a compact stream (enabled).
+image_layer(
+    name = "layer",
+    srcs = {
+        "/etc/app/config.txt": ":config_txt",
+        "/etc/app/config_dup.txt": ":config_dup_txt",
+        "/etc/app/special.txt": ":deep_txt",
+    },
+    default_metadata = file_metadata(
+        gid = 1000,
+        gname = "devs",
+        mode = "0644",
+        mtime = "2023-01-01T00:00:00Z",
+        pax_records = {"SCHILY.xattr.user.team": "infra"},
+        uid = 1000,
+        uname = "alice",
+    ),
+    file_metadata = {
+        "/etc/app/special.txt": file_metadata(
+            gid = 4243,
+            gname = "svcgrp",
+            mode = "0600",
+            mtime = "2024-12-31T23:59:59Z",
+            pax_records = {"SCHILY.xattr.user.secret": "yes"},
+            uid = 4242,
+            uname = "svc",
+        ),
+    },
+    symlinks = {"/etc/app/current.txt": "/etc/app/config.txt"},
+)
+
+mtree_golden_test(
+    name = "test",
+    golden = "expected.mtree",
+    layer = ":layer",
+)

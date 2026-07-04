@@ -4,6 +4,8 @@ import (
 	"context"
 	"net/url"
 	"testing"
+
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/auth/credential"
 )
 
 func TestBasicAuthCredentials(t *testing.T) {
@@ -166,6 +168,44 @@ func TestParseGRPCURL(t *testing.T) {
 			hasUser := parsed.User != nil && parsed.User.String() != ""
 			if hasUser != tt.hasUser {
 				t.Errorf("expected hasUser=%v, got %v", tt.hasUser, hasUser)
+			}
+		})
+	}
+}
+
+func TestClientTarget(t *testing.T) {
+	tests := []struct {
+		name       string
+		uri        string
+		wantTarget string
+	}{
+		{
+			name:       "grpc endpoint",
+			uri:        "grpc://example.com:9092",
+			wantTarget: "dns:example.com:9092",
+		},
+		{
+			name:       "grpcs endpoint",
+			uri:        "grpcs://example.com:443",
+			wantTarget: "dns:example.com:443",
+		},
+		{
+			name:       "unix endpoint",
+			uri:        "unix:///mnt/ephemeral/buildbarn/.cache/bb_clientd/grpc",
+			wantTarget: "unix:///mnt/ephemeral/buildbarn/.cache/bb_clientd/grpc",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			conn, err := Client(tt.uri, credential.NopHelper())
+			if err != nil {
+				t.Fatalf("Client(%q) returned error: %v", tt.uri, err)
+			}
+			defer conn.Close()
+
+			if got := conn.Target(); got != tt.wantTarget {
+				t.Fatalf("Client(%q).Target() = %q, want %q", tt.uri, got, tt.wantTarget)
 			}
 		})
 	}

@@ -9,13 +9,14 @@ import (
 	"slices"
 	"time"
 
-	registryv1 "github.com/malt3/go-containerregistry/pkg/v1"
+	registryv1 "github.com/google/go-containerregistry/pkg/v1"
 	ocidigest "github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/api"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/containerd"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/docker"
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/ocitar"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/progress"
 )
 
@@ -159,12 +160,21 @@ func (l *loader) LoadAll(ctx context.Context, ops []api.IndexedLoadDeployOperati
 				}
 				pushedTags = append(pushedTags, loadedTags...)
 			}
-		case "docker", "podman", "generic":
-			// Load all images via docker/podman/generic load
+		case "docker", "podman", "generic", "containerization":
+			// Load all images via docker/podman/generic/containerization load
 			for _, op := range ops {
 				loadedTags, err := l.loadViaDockerOrPodman(ctx, op)
 				if err != nil {
 					return nil, fmt.Errorf("loading image via %s: %w", daemon, err)
+				}
+				pushedTags = append(pushedTags, loadedTags...)
+			}
+		case "tar":
+			// Stream unified tar to stdout
+			for _, op := range ops {
+				loadedTags, err := l.streamToStdout(ctx, op)
+				if err != nil {
+					return nil, fmt.Errorf("streaming tar to stdout: %w", err)
 				}
 				pushedTags = append(pushedTags, loadedTags...)
 			}
@@ -254,18 +264,75 @@ func (l *loader) loadViaDockerOrPodman(ctx context.Context, op api.IndexedLoadDe
 }
 
 func (l *loader) streamDockerTar(ctx context.Context, op api.IndexedLoadDeployOperation, w io.Writer) ([]string, error) {
-	tw := docker.NewTarWriter(w)
-
 	allTags := l.tags(op)
+	var normalizedTags []string
+	for _, tag := range allTags {
+		normalizedTags = append(normalizedTags, NormalizeDockerReference(tag))
+	}
+
+	blobSource := &vfsBlobSource{vfs: l.vfs}
+	opts := ocitar.Options{
+		Tags:    normalizedTags,
+		OCITags: normalizedTags,
+		ProgressFunc: func(ctx context.Context, size int64, name string) io.Writer {
+			pw, err := progress.Writer(ctx, size, name)
+			if err != nil {
+				return nil
+			}
+			return pw
+		},
+	}
+
 	if op.RootKind == "index" {
-		// For multi-platform images, we need to select a manifest
-		manifestIndex, err := l.selectManifestForPlatform(op)
+		indexDigest, err := registryv1.NewHash(op.Root.Digest)
 		if err != nil {
 			return nil, err
 		}
-		return l.streamManifestToTar(ctx, op.Manifests[manifestIndex], allTags, tw)
+		index, err := l.vfs.ImageIndex(indexDigest)
+		if err != nil {
+			return nil, err
+		}
+		rawIndex, err := index.RawManifest()
+		if err != nil {
+			return nil, err
+		}
+		indexManifest, err := index.IndexManifest()
+		if err != nil {
+			return nil, err
+		}
+
+		var manifestInfos []ocitar.ManifestInfo
+		for _, desc := range indexManifest.Manifests {
+			img, err := l.vfs.Image(desc.Digest)
+			if err != nil {
+				return nil, fmt.Errorf("getting image for %s: %w", desc.Digest, err)
+			}
+			rawManifest, err := img.RawManifest()
+			if err != nil {
+				return nil, fmt.Errorf("getting raw manifest for %s: %w", desc.Digest, err)
+			}
+			manifest, err := img.Manifest()
+			if err != nil {
+				return nil, fmt.Errorf("getting manifest for %s: %w", desc.Digest, err)
+			}
+			info := ocitar.ManifestInfo{
+				ManifestData: rawManifest,
+				ConfigDigest: manifest.Config.Digest.Hex,
+				MediaType:    desc.MediaType,
+			}
+			for _, layer := range manifest.Layers {
+				info.LayerDigests = append(info.LayerDigests, layer.Digest.Hex)
+			}
+			manifestInfos = append(manifestInfos, info)
+		}
+
+		opts.ManifestFilter = l.makeManifestFilter()
+
+		if err := ocitar.WriteIndex(ctx, w, rawIndex, manifestInfos, blobSource, opts); err != nil {
+			return nil, err
+		}
+		return normalizedTags, nil
 	} else if op.RootKind == "manifest" && len(op.Manifests) == 1 {
-		// Validate that the single manifest matches requested platform if explicit
 		digest, err := registryv1.NewHash(op.Manifests[0].Descriptor.Digest)
 		if err != nil {
 			return nil, err
@@ -273,140 +340,76 @@ func (l *loader) streamDockerTar(ctx context.Context, op api.IndexedLoadDeployOp
 		if err := l.validateManifestPlatform(digest); err != nil {
 			return nil, fmt.Errorf("single manifest validation failed: %w", err)
 		}
-		return l.streamManifestToTar(ctx, op.Manifests[0], allTags, tw)
+		img, err := l.vfs.Image(digest)
+		if err != nil {
+			return nil, err
+		}
+		rawManifest, err := img.RawManifest()
+		if err != nil {
+			return nil, err
+		}
+		manifest, err := img.Manifest()
+		if err != nil {
+			return nil, err
+		}
+		if err := ocitar.WriteSingleManifest(ctx, w, manifest, rawManifest, blobSource, opts); err != nil {
+			return nil, err
+		}
+		return normalizedTags, nil
 	}
 
 	return nil, fmt.Errorf("no manifest or index provided")
 }
 
-// selectManifestForPlatform selects the appropriate manifest from an index based on platform criteria
-func (l *loader) selectManifestForPlatform(op api.IndexedLoadDeployOperation) (int, error) {
-	// Load and parse the index
-	digest, err := registryv1.NewHash(op.Root.Digest)
-	if err != nil {
-		return 0, err
-	}
-	index, err := l.vfs.ImageIndex(digest)
-	if err != nil {
-		return 0, err
-	}
-
-	mnfst, err := index.IndexManifest()
-	if err != nil {
-		return 0, err
-	}
-
-	// Determine which platforms to match
+func (l *loader) makeManifestFilter() ocitar.ManifestFilter {
 	platforms := l.platforms
-	hasExplicit := l.hasExplicitPlatforms()
-
-	// If "all" is specified, we can't load multi-platform for docker
-	// Fall back to current platform
-	if contains(platforms, "all") {
-		platforms = []string{getCurrentPlatform()}
-	} else if !hasExplicit {
-		// No explicit platform requested, use defaults
-		// If only one manifest, use it
-		if len(mnfst.Manifests) == 1 {
-			return 0, nil
+	return func(manifests []ocitar.ManifestDescriptor) ([]int, int) {
+		if len(manifests) == 0 {
+			return nil, 0
 		}
-		// Otherwise use current platform
-		platforms = []string{getCurrentPlatform()}
-	}
 
-	// Find matching manifest
-	for i, manifestDesc := range mnfst.Manifests {
-		if manifestDesc.Platform != nil && platformMatches(manifestDesc.Platform, platforms) {
-			return i, nil
+		// If "all" is specified or no platform filter, include all
+		if contains(platforms, "all") || len(platforms) == 0 {
+			included := make([]int, len(manifests))
+			for i := range manifests {
+				included[i] = i
+			}
+			// Default: best match for current platform
+			defaultPlatforms := []string{getCurrentPlatform()}
+			defaultIdx := 0
+			for i, m := range manifests {
+				if m.Platform != nil && platformMatches(m.Platform, defaultPlatforms) {
+					defaultIdx = i
+					break
+				}
+			}
+			return included, defaultIdx
 		}
-	}
 
-	return 0, fmt.Errorf("no manifest found for platform(s): %v", platforms)
+		// Filter to matching platforms
+		var included []int
+		for i, m := range manifests {
+			if m.Platform != nil && platformMatches(m.Platform, platforms) {
+				included = append(included, i)
+			}
+		}
+		if len(included) == 0 {
+			included = []int{0}
+		}
+		return included, included[0]
+	}
 }
 
-func (l *loader) streamManifestToTar(ctx context.Context, manifestInfo api.ManifestDeployInfo, tags []string, tw *docker.TarWriter) ([]string, error) {
-	// Load config
-	digest, err := registryv1.NewHash(manifestInfo.Descriptor.Digest)
+func (l *loader) streamToStdout(ctx context.Context, op api.IndexedLoadDeployOperation) ([]string, error) {
+	tags, err := l.streamDockerTar(ctx, op, os.Stdout)
 	if err != nil {
 		return nil, err
 	}
-	img, err := l.vfs.Image(digest)
-	if err != nil {
-		return nil, err
-	}
-	rawConfigFile, err := img.RawConfigFile()
-	if err != nil {
-		return nil, err
-	}
-
-	// Write config
-	if err := tw.WriteConfig(rawConfigFile); err != nil {
-		return nil, fmt.Errorf("writing config: %w", err)
-	}
-
-	// Normalize and set tags
-	var normalizedTags []string
+	// Print tags to stderr (stdout has the tar)
 	for _, tag := range tags {
-		normalizedTags = append(normalizedTags, NormalizeDockerReference(tag))
+		fmt.Fprintln(os.Stderr, tag)
 	}
-	if len(normalizedTags) > 0 {
-		tw.SetTags(normalizedTags)
-	}
-
-	// Stream layers
-	if err := l.streamLayers(ctx, manifestInfo, tw); err != nil {
-		return nil, fmt.Errorf("streaming layers: %w", err)
-	}
-
-	// Finalize the tar
-	if err := tw.Finalize(); err != nil {
-		return nil, fmt.Errorf("finalizing tar: %w", err)
-	}
-
-	// Print digest once
-	fmt.Printf("%s\n", manifestInfo.Descriptor.Digest)
-
-	// Print each tag without digest
-	for _, tag := range normalizedTags {
-		fmt.Println(tag)
-	}
-	return normalizedTags, nil
-}
-
-func (l *loader) streamLayers(ctx context.Context, manifestInfo api.ManifestDeployInfo, tw *docker.TarWriter) error {
-	// Pre-declare trackers for all layers in order
-	layerNames := make([]string, len(manifestInfo.LayerBlobs))
-	layerSizes := make([]int64, len(manifestInfo.LayerBlobs))
-	for i, layerDesc := range manifestInfo.LayerBlobs {
-		digest, _ := registryv1.NewHash(layerDesc.Digest)
-		layerNames[i] = digest.Hex[:12]
-		layerSizes[i] = layerDesc.Size
-	}
-	// Setup progress tracking for layer streaming
-	ctx, stopProgress := progress.InitProgress(ctx, "loaded")
-	ctx = progress.DeclareTrackers(ctx, layerNames, layerSizes)
-	defer stopProgress()
-
-	for _, layerDesc := range manifestInfo.LayerBlobs {
-		digest, err := registryv1.NewHash(layerDesc.Digest)
-		if err != nil {
-			return err
-		}
-		layer, err := l.vfs.Layer(digest)
-		if err != nil {
-			return err
-		}
-		rc, err := layer.Compressed()
-		if err != nil {
-			return err
-		}
-		defer rc.Close()
-
-		if err := tw.WriteLayer(ctx, digest, layerDesc.Size, rc); err != nil {
-			return err
-		}
-	}
-	return nil
+	return tags, nil
 }
 
 func (l *loader) connect(ctx context.Context, daemon string, showDockerWarnings bool) (*containerd.Client, error) {
@@ -756,6 +759,30 @@ func deduplicateAndSort(tags []string) []string {
 		}
 	}
 	return outTags
+}
+
+type vfsBlobSource struct {
+	vfs vfs
+}
+
+func (v *vfsBlobSource) OpenBlob(ctx context.Context, hexDigest string) (io.ReadCloser, int64, error) {
+	hash := registryv1.Hash{Algorithm: "sha256", Hex: hexDigest}
+	layer, err := v.vfs.Layer(hash)
+	if err != nil {
+		layer, err = v.vfs.ManifestBlob(hash)
+		if err != nil {
+			return nil, 0, fmt.Errorf("blob %s not found in VFS", hexDigest)
+		}
+	}
+	size, err := layer.Size()
+	if err != nil {
+		return nil, 0, fmt.Errorf("getting size for blob %s: %w", hexDigest, err)
+	}
+	rc, err := layer.Compressed()
+	if err != nil {
+		return nil, 0, fmt.Errorf("opening blob %s: %w", hexDigest, err)
+	}
+	return rc, size, nil
 }
 
 func contains(slice []string, item string) bool {

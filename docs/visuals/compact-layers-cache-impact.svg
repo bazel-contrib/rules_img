@@ -1,0 +1,137 @@
+<svg viewBox="0 0 860 510" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <style>
+      * { font-family: system-ui, -apple-system, sans-serif; }
+    </style>
+    <marker id="arr" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L8,3 z" fill="#b0b0b0"/>
+    </marker>
+    <marker id="arr-red" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L8,3 z" fill="#e05252"/>
+    </marker>
+    <marker id="arr-green" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L8,3 z" fill="#4caf7d"/>
+    </marker>
+    <linearGradient id="gbad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#e05252;stop-opacity:0.13"/>
+      <stop offset="100%" style="stop-color:#e05252;stop-opacity:0.03"/>
+    </linearGradient>
+    <linearGradient id="ggood" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#4caf7d;stop-opacity:0.13"/>
+      <stop offset="100%" style="stop-color:#4caf7d;stop-opacity:0.03"/>
+    </linearGradient>
+    <linearGradient id="gcache" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#0071e3;stop-opacity:0.14"/>
+      <stop offset="100%" style="stop-color:#0071e3;stop-opacity:0.04"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="860" height="510" fill="#ffffff"/>
+
+  <!-- Title -->
+  <text x="430" y="30" text-anchor="middle" font-size="17" font-weight="800" fill="#1d1d1f">Remote Cache Storage Impact</text>
+  <text x="430" y="50" text-anchor="middle" font-size="10.5" fill="#1d1d1f" opacity="0.6" font-family="'SF Mono', 'Menlo', monospace">--@rules_img//img/settings:experimental_compact_layers</text>
+
+  <!-- Divider -->
+  <line x1="430" y1="65" x2="430" y2="500" stroke="#888" stroke-width="1.2" stroke-dasharray="6 4" opacity="0.3"/>
+
+  <!-- ══════════════  LEFT PANEL  (center x=218) ══════════════ -->
+  <rect x="18" y="65" width="400" height="428" rx="14" fill="url(#gbad)" stroke="#e05252" stroke-width="1.3"/>
+  <text x="218" y="89" text-anchor="middle" font-size="13" font-weight="700" fill="#e05252">experimental_compact_layers = disabled</text>
+
+  <!-- Input binary: centered at x=218 -->
+  <rect x="148" y="108" width="140" height="50" rx="8" fill="#0071e3" opacity="0.12" stroke="#0071e3" stroke-width="1.2"/>
+  <text x="218" y="128" text-anchor="middle" font-size="12" font-weight="600" fill="#1d1d1f">app</text>
+  <text x="218" y="143" text-anchor="middle" font-size="10" fill="#1d1d1f" opacity="0.45">input binary  ~820 MB</text>
+
+  <!-- Arrow into layer rule -->
+  <line x1="218" y1="158" x2="218" y2="178" stroke="#b0b0b0" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- Layer rule: centered at x=218 -->
+  <rect x="133" y="178" width="170" height="42" rx="8" fill="#0071e3" opacity="0.10" stroke="#0071e3" stroke-width="1.1"/>
+  <text x="218" y="196" text-anchor="middle" font-size="11.5" font-weight="600" fill="#1d1d1f">layer rule</text>
+  <text x="218" y="211" text-anchor="middle" font-size="9.5" fill="#1d1d1f" opacity="0.45">packs binary into tar</text>
+
+  <!-- Arrow down to layer.tgz -->
+  <line x1="218" y1="220" x2="218" y2="243" stroke="#b0b0b0" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- layer.tgz output: centered at x=218 -->
+  <rect x="133" y="243" width="170" height="50" rx="8" fill="#e05252" opacity="0.12" stroke="#e05252" stroke-width="1.4"/>
+  <text x="218" y="263" text-anchor="middle" font-size="12" font-weight="600" fill="#e05252">layer.tgz</text>
+  <text x="218" y="278" text-anchor="middle" font-size="10" fill="#e05252">full layer tarball  ~820 MB</text>
+
+  <!-- Remote Cache LEFT: centered at x=218 -->
+  <rect x="30" y="345" width="370" height="130" rx="10" fill="url(#gcache)" stroke="#0071e3" stroke-width="1.3"/>
+  <text x="215" y="367" text-anchor="middle" font-size="12" font-weight="700" fill="#1d1d1f">☁  Remote Cache</text>
+
+  <!-- Arrow from layer.tgz to remote cache -->
+  <line x1="218" y1="293" x2="218" y2="345" stroke="#e05252" stroke-width="2" marker-end="url(#arr-red)"/>
+  <text x="290" y="320" font-size="9" fill="#e05252" text-anchor="middle">written to cache</text>
+
+  <!-- Binary blob in cache -->
+  <rect x="46" y="377" width="160" height="52" rx="7" fill="#0071e3" opacity="0.15" stroke="#0071e3" stroke-width="1.2"/>
+  <text x="126" y="397" text-anchor="middle" font-size="10.5" font-weight="600" fill="#1d1d1f">sha256:ab3f… (binary)</text>
+  <text x="126" y="413" text-anchor="middle" font-size="10" fill="#1d1d1f" opacity="0.6">~820 MB</text>
+  <text x="126" y="425" text-anchor="middle" font-size="9" fill="#1d1d1f" opacity="0.45">needed in all cases</text>
+
+  <!-- Layer tar blob in cache -->
+  <rect x="220" y="377" width="164" height="52" rx="7" fill="#e05252" opacity="0.15" stroke="#e05252" stroke-width="1.2"/>
+  <text x="302" y="397" text-anchor="middle" font-size="10.5" font-weight="600" fill="#e05252">sha256:9d2e… (layer)</text>
+  <text x="302" y="413" text-anchor="middle" font-size="10" fill="#e05252">~820 MB</text>
+  <text x="302" y="425" text-anchor="middle" font-size="9" fill="#e05252">redundant! same data</text>
+
+  <!-- Total -->
+  <rect x="46" y="437" width="338" height="26" rx="6" fill="#e05252" opacity="0.10" stroke="#e05252" stroke-width="1" stroke-dasharray="3 2"/>
+  <text x="215" y="454" text-anchor="middle" font-size="11" font-weight="700" fill="#e05252">Total ≈ 1.64 GB  (binary stored twice)</text>
+
+  <!-- ══════════════  RIGHT PANEL  (center x=642) ══════════════ -->
+  <rect x="442" y="65" width="400" height="428" rx="14" fill="url(#ggood)" stroke="#4caf7d" stroke-width="1.3"/>
+  <text x="642" y="89" text-anchor="middle" font-size="13" font-weight="700" fill="#4caf7d">experimental_compact_layers = enabled</text>
+
+  <!-- Input binary: centered at x=642 -->
+  <rect x="572" y="108" width="140" height="50" rx="8" fill="#0071e3" opacity="0.12" stroke="#0071e3" stroke-width="1.2"/>
+  <text x="642" y="128" text-anchor="middle" font-size="12" font-weight="600" fill="#1d1d1f">app</text>
+  <text x="642" y="143" text-anchor="middle" font-size="10" fill="#1d1d1f" opacity="0.45">input binary  ~820 MB</text>
+
+  <!-- Arrow into layer rule -->
+  <line x1="642" y1="158" x2="642" y2="178" stroke="#b0b0b0" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- Layer rule: centered at x=642 -->
+  <rect x="557" y="178" width="170" height="42" rx="8" fill="#0071e3" opacity="0.10" stroke="#0071e3" stroke-width="1.1"/>
+  <text x="642" y="196" text-anchor="middle" font-size="11.5" font-weight="600" fill="#1d1d1f">layer rule</text>
+  <text x="642" y="211" text-anchor="middle" font-size="9.5" fill="#1d1d1f" opacity="0.45">emits compact stream</text>
+
+  <!-- Arrow down to layer.cstream -->
+  <line x1="642" y1="220" x2="642" y2="243" stroke="#4caf7d" stroke-width="1.5" marker-end="url(#arr-green)" opacity="0.8"/>
+
+  <!-- .cstream output: centered at x=642 -->
+  <rect x="557" y="243" width="170" height="50" rx="8" fill="#4caf7d" opacity="0.13" stroke="#4caf7d" stroke-width="1.4"/>
+  <text x="642" y="263" text-anchor="middle" font-size="12" font-weight="600" fill="#4caf7d">layer.cstream</text>
+  <text x="642" y="278" text-anchor="middle" font-size="10" fill="#4caf7d">metadata  ~1 KB</text>
+
+  <!-- Remote Cache RIGHT: centered at x=642 -->
+  <rect x="454" y="345" width="370" height="130" rx="10" fill="url(#gcache)" stroke="#0071e3" stroke-width="1.3"/>
+  <text x="639" y="367" text-anchor="middle" font-size="12" font-weight="700" fill="#1d1d1f">☁  Remote Cache</text>
+
+  <!-- Arrow from cstream to remote cache -->
+  <line x1="642" y1="293" x2="642" y2="345" stroke="#4caf7d" stroke-width="2" marker-end="url(#arr-green)"/>
+  <text x="714" y="320" font-size="9" fill="#4caf7d" text-anchor="middle">written to cache</text>
+
+  <!-- Binary blob in cache -->
+  <rect x="470" y="377" width="160" height="52" rx="7" fill="#0071e3" opacity="0.15" stroke="#0071e3" stroke-width="1.2"/>
+  <text x="550" y="397" text-anchor="middle" font-size="10.5" font-weight="600" fill="#1d1d1f">sha256:ab3f… (binary)</text>
+  <text x="550" y="413" text-anchor="middle" font-size="10" fill="#1d1d1f" opacity="0.6">~820 MB</text>
+  <text x="550" y="425" text-anchor="middle" font-size="9" fill="#1d1d1f" opacity="0.45">needed in all cases</text>
+
+  <!-- .cstream blob in cache -->
+  <rect x="644" y="377" width="164" height="52" rx="7" fill="#4caf7d" opacity="0.15" stroke="#4caf7d" stroke-width="1.2"/>
+  <text x="726" y="397" text-anchor="middle" font-size="10.5" font-weight="600" fill="#4caf7d">layer.cstream</text>
+  <text x="726" y="413" text-anchor="middle" font-size="10" fill="#4caf7d">~1 KB</text>
+  <text x="726" y="425" text-anchor="middle" font-size="9" fill="#4caf7d">no redundancy</text>
+
+  <!-- Total -->
+  <rect x="470" y="437" width="338" height="26" rx="6" fill="#4caf7d" opacity="0.10" stroke="#4caf7d" stroke-width="1" stroke-dasharray="3 2"/>
+  <text x="639" y="454" text-anchor="middle" font-size="11" font-weight="700" fill="#4caf7d">Total ≈ 820 MB  (binary stored once)</text>
+
+</svg>

@@ -3,26 +3,35 @@ package registry
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 
+	ecr "github.com/awslabs/amazon-ecr-credential-helper/ecr-login"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/auth/credential"
-	"github.com/malt3/go-containerregistry/pkg/authn"
-	"github.com/malt3/go-containerregistry/pkg/v1/google"
-	"github.com/malt3/go-containerregistry/pkg/v1/remote"
+	"github.com/google/go-containerregistry/pkg/authn"
+	"github.com/google/go-containerregistry/pkg/v1/google"
+	"github.com/google/go-containerregistry/pkg/v1/remote"
 )
 
-// WithAuthFromMultiKeychain returns a remote.Option that uses a MultiKeychain
-// combining the default keychain and the Google keychain for authentication.
-// If `IMG_CREDENTIAL_HELPER` is set in the environment, the Bazel credential helper will
-// contribute to the keychain.
+// amazonKeychain authenticates to Amazon ECR registries using the
+// amazon-ecr-credential-helper, resolving credentials from the ambient AWS
+// configuration (environment, shared config files, or instance/role metadata).
+var amazonKeychain authn.Keychain = authn.NewKeychainFromHelper(ecr.NewECRHelper(ecr.WithLogger(io.Discard)))
+
+// WithAuthFromMultiKeychain returns a remote.Option that uses a MultiKeychain.
+// If `IMG_CREDENTIAL_HELPER` is set in the environment, the Bazel credential helper
+// is checked before the default Docker, Google, and Amazon ECR keychains.
 // If `IMG_AUTH_DEBUG` is set, each keychain resolution is logged to stderr.
-// WARNING: keep in sync with the same function in pull_tool/pkg/auth/registry/registry.go.
 func WithAuthFromMultiKeychain() remote.Option {
+	return remote.WithAuthFromKeychain(keychainFromEnvironment())
+}
+
+func keychainFromEnvironment() authn.Keychain {
 	_, debug := os.LookupEnv("IMG_AUTH_DEBUG")
 
 	var keychains []authn.Keychain
 
-	if value, ok := os.LookupEnv("IMG_CREDENTIAL_HELPER"); ok {
+	if value, ok := os.LookupEnv("IMG_CREDENTIAL_HELPER"); ok && value != "" {
 		bazel := credential.New(value, &credential.Options{CaptureStderr: true})
 		keychain := credential.ContainerRegistryKeychain(bazel)
 		keychains = append(keychains, namedKeychain("bazel credential helper", keychain, debug))
@@ -32,11 +41,10 @@ func WithAuthFromMultiKeychain() remote.Option {
 		keychains,
 		namedKeychain("docker config", authn.DefaultKeychain, debug),
 		namedKeychain("google", google.Keychain, debug),
+		namedKeychain("amazon ecr", amazonKeychain, debug),
 	)
 
-	kc := authn.NewMultiKeychain(keychains...)
-
-	return remote.WithAuthFromKeychain(kc)
+	return authn.NewMultiKeychain(keychains...)
 }
 
 func namedKeychain(name string, kc authn.Keychain, debug bool) authn.Keychain {

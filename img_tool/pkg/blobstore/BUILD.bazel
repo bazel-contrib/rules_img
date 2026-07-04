@@ -1,0 +1,14 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "blobstore",
+    srcs = ["blobstore.go"],
+    importpath = "github.com/bazel-contrib/rules_img/img_tool/pkg/blobstore",
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "blobstore_test",
+    srcs = ["blobstore_test.go"],
+    embed = [":blobstore"],
+)

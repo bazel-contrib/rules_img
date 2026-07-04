@@ -1,7 +1,58 @@
 """Repository rules for downloading container image components."""
 
-load("@pull_hub_repo//:defs.bzl", "tool_for_repository_os")
+load("@img_toolchain//:defs.bzl", "tool_for_repository_os")
 load(":registry.bzl", "get_registries", "get_sources_list")
+
+def _configured_attr(ctx, name):
+    if hasattr(ctx, "attr") and hasattr(ctx.attr, name):
+        value = getattr(ctx.attr, name)
+        if value:
+            return value
+    return None
+
+def _configured_env(ctx, name):
+    if hasattr(ctx, "getenv"):
+        value = ctx.getenv(name)
+    else:
+        value = ctx.os.environ.get(name)
+
+    return value if value else None
+
+def auth_environment(ctx, credential_helper = None, docker_config_path = None):
+    """Build auth-related environment overrides for repository/module executions.
+
+    Args:
+        ctx: Repository or module context.
+        credential_helper: Optional credential helper path to pass as IMG_CREDENTIAL_HELPER.
+        docker_config_path: Optional Docker-compatible auth config path to pass as REGISTRY_AUTH_FILE.
+
+    Returns:
+        Dictionary of environment variables to set on tool executions.
+    """
+    env = {}
+
+    credential_helper = credential_helper or _configured_attr(ctx, "credential_helper") or _configured_env(ctx, "IMG_CREDENTIAL_HELPER")
+    if credential_helper:
+        env["IMG_CREDENTIAL_HELPER"] = credential_helper
+
+    docker_config_path = docker_config_path or _configured_attr(ctx, "docker_config_path") or _configured_env(ctx, "REGISTRY_AUTH_FILE")
+    if docker_config_path:
+        env["REGISTRY_AUTH_FILE"] = docker_config_path
+
+    docker_config = _configured_env(ctx, "DOCKER_CONFIG")
+    if docker_config:
+        env["DOCKER_CONFIG"] = docker_config
+
+    return env
+
+_MANIFEST_ACCEPT_HEADERS = {
+    "Accept": ",".join([
+        "application/vnd.oci.image.index.v1+json",
+        "application/vnd.docker.distribution.manifest.list.v2+json",
+        "application/vnd.oci.image.manifest.v1+json",
+        "application/vnd.docker.distribution.manifest.v2+json",
+    ]),
+}
 
 def learn_digest_from_tag(rctx, *, tag, downloader, sources):
     """Learn the digest of an image from its tag by downloading manifest headers.
@@ -32,6 +83,7 @@ def learn_digest_from_tag(rctx, *, tag, downloader, sources):
         result = rctx.download(
             url = urls,
             output = "temp_manifest_for_digest_learning.json",
+            headers = _MANIFEST_ACCEPT_HEADERS,
         )
 
         # The digest is the SHA256 of the downloaded manifest
@@ -54,7 +106,7 @@ def learn_digest_from_tag(rctx, *, tag, downloader, sources):
             "--source={}".format(source)
             for source in sources_list
         ]
-        result = rctx.execute(args)
+        result = rctx.execute(args, environment = auth_environment(rctx))
         if result.return_code != 0:
             # Failed to get digest
             fail("Failed to learn digest from tag {}: {}".format(tag, result.stderr))
@@ -153,7 +205,7 @@ def download_blob(rctx, *, downloader, digest, sources, wait_and_read = True, ou
             "--source={}".format(source)
             for source in sources_list
         ]
-        result = rctx.execute(args)
+        result = rctx.execute(args, environment = auth_environment(rctx))
         if result.return_code != 0:
             fail("Failed to download blob: {}{}".format(result.stdout, result.stderr))
     else:
@@ -260,7 +312,7 @@ def download_manifest_from_sources(rctx, *, downloader, reference, **kwargs):
         **kwargs
     )
 
-def download_manifest(ctx, *, downloader, reference, sha256, have_valid_digest, sources, **kwargs):
+def download_manifest(ctx, *, downloader, reference, sha256, have_valid_digest, sources, credential_helper = None, docker_config_path = None, **kwargs):
     """Download a manifest from a container registry using Bazel's downloader or img tool.
 
     Args:
@@ -270,6 +322,8 @@ def download_manifest(ctx, *, downloader, reference, sha256, have_valid_digest, 
         sha256: digest of the manifest (or None).
         have_valid_digest: bool indicating the presence of a valid digest.
         sources: Sources dict mapping repositories to registries.
+        credential_helper: Optional credential helper path to pass to the img tool.
+        docker_config_path: Optional Docker-compatible auth config path to pass to the img tool.
         **kwargs: Additional arguments.
 
     Returns:
@@ -292,6 +346,8 @@ def download_manifest(ctx, *, downloader, reference, sha256, have_valid_digest, 
             sha256 = sha256,
             have_valid_digest = have_valid_digest,
             sources = sources,
+            credential_helper = credential_helper,
+            docker_config_path = docker_config_path,
         )
 
     if not have_valid_digest:
@@ -339,6 +395,7 @@ def download_manifest_bazel(rctx, *, reference, sha256, have_valid_digest, sourc
 
     manifest_result = rctx.download(
         url = urls,
+        headers = _MANIFEST_ACCEPT_HEADERS,
         **kwargs
     )
     if have_valid_digest and manifest_result.sha256 != sha256:
@@ -350,7 +407,7 @@ def download_manifest_bazel(rctx, *, reference, sha256, have_valid_digest, sourc
         waiter = None,
     )
 
-def download_manifest_img_tool(rctx, *, reference, sha256, have_valid_digest, sources):
+def download_manifest_img_tool(rctx, *, reference, sha256, have_valid_digest, sources, credential_helper = None, docker_config_path = None):
     """Download a manifest from a container registry using img tool.
 
     Args:
@@ -359,6 +416,8 @@ def download_manifest_img_tool(rctx, *, reference, sha256, have_valid_digest, so
         sha256: digest of the manifest (or None).
         have_valid_digest: bool indicating the presence of a valid digest.
         sources: Sources dict mapping repositories to registries.
+        credential_helper: Optional credential helper path to pass to the img tool.
+        docker_config_path: Optional Docker-compatible auth config path to pass to the img tool.
 
     Returns:
         A struct containing digest, path, and data of the downloaded manifest.
@@ -386,7 +445,14 @@ def download_manifest_img_tool(rctx, *, reference, sha256, have_valid_digest, so
     else:
         args.extend(["--tag", reference])
 
-    result = rctx.execute(args)
+    result = rctx.execute(
+        args,
+        environment = auth_environment(
+            rctx,
+            credential_helper = credential_helper,
+            docker_config_path = docker_config_path,
+        ),
+    )
     if result.return_code != 0:
         fail("Failed to download manifest: {}".format(result.stderr))
     return struct(
@@ -436,6 +502,6 @@ def download_with_tool(rctx, *, tool_path, reference):
         "--repository=" + rctx.attr.repository,
         "--layer-handling=" + rctx.attr.layer_handling,
     ] + ["--registry=" + r for r in registries]
-    result = rctx.execute(args, quiet = False)
+    result = rctx.execute(args, environment = auth_environment(rctx), quiet = False)
     if result.return_code != 0:
         fail("img tool failed with exit code {} and message {}".format(result.return_code, result.stderr))

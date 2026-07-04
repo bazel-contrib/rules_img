@@ -11,8 +11,8 @@ import (
 	"time"
 
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
-	"github.com/malt3/go-containerregistry/pkg/registry"
-	registryv1 "github.com/malt3/go-containerregistry/pkg/v1"
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/registry"
+	registryv1 "github.com/google/go-containerregistry/pkg/v1"
 	"google.golang.org/grpc"
 
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/auth/credential"
@@ -70,7 +70,7 @@ func Run(ctx context.Context, args []string) {
 	flagSet.StringVar(&credentialHelperPath, "credential-helper", "", "Path to credential helper binary (optional, defaults to no helper)")
 
 	if err := flagSet.Parse(args[1:]); err != nil {
-		fmt.Fprintf(os.Stderr, err.Error())
+		fmt.Fprint(os.Stderr, err.Error())
 		flagSet.Usage()
 		os.Exit(1)
 	}

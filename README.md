@@ -18,6 +18,7 @@ Supports both **Bzlmod** and **WORKSPACE** setups. For WORKSPACE setup instructi
 - 🔧 **Bazel Native** - No Docker daemon required, fully hermetic builds
 - 🌍 **Multi-Platform** - Native cross-platform support through Bazel transitions
 - ⚡ **eStargz Support** - Lazy pulling optimization for faster container starts
+- 🗜️ **Cache-efficient layers** - Skip storing layer tarballs in the Bazel remote cache. Layer rules emit a compact [stream representation](docs/compact-stream.md) instead, and the full layer tar is reconstructed on demand only at push/load time
 - 🪶 **Smaller layers** - Deduplicates files using hardlinks
 - 🎯 **Shallow Base Images** - Avoid downloading layers from huge base images like CUDA
 - 🏢 **Enterprise Ready** - Remote Build Execution and Content Addressable Storage integration
@@ -27,7 +28,7 @@ Supports both **Bzlmod** and **WORKSPACE** setups. For WORKSPACE setup instructi
 Add to your `MODULE.bazel`:
 
 ```starlark
-bazel_dep(name = "rules_img", version = "0.3.11")
+bazel_dep(name = "rules_img", version = "0.3.15")
 ```
 
 <details>
@@ -88,7 +89,7 @@ common --@rules_img//img/settings:destination_registry=gcr.io
 common --@rules_img//img/settings:load_strategy=eager
 
 # The daemon to target with image_load
-# "docker", "containerd", "podman", or "generic"
+# "docker", "containerd", "podman", "containerization", "tar", or "generic"
 # For "generic", set LOADER_BINARY environment variable at runtime
 common --@rules_img//img/settings:load_daemon=docker
 
@@ -118,6 +119,45 @@ common --@rules_img//img/settings:credential_helper=tweag-credential-helper
 # when downloading image layers during build time (e.g., for lazy base image pulling).
 # Typically set to ~/.docker/config.json or similar.
 common --@rules_img//img/settings:docker_config_path=/home/user/.docker/config.json
+
+# [Experimental] Store layers compactly instead of as full tarballs.
+# When enabled, layer rules no longer produce the layer tar as a file output, so
+# layer blobs are never written to (or fetched from) the Bazel remote cache.
+# Each layer is instead represented by a compact stream, and the full layer tar is
+# reconstructed on demand at push/load time, only when it is actually needed.
+common --@rules_img//img/settings:experimental_compact_layers=enabled
+
+# [Experimental] Inline small files directly into the compact stream instead of
+# storing them as separate content-addressed references. Files smaller than this
+# size (in bytes) are embedded inline; larger files become CAS references. Set to
+# 0 to disable inlining. Only has an effect when compact layers are enabled.
+common --@rules_img//img/settings:experimental_compact_layers_inline_threshold=4096
+
+# Path prefix for entries in the layer `mtree` output group. "./" makes every
+# entry an unambiguous full-path entry (recommended); "" emits bare tar paths and
+# gives directory entries a trailing "/" so they still parse as full-path entries.
+common --@rules_img//img/settings:mtree_path_prefix=./
+
+# Comma-separated, ordered list of fields to include in the layer `mtree` output
+# group, on a best-effort basis. Supported: type, size, mode, uid, uname, gid,
+# gname, sha256, time, link, nlink, xattr.
+common --@rules_img//img/settings:mtree_options=type,size,mode,uid,uname,gid,gname,sha256,time,link,nlink
+
+# How the layer `mtree` output group is laid out. "tar" emits one entry per tar
+# entry in exact tar order (whiteouts kept, no synthesized directories).
+# "oci_layer_filesystem_applied_changeset" applies the layer as an OCI changeset
+# to an empty filesystem (synthesizing missing parent directories and applying
+# whiteouts) and serializes the resulting tree in a stable, sorted order.
+common --@rules_img//img/settings:mtree_layer_layout=tar
+
+# How the image `mtree` output group is laid out. An image `mtree` merges the
+# per-layer `mtree` files (in layer order) into one spec.
+# "oci_layer_filesystem_applied_changeset" (default) applies the layers as an OCI
+# changeset to an empty filesystem, yielding the image's final filesystem view;
+# "tar" concatenates the per-layer entries verbatim. The changeset layout needs
+# the per-layer files to keep their whiteout markers, so leave mtree_layer_layout
+# at "tar" when using it.
+common --@rules_img//img/settings:mtree_image_layout=oci_layer_filesystem_applied_changeset
 ```
 
 </details>
@@ -269,85 +309,101 @@ For more details on working with platforms, architecture variants, and building 
 
 ### Registry Authentication
 
-`rules_img` uses [go-containerregistry](https://github.com/google/go-containerregistry) to interact with container registries, which provides automatic credential discovery from standard locations. This means authentication works the same way as with Docker CLI, Podman, and other container tools.
+`rules_img` uses a multi-keychain approach to authenticate with container registries. When pushing or pulling images, each keychain is tried in order until one provides credentials for the target registry:
 
-#### Credential Discovery
+| Priority | Keychain | Registries | Credential Source |
+|----------|----------|------------|-------------------|
+| 1 | **Bazel credential helper** | Any | `--@rules_img//img/settings:credential_helper` or `IMG_CREDENTIAL_HELPER` env var |
+| 2 | **Docker / Podman config** | Any | `~/.docker/config.json`, `$DOCKER_CONFIG/config.json`, `${XDG_RUNTIME_DIR}/containers/auth.json` |
+| 3 | **Google** | `gcr.io`, `*.pkg.dev` | [Application Default Credentials](https://cloud.google.com/docs/authentication/application-default-credentials) (workload identity, `gcloud auth login`, service account keys) |
+| 4 | **Amazon ECR** | `*.dkr.ecr.*.amazonaws.com` | Ambient AWS credentials (env vars, `~/.aws/`, EC2/ECS instance roles). See [ECR credential helper docs](https://github.com/awslabs/amazon-ecr-credential-helper#usage). |
 
-When pushing or pulling images, `rules_img` automatically searches for credentials in the following locations (in order):
-
-1. **`~/.docker/config.json`** - Standard Docker credential file
-2. **`$DOCKER_CONFIG/config.json`** - If the `DOCKER_CONFIG` environment variable is set
-3. **`${XDG_RUNTIME_DIR}/containers/auth.json`** - Podman credential file (typically `/run/user/1000/containers/auth.json`)
-
-Additionally, for Google Container Registry (gcr.io, pkg.dev, etc.), `rules_img` registers the [Google keychain](https://pkg.go.dev/github.com/google/go-containerregistry/pkg/v1/google#Keychain) alongside the default keychain. This provides automatic authentication using Application Default Credentials (ADC), making it seamless to push/pull from GCR when running on Google Cloud or with `gcloud` configured locally.
-
-For more details on how credential discovery works, see the [go-containerregistry keychain documentation](https://github.com/google/go-containerregistry/tree/main/pkg/authn#tldr-for-consumers-of-this-package).
+The first keychain that returns credentials wins — subsequent keychains are not consulted.
 
 #### Setting up Credentials
 
-The easiest way to configure credentials is using `docker login`:
+**Docker / Podman** (works for any registry):
 
 ```bash
-# Login to Docker Hub
+# Docker Hub
 docker login
 
-# Login to a private registry
+# Private registries
 docker login ghcr.io
 docker login registry.example.com
 
-# Login with username and password
-docker login -u myusername registry.example.com
-```
-
-These commands will store credentials in `~/.docker/config.json`, which `rules_img` will automatically use.
-
-#### Alternative: Podman
-
-If you're using Podman, credentials are stored in a different location:
-
-```bash
+# Podman (stores in ${XDG_RUNTIME_DIR}/containers/auth.json)
 podman login registry.example.com
 ```
 
-This stores credentials in `${XDG_RUNTIME_DIR}/containers/auth.json`, which `rules_img` also automatically discovers.
+**Google Cloud** (gcr.io, Artifact Registry):
+
+```bash
+# Local development
+gcloud auth application-default login
+
+# CI / GKE — workload identity is used automatically, no setup required.
+```
+
+**Amazon ECR**:
+
+```bash
+# Local development — authenticate via AWS CLI
+aws configure
+# or
+aws sso login
+
+# CI / ECS / EC2 — instance roles and IRSA are used automatically, no setup required.
+```
+
+**Bazel credential helper** (any registry, highest priority):
+
+```bash
+# In .bazelrc
+common --@rules_img//img/settings:credential_helper=my-credential-helper
+```
+
+This uses the same credential helper protocol as Bazel itself. See the [Bazel credential helper spec](https://github.com/bazelbuild/proposals/blob/main/designs/2022-06-07-bazel-credential-helpers.md) for details.
 
 #### Bazel Sandbox and Authentication
 
-When Bazel runs actions in a sandbox (which is the default behavior), it may hide certain environment information like the current username and home directory. This can prevent `rules_img` from automatically finding your Docker credential files.
+When Bazel runs actions in a sandbox, it may hide certain environment information like the current username and home directory. This can prevent `rules_img` from finding your Docker credential files.
 
-If you encounter authentication failures, you can explicitly configure the path to your Docker configuration file:
+If you encounter authentication failures, explicitly configure the path to your Docker configuration file:
 
 ```bash
 # In your .bazelrc or on the command line
 common --@rules_img//img/settings:docker_config_path=/home/username/.docker/config.json
 ```
 
-Replace `/home/username/` with your actual home directory path. This setting affects:
+Replace `/home/username/` with your actual home directory path. This setting affects build-time blob downloads, push, load, and multi-deploy operations.
 
-1. **Build-time blob downloads**: When downloading image layers during builds (e.g., lazy base image pulling or the `download_blobs` rule), the `REGISTRY_AUTH_FILE` environment variable is set to this path.
-2. **Push operations**: When running `image_push` targets with `bazel run`, this ensures authentication works correctly.
-3. **Load operations**: When running `image_load` targets with `bazel run`, credentials are available for any required registry access.
-4. **Multi-deploy operations**: When running `multi_deploy` targets, all combined operations can authenticate properly.
-
-Additionally, the `DOCKER_CONFIG` environment variable is inherited from your shell environment for all push, load, and multi_deploy operations. This means you can also use the standard Docker environment variable as an alternative:
+Additionally, the `DOCKER_CONFIG` environment variable is inherited from your shell environment for push, load, and multi-deploy operations:
 
 ```bash
-# Alternative: use DOCKER_CONFIG environment variable
 export DOCKER_CONFIG=/path/to/docker/config/dir
 bazel run //:push_image
+```
+
+#### Debugging
+
+Set `IMG_AUTH_DEBUG=1` to see which keychains are tried and which one provides credentials:
+
+```
+IMG_AUTH_DEBUG: keychain "docker config" for ghcr.io: no credentials, trying next
+IMG_AUTH_DEBUG: keychain "google" for ghcr.io: no credentials, trying next
+IMG_AUTH_DEBUG: keychain "amazon ecr" for ghcr.io: no credentials, trying next
 ```
 
 #### Troubleshooting
 
 If you're experiencing authentication issues:
 
-1. **Verify credentials exist**: Check that `~/.docker/config.json` or `${XDG_RUNTIME_DIR}/containers/auth.json` contains the registry
-2. **Check permissions**: Ensure the credential file is readable by the user running Bazel
-3. **Environment variables**: If using `$DOCKER_CONFIG`, ensure it points to a directory containing `config.json`
+1. **Enable debug logging**: Set `IMG_AUTH_DEBUG=1` to see which keychains are being consulted
+2. **Verify credentials exist**: Check that `~/.docker/config.json` or `${XDG_RUNTIME_DIR}/containers/auth.json` contains the registry
+3. **Check permissions**: Ensure the credential file is readable by the user running Bazel
 4. **Test with Docker/Podman**: If `docker pull` or `podman pull` works, `rules_img` should work too
 5. **Bazel sandbox issues**: If authentication works outside Bazel but fails during builds, try setting `--@rules_img//img/settings:docker_config_path` to your Docker config file path
-
-For advanced authentication scenarios (credential helpers, custom authentication), refer to the [go-containerregistry authentication documentation](https://github.com/google/go-containerregistry/blob/main/cmd/crane/doc/crane.md#authenticating).
 
 ### Language-specific examples
 
@@ -399,6 +455,7 @@ This results in a more complex implementation, but also allows for interesting o
     - [`oras_file_layer`](docs/oras.md#oras_file_layer) - Create oras artifact layers from individual files
     - [`oras_layer`](docs/oras.md#oras_layer) - Create oras tree layers from files and directories
 - [Platforms Guide](docs/platforms.md) - Working with Bazel platforms, architecture variants, and multi-platform builds
+- [Compact Stream Representation](docs/compact-stream.md) - On-disk format behind the experimental cache-efficient layers (`experimental_compact_layers`)
 - [Migration Guide from rules_oci](docs/migration-from-rules_oci.md)
 
 ## Key Differences Explained

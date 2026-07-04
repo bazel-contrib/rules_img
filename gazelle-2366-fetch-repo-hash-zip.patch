@@ -1,0 +1,89 @@
+From 3b445b4d983e7786ef82c4a2845443584b20f8ca Mon Sep 17 00:00:00 2001
+From: Malte Poll <1780588+malt3@users.noreply.github.com>
+Date: Thu, 2 Jul 2026 17:40:59 +0100
+Subject: [PATCH] fetch_repo: verify module sum against the zip, not the
+ extracted tree
+
+fetch_repo re-hashed the extracted module directory with dirhash.HashDir
+and compared the result against the go.sum entry. This duplicates the
+verification go itself does, but derives the hash from the filesystem
+rather than the authoritative source, so it fails whenever the filesystem
+cannot faithfully round-trip the zip's file names.
+
+github.com/vbatts/go-mtree v0.7.0 ships a testdata file whose name ends in
+a trailing space (testdata/dirwithbrokenlink/...). On Windows the trailing
+space is stripped during extraction, so HashDir walks a different set of
+names than the zip contains and computes a different hash. This surfaces
+as a spurious sum mismatch on Windows only, even though the downloaded
+module is correct:
+
+    fetch_repo: resulting module with sum
+    h1:0eFy2k8hOMfWGZ0EXIWhDdNMeCo0+DSQWB23GP6xdWg=; expected sum
+    h1:ytmOc3MTRidZiBi9VBCyZ2BHe4fZS47L5v7BVXDWW4E=. Please retry.
+
+The h1: hash in go.sum is defined as dirhash.HashZip over the module zip,
+which is exactly what the go toolchain computes and verifies before
+extraction. Hash the zip directly instead: `go mod download -json` already
+reports the cached zip path, so we decode a new Zip field from its output
+and pass it to dirhash.HashZip. This verifies the same bytes go verifies
+and is immune to filesystem round-trip quirks (trailing spaces,
+case-folding, unicode normalization, symlink handling, ...).
+
+The verification also moves ahead of copyTree, so a mismatch is caught
+before anything is written to the destination.
+---
+ cmd/fetch_repo/go_mod_download.go |  1 +
+ cmd/fetch_repo/module.go          | 21 ++++++++++++++-------
+ 2 files changed, 15 insertions(+), 7 deletions(-)
+
+diff --git a/cmd/fetch_repo/go_mod_download.go b/cmd/fetch_repo/go_mod_download.go
+index 4e71fad6f..35e51162e 100644
+--- a/cmd/fetch_repo/go_mod_download.go
++++ b/cmd/fetch_repo/go_mod_download.go
+@@ -15,6 +15,7 @@ import (
+ type GoModDownloadResult struct {
+ 	Dir   string
+ 	Sum   string
++	Zip   string
+ 	Error string
+ }
+ 
+diff --git a/cmd/fetch_repo/module.go b/cmd/fetch_repo/module.go
+index fc4101917..7bf9b5a99 100644
+--- a/cmd/fetch_repo/module.go
++++ b/cmd/fetch_repo/module.go
+@@ -54,13 +54,15 @@ func fetchModule(dest, importpath, version, sum string) error {
+ 		return err
+ 	}
+ 
+-	// Copy the module to the destination.
+-	if err := copyTree(dest, dl.Dir); err != nil {
+-		return fmt.Errorf("failed copying repo: %w", err)
+-	}
+-
+-	// Verify sum of the directory itself against the go.sum.
+-	repoSum, err := dirhash.HashDir(dest, importpath+"@"+version, dirhash.Hash1)
++	// Verify the sum of the downloaded module against the go.sum before copying
++	// anything to the destination. We hash the module zip directly rather than
++	// re-hashing the extracted directory: the h1: hash in go.sum is defined as
++	// dirhash.HashZip over the module zip, which is exactly what the go toolchain
++	// computes and verifies. Re-hashing the extracted tree with dirhash.HashDir
++	// can diverge whenever the filesystem cannot faithfully represent the zip's
++	// file names (e.g. Windows strips a trailing space from a filename), even
++	// though the module contents are correct.
++	repoSum, err := dirhash.HashZip(dl.Zip, dirhash.Hash1)
+ 	if err != nil {
+ 		return fmt.Errorf("failed computing sum: %w", err)
+ 	}
+@@ -81,6 +83,11 @@ func fetchModule(dest, importpath, version, sum string) error {
+ 		return errors.New(errMsg)
+ 	}
+ 
++	// Copy the module to the destination.
++	if err := copyTree(dest, dl.Dir); err != nil {
++		return fmt.Errorf("failed copying repo: %w", err)
++	}
++
+ 	return nil
+ }
+ 

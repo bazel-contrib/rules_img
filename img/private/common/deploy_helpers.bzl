@@ -142,6 +142,26 @@ def resolve_load_strategy(ctx):
         strategy = load_settings.strategy
     return strategy
 
+def content_tracking_json_vars(descriptor):
+    """Build json_vars wiring that exposes the image digest for content tracking.
+
+    When `tracks_content` is enabled, the image descriptor is passed through the
+    `json_vars` path of `expand_or_write`. This both declares the descriptor as an
+    input of the template-expansion action (so the tag re-stamps when the image
+    content changes) and exposes the digest to templates as `{{.digest}}`.
+
+    Args:
+        descriptor: File containing the image descriptor (manifest/index), or None
+            to disable content tracking.
+
+    Returns:
+        Tuple of (json_vars, json_path_to_root) suitable for `expand_or_write`.
+        Both are None when descriptor is None.
+    """
+    if descriptor == None:
+        return None, None
+    return {"digest": descriptor}, {"digest": "digest"}
+
 def resolve_daemon(ctx):
     """Determine the daemon to target, resolving 'auto' from settings.
 

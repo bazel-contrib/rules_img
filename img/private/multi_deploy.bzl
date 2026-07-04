@@ -47,26 +47,25 @@ def _compute_multi_deploy_metadata(*, ctx):
             inputs.append(deploy_info.layer_hints)
 
     # Create the merge command
-    args = ctx.actions.args()
-    args.add("deploy-merge")
-    args.add("--push-strategy", _multi_deploy_strategy(ctx, "push"))
-    args.add("--load-strategy", _multi_deploy_strategy(ctx, "load"))
+    merge_args = ctx.actions.args()
+    merge_args.add("--push-strategy", _multi_deploy_strategy(ctx, "push"))
+    merge_args.add("--load-strategy", _multi_deploy_strategy(ctx, "load"))
 
     # Add layer hints inputs and output if any exist
     layer_hints_out = None
     if layer_hints_files:
-        for layer_hints_file in layer_hints_files:
-            args.add("--layer-hints-input", layer_hints_file.path)
+        merge_args.add_all(layer_hints_files, before_each = "--layer-hints-input")
         layer_hints_out = ctx.actions.declare_file(ctx.label.name + ".layer_hints")
-        args.add("--layer-hints-output", layer_hints_out.path)
+        merge_args.add("--layer-hints-output", layer_hints_out)
 
     # Add input deploy manifest files
-    for manifest in deploy_manifests:
-        args.add(manifest.path)
+    merge_args.add_all(deploy_manifests)
 
     # Output file
     metadata_out = ctx.actions.declare_file(ctx.label.name + ".json")
-    args.add(metadata_out.path)
+    merge_args.add(metadata_out)
+    merge_args.set_param_file_format("multiline")
+    merge_args.use_param_file("@%s", use_always = True)
 
     outputs = [metadata_out]
     if layer_hints_out != None:
@@ -77,7 +76,7 @@ def _compute_multi_deploy_metadata(*, ctx):
         inputs = inputs,
         outputs = outputs,
         executable = img_toolchain_info.tool_exe,
-        arguments = [args],
+        arguments = ["deploy-merge", merge_args],
         mnemonic = "MultiDeployMerge",
     )
     return metadata_out, layer_hints_out

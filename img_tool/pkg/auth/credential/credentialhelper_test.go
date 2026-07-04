@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/malt3/go-containerregistry/pkg/authn"
+	"github.com/google/go-containerregistry/pkg/authn"
 )
 
 func TestNew_ReplacesWorkspacePlaceholder(t *testing.T) {
@@ -39,6 +39,30 @@ func TestNew_WithoutWorkspacePlaceholder(t *testing.T) {
 		t.Fatalf("expected *externalCredentialHelper, got %T", helper)
 	}
 	expected := "/usr/local/bin/helper"
+	if extHelper.helperBinary != expected {
+		t.Errorf("expected helperBinary to be %q, got %q", expected, extHelper.helperBinary)
+	}
+}
+
+func TestNew_WorkspacePlaceholderWithoutEnv(t *testing.T) {
+	orig, hadOrig := os.LookupEnv("BUILD_WORKSPACE_DIRECTORY")
+	defer func() {
+		if hadOrig {
+			os.Setenv("BUILD_WORKSPACE_DIRECTORY", orig)
+		} else {
+			os.Unsetenv("BUILD_WORKSPACE_DIRECTORY")
+		}
+	}()
+	os.Unsetenv("BUILD_WORKSPACE_DIRECTORY")
+
+	helper := New("%workspace%/bin/helper", nil)
+	extHelper, ok := helper.(*externalCredentialHelper)
+	if !ok {
+		t.Fatalf("expected *externalCredentialHelper, got %T", helper)
+	}
+	// Without BUILD_WORKSPACE_DIRECTORY, the placeholder is left unresolved
+	// (and a warning is printed to stderr).
+	expected := "%workspace%/bin/helper"
 	if extHelper.helperBinary != expected {
 		t.Errorf("expected helperBinary to be %q, got %q", expected, extHelper.helperBinary)
 	}

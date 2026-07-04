@@ -1,0 +1,14 @@
+load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
+
+# gazelle:exclude_from_release
+
+# Shared rule definitions for the layering test suite. The actual test cases
+# (layers, manifests, and fixtures) live in //tests/layering/testcases. The Go
+# tooling lives in //tests/layering/{manifest,verifier,generate_golden}.
+
+bzl_library(
+    name = "defs",
+    srcs = ["defs.bzl"],
+    visibility = ["//visibility:public"],
+    deps = ["@rules_img//img:providers"],
+)

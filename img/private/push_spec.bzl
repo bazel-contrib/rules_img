@@ -31,6 +31,7 @@ def _image_push_spec_impl(ctx):
         build_settings = build_settings,
         stamp = ctx.attr.stamp,
         stamp_settings = ctx.attr._stamp_settings[StampSettingInfo],
+        tracks_content = ctx.attr.tracks_content,
     )]
 
 image_push_spec = rule(

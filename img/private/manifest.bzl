@@ -5,7 +5,8 @@ load("//img/private:annotations_util.bzl", "extract_annotations_from_pull_info")
 load("//img/private:push_metadata.bzl", "process_deploy_specs")
 load("//img/private:stamp.bzl", "expand_or_write")
 load("//img/private/common:build.bzl", "TOOLCHAIN", "TOOLCHAINS")
-load("//img/private/common:layer_helper.bzl", "allow_tar_files", "calculate_layer_info", "extension_to_compression")
+load("//img/private/common:inherit.bzl", "INHERIT_FROM_BASE")
+load("//img/private/common:layer_helper.bzl", "allow_tar_files", "build_image_mtree", "calculate_layer_info", "extension_to_compression", "image_layer_mtrees")
 load("//img/private/common:transitions.bzl", "normalize_layer_transition", "single_platform_transition")
 load("//img/private/config:defs.bzl", "TargetPlatformInfo")
 load("//img/private/providers:index_info.bzl", "ImageIndexInfo")
@@ -291,6 +292,9 @@ def _build_sparse_oci_layout(ctx, format, manifest_out, config_out, layers):
     for layer in layers:
         args.add("--layer", layer.metadata.path)
         inputs.append(layer.metadata)
+        if layer.compact_stream != None:
+            args.add("--layer-compact-stream", "{}={}".format(layer.metadata.path, layer.compact_stream.path))
+            inputs.append(layer.compact_stream)
 
     img_toolchain_info = ctx.toolchains[TOOLCHAIN].imgtoolchaininfo
     ctx.actions.run(
@@ -385,9 +389,28 @@ def _image_manifest_impl(ctx):
 
     merged_env = dict(layer_env)
     merged_env.update(ctx.attr.env)
-    effective_entrypoint = ctx.attr.entrypoint if len(ctx.attr.entrypoint) > 0 else (layer_entrypoint if layer_entrypoint != None else [])
-    effective_cmd = ctx.attr.cmd if len(ctx.attr.cmd) > 0 else (layer_cmd if layer_cmd != None else [])
-    effective_working_dir = ctx.attr.working_dir if ctx.attr.working_dir else (layer_working_dir if layer_working_dir != None else "")
+
+    # entrypoint, cmd, and working_dir support three states, distinguished by the
+    # INHERIT_FROM_BASE sentinel (which is also their default value):
+    #   * left at the sentinel default -> defer to a non-empty layer-provided config
+    #     value if any, otherwise forward the sentinel so the tool inherits from the
+    #     base. (An empty layer value carries no opinion and inherits, matching the
+    #     historical behavior.)
+    #   * explicitly set (including to an empty value) -> forward verbatim, so an
+    #     empty value unsets the field and a value containing the sentinel expands
+    #     the base value in place (see img/private/common/inherit.bzl).
+    if ctx.attr.entrypoint == [INHERIT_FROM_BASE]:
+        effective_entrypoint = layer_entrypoint if layer_entrypoint else [INHERIT_FROM_BASE]
+    else:
+        effective_entrypoint = ctx.attr.entrypoint
+    if ctx.attr.cmd == [INHERIT_FROM_BASE]:
+        effective_cmd = layer_cmd if layer_cmd else [INHERIT_FROM_BASE]
+    else:
+        effective_cmd = ctx.attr.cmd
+    if ctx.attr.working_dir == INHERIT_FROM_BASE:
+        effective_working_dir = layer_working_dir if layer_working_dir else INHERIT_FROM_BASE
+    else:
+        effective_working_dir = ctx.attr.working_dir
 
     args.add("--os", os)
     args.add("--architecture", arch)
@@ -480,17 +503,26 @@ def _image_manifest_impl(ctx):
         for key, value in computed_annotations.items():
             args.add("--annotation", "%s=%s" % (key, value))
 
-    # Add other image config attributes
-    if ctx.attr.user:
-        args.add("--user", ctx.attr.user)
+    # Environment variables from a file are merged in by the tool.
+    # Values from `env` (or expanded templates) take precedence over file entries.
+    if ctx.attr.env_file != None:
+        inputs.append(ctx.file.env_file)
+        args.add("--env-file", ctx.file.env_file.path)
+
+    # Image config value overrides (user, working_dir, stop_signal, entrypoint,
+    # cmd). The scalar flags are always passed -- even when empty -- so the tool
+    # can distinguish the INHERIT_FROM_BASE sentinel (inherit) from an explicit
+    # empty value (unset). For the list flags, the sentinel default emits a single
+    # --entrypoint/--cmd carrying the sentinel (inherit), while an explicit empty
+    # list emits no flags at all (unset); the tool applies the inherit/unset/expand
+    # semantics against the base image config (see cmd/manifest).
+    args.add("--user", ctx.attr.user)
     for entry in effective_entrypoint:
         args.add("--entrypoint", entry)
     for entry in effective_cmd:
         args.add("--cmd", entry)
-    if effective_working_dir:
-        args.add("--working-dir", effective_working_dir)
-    if ctx.attr.stop_signal:
-        args.add("--stop-signal", ctx.attr.stop_signal)
+    args.add("--working-dir", effective_working_dir)
+    args.add("--stop-signal", ctx.attr.stop_signal)
 
     structured_config = dict(
         architecture = arch,
@@ -526,7 +558,6 @@ def _image_manifest_impl(ctx):
         os = os,
         variant = variant,
         layers = layers,
-        missing_blobs = base.missing_blobs if base != None else [],
         sparse_oci_layout = sparse_layout,
     )
     providers.extend([
@@ -555,6 +586,18 @@ def _image_manifest_impl(ctx):
         oci_tarball = depset([_build_oci_layout(ctx, "tar", manifest_out, config_out, layers)]),
         sparse_oci_layout = depset([sparse_layout]),
     )
+
+    # Merge the per-layer mtree specs (in layer order) into a single image-level
+    # mtree, exposed as the `mtree` output group. Layers built by rules_img layer
+    # rules carry their own mtree; for other layers (pulled/imported base-image
+    # layers, raw tars added via DefaultInfo) an mtree is rendered on the fly from
+    # the layer's tar blob. This is best-effort: a layer with no blob (shallow/lazy)
+    # or a non-tar blob is skipped, and the output group is only produced when at
+    # least one layer contributes an mtree.
+    layer_mtrees = image_layer_mtrees(ctx, layers)
+    if len(layer_mtrees) > 0:
+        output_groups["mtree"] = depset([build_image_mtree(ctx, ctx.label.name, layer_mtrees)])
+
     if deploy_info != None:
         providers.append(deploy_info)
         output_groups["deploy_manifest"] = depset([deploy_info.deploy_manifest])
@@ -600,6 +643,13 @@ Output groups:
 - `oci_layout`: Complete OCI layout directory with blobs
 - `oci_tarball`: OCI layout packaged as a tar file for downstream use
 - `sparse_oci_layout`: Sparse OCI layout directory (without layer blobs, only layer descriptors)
+- `mtree`: a single [mtree](https://man.freebsd.org/cgi/man.cgi?mtree(5)) text file describing the
+  image's filesystem, merged (in layer order) from per-layer mtrees. Layers built by rules_img layer
+  rules reuse their own `mtree`; for any other layer -- pulled/imported base-image layers, or raw
+  tars added directly via `DefaultInfo` -- an mtree is rendered on the fly from the layer's tar blob.
+  A layer is skipped on a best-effort basis only when its blob is unavailable (shallow/lazy layers)
+  or is not a tar (empty layers, non-tar artifact blobs), so a skipped layer means the merged mtree
+  reflects only a subset of the image. Only produced when at least one layer contributes an `mtree`.
 """,
     attrs = {
         "base": attr.label(
@@ -630,7 +680,11 @@ image_manifest(
         ),
         "user": attr.string(
             doc = """The username or UID which is a platform-specific structure that allows specific control over which user the process run as.
-This acts as a default value to use when the value is not specified when creating a container.""",
+This acts as a default value to use when the value is not specified when creating a container.
+
+Defaults to `INHERIT_FROM_BASE`: the value is inherited from the base image. Set it to
+an explicit value to override, or to `""` to unset it (do not inherit from the base).""",
+            default = INHERIT_FROM_BASE,
         ),
         "env": attr.string_dict(
             doc = """Default environment variables to set when starting a container based on this image.
@@ -639,16 +693,47 @@ Subject to [template expansion](/docs/templating.md).
 """,
             default = {},
         ),
+        "env_file": attr.label(
+            allow_single_file = True,
+            doc = """File containing environment variables to set when starting a container based on this image.
+
+The file may be JSON or newline-delimited text, auto-detected from its contents:
+
+- JSON object with string values: `{"KEY": "value"}`
+- JSON object with list values: `{"KEY": ["value1", "value2"]}` (the last value wins)
+- JSON array of `KEY=VALUE` strings: `["KEY=value"]`
+- newline-delimited `KEY=VALUE` text (one per line; blank lines and `#` comments are ignored)
+
+Values in JSON objects are used verbatim and may contain `=`, spaces, or newlines.
+The `KEY=VALUE` forms split on the first `=` and trim surrounding whitespace.
+
+Values from the `env` attribute (or expanded templates) take precedence over the file.""",
+        ),
         "entrypoint": attr.string_list(
-            doc = "A list of arguments to use as the command to execute when the container starts. These values act as defaults and may be replaced by an entrypoint specified when creating a container.",
-            default = [],
+            doc = """A list of arguments to use as the command to execute when the container starts. These values act as defaults and may be replaced by an entrypoint specified when creating a container.
+
+Defaults to `[INHERIT_FROM_BASE]`: the entrypoint is inherited from the base image (or,
+for `image_from_binary`, from the packaged binary). Set it to an explicit list to override,
+or to `[]` to unset it. An `INHERIT_FROM_BASE` item inside the list is replaced in place by
+the base image's entrypoint, so `[INHERIT_FROM_BASE, "--flag"]` appends `"--flag"` to it.""",
+            default = [INHERIT_FROM_BASE],
         ),
         "cmd": attr.string_list(
-            doc = "Default arguments to the entrypoint of the container. These values act as defaults and may be replaced by any specified when creating a container. If an Entrypoint value is not specified, then the first entry of the Cmd array SHOULD be interpreted as the executable to run.",
-            default = [],
+            doc = """Default arguments to the entrypoint of the container. These values act as defaults and may be replaced by any specified when creating a container. If an Entrypoint value is not specified, then the first entry of the Cmd array SHOULD be interpreted as the executable to run.
+
+Defaults to `[INHERIT_FROM_BASE]`: the value is inherited from the base image (or, for
+`image_from_binary`, from the packaged binary's `args`). Set it to an explicit list to
+override, or to `[]` to unset it. An `INHERIT_FROM_BASE` item inside the list is replaced in
+place by the base image's cmd, so `[INHERIT_FROM_BASE, "--flag"]` appends `"--flag"` to it.""",
+            default = [INHERIT_FROM_BASE],
         ),
         "working_dir": attr.string(
-            doc = "Sets the current working directory of the entrypoint process in the container. This value acts as a default and may be replaced by a working directory specified when creating a container.",
+            doc = """Sets the current working directory of the entrypoint process in the container. This value acts as a default and may be replaced by a working directory specified when creating a container.
+
+Defaults to `INHERIT_FROM_BASE`: the value is inherited from the base image (or, for
+`image_from_binary`, from the packaged binary). Set it to an explicit value to override, or
+to `""` to unset it (do not inherit from the base).""",
+            default = INHERIT_FROM_BASE,
         ),
         "labels": attr.string_dict(
             doc = """This field contains arbitrary metadata for the container.
@@ -658,9 +743,19 @@ Subject to [template expansion](/docs/templating.md).
             default = {},
         ),
         "label_files": attr.label_list(
-            doc = """Files containing newline-delimited KEY=VALUE labels for the image config.
+            doc = """Files containing labels for the image config, as JSON or newline-delimited text.
 
-Each file should contain one label per line in KEY=VALUE format. Empty lines are ignored.
+Each file is parsed in one of the following formats, auto-detected from its contents:
+
+- JSON object with string values: `{"key": "value"}`
+- JSON object with list values: `{"key": ["value1", "value2"]}` (the last value wins)
+- JSON array of `KEY=VALUE` strings: `["key=value"]`
+- newline-delimited `KEY=VALUE` text (one per line; blank lines and `#` comments are ignored)
+
+Values in JSON objects are used verbatim, so they can encode arbitrary strings including
+values that contain `=`, spaces, or newlines. The `KEY=VALUE` forms (JSON array and text)
+split on the first `=` and trim surrounding whitespace from the key and value.
+
 Labels from these files are merged together, and then merged with labels specified via
 the `labels` attribute. Values from files take precedence over the `labels` attribute
 for matching keys.
@@ -684,10 +779,21 @@ Subject to [template expansion](/docs/templating.md).
             default = {},
         ),
         "annotations_file": attr.label(
-            doc = """File containing newline-delimited KEY=VALUE annotations for the manifest.
+            doc = """File containing annotations for the manifest, as JSON or newline-delimited text.
 
-The file should contain one annotation per line in KEY=VALUE format. Empty lines are ignored.
-Annotations from this file are merged with annotations specified via the `annotations` attribute.
+The file is parsed in one of the following formats, auto-detected from its contents:
+
+- JSON object with string values: `{"key": "value"}`
+- JSON object with list values: `{"key": ["value1", "value2"]}` (the last value wins)
+- JSON array of `KEY=VALUE` strings: `["key=value"]`
+- newline-delimited `KEY=VALUE` text (one per line; blank lines and `#` comments are ignored)
+
+Values in JSON objects are used verbatim, so they can encode arbitrary strings including
+values that contain `=`, spaces, or newlines. The `KEY=VALUE` forms (JSON array and text)
+split on the first `=` and trim surrounding whitespace from the key and value.
+
+Annotations from this file are merged with annotations specified via the `annotations`
+attribute. Values from the file take precedence over the `annotations` attribute for matching keys.
 
 Example file content:
 ```
@@ -701,7 +807,11 @@ Each annotation is subject to [template expansion](/docs/templating.md).
             allow_single_file = True,
         ),
         "stop_signal": attr.string(
-            doc = "This field contains the system call signal that will be sent to the container to exit. The signal can be a signal name in the format SIGNAME, for instance SIGKILL or SIGRTMIN+3.",
+            doc = """This field contains the system call signal that will be sent to the container to exit. The signal can be a signal name in the format SIGNAME, for instance SIGKILL or SIGRTMIN+3.
+
+Defaults to `INHERIT_FROM_BASE`: the value is inherited from the base image. Set it to an
+explicit value to override, or to `""` to unset it (do not inherit from the base).""",
+            default = INHERIT_FROM_BASE,
         ),
         "config_fragment": attr.label(
             doc = """Optional JSON file containing a partial OCI image config, which will be used as a base for the final image config.
@@ -798,6 +908,22 @@ See [template expansion](/docs/templating.md) for available stamp variables.
         "_stamp_settings": attr.label(
             default = Label("//img/private/settings:stamp"),
             providers = [StampSettingInfo],
+        ),
+        "_mtree_path_prefix": attr.label(
+            default = Label("//img/settings:mtree_path_prefix"),
+            providers = [BuildSettingInfo],
+        ),
+        "_mtree_options": attr.label(
+            default = Label("//img/settings:mtree_options"),
+            providers = [BuildSettingInfo],
+        ),
+        "_mtree_layer_layout": attr.label(
+            default = Label("//img/settings:mtree_layer_layout"),
+            providers = [BuildSettingInfo],
+        ),
+        "_mtree_image_layout": attr.label(
+            default = Label("//img/settings:mtree_image_layout"),
+            providers = [BuildSettingInfo],
         ),
         "push_specs": attr.label_list(
             doc = """Push configurations to produce DeployInfo for this image.

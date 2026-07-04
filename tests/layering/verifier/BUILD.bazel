@@ -1,0 +1,24 @@
+load("@rules_go//go:def.bzl", "go_binary", "go_library")
+
+# gazelle:exclude_from_release
+
+go_library(
+    name = "verifier_lib",
+    srcs = ["verifier.go"],
+    importpath = "github.com/bazel-contrib/rules_img/tests/layering/verifier",
+    visibility = ["//visibility:private"],
+    deps = [
+        "//tests/layering/manifest",
+        "@rules_go//go/runfiles",
+    ],
+)
+
+go_binary(
+    name = "verifier",
+    data = ["@rules_img_tool//cmd/img"],
+    embed = [":verifier_lib"],
+    visibility = ["//tests:__subpackages__"],
+    x_defs = {
+        "IMGRlocationPath": "$(rlocationpath @rules_img_tool//cmd/img)",
+    },
+)

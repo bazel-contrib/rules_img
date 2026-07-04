@@ -1,0 +1,5 @@
+# Layer-contents test fixtures and goldens are byte-exact: their recorded sizes
+# and sha256s must match across platforms. Disable all line-ending conversion
+# (e.g. Windows core.autocrlf), so checkouts stay identical to what was committed
+# and tree-artifact contents don't pick up CRLF on Windows.
+* -text

@@ -1,0 +1,22 @@
+load("//tests/layering:defs.bzl", "combine_layers", "layer_contents_test")
+
+# gazelle:exclude_from_release
+
+# Multiple ordered layers fed to a single test with one manifest per layer.
+combine_layers(
+    name = "layer",
+    layers = [
+        "//tests/layering/testcases/files:layer",
+        "//tests/layering/testcases/tree:layer",
+    ],
+)
+
+layer_contents_test(
+    name = "test",
+    size = "small",
+    layer = ":layer",
+    manifests = [
+        "//tests/layering/testcases/files:expected.ndjson",
+        "//tests/layering/testcases/tree:expected.ndjson",
+    ],
+)

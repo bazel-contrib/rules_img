@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/malt3/go-containerregistry/pkg/authn"
+	"github.com/google/go-containerregistry/pkg/authn"
 )
 
 // Helper is the interface for a credential helper.
@@ -38,9 +38,12 @@ type externalCredentialHelper struct {
 }
 
 func New(credentialHelperBinary string, opts *Options) Helper {
-	workingDirectory := os.Getenv("BUILD_WORKSPACE_DIRECTORY")
-	if workingDirectory != "" {
-		credentialHelperBinary = strings.Replace(credentialHelperBinary, "%workspace%", workingDirectory, 1)
+	if strings.Contains(credentialHelperBinary, "%workspace%") {
+		if workingDirectory := os.Getenv("BUILD_WORKSPACE_DIRECTORY"); workingDirectory != "" {
+			credentialHelperBinary = strings.ReplaceAll(credentialHelperBinary, "%workspace%", workingDirectory)
+		} else {
+			fmt.Fprintf(os.Stderr, "warning: credential helper path %q contains %%workspace%% but BUILD_WORKSPACE_DIRECTORY is not set; leaving the placeholder unresolved\n", credentialHelperBinary)
+		}
 	}
 	var captureStderr bool
 	if opts != nil {

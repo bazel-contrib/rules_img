@@ -8,7 +8,7 @@ load("//img/private:stamp.bzl", "expand_or_write")
 load("//img/private/common:build.bzl", "TOOLCHAIN", "TOOLCHAINS")
 load("//img/private/common:default_deploy_tool.bzl", "default_deploy_tool")
 load("//img/private/common:deploy_attrs.bzl", "COMMON_LOAD_ATTRS")
-load("//img/private/common:deploy_helpers.bzl", "get_image_providers", "get_tags", "image_target_vars", "resolve_daemon", "resolve_load_strategy")
+load("//img/private/common:deploy_helpers.bzl", "content_tracking_json_vars", "get_image_providers", "get_tags", "image_target_vars", "resolve_daemon", "resolve_load_strategy")
 load("//img/private/common:transitions.bzl", "reset_platform_transition")
 load("//img/private/providers:deploy_info.bzl", "DeployInfo")
 load("//img/private/providers:deploy_tool_info.bzl", "DeployToolInfo")
@@ -125,6 +125,13 @@ def _image_load_impl(ctx):
         tag_file = ctx.attr.tag_file.files.to_list()[0]
         newline_delimited_lists_files = {"tags": tag_file}
 
+    # When tracks_content is set, expose the image descriptor as a json-var.
+    # The descriptor file becomes an action input (so the tag re-stamps when the
+    # digest changes) and is available to templates as {{.digest}}.
+    json_vars, json_path_to_root = content_tracking_json_vars(
+        image_provider.descriptor if ctx.attr.tracks_content else None,
+    )
+
     # Either expand templates or write directly
     configuration_json = expand_or_write(
         ctx = ctx,
@@ -132,6 +139,8 @@ def _image_load_impl(ctx):
         output_name = ctx.label.name + ".configuration.json",
         newline_delimited_lists_files = newline_delimited_lists_files,
         extra_build_settings = image_target_vars(ctx.attr.image.label),
+        json_vars = json_vars,
+        json_path_to_root = json_path_to_root,
     )
 
     deploy_metadata, layer_hints = _compute_load_metadata(
@@ -233,6 +242,8 @@ Output groups:
 - `tarball`: "docker save" compatible tarball with OCI layout (available for both single and multi-platform images).
   For multi-platform images, the first manifest is used as the default in `manifest.json`,
   and all manifests are included in `index.json`.
+  Alternatively, setting `daemon = "tar"` (or `--@rules_img//img/settings:load_daemon=tar`)
+  produces the same format on-the-fly by streaming it to stdout at runtime.
 
 Example:
 
@@ -282,14 +293,19 @@ bazel run //path/to:load_multiarch -- --platform linux/arm64
 
 # Build Docker save tarball
 bazel build //path/to:load_app --output_groups=tarball
+
+# Stream tar to stdout (e.g., pipe to another tool)
+bazel run //path/to:load_app --@rules_img//img/settings:load_daemon=tar
 ```
 
 Performance notes:
 - When Docker uses containerd storage (Docker 23.0+), images are loaded directly
   into containerd for better performance if the containerd socket is accessible.
-- For older Docker versions, falls back to `docker load` which requires building
+- For older Docker versions, falls back to `docker image load` which requires building
   a tar file (slower and limited to single-platform images)
 - The `--platform` flag filters which platforms are loaded from multi-platform images
+- The `tar` daemon streams a unified OCI+Docker tar to stdout without loading into any daemon
+- The `containerization` daemon uses Apple's Containerization framework via `container image load`
 """,
     attrs = dict(
         COMMON_LOAD_ATTRS,

@@ -12,7 +12,7 @@ import (
 	"slices"
 	"strings"
 
-	v1 "github.com/malt3/go-containerregistry/pkg/v1"
+	v1 "github.com/google/go-containerregistry/pkg/v1"
 )
 
 const OCILayoutVersion = "1.0.0"

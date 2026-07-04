@@ -1,0 +1,24 @@
+load("@rules_img//img:layer.bzl", "layer_from_tar")
+load("//tests/layering:defs.bzl", "layer_contents_test")
+
+# gazelle:exclude_from_release
+
+# layer_from_tar with optimize = True over the same hand-crafted tar as the
+# //tests/layering/testcases/from_tar case. Optimizing re-imports the tar through
+# the img tool (deduplicating contents) and recompresses to the default gzip, so
+# the resulting layer is a freshly written tar rather than the source verbatim.
+layer_from_tar(
+    name = "layer",
+    src = "//tests/layering/testcases/from_tar:source.tar.zst",
+    optimize = True,
+)
+
+layer_contents_test(
+    name = "test",
+    size = "small",
+    layer = ":layer",
+    manifests = ["expected.ndjson"],
+    # layer_from_tar (even with optimize) goes through the layer helper path,
+    # which never emits a compact stream, so there is nothing to reconstruct.
+    test_compact_stream = False,
+)

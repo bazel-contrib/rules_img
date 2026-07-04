@@ -1,0 +1,25 @@
+load("@rules_img//img:layer.bzl", "image_layer")
+load("//tests/layering:defs.bzl", "layer_contents_test")
+
+# gazelle:exclude_from_release
+
+# create_parent_directories: explicit TypeDir entries are emitted for every
+# parent directory of each entry (image_layer variant).
+image_layer(
+    name = "layer",
+    srcs = {
+        "/etc/app/config.txt": "//tests/layering/testcases:config_txt",
+        "/usr/share/data/deep.txt": "//tests/layering/testcases:deep_txt",
+    },
+    create_parent_directories = "enabled",
+    symlinks = {
+        "/etc/app/current.txt": "/etc/app/config.txt",
+    },
+)
+
+layer_contents_test(
+    name = "test",
+    size = "small",
+    layer = ":layer",
+    manifests = ["expected.ndjson"],
+)

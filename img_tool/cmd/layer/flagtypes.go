@@ -107,6 +107,20 @@ func (a *addFromFileArgs) Set(value string) error {
 	return nil
 }
 
+type placeFilesArgs []string
+
+func (p *placeFilesArgs) String() string {
+	return strings.Join(*p, ", ")
+}
+
+func (p *placeFilesArgs) Set(value string) error {
+	if _, err := os.Stat(value); err != nil {
+		return fmt.Errorf("file %s does not exist: %w", value, err)
+	}
+	*p = append(*p, value)
+	return nil
+}
+
 type importTars []string
 
 func (i *importTars) String() string {

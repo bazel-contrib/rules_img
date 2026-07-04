@@ -1,12 +1,12 @@
 module(
     name = "rules_img",
-    version = "0.3.11",
+    version = "0.3.15",
 )
 
 bazel_dep(name = "bazel_features", version = "1.47.0")
 bazel_dep(name = "bazel_skylib", version = "1.9.0")
 bazel_dep(name = "platforms", version = "1.0.0")
-bazel_dep(name = "hermetic_launcher", version = "0.0.5")
+bazel_dep(name = "hermetic_launcher", version = "0.0.10")
 bazel_dep(name = "package_metadata", version = "0.0.10")
 bazel_dep(name = "rules_runfiles_group", version = "0.0.1-rc.5")
 
@@ -28,17 +28,6 @@ register_toolchains(
     "@img_toolchain//:all",
 )
 
-pull_tool = use_extension("@rules_img//img/private/prebuilt:prebuilt.bzl", "pull_tool")
-pull_tool.collection(name = "pull_hub_repo")
-pull_tool.from_file(
-    collection = "pull_hub_repo",
-    file = "@rules_img//:pull_tool_lockfile.json",
-)
-use_repo(
-    pull_tool,
-    "pull_hub_repo",
-)
-
 ### REMOVE_BEFORE_RELEASE_START
 
 # ✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂
@@ -49,15 +38,24 @@ bazel_dep(name = "aspect_bazel_lib", version = "2.22.5", dev_dependency = True) 
 bazel_dep(name = "bazel_lib", version = "3.3.1", dev_dependency = True)
 bazel_dep(name = "bazel_skylib_gazelle_plugin", version = "1.9.0", dev_dependency = True)
 bazel_dep(name = "buildifier_prebuilt", version = "8.5.1.2", dev_dependency = True)
-bazel_dep(name = "gazelle", version = "0.47.0", dev_dependency = True)
-bazel_dep(name = "protobuf", version = "34.0.bcr.1", dev_dependency = True)
-bazel_dep(name = "rules_android", version = "0.7.2", dev_dependency = True)  # only exists to upgrade this transitive dep to a versions that loads CcInfo
+bazel_dep(name = "gazelle", version = "0.51.3", dev_dependency = True)
+
+# Patch fetch_repo to hash the module zip directly instead of re-hashing the
+# extracted directory, fixing a spurious checksum mismatch on Windows when a
+# module contains a filename with a trailing space (NTFS strips it silently).
+# https://github.com/bazel-contrib/bazel-gazelle/pull/2366
+single_version_override(
+    module_name = "gazelle",
+    patch_strip = 1,
+    patches = ["//:gazelle-2366-fetch-repo-hash-zip.patch"],
+)
+
+bazel_dep(name = "protobuf", version = "35.1", dev_dependency = True)
 bazel_dep(name = "rules_bazel_integration_test", version = "0.37.1", dev_dependency = True)
-bazel_dep(name = "rules_go", version = "0.60.0", dev_dependency = True)
-bazel_dep(name = "rules_img_pull_tool", version = "0.3.11", dev_dependency = True)
-bazel_dep(name = "rules_img_tool", version = "0.3.11", dev_dependency = True)
+bazel_dep(name = "rules_go", version = "0.61.1", dev_dependency = True)
+bazel_dep(name = "rules_img_tool", version = "0.3.15", dev_dependency = True)
 bazel_dep(name = "rules_pkg", version = "1.2.0", dev_dependency = True)
-bazel_dep(name = "rules_python", version = "2.0.0", dev_dependency = True)
+bazel_dep(name = "rules_python", version = "2.1.0", dev_dependency = True)
 bazel_dep(name = "stardoc", version = "0.8.1", dev_dependency = True)
 
 # Register a source-built toolchain of the img tool
@@ -76,9 +74,9 @@ bazel_binaries = use_extension(
     dev_dependency = True,
 )
 bazel_binaries.download(version = "7.4.0")
-bazel_binaries.download(version = "8.6.0")
-bazel_binaries.download(version = "9.0.2")
-use_repo(bazel_binaries, "bazel_binaries", "bazel_binaries_bazelisk", "build_bazel_bazel_7_4_0", "build_bazel_bazel_8_6_0", "build_bazel_bazel_9_0_2")
+bazel_binaries.download(version = "8.7.0")
+bazel_binaries.download(version = "9.1.1")
+use_repo(bazel_binaries, "bazel_binaries", "bazel_binaries_bazelisk", "build_bazel_bazel_7_4_0", "build_bazel_bazel_8_7_0", "build_bazel_bazel_9_1_1")
 
 go_sdk = use_extension(
     "@rules_go//go:extensions.bzl",
@@ -89,11 +87,19 @@ go_sdk.download(version = "1.26.2")
 go_sdk.nogo(
     includes = [
         "@rules_img//:__subpackages__",
-        "@rules_img_pull_tool//:__subpackages__",
         "@rules_img_tool//:__subpackages__",
     ],
     nogo = "//util:nogo",
 )
+
+# Go module dependencies for the in-repo test tooling (tests/layering).
+go_deps = use_extension(
+    "@gazelle//:extensions.bzl",
+    "go_deps",
+    dev_dependency = True,
+)
+go_deps.from_file(go_mod = "//:go.mod")
+use_repo(go_deps, "com_github_klauspost_compress")
 
 http_file = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_file")
 

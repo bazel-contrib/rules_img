@@ -78,7 +78,7 @@ type hashRequest struct {
 	input       string
 	output      string
 	layerMeta   bool
-	name        string
+	history     string
 	mediaType   string
 	digestModes []string
 	annotations map[string]string
@@ -130,7 +130,7 @@ func parseHashRequest(args []string) (*hashRequest, error) {
 	flags := flag.NewFlagSet("hash", flag.ContinueOnError)
 	digest := flags.String("digest", "sha256", "Hash algorithm (sha256 or sha512)")
 	encoding := flags.String("encoding", "raw", "Output encoding (raw, hex, sri, oci-digest, layer-metadata)")
-	name := flags.String("name", "", "Layer name (only used with layer-metadata encoding)")
+	history := flags.String("history", "", `Layer history created_by string, e.g. "bazel build //pkg:target" (only used with layer-metadata encoding)`)
 	mediaType := flags.String("media-type", "", "Override layer media type (only used with layer-metadata encoding; e.g. application/vnd.cncf.helm.chart.content.v1.tar for Helm charts)")
 	digestModes := &stringSliceFlag{}
 	flags.Var(digestModes, "digest-mode", "Digest mode to compute (digest, diff_id, diff_id_annotation:<name>). Can be repeated. Defaults to digest+diff_id.")
@@ -172,7 +172,7 @@ func parseHashRequest(args []string) (*hashRequest, error) {
 		input:       positionalArgs[0],
 		output:      positionalArgs[1],
 		layerMeta:   layerMeta,
-		name:        *name,
+		history:     *history,
 		mediaType:   *mediaType,
 		digestModes: modes,
 		annotations: annotations,

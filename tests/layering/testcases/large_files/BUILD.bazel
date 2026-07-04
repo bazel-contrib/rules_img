@@ -1,0 +1,91 @@
+load("@rules_img//img:layer.bzl", "image_layer")
+load("//tests/layering:defs.bzl", "generated_layer_file", "layer_contents_test")
+
+# gazelle:exclude_from_release
+
+exports_files(
+    ["expected.ndjson"],
+    visibility = ["//tests/layering/testcases:__subpackages__"],
+)
+
+# A realistic, multi-file layer whose contents are generated at build time (so no
+# large blobs are committed to the repo). The other compact-stream cases use only
+# tiny files; this one exercises the compact stream with substantial, multi-block
+# content and a mix of inlined and CAS-referenced files. Sizes are chosen to cover
+# several edge cases:
+#
+#   - app_binary.bin (~50 KB): a "binary" spanning many tar blocks, non-512-aligned.
+#   - libfoo.so (8192 B): block-aligned content (16 full blocks, zero padding).
+#   - boundary.dat (513 B): one block plus one byte, the maximum (511 B) padding.
+#   - asset_a.dat / asset_b.dat (identical bytes): the layer tool deduplicates
+#     identical content, recording the second as a hardlink to the first.
+#   - small.txt (37 B): a tiny file.
+#
+# Larger files are stored as CAS references while small files are inlined directly
+# into the compact stream by default; reconstruction handles both. With
+# test_compact_stream = True (the default), the layer is also reconstructed from its
+# compact stream and asserted byte-for-byte equal to the directly-built blob.
+
+generated_layer_file(
+    name = "app_binary",
+    out = "app_binary.bin",
+    seed = "app-binary",
+    size_bytes = 50000,
+)
+
+generated_layer_file(
+    name = "libfoo",
+    out = "libfoo.so",
+    seed = "libfoo",
+    size_bytes = 8192,
+)
+
+generated_layer_file(
+    name = "boundary",
+    out = "boundary.dat",
+    seed = "boundary",
+    size_bytes = 513,
+)
+
+# asset_a and asset_b share a seed and size, so they are byte-identical and the
+# layer tool records the second as a hardlink to the first.
+generated_layer_file(
+    name = "asset_a",
+    out = "asset_a.dat",
+    seed = "shared-asset",
+    size_bytes = 3000,
+)
+
+generated_layer_file(
+    name = "asset_b",
+    out = "asset_b.dat",
+    seed = "shared-asset",
+    size_bytes = 3000,
+)
+
+generated_layer_file(
+    name = "small",
+    out = "small.txt",
+    seed = "small",
+    size_bytes = 37,
+)
+
+image_layer(
+    name = "layer",
+    srcs = {
+        "/opt/app/bin/app": ":app_binary",
+        "/opt/app/lib/libfoo.so": ":libfoo",
+        "/opt/app/share/asset_a.dat": ":asset_a",
+        "/opt/app/share/asset_b.dat": ":asset_b",
+        "/etc/app/boundary.dat": ":boundary",
+        "/etc/app/small.txt": ":small",
+    },
+    visibility = ["//tests/layering/testcases:__subpackages__"],
+)
+
+layer_contents_test(
+    name = "test",
+    size = "small",
+    layer = ":layer",
+    manifests = ["expected.ndjson"],
+)

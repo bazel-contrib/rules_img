@@ -7,12 +7,6 @@ local_path_override(
     path = "../..",
 )
 
-bazel_dep(name = "rules_img_pull_tool")
-local_path_override(
-    module_name = "rules_img_pull_tool",
-    path = "../../pull_tool",
-)
-
 bazel_dep(name = "rules_img_tool")
 local_path_override(
     module_name = "rules_img_tool",
@@ -22,15 +16,15 @@ local_path_override(
 register_toolchains("@rules_img_tool//toolchain:all")
 # END BAZEL_DEP
 
-bazel_dep(name = "bazel_skylib", version = "1.7.1")
+bazel_dep(name = "bazel_skylib", version = "1.9.0")
 bazel_dep(name = "container_structure_test", version = "1.22.1")
-bazel_dep(name = "platforms", version = "0.0.11")
+bazel_dep(name = "platforms", version = "1.1.0")
 bazel_dep(name = "rules_distroless", version = "0.8.0")
 bazel_dep(name = "rules_pkg", version = "1.2.0")
-bazel_dep(name = "rules_python", version = "2.0.0")
+bazel_dep(name = "rules_python", version = "2.1.0")
 bazel_dep(name = "rules_runfiles_group", version = "0.0.1-rc.5")
 bazel_dep(name = "rules_shell", version = "0.8.0")
-bazel_dep(name = "tar.bzl", version = "0.7.0")
+bazel_dep(name = "tar.bzl", version = "0.10.5")
 bazel_dep(name = "rules_runfiles_group_example")
 
 single_version_override(
@@ -133,7 +127,6 @@ pull(
 pull(
     name = "distroless_static",
     digest = "sha256:3f2b64ef97bd285e36132c684e6b2ae8f2723293d09aae046196cca64251acac",
-    layer_handling = "eager",
     registry = "gcr.io",
     repository = "distroless/static",
 )

@@ -1,0 +1,28 @@
+load("@rules_img//img:layer.bzl", "layer_from_binary")
+load("//tests/layering:defs.bzl", "layer_contents_test")
+
+# gazelle:exclude_from_release
+
+# runfiles_sharing_mode = "private" keeps each group's runfiles under the
+# conventional <binary>.runfiles path (no shared runfiles tree or symlink),
+# while still producing one layer per RunfilesGroupInfo group plus the binary.
+layer_from_binary(
+    name = "layer",
+    binary = "//tests/layering/testcases:runfiles_groups_tool",
+    path = "/app/bin/launcher",
+    runfiles_sharing_mode = "private",
+)
+
+# One manifest per layer (stdlib group, app group, entrypoint). With private
+# runfiles, group content sits under the conventional <binary>.runfiles path and
+# the entrypoint layer has no shared-runfiles symlink.
+layer_contents_test(
+    name = "test",
+    size = "small",
+    layer = ":layer",
+    manifests = [
+        "stdlib.ndjson",
+        "app.ndjson",
+        "binary.ndjson",
+    ],
+)

@@ -5,7 +5,7 @@ import (
 	"os"
 	"runtime"
 
-	"github.com/tweag/rules_img/e2e/go/architecturevariant"
+	"github.com/bazel-contrib/rules_img/e2e/go/architecturevariant"
 )
 
 func main() {

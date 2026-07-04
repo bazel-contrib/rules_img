@@ -29,6 +29,9 @@ def build_sparse_oci_layout_for_manifest(ctx, manifest_out, config_out, layers, 
     for layer in layers:
         args.add("--layer", layer.metadata.path)
         inputs.append(layer.metadata)
+        if layer.compact_stream != None:
+            args.add("--layer-compact-stream", "{}={}".format(layer.metadata.path, layer.compact_stream.path))
+            inputs.append(layer.compact_stream)
 
     img_toolchain_info = ctx.toolchains[TOOLCHAIN].imgtoolchaininfo
     ctx.actions.run(
@@ -71,6 +74,9 @@ def build_sparse_oci_layout_for_index(ctx, index_out, manifests):
         for layer in manifest.layers:
             args.add("--layer", layer.metadata.path)
             inputs.append(layer.metadata)
+            if layer.compact_stream != None:
+                args.add("--layer-compact-stream", "{}={}".format(layer.metadata.path, layer.compact_stream.path))
+                inputs.append(layer.compact_stream)
 
     img_toolchain_info = ctx.toolchains[TOOLCHAIN].imgtoolchaininfo
     ctx.actions.run(

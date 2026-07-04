@@ -2,72 +2,6 @@
 
 This guide provides instructions for developers working on rules_img.
 
-**Note**: As of v0.2.6, development has been simplified. You no longer need to manually manage lockfiles or build custom binaries. Instead, use Bazel module overrides to work with source-built versions of the Go tools. See [Development with Source-Built Tools](#development-with-source-built-tools) for details.
-
-## Development Environment
-
-### Prerequisites
-
-- [Nix](https://nixos.org/download.html) (recommended for reproducible development environment)
-- OR manually install:
-  - Bazel
-  - Go
-  - pre-commit
-
-### Setting up the Development Environment
-
-#### Option 1: Using Nix (Recommended)
-
-```bash
-# Enter the development shell
-nix develop
-
-# This provides:
-# - Bazel with proper configuration
-# - Go toolchain
-# - pre-commit hooks
-# - All other required tools
-```
-
-#### Option 2: Manual Setup
-
-If not using Nix, ensure you have all prerequisites installed and set up pre-commit:
-
-```bash
-# Install pre-commit hooks
-pre-commit install
-```
-
-## IDE Setup
-
-### Visual Studio Code
-
-For the best development experience with VSCode, especially when using Nix:
-
-```bash
-# The repository includes VSCode settings for Bazel+Nix development
-# Create a symlink to use them:
-ln -sf .vscode/settings-bazel-nix.json .vscode/settings.json
-
-# If not using Nix, you may need to adjust the GOPACKAGESDRIVER path
-# from gopackagesdriver-nix.sh to gopackagesdriver.sh
-```
-
-## Code Formatting and Linting
-
-### Pre-commit Hooks
-
-Pre-commit hooks run automatically on `git commit`. They ensure code quality and consistency.
-
-```bash
-# Run all pre-commit hooks manually
-pre-commit run --all-files
-
-# Run specific hooks
-pre-commit run buildifier --all-files
-pre-commit run trailing-whitespace --all-files
-```
-
 ### Starlark (Bazel) Files
 
 ```bash
@@ -80,10 +14,6 @@ bazel test //util:buildifier.check
 # Run Gazelle to update BUILD files
 bazel run //util:gazelle
 ```
-
-### Markdown Files
-
-Generated markdown files in `docs/` are excluded from trailing whitespace and end-of-file checks.
 
 ## Building and Testing
 
@@ -118,6 +48,9 @@ bazel test --test_output=all //...
 Integration tests are available in the `e2e/` directory:
 
 ```bash
+# Run all integration tests
+bazel test //e2e:integration_tests
+
 # Run C++ integration tests
 cd e2e/cc && bazel test //...
 
@@ -125,21 +58,20 @@ cd e2e/cc && bazel test //...
 cd e2e/go && bazel test //...
 
 # Test push functionality
-cd e2e/go && bazel run //:push
+cd e2e/go && bazel run //image:push
 ```
 
 ### Development with Source-Built Tools
 
-When developing rules_img, you can use source-built versions of the Go tools (`img` and `pull_tool`) instead of prebuilt binaries. This is useful for testing changes to the tool implementations or applying patches.
+When developing rules_img, you can use a source-built version of the Go `img` tool instead of prebuilt binaries. This is useful for testing changes to the tool implementation or applying patches. The `img` tool now also provides the image-pulling functionality used by repository rules, so there is a single tool module (`rules_img_tool`) to override.
 
 #### Setting Up Development Dependencies
 
-Add dependencies on the tool modules and register the source-built toolchains in your `MODULE.bazel`:
+Add a dependency on the tool module and register the source-built toolchain in your `MODULE.bazel`:
 
 ```starlark
-# Add dependencies on the tool modules
+# Add a dependency on the tool module
 bazel_dep(name = "rules_img_tool", version = "<version>", dev_dependency = True)
-bazel_dep(name = "rules_img_pull_tool", version = "<version>", dev_dependency = True)
 
 # Register source-built toolchain
 register_toolchains(
@@ -150,7 +82,7 @@ register_toolchains(
 
 #### Module Override Options
 
-You can override the tool modules using various Bazel module override mechanisms:
+You can override the tool module using various Bazel module override mechanisms:
 
 ##### Local Development Override
 
@@ -161,11 +93,6 @@ For local development with modifications:
 local_path_override(
     module_name = "rules_img_tool",
     path = "../img_tool",  # Path to your local checkout
-)
-
-local_path_override(
-    module_name = "rules_img_pull_tool",
-    path = "../pull_tool",
 )
 ```
 
@@ -182,13 +109,6 @@ git_override(
     commit = "abc123def456",  # Specific commit
     # Or use: branch = "feature-branch"
 )
-
-git_override(
-    module_name = "rules_img_pull_tool",
-    remote = "https://github.com/your-fork/rules_img.git",
-    strip_prefix = "pull_tool",
-    commit = "abc123def456",
-)
 ```
 
 ##### Archive Override
@@ -202,13 +122,6 @@ archive_override(
     integrity = "sha256-...",
     strip_prefix = "rules_img-abc123def456/img_tool",  # Note: includes img_tool subdirectory
 )
-
-archive_override(
-    module_name = "rules_img_pull_tool",
-    urls = ["https://github.com/your-fork/rules_img/archive/abc123def456.tar.gz"],
-    integrity = "sha256-...",
-    strip_prefix = "rules_img-abc123def456/pull_tool",  # Note: includes pull_tool subdirectory
-)
 ```
 
 ##### Single Version Override with Patches
@@ -220,12 +133,6 @@ single_version_override(
     module_name = "rules_img_tool",
     patches = ["//patches:img_tool_performance.patch"],
     patch_strip = 2,  # For patches created from rules_img root (strips img_tool/ prefix)
-)
-
-single_version_override(
-    module_name = "rules_img_pull_tool",
-    patches = ["//patches:pull_tool_auth_fix.patch"],
-    patch_strip = 2,  # For patches created from rules_img root (strips pull_tool/ prefix)
 )
 ```
 

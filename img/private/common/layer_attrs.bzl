@@ -43,6 +43,9 @@ If set to 'auto', uses the global default from --@rules_img//img/settings:layer_
 Whether to include runfiles for executable targets.
 When True (default), executables in srcs will include their runfiles tree.
 When False, only the executable file itself is included, without runfiles.
+
+Either way, any additional default outputs of the target (the rest of `DefaultInfo.files`
+beyond the executable) are copied into the layer, placed relative to the executable.
 """,
     ),
     annotations = attr.string_dict(
@@ -53,10 +56,21 @@ Annotations to add to the layer metadata as key-value pairs.
     ),
     annotations_file = attr.label(
         doc = """\
-File containing newline-delimited KEY=VALUE annotations for the layer.
+File containing annotations for the layer, as JSON or newline-delimited text.
 
-The file should contain one annotation per line in KEY=VALUE format. Empty lines are ignored.
-Annotations from this file are merged with annotations specified via the `annotations` attribute.
+The file is parsed in one of the following formats, auto-detected from its contents:
+
+- JSON object with string values: `{"key": "value"}`
+- JSON object with list values: `{"key": ["value1", "value2"]}` (the last value wins)
+- JSON array of `KEY=VALUE` strings: `["key=value"]`
+- newline-delimited `KEY=VALUE` text (one per line; blank lines and `#` comments are ignored)
+
+Values in JSON objects are used verbatim, so they can encode arbitrary strings including
+values that contain `=`, spaces, or newlines. The `KEY=VALUE` forms (JSON array and text)
+split on the first `=` and trim surrounding whitespace from the key and value.
+
+Annotations from this file are merged with annotations specified via the `annotations`
+attribute, which take precedence for matching keys.
 
 Example file content:
 ```
@@ -103,6 +117,26 @@ Override the layer media type. By default, the media type is auto-detected from 
     ),
     _compression_level = attr.label(
         default = Label("//img/settings:compression_level"),
+        providers = [BuildSettingInfo],
+    ),
+    _experimental_compact_layers = attr.label(
+        default = Label("//img/settings:experimental_compact_layers"),
+        providers = [BuildSettingInfo],
+    ),
+    _experimental_compact_layers_inline_threshold = attr.label(
+        default = Label("//img/settings:experimental_compact_layers_inline_threshold"),
+        providers = [BuildSettingInfo],
+    ),
+    _mtree_path_prefix = attr.label(
+        default = Label("//img/settings:mtree_path_prefix"),
+        providers = [BuildSettingInfo],
+    ),
+    _mtree_options = attr.label(
+        default = Label("//img/settings:mtree_options"),
+        providers = [BuildSettingInfo],
+    ),
+    _mtree_layer_layout = attr.label(
+        default = Label("//img/settings:mtree_layer_layout"),
         providers = [BuildSettingInfo],
     ),
 )

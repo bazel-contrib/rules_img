@@ -7,9 +7,73 @@ can also compute deploy metadata when they have push_specs/load_specs attached.
 load("//img/private:layer_path_hints.bzl", "layer_hints_for_deploy_metadata")
 load("//img/private:stamp.bzl", "expand_or_write")
 load("//img/private/common:build.bzl", "TOOLCHAIN")
+load("//img/private/common:deploy_helpers.bzl", "content_tracking_json_vars")
 load("//img/private/providers:deploy_info.bzl", "DeployInfo")
 load("//img/private/providers:load_config_info.bzl", "LoadConfigInfo")
 load("//img/private/providers:push_config_info.bzl", "PushConfigInfo")
+
+def _manifest_layer_sources(manifest_info):
+    """Return the per-layer upstream sources of a manifest, aligned with its layers.
+
+    Each element corresponds to a layer (in order) and is a list of
+    {"registry": .., "repository": ..} dicts (empty for layers with no source).
+    """
+    return [
+        [{"registry": source.registry, "repository": source.repository} for source in layer.sources]
+        for layer in manifest_info.layers
+    ]
+
+def _write_layer_sources_file(ctx, *, manifest_info, index_info, output_prefix):
+    """Write a JSON side file describing each layer's upstream sources.
+
+    The file maps a manifest index (as a string) to a list aligned with that
+    manifest's layers, each element being the list of sources for that layer. It is
+    consumed by the deploy-metadata tool (`--layer-sources-file`) to populate the
+    per-layer `sources` in the deploy manifest. Returns None (and writes nothing)
+    when no layer records any source, so unaffected images stay byte-identical.
+    """
+    mapping = {}
+    has_any = False
+    if manifest_info != None:
+        per_layer = _manifest_layer_sources(manifest_info)
+        mapping["0"] = per_layer
+        has_any = any([len(entry) > 0 for entry in per_layer])
+    if index_info != None:
+        for i, manifest in enumerate(index_info.manifests):
+            per_layer = _manifest_layer_sources(manifest)
+            mapping[str(i)] = per_layer
+            if any([len(entry) > 0 for entry in per_layer]):
+                has_any = True
+    if not has_any:
+        return None
+    out = ctx.actions.declare_file(output_prefix + ".layer_sources.json")
+    ctx.actions.write(out, json.encode(mapping))
+    return out
+
+def _add_manifest_compact_streams(manifest_index, manifest_info, args, inputs):
+    """Record each compact-stream layer's .cstream for the deploy-metadata tool.
+
+    For the "bes" strategy the layer's compressed blob is never materialized, so
+    the syncer reconstructs it from the .cstream. We pass the .cstream so the tool
+    can record its CAS digest, and add the .cstream plus the layer's
+    content-addressed input files as action inputs so Bazel uploads them to the CAS
+    the syncer reads from.
+    """
+    for layer_index, layer in enumerate(manifest_info.layers):
+        if layer.compact_stream == None:
+            continue
+        args.add("--layer-compact-stream", "{},{}={}".format(manifest_index, layer_index, layer.compact_stream.path))
+        inputs.append(layer.compact_stream)
+        if layer.layer_input_files_cas != None:
+            inputs.append(layer.layer_input_files_cas)
+
+def _add_compact_stream_args(manifest_info, index_info, args, inputs):
+    """Add --layer-compact-stream args for all compact-stream layers of the image."""
+    if manifest_info != None:
+        _add_manifest_compact_streams(0, manifest_info, args, inputs)
+    if index_info != None:
+        for i, manifest in enumerate(index_info.manifests):
+            _add_manifest_compact_streams(i, manifest, args, inputs)
 
 def compute_push_metadata(
         ctx,
@@ -81,7 +145,6 @@ def compute_push_metadata(
         args.add("--root-path", manifest_info.manifest.path)
         args.add("--root-kind", "manifest")
         args.add("--manifest-path", "0=" + manifest_info.manifest.path)
-        args.add("--missing-blobs-for-manifest", "0=" + (",".join(manifest_info.missing_blobs)))
         inputs.append(manifest_info.manifest)
 
     if index_info != None:
@@ -89,12 +152,26 @@ def compute_push_metadata(
         args.add("--root-kind", "index")
         for i, manifest in enumerate(index_info.manifests):
             args.add("--manifest-path", "{}={}".format(i, manifest.manifest.path))
-            args.add("--missing-blobs-for-manifest", "{}={}".format(i, ",".join(manifest.missing_blobs)))
         for child_index, tag_file in manifest_tags_expanded:
             args.add("--manifest-tag-file", "{}={}".format(child_index, tag_file.path))
             inputs.append(tag_file)
         inputs.append(index_info.index)
         inputs.extend([manifest.manifest for manifest in index_info.manifests])
+
+    layer_sources_file = _write_layer_sources_file(
+        ctx,
+        manifest_info = manifest_info,
+        index_info = index_info,
+        output_prefix = output_prefix,
+    )
+    if layer_sources_file != None:
+        inputs.append(layer_sources_file)
+        args.add("--layer-sources-file", layer_sources_file.path)
+
+    # For the bes strategy, compact-stream layers are reconstructed by the syncer
+    # from the CAS, so record each .cstream and pull its input files into the CAS.
+    if strategy == "bes":
+        _add_compact_stream_args(manifest_info, index_info, args, inputs)
 
     for ref_idx, referrer in enumerate(referrers):
         ref_manifest_info = referrer.manifest_info
@@ -103,14 +180,12 @@ def compute_push_metadata(
             args.add("--referrer-root-path", "{}={}".format(ref_idx, ref_manifest_info.manifest.path))
             args.add("--referrer-root-kind", "{}=manifest".format(ref_idx))
             args.add("--referrer-manifest-path", "{},0={}".format(ref_idx, ref_manifest_info.manifest.path))
-            args.add("--referrer-missing-blobs-for-manifest", "{},0={}".format(ref_idx, ",".join(ref_manifest_info.missing_blobs)))
             inputs.append(ref_manifest_info.manifest)
         elif ref_index_info != None:
             args.add("--referrer-root-path", "{}={}".format(ref_idx, ref_index_info.index.path))
             args.add("--referrer-root-kind", "{}=index".format(ref_idx))
             for i, manifest in enumerate(ref_index_info.manifests):
                 args.add("--referrer-manifest-path", "{},{}={}".format(ref_idx, i, manifest.manifest.path))
-                args.add("--referrer-missing-blobs-for-manifest", "{},{}={}".format(ref_idx, i, ",".join(manifest.missing_blobs)))
             inputs.append(ref_index_info.index)
             inputs.extend([manifest.manifest for manifest in ref_index_info.manifests])
 
@@ -289,7 +364,6 @@ def compute_load_metadata(
         args.add("--root-path", manifest_info.manifest.path)
         args.add("--root-kind", "manifest")
         args.add("--manifest-path", "0=" + manifest_info.manifest.path)
-        args.add("--missing-blobs-for-manifest", "0=" + (",".join(manifest_info.missing_blobs)))
         inputs.append(manifest_info.manifest)
 
     if index_info != None:
@@ -297,9 +371,18 @@ def compute_load_metadata(
         args.add("--root-kind", "index")
         for i, manifest in enumerate(index_info.manifests):
             args.add("--manifest-path", "{}={}".format(i, manifest.manifest.path))
-            args.add("--missing-blobs-for-manifest", "{}={}".format(i, ",".join(manifest.missing_blobs)))
         inputs.append(index_info.index)
         inputs.extend([manifest.manifest for manifest in index_info.manifests])
+
+    layer_sources_file = _write_layer_sources_file(
+        ctx,
+        manifest_info = manifest_info,
+        index_info = index_info,
+        output_prefix = output_prefix,
+    )
+    if layer_sources_file != None:
+        inputs.append(layer_sources_file)
+        args.add("--layer-sources-file", layer_sources_file.path)
 
     outputs = []
     layer_hints_file = layer_hints_for_deploy_metadata(
@@ -377,6 +460,12 @@ def process_deploy_specs(
         if push_config.tag_file:
             newline_delimited_lists_files = {"tags": push_config.tag_file}
 
+        # When tracks_content is set, expose the image descriptor as a json-var so
+        # the tag re-stamps when the digest changes and {{.digest}} is available.
+        json_vars, json_path_to_root = content_tracking_json_vars(
+            image_info.descriptor if push_config.tracks_content else None,
+        )
+
         configuration_json = expand_or_write(
             ctx = ctx,
             templates = templates,
@@ -386,6 +475,8 @@ def process_deploy_specs(
             stamp_override = push_config.stamp,
             stamp_settings_override = push_config.stamp_settings,
             extra_build_settings = image_target_vars,
+            json_vars = json_vars,
+            json_path_to_root = json_path_to_root,
         )
 
         manifest_tags_expanded = []
@@ -432,6 +523,12 @@ def process_deploy_specs(
         if load_config.tag_file:
             newline_delimited_lists_files = {"tags": load_config.tag_file}
 
+        # When tracks_content is set, expose the image descriptor as a json-var so
+        # the tag re-stamps when the digest changes and {{.digest}} is available.
+        json_vars, json_path_to_root = content_tracking_json_vars(
+            image_info.descriptor if load_config.tracks_content else None,
+        )
+
         configuration_json = expand_or_write(
             ctx = ctx,
             templates = templates,
@@ -441,6 +538,8 @@ def process_deploy_specs(
             stamp_override = load_config.stamp,
             stamp_settings_override = load_config.stamp_settings,
             extra_build_settings = image_target_vars,
+            json_vars = json_vars,
+            json_path_to_root = json_path_to_root,
         )
 
         deploy_metadata, layer_hints = compute_load_metadata(

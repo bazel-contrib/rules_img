@@ -1,0 +1,10 @@
+load("@rules_go//go:def.bzl", "go_binary")
+
+go_binary(
+    name = "gen_data",
+    srcs = ["main.go"],
+    importpath = "github.com/bazel-contrib/rules_img/e2e/go/compact_layers/gen_data",
+    pure = "on",
+    tags = ["manual"],
+    visibility = ["//compact_layers:__pkg__"],
+)

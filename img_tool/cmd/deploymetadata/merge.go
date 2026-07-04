@@ -8,6 +8,7 @@ import (
 	"os"
 
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/api"
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/argfile"
 )
 
 var (
@@ -18,6 +19,13 @@ var (
 )
 
 func DeployMergeProcess(ctx context.Context, args []string) {
+	expandedArgs, err := argfile.Expand(args)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error parsing argfile: %v\n", err)
+		os.Exit(1)
+	}
+	args = expandedArgs
+
 	flagSet := flag.NewFlagSet("deploy-merge", flag.ExitOnError)
 	flagSet.Usage = func() {
 		fmt.Fprintf(flagSet.Output(), "Merges multiple deploy manifests into a single unified deployment.\n\n")

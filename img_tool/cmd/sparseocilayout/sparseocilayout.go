@@ -11,7 +11,7 @@ import (
 	"slices"
 	"strings"
 
-	v1 "github.com/malt3/go-containerregistry/pkg/v1"
+	v1 "github.com/google/go-containerregistry/pkg/v1"
 
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/ocilayout"
 )
@@ -24,6 +24,7 @@ func SparseOCILayoutProcess(ctx context.Context, args []string) {
 	var outputDir string
 	var configPath string
 	var layerFlags layerMappingFlag
+	var layerCompactStreamFlags layerMappingFlag
 	var manifestPaths stringSliceFlag
 	var configPaths stringSliceFlag
 	var format string
@@ -43,6 +44,7 @@ func SparseOCILayoutProcess(ctx context.Context, args []string) {
 	flagSet.StringVar(&outputDir, "output", "", "Output path for sparse OCI layout (required)")
 	flagSet.StringVar(&format, "format", "directory", "Output format: 'directory' or 'tar'")
 	flagSet.Var(&layerFlags, "layer", "Layer metadata path (can be specified multiple times)")
+	flagSet.Var(&layerCompactStreamFlags, "layer-compact-stream", "Layer compact stream as <metadata_path>=<cstream_path> (can be specified multiple times)")
 	flagSet.Var(&manifestPaths, "manifest-path", "Path to manifest file (for index, can be specified multiple times)")
 	flagSet.Var(&configPaths, "config-path", "Path to config file (for index, can be specified multiple times)")
 
@@ -77,7 +79,7 @@ func SparseOCILayoutProcess(ctx context.Context, args []string) {
 			fmt.Fprintf(os.Stderr, "Error: --index requires at least one --manifest-path and --config-path\n")
 			os.Exit(1)
 		}
-		err = assembleSparseLayoutWithIndex(indexPath, outputDir, format, manifestPaths, configPaths, layerFlags)
+		err = assembleSparseLayoutWithIndex(indexPath, outputDir, format, manifestPaths, configPaths, layerFlags, layerCompactStreamFlags)
 	} else {
 		if manifestPath == "" {
 			fmt.Fprintf(os.Stderr, "Error: either --manifest or --index is required\n")
@@ -93,7 +95,7 @@ func SparseOCILayoutProcess(ctx context.Context, args []string) {
 			fmt.Fprintf(os.Stderr, "Error: cannot use --manifest-path or --config-path without --index\n")
 			os.Exit(1)
 		}
-		err = assembleSparseLayout(manifestPath, configPath, outputDir, format, layerFlags)
+		err = assembleSparseLayout(manifestPath, configPath, outputDir, format, layerFlags, layerCompactStreamFlags)
 	}
 
 	if err != nil {
@@ -153,6 +155,22 @@ func copyBlobs(sink ocilayout.OCILayoutSink, blobs blobMap) error {
 		dstPath := filepath.Join("blobs", "sha256", digest)
 		if err := sink.CopyFile(dstPath, srcPath, false); err != nil {
 			return fmt.Errorf("copying blob %s: %w", digest, err)
+		}
+	}
+	return nil
+}
+
+func copyLayerCompactStreams(sink ocilayout.OCILayoutSink, layerCompactStreamByDigest map[string]string) error {
+	digests := make([]string, 0, len(layerCompactStreamByDigest))
+	for k := range layerCompactStreamByDigest {
+		digests = append(digests, k)
+	}
+	slices.Sort(digests)
+	for _, digest := range digests {
+		srcPath := layerCompactStreamByDigest[digest]
+		dstPath := filepath.Join("blobs", "sha256", digest+".cstream")
+		if err := sink.CopyFile(dstPath, srcPath, false); err != nil {
+			return fmt.Errorf("copying compact stream for %s: %w", digest, err)
 		}
 	}
 	return nil
@@ -219,7 +237,28 @@ func buildLayerMetadataMap(layers []string) (map[string]layerDescriptor, error) 
 	return result, nil
 }
 
-func assembleSparseLayout(manifestPath, configPath, outputPath, format string, layers layerMappingFlag) error {
+// buildLayerCompactStreamMap parses --layer-compact-stream flags of the form <metadata_path>=<cstream_path>
+// and returns a map from digest hex to compact stream file path.
+func buildLayerCompactStreamMap(layerCompactStreamFlags []string) (map[string]string, error) {
+	result := make(map[string]string)
+	for _, entry := range layerCompactStreamFlags {
+		sep := strings.Index(entry, "=")
+		if sep < 0 {
+			return nil, fmt.Errorf("invalid --layer-compact-stream value %q: expected <metadata_path>=<cstream_path>", entry)
+		}
+		metadataPath := entry[:sep]
+		compactStreamPath := entry[sep+1:]
+		meta, err := readLayerMetadata(metadataPath)
+		if err != nil {
+			return nil, fmt.Errorf("reading metadata for --layer-compact-stream %q: %w", entry, err)
+		}
+		hex := strings.TrimPrefix(meta.Digest, "sha256:")
+		result[hex] = compactStreamPath
+	}
+	return result, nil
+}
+
+func assembleSparseLayout(manifestPath, configPath, outputPath, format string, layers layerMappingFlag, layerCompactStreamFlags layerMappingFlag) error {
 	sink, err := createSink(outputPath, format)
 	if err != nil {
 		return err
@@ -241,6 +280,11 @@ func assembleSparseLayout(manifestPath, configPath, outputPath, format string, l
 	}
 
 	layerMetadataByDigest, err := buildLayerMetadataMap(layers)
+	if err != nil {
+		return err
+	}
+
+	layerCompactStreamByDigest, err := buildLayerCompactStreamMap(layerCompactStreamFlags)
 	if err != nil {
 		return err
 	}
@@ -274,10 +318,11 @@ func assembleSparseLayout(manifestPath, configPath, outputPath, format string, l
 		return err
 	}
 
-	return nil
+	// Copy compact stream files
+	return copyLayerCompactStreams(sink, layerCompactStreamByDigest)
 }
 
-func assembleSparseLayoutWithIndex(indexPath, outputPath, format string, manifestPaths, configPaths []string, layers layerMappingFlag) error {
+func assembleSparseLayoutWithIndex(indexPath, outputPath, format string, manifestPaths, configPaths []string, layers layerMappingFlag, layerCompactStreamFlags layerMappingFlag) error {
 	sink, err := createSink(outputPath, format)
 	if err != nil {
 		return err
@@ -299,6 +344,11 @@ func assembleSparseLayoutWithIndex(indexPath, outputPath, format string, manifes
 	}
 
 	layerMetadataByDigest, err := buildLayerMetadataMap(layers)
+	if err != nil {
+		return err
+	}
+
+	layerCompactStreamByDigest, err := buildLayerCompactStreamMap(layerCompactStreamFlags)
 	if err != nil {
 		return err
 	}
@@ -348,5 +398,6 @@ func assembleSparseLayoutWithIndex(indexPath, outputPath, format string, manifes
 		return err
 	}
 
-	return nil
+	// Copy compact stream files
+	return copyLayerCompactStreams(sink, layerCompactStreamByDigest)
 }

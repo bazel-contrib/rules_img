@@ -1,0 +1,31 @@
+load("@rules_img//img:image.bzl", "image_manifest")
+load("//tests/mtree:defs.bzl", "image_mtree_golden_test")
+
+# gazelle:exclude_from_release
+
+exports_files(["layer.tar"])
+
+# A plain filegroup exposing the raw tar via DefaultInfo (no LayersInfo, no
+# precomputed mtree), so image_manifest takes its on-the-fly path.
+filegroup(
+    name = "raw_layer",
+    srcs = ["layer.tar"],
+)
+
+# layer.tar is a hand-built raw tar (see README.md), added to the image directly
+# as a `layers` entry -- i.e. via DefaultInfo, NOT a rules_img layer rule, so it
+# carries no precomputed `mtree`. This exercises image_manifest rendering a layer
+# mtree ON THE FLY from the layer's tar blob (the same path used for pulled /
+# imported base-image layers that ship a blob). image_mtree_golden_test builds the
+# image `mtree` output group (applied-changeset layout) and diffs it against
+# expected.mtree.
+image_manifest(
+    name = "image",
+    layers = [":raw_layer"],
+)
+
+image_mtree_golden_test(
+    name = "test",
+    golden = "expected.mtree",
+    image = ":image",
+)

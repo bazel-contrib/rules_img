@@ -1,10 +1,7 @@
 load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
+load("//img/private:download_blobs_test.bzl", "download_blobs_test_suite")
 
-bzl_library(
-    name = "annotations_util",
-    srcs = ["annotations_util.bzl"],
-    visibility = ["//img:__subpackages__"],
-)
+download_blobs_test_suite(name = "download_blobs_test")
 
 bzl_library(
     name = "import",
@@ -14,8 +11,10 @@ bzl_library(
         ":manifest_media_type",
         "//img:providers",
         "//img/private/common:build",
+        "//img/private/common:layer_helper",
         "//img/private/common:sparse_oci_layout",
         "//img/private/common:transitions",
+        "@bazel_skylib//rules:common_settings",
     ],
 )
 
@@ -79,12 +78,6 @@ bzl_library(
 )
 
 bzl_library(
-    name = "layer_path_hints",
-    srcs = ["layer_path_hints.bzl"],
-    visibility = ["//img:__subpackages__"],
-)
-
-bzl_library(
     name = "push",
     srcs = ["push.bzl"],
     visibility = ["//img:__subpackages__"],
@@ -143,6 +136,7 @@ bzl_library(
         ":push_metadata",
         ":stamp",
         "//img/private/common:build",
+        "//img/private/common:inherit",
         "//img/private/common:layer_helper",
         "//img/private/common:transitions",
         "//img/private/config:defs",
@@ -156,6 +150,22 @@ bzl_library(
         "//img/private/providers:push_config_info",
         "//img/private/providers:single_layer_info",
         "//img/private/providers:stamp_setting_info",
+        "@bazel_skylib//rules:common_settings",
+    ],
+)
+
+bzl_library(
+    name = "optimize",
+    srcs = ["optimize.bzl"],
+    visibility = ["//img:__subpackages__"],
+    deps = [
+        "//img/private/common:build",
+        "//img/private/common:layer_helper",
+        "//img/private/common:transitions",
+        "//img/private/providers:index_info",
+        "//img/private/providers:manifest_info",
+        "//img/private/providers:oci_layout_settings_info",
+        "//img/private/providers:single_layer_info",
         "@bazel_skylib//rules:common_settings",
     ],
 )
@@ -270,24 +280,6 @@ bzl_library(
 )
 
 bzl_library(
-    name = "file_metadata",
-    srcs = ["file_metadata.bzl"],
-    visibility = ["//img:__subpackages__"],
-)
-
-bzl_library(
-    name = "manifest_media_type",
-    srcs = ["manifest_media_type.bzl"],
-    visibility = ["//img:__subpackages__"],
-)
-
-bzl_library(
-    name = "root_symlinks",
-    srcs = ["root_symlinks.bzl"],
-    visibility = ["//img:__subpackages__"],
-)
-
-bzl_library(
     name = "deploy_tool",
     srcs = ["deploy_tool.bzl"],
     visibility = ["//img:__subpackages__"],
@@ -302,6 +294,7 @@ bzl_library(
         ":layer_path_hints",
         ":stamp",
         "//img/private/common:build",
+        "//img/private/common:deploy_helpers",
         "//img/private/providers:deploy_info",
         "//img/private/providers:load_config_info",
         "//img/private/providers:push_config_info",
@@ -342,4 +335,44 @@ bzl_library(
     srcs = ["file_for_host.bzl"],
     visibility = ["//img:__subpackages__"],
     deps = ["//img/private/common:transitions"],
+)
+
+bzl_library(
+    name = "empty_layer",
+    srcs = ["empty_layer.bzl"],
+    visibility = ["//img:__subpackages__"],
+    deps = [
+        "//img/private/providers:layers_info",
+        "//img/private/providers:single_layer_info",
+    ],
+)
+
+bzl_library(
+    name = "annotations_util",
+    srcs = ["annotations_util.bzl"],
+    visibility = ["//img:__subpackages__"],
+)
+
+bzl_library(
+    name = "file_metadata",
+    srcs = ["file_metadata.bzl"],
+    visibility = ["//img:__subpackages__"],
+)
+
+bzl_library(
+    name = "layer_path_hints",
+    srcs = ["layer_path_hints.bzl"],
+    visibility = ["//img:__subpackages__"],
+)
+
+bzl_library(
+    name = "manifest_media_type",
+    srcs = ["manifest_media_type.bzl"],
+    visibility = ["//img:__subpackages__"],
+)
+
+bzl_library(
+    name = "root_symlinks",
+    srcs = ["root_symlinks.bzl"],
+    visibility = ["//img:__subpackages__"],
 )

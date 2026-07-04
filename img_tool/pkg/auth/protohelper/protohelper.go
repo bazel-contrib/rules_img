@@ -25,13 +25,19 @@ func Client(uri string, helper credhelper.Helper, opts ...grpc.DialOption) (*grp
 		return nil, fmt.Errorf("invalid uri for grpc: %s: %w", uri, err)
 	}
 
+	var target string
 	switch parsed.Scheme {
 	case "grpc":
 		// unencrypted grpc
 		warnUnencryptedGRPC(uri)
 		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		target = fmt.Sprintf("dns:%s", parsed.Host)
 	case "grpcs":
 		opts = append(opts, grpc.WithTransportCredentials(credentials.NewTLS(nil)))
+		target = fmt.Sprintf("dns:%s", parsed.Host)
+	case "unix":
+		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		target = uri
 	default:
 		return nil, fmt.Errorf("unsupported scheme for grpc: %s", parsed.Scheme)
 	}
@@ -40,8 +46,6 @@ func Client(uri string, helper credhelper.Helper, opts ...grpc.DialOption) (*grp
 	if parsed.User != nil && parsed.User.String() != "" {
 		opts = append(opts, grpc.WithPerRPCCredentials(basicAuthFromUserinfo(parsed.User)))
 	}
-
-	target := fmt.Sprintf("dns:%s", parsed.Host)
 
 	opts = append(opts, grpcheaderinterceptor.DialOptions(helper)...)
 

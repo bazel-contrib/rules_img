@@ -15,9 +15,9 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
-	"github.com/malt3/go-containerregistry/pkg/name"
-	registryv1 "github.com/malt3/go-containerregistry/pkg/v1"
-	"github.com/malt3/go-containerregistry/pkg/v1/remote"
+	"github.com/google/go-containerregistry/pkg/name"
+	registryv1 "github.com/google/go-containerregistry/pkg/v1"
+	"github.com/google/go-containerregistry/pkg/v1/remote"
 
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/api"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/auth/credential"
@@ -183,16 +183,41 @@ func DeployWithExtras(ctx context.Context, rawRequest []byte, opts DeployOptions
 		return fmt.Errorf("unmarshalling deploy manifest file: %w", err)
 	}
 
-	reapiEndpoint := os.Getenv("IMG_REAPI_ENDPOINT")
-	reapiInstanceName := os.Getenv("IMG_REAPI_INSTANCE_NAME")
-	blobcacheEndpoint := os.Getenv("IMG_BLOB_CACHE_ENDPOINT")
-	diskCachePath := os.Getenv("IMG_DISK_CACHE")
-	credentialHelperPath := credentialHelperPath()
-	var credentialHelper credential.Helper
-	if credentialHelperPath != "" {
-		credentialHelper = credential.New(credentialHelperPath, nil)
-	} else {
-		credentialHelper = credential.NopHelper()
+	vfsBuilder := deployvfs.NewBuilder(req).WithContainerRegistryOption(registry.WithAuthFromMultiKeychain()).WithContext(ctx)
+	hasLazyStrategy := false
+	baseOps, err := req.BaseOperations()
+	if err != nil {
+		return fmt.Errorf("checking operations for lazy strategy: %w", err)
+	}
+	for _, op := range baseOps {
+		var strategy string
+		switch op.Command {
+		case "push":
+			strategy = req.Settings.PushStrategy
+		case "load":
+			strategy = req.Settings.LoadStrategy
+		}
+		if strategy == "lazy" {
+			hasLazyStrategy = true
+			break
+		}
+	}
+	vfsBuilder, err = configureBuilderFromEnv(vfsBuilder, hasLazyStrategy)
+	if err != nil {
+		return err
+	}
+	if opts.RunfilesRootSymlinksPrefix != "" {
+		vfsBuilder = vfsBuilder.WithRunfilesRootSymlinksPrefix(opts.RunfilesRootSymlinksPrefix)
+	}
+	for _, layoutPath := range opts.OCILayouts {
+		vfsBuilder = vfsBuilder.WithOCILayout(layoutPath)
+	}
+	for digest, filePath := range opts.ExplicitLayers {
+		vfsBuilder = vfsBuilder.WithExplicitLayer(digest, filePath)
+	}
+	vfs, err := vfsBuilder.Build()
+	if err != nil {
+		return fmt.Errorf("building VFS: %w", err)
 	}
 
 	pushOperations, err := req.PushOperations()
@@ -211,52 +236,21 @@ func DeployWithExtras(ctx context.Context, rawRequest []byte, opts DeployOptions
 		return fmt.Errorf("no push, load, or registry_tag operations found in deploy manifest")
 	}
 
-	// Create CAS reader if endpoint is available (used as universal blob source fallback)
-	var casReader *cas.CAS
-	if reapiEndpoint != "" {
-		grpcClientConn, err := protohelper.Client(reapiEndpoint, credentialHelper)
-		if err != nil {
-			return fmt.Errorf("Failed to create gRPC client connection: %w", err)
-		}
-		casReader, err = cas.New(grpcClientConn, cas.WithInstanceName(reapiInstanceName))
-		if err != nil {
-			return fmt.Errorf("creating CAS client: %w", err)
-		}
-	}
 	// check if any operation requires a blob cache endpoint
 	var blobcacheClient blobcache.BlobsClient
 	haveBlobCacheCient := false
 	if len(pushOperations) > 0 && req.Settings.PushStrategy == "cas_registry" {
+		blobcacheEndpoint := os.Getenv("IMG_BLOB_CACHE_ENDPOINT")
 		if blobcacheEndpoint == "" {
 			return fmt.Errorf("IMG_BLOB_CACHE_ENDPOINT environment variable must be set for cas_registry push strategy")
 		}
-		grpcClientConn, err := protohelper.Client(blobcacheEndpoint, credentialHelper)
+		credHelper := credentialHelperInstance()
+		grpcClientConn, err := protohelper.Client(blobcacheEndpoint, credHelper)
 		if err != nil {
 			return fmt.Errorf("Failed to create gRPC client connection: %w", err)
 		}
 		blobcacheClient = blobcache.NewBlobsClient(grpcClientConn)
 		haveBlobCacheCient = true
-	}
-
-	vfsBuilder := deployvfs.Builder(req).WithContainerRegistryOption(registry.WithAuthFromMultiKeychain())
-	if opts.RunfilesRootSymlinksPrefix != "" {
-		vfsBuilder = vfsBuilder.WithRunfilesRootSymlinksPrefix(opts.RunfilesRootSymlinksPrefix)
-	}
-	for _, layoutPath := range opts.OCILayouts {
-		vfsBuilder = vfsBuilder.WithOCILayout(layoutPath)
-	}
-	for digest, filePath := range opts.ExplicitLayers {
-		vfsBuilder = vfsBuilder.WithExplicitLayer(digest, filePath)
-	}
-	if diskCachePath != "" {
-		vfsBuilder = vfsBuilder.WithDiskCache(diskCachePath)
-	}
-	if casReader != nil {
-		vfsBuilder = vfsBuilder.WithCASReader(casReader)
-	}
-	vfs, err := vfsBuilder.Build()
-	if err != nil {
-		return fmt.Errorf("building VFS: %w", err)
 	}
 
 	// Create a single persistent pusher for all push operations (including registry_tag)
@@ -322,7 +316,7 @@ func DeployWithExtras(ctx context.Context, rawRequest []byte, opts DeployOptions
 
 	// Print VFS statistics to stderr
 	stats := vfs.Stats()
-	fmt.Fprintf(os.Stderr, "    blob transfers: %d from disk, %d from disk cache, %d from container registry, %d from remote cache\n", stats.BlobsFromLocalDisk.Load(), stats.BlobsFromDiskCache.Load(), stats.BlobsFromRegistry.Load(), stats.BlobsFromRemoteCache.Load())
+	fmt.Fprintf(os.Stderr, "    blob transfers: %d from disk, %d from disk cache, %d from container registry, %d from remote cache, %d from compact stream\n", stats.BlobsFromLocalDisk.Load(), stats.BlobsFromDiskCache.Load(), stats.BlobsFromRegistry.Load(), stats.BlobsFromRemoteCache.Load(), stats.BlobsFromCompactStream.Load())
 
 	// Print all pushed tags to stdout, one per line.
 	for _, tag := range pushedTags {
@@ -441,6 +435,40 @@ func credentialHelperPath() string {
 		return tweagCredentialHelper
 	}
 	return ""
+}
+
+func credentialHelperInstance() credential.Helper {
+	credPath := credentialHelperPath()
+	if credPath != "" {
+		return credential.New(credPath, nil)
+	}
+	return credential.NopHelper()
+}
+
+func configureBuilderFromEnv(builder *deployvfs.Builder, needsCAS bool) (*deployvfs.Builder, error) {
+	diskCachePath := os.Getenv("IMG_DISK_CACHE")
+	if diskCachePath != "" {
+		builder = builder.WithDiskCache(diskCachePath)
+	}
+
+	if needsCAS {
+		reapiEndpoint := os.Getenv("IMG_REAPI_ENDPOINT")
+		if reapiEndpoint != "" {
+			reapiInstanceName := os.Getenv("IMG_REAPI_INSTANCE_NAME")
+			credHelper := credentialHelperInstance()
+			grpcConn, err := protohelper.Client(reapiEndpoint, credHelper)
+			if err != nil {
+				return nil, fmt.Errorf("creating gRPC client for REAPI: %w", err)
+			}
+			casReader, err := cas.New(grpcConn, cas.WithInstanceName(reapiInstanceName))
+			if err != nil {
+				return nil, fmt.Errorf("creating CAS client: %w", err)
+			}
+			builder = builder.WithCASReader(casReader)
+		}
+	}
+
+	return builder, nil
 }
 
 func extractJobsFlag(args []string) int {

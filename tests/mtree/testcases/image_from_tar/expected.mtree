@@ -1,0 +1,5 @@
+#mtree v2.0
+./etc type=dir mode=0755 uid=0 uname=root gid=0 gname=root time=1609459200 nlink=1
+./etc/hosts type=file size=20 mode=0644 uid=0 uname=root gid=0 gname=root sha256digest=081ef9d5367595d16e30b4b4549d9f43537320508b4ce0788963e10e4f808857 time=1609459200 nlink=1
+./opt type=dir
+./opt/tool type=file size=10 mode=0755 uid=0 uname=root gid=0 gname=root sha256digest=a8076d3d28d21e02012b20eaf7dbf75409a6277134439025f282e368e3305abf time=1609459200 nlink=1

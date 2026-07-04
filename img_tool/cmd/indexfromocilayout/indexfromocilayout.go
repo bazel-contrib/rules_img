@@ -329,6 +329,10 @@ func convertManifest(manifestDesc *specv1.Descriptor, manifestIdx int, arch, ope
 		return specv1.Descriptor{}, fmt.Errorf("layer count mismatch: OCI layout has %d layers, but %d layer media types specified", len(manifest.Layers), layerCount)
 	}
 
+	// Distribute the source config's history across layers so it is preserved
+	// when this converted image is used as a base (mirrors the image_import rule).
+	perLayerHistory := metadata.SplitHistoryPerLayer(config.History, len(manifest.Layers))
+
 	// Copy/hardlink each layer blob and create metadata JSONs
 	for i := range manifest.Layers {
 		targetMediaType, ok := layerMediaTypes.Get(manifestIdx, i)
@@ -358,9 +362,6 @@ func convertManifest(manifestDesc *specv1.Descriptor, manifestIdx int, arch, ope
 		}
 
 		// Create the metadata JSON from the existing descriptor
-		// Use digest as the name for anonymous layers from OCI layout
-		layerName := manifest.Layers[i].Digest.String()
-
 		metadataFile, err := os.Create(layerMetadataPath)
 		if err != nil {
 			return specv1.Descriptor{}, fmt.Errorf("creating metadata file for layer %d: %w", i, err)
@@ -368,12 +369,12 @@ func convertManifest(manifestDesc *specv1.Descriptor, manifestIdx int, arch, ope
 		defer metadataFile.Close()
 
 		if err := metadata.WriteLayerMetadata(
-			layerName,
 			config.RootFS.DiffIDs[i].String(),
 			manifest.Layers[i].MediaType,
 			manifest.Layers[i].Digest.String(),
 			manifest.Layers[i].Size,
 			manifest.Layers[i].Annotations,
+			perLayerHistory[i],
 			metadataFile,
 		); err != nil {
 			return specv1.Descriptor{}, fmt.Errorf("writing metadata for layer %d: %w", i, err)

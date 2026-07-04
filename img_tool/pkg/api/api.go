@@ -5,6 +5,7 @@ import (
 	"io"
 	"io/fs"
 	"iter"
+	"time"
 )
 
 type (
@@ -65,13 +66,43 @@ var (
 	Symlink     = FileType{"l"}
 )
 
+// History describes the history of a layer.
+// This is a re-export of the oci spec v1 History structure to avoid taking a dep on it
+type History struct {
+	// Created is the combined date and time at which the layer was created, formatted as defined by RFC 3339, section 5.6.
+	Created *time.Time `json:"created,omitempty"`
+
+	// CreatedBy is the command which created the layer.
+	CreatedBy string `json:"created_by,omitempty"`
+
+	// Author is the author of the build point.
+	Author string `json:"author,omitempty"`
+
+	// Comment is a custom message set when creating the layer.
+	Comment string `json:"comment,omitempty"`
+
+	// EmptyLayer is used to mark if the history item created a filesystem diff.
+	EmptyLayer bool `json:"empty_layer,omitempty"`
+}
+
+// LayerHistory returns the history for a layer whose creating command is
+// createdBy (e.g. "bazel build //pkg:target", assembled by the caller). When
+// createdBy is empty (no --history was provided), it records a "history missing"
+// marker so every layer carries at least a created_by entry.
+func LayerHistory(createdBy string) []History {
+	if createdBy == "" {
+		createdBy = "history missing"
+	}
+	return []History{{CreatedBy: createdBy}}
+}
+
 type Descriptor struct {
-	Name        string            `json:"name,omitempty"`
 	DiffID      string            `json:"diff_id,omitempty"`
 	MediaType   string            `json:"mediaType"`
 	Digest      string            `json:"digest"`
 	Size        int64             `json:"size"`
 	Annotations map[string]string `json:"annotations,omitempty"`
+	History     []History         `json:"history,omitempty"`
 }
 
 type AppenderState struct {
@@ -106,6 +137,22 @@ type TarAppender interface {
 }
 
 const (
+	// AnnotationContainerdImageName is the annotation used by containerd to store the full
+	// image reference (<registry>/<repository>:<tag>) in an OCI image index descriptor.
+	// See https://github.com/containerd/containerd/blob/main/core/images/image.go
+	AnnotationContainerdImageName = "io.containerd.image.name"
+
+	// AnnotationAppleContainerizationImageName is the annotation used by Apple's Containerization
+	// framework to store the full image reference (<registry>/<repository>:<tag>) in an OCI
+	// image index descriptor.
+	AnnotationAppleContainerizationImageName = "com.apple.containerization.image.name"
+
+	// AnnotationOCIImageRefName is the annotation defined by the OCI image spec to store the
+	// tag component of an image reference (e.g. "latest") in an OCI image index descriptor.
+	// Note that this value may not be unique within the index.
+	// See https://github.com/opencontainers/image-spec/blob/main/annotations.md
+	AnnotationOCIImageRefName = "org.opencontainers.image.ref.name"
+
 	// TocDigestAnnotation is the annotation key for the TOC digest in estargz layers
 	TocDigestAnnotation = "containerd.io/snapshot/stargz/toc.digest"
 	// UncompressedSizeAnnotation is the annotation key for the uncompressed size in estargz layers

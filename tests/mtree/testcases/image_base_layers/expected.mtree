@@ -1,0 +1,5 @@
+#mtree v2.0
+./usr type=dir
+./usr/bin type=dir
+./usr/bin/base-tool type=file size=5 mode=0755 uid=0 uname=root gid=0 gname=root sha256digest=f34848ca92665c342abd5816c9e3eda0e82180671195362bcd0080544a3bc2ac time=1609459200 nlink=1
+./usr/bin/top-tool type=file size=15 mode=0644 uid=1000 uname=alice gid=1000 gname=devs sha256digest=da26edc3010d92ff469d43676e6c5f4c18e6c1f7b5fe6d9c8a277c0bc2fa5aee time=1672531200 nlink=1

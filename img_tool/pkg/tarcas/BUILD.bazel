@@ -1,9 +1,10 @@
-load("@rules_go//go:def.bzl", "go_library")
+load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "tarcas",
     srcs = [
         "factory.go",
+        "observer.go",
         "options.go",
         "tarcas.go",
         "tarmetadata.go",
@@ -12,7 +13,22 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/api",
+        "//pkg/compactstream",
         "//pkg/digestfs",
         "//pkg/tree/merkle",
+    ],
+)
+
+go_test(
+    name = "tarcas_test",
+    srcs = [
+        "inspect_test.go",
+        "reconstruct_integration_test.go",
+        "reconstruct_test.go",
+    ],
+    embed = [":tarcas"],
+    deps = [
+        "//pkg/compactstream",
+        "//pkg/compress",
     ],
 )

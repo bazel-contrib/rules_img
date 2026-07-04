@@ -1,0 +1,15 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "optimize",
+    srcs = [
+        "flags.go",
+        "optimize.go",
+    ],
+    importpath = "github.com/bazel-contrib/rules_img/img_tool/cmd/optimize",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/api",
+        "@com_github_opencontainers_image_spec//specs-go/v1:specs-go",
+    ],
+)

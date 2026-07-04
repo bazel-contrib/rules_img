@@ -13,18 +13,12 @@ local_path_override(
     path = "../../img_tool",
 )
 
-bazel_dep(name = "rules_img_pull_tool")
-local_path_override(
-    module_name = "rules_img_pull_tool",
-    path = "../../pull_tool",
-)
-
 register_toolchains("@rules_img_tool//toolchain:all")
 # END BAZEL_DEP
 
-bazel_dep(name = "bazel_skylib", version = "1.7.1")
-bazel_dep(name = "package_metadata", version = "0.0.10")
-bazel_dep(name = "platforms", version = "0.0.11")
+bazel_dep(name = "bazel_skylib", version = "1.9.0")
+bazel_dep(name = "package_metadata", version = "0.0.13")
+bazel_dep(name = "platforms", version = "1.1.0")
 bazel_dep(name = "supply_chain_tools", version = "0.0.1")
 
 # FIXME: drop archive_override after https://github.com/bazel-contrib/supply-chain/pull/158 is merged and released

@@ -7,11 +7,12 @@ import (
 	"io"
 	"math/rand"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
-	"github.com/malt3/go-containerregistry/pkg/name"
-	"github.com/malt3/go-containerregistry/pkg/v1/remote"
+	"github.com/google/go-containerregistry/pkg/name"
+	"github.com/google/go-containerregistry/pkg/v1/remote"
 
 	reg "github.com/bazel-contrib/rules_img/img_tool/pkg/auth/registry"
 )
@@ -128,6 +129,15 @@ func downloadFromRegistry(registry, repository, digest, outputPath string) (retE
 	layer, err := remote.Layer(ref, reg.WithAuthFromMultiKeychain())
 	if err != nil {
 		return fmt.Errorf("getting layer: %w", err)
+	}
+
+	// Check if the output path ends with well known pattern "blobs/sha256/<hash>".
+	// If so, create the parent directories.
+	parentDir := filepath.Dir(outputPath)
+	if strings.HasSuffix(outputPath, filepath.Join("blobs", "sha256", digest[len("sha256:"):])) {
+		if err := os.MkdirAll(parentDir, 0o755); err != nil {
+			return fmt.Errorf("creating parent directories for blobs: %w", err)
+		}
 	}
 
 	outputFile, err := os.OpenFile(outputPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)

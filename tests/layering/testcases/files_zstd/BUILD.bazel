@@ -1,0 +1,26 @@
+load("@rules_img//img:layer.bzl", "image_layer")
+load("//tests/layering:defs.bzl", "layer_contents_test")
+
+# gazelle:exclude_from_release
+
+# Same files as the `files` case but zstd-compressed; exercises the verifier's
+# zstd path. The contents are identical, so it reuses the `files` golden.
+image_layer(
+    name = "layer",
+    srcs = {
+        "/etc/app/config.txt": "//tests/layering/testcases:config_txt",
+        "/etc/app/config_copy.txt": "//tests/layering/testcases:config_dup_txt",
+        "/usr/share/data/deep.txt": "//tests/layering/testcases:deep_txt",
+    },
+    compress = "zstd",
+    symlinks = {
+        "/etc/app/current.txt": "/etc/app/config.txt",
+    },
+)
+
+layer_contents_test(
+    name = "test",
+    size = "small",
+    layer = ":layer",
+    manifests = ["//tests/layering/testcases/files:expected.ndjson"],
+)

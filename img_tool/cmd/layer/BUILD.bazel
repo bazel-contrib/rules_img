@@ -1,4 +1,4 @@
-load("@rules_go//go:def.bzl", "go_library")
+load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "layer",
@@ -7,18 +7,27 @@ go_library(
         "layer.go",
         "metadata.go",
         "paramfile.go",
+        "placement.go",
     ],
     importpath = "github.com/bazel-contrib/rules_img/img_tool/cmd/layer",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/api",
+        "//pkg/compactstream",
         "//pkg/compress",
         "//pkg/contentmanifest",
         "//pkg/digestfs",
+        "//pkg/kvfile",
         "//pkg/metadata",
         "//pkg/tarcas",
         "//pkg/tree",
         "//pkg/tree/runfiles",
         "//pkg/tree/treeartifact",
     ],
+)
+
+go_test(
+    name = "layer_test",
+    srcs = ["layer_test.go"],
+    embed = [":layer"],
 )

@@ -19,6 +19,7 @@ FIELDS = dict(
     build_settings = "Dict(string, string) of resolved build setting values.",
     stamp = "Stamp preference string ('auto', 'force', 'disabled').",
     stamp_settings = "StampSettingInfo provider for stamp resolution.",
+    tracks_content = "Bool: when True, expose the image digest to templates and re-stamp tags on content change.",
 )
 
 PushConfigInfo = provider(

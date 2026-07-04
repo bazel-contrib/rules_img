@@ -1,0 +1,50 @@
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@rules_img//img:layer.bzl", "image_layer")
+load("//tests/layering:defs.bzl", "layer_contents_test")
+
+# gazelle:exclude_from_release
+
+write_file(
+    name = "a",
+    out = "a.txt",
+    content = ["a\n"],
+)
+
+write_file(
+    name = "b",
+    out = "nested/b.txt",
+    content = ["b\n"],
+)
+
+write_file(
+    name = "single",
+    out = "single.txt",
+    content = ["single\n"],
+)
+
+filegroup(
+    name = "files",
+    srcs = [
+        ":a",
+        ":b",
+    ],
+)
+
+# srcs keys ending in "/" are treated as directories:
+# - a multi-output target is placed package-relative beneath the directory, with
+#   the trailing slash normalized (no doubled slash);
+# - a single file is placed inside the directory under its basename.
+image_layer(
+    name = "layer",
+    srcs = {
+        "/opt/data/": ":files",
+        "/opt/solo/": ":single",
+    },
+)
+
+layer_contents_test(
+    name = "test",
+    size = "small",
+    layer = ":layer",
+    manifests = ["expected.ndjson"],
+)

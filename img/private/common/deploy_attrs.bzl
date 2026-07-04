@@ -186,6 +186,21 @@ See [template expansion](/docs/templating.md) for available stamp variables.
         default = "auto",
         values = ["auto", "force", "disabled"],
     ),
+    tracks_content = attr.bool(
+        doc = """When True, the template expansion action depends on the image digest.
+
+A template string built from a volatile stamp value (e.g. `{{.BUILD_TIMESTAMP}}`) normally
+freezes on the first build, because Bazel excludes the volatile workspace-status
+file from the action cache key. With this enabled, the image descriptor becomes
+an input to the tag-expansion action, so the tag re-stamps whenever the image
+content (digest) changes, while unchanged content keeps the cached tag.
+
+The digest is exposed to the `registry`, `repository`, and `tag` templates
+as `{{.digest}}`. Referencing the digest in the tag is optional: the re-stamp
+behavior applies whether or not the tag contains it.
+""",
+        default = False,
+    ),
     _push_settings = attr.label(
         default = Label("//img/private/settings:push"),
         providers = [PushSettingsInfo],
@@ -209,13 +224,17 @@ Available options:
 - **`containerd`**: Loads directly into containerd namespace. Supports multi-platform images
   and incremental loading.
 - **`docker`**: Loads via Docker daemon. When Docker uses containerd storage (23.0+),
-  loads directly into containerd. Otherwise falls back to `docker load` command which
+  loads directly into containerd. Otherwise falls back to `docker image load` command which
   is slower and limited to single-platform images.
-- **`podman`**: Loads via Podman daemon using `podman load` command. Similar to Docker
+- **`podman`**: Loads via Podman daemon using `podman image load` command. Similar to Docker
   fallback mode, this is slower than containerd and limited to single-platform images.
+- **`containerization`**: Loads via Apple's Containerization framework using `container image load`.
+  Reads a unified OCI+Docker tar from stdin.
+- **`tar`**: Does not load into any daemon. Instead, streams the unified OCI+Docker tar to stdout.
+  Useful for piping to other tools or saving to a file.
 - **`generic`**: Loads via a custom container runtime. The loader will invoke the command
-  specified in the `LOADER_BINARY` environment variable with the `load` subcommand. For example,
-  if `LOADER_BINARY=nerdctl`, it will run `nerdctl load`. Limited to single-platform images.
+  specified in the `LOADER_BINARY` environment variable with `image load` subcommands. For example,
+  if `LOADER_BINARY=nerdctl`, it will run `nerdctl image load`.
   Requires `LOADER_BINARY` to be set at runtime.
 
 The best performance is achieved with:
@@ -223,7 +242,7 @@ The best performance is achieved with:
 - Docker 23.0+ with containerd storage enabled and accessible containerd socket
 """,
         default = "auto",
-        values = ["auto", "docker", "containerd", "podman", "generic"],
+        values = ["auto", "docker", "containerd", "podman", "containerization", "tar", "generic"],
     ),
     tag = attr.string(
         doc = """Tag to apply when loading the image.
@@ -298,6 +317,21 @@ See [template expansion](/docs/templating.md) for available stamp variables.
 """,
         default = "auto",
         values = ["auto", "force", "disabled"],
+    ),
+    tracks_content = attr.bool(
+        doc = """When True, the template expansion action depends on the image digest.
+
+A template string built from a volatile stamp value (e.g. `{{.BUILD_TIMESTAMP}}`) normally
+freezes on the first build, because Bazel excludes the volatile workspace-status
+file from the action cache key. With this enabled, the image descriptor becomes
+an input to the tag-expansion action, so the tag re-stamps whenever the image
+content (digest) changes, while unchanged content keeps the cached tag.
+
+The digest is exposed to the `tag` templates as `{{.digest}}`. Referencing the
+digest in the tag is optional: the re-stamp behavior applies whether or not the
+tag contains it.
+""",
+        default = False,
     ),
     _load_settings = attr.label(
         default = Label("//img/private/settings:load"),

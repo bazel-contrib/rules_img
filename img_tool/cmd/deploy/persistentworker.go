@@ -9,9 +9,9 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
-	"github.com/malt3/go-containerregistry/pkg/name"
-	registryv1 "github.com/malt3/go-containerregistry/pkg/v1"
-	"github.com/malt3/go-containerregistry/pkg/v1/remote"
+	"github.com/google/go-containerregistry/pkg/name"
+	registryv1 "github.com/google/go-containerregistry/pkg/v1"
+	"github.com/google/go-containerregistry/pkg/v1/remote"
 
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/api"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/auth/registry"
@@ -22,19 +22,28 @@ import (
 )
 
 type deployWorkerHandler struct {
-	pusher        *remote.Pusher
-	jobs          int
-	diskCachePath string
+	pusher      *remote.Pusher
+	jobs        int
+	baseBuilder *deployvfs.Builder
 }
 
 func newDeployWorkerHandler(jobs int) *deployWorkerHandler {
+	baseBuilder := deployvfs.NewBuilder(api.DeployManifest{}).
+		WithContainerRegistryOption(registry.WithAuthFromMultiKeychain())
+	// We set needsCAS to true unconditionally.
+	// The reason is that we just cannot know in advance whether a future work request
+	// wants to connect to the remote cache or not.
+	baseBuilder, err := configureBuilderFromEnv(baseBuilder, true /* needsCAS */)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to configure VFS from environment: %v\n", err)
+	}
+
 	opts := []remote.Option{registry.WithAuthFromMultiKeychain(), remote.WithJobs(jobs)}
 	p, err := remote.NewPusher(opts...)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "warning: failed to create persistent pusher: %v\n", err)
-		return &deployWorkerHandler{jobs: jobs, diskCachePath: os.Getenv("IMG_DISK_CACHE")}
 	}
-	return &deployWorkerHandler{pusher: p, jobs: jobs, diskCachePath: os.Getenv("IMG_DISK_CACHE")}
+	return &deployWorkerHandler{pusher: p, jobs: jobs, baseBuilder: baseBuilder}
 }
 
 func (h *deployWorkerHandler) HandleRequest(ctx context.Context, req persistentworker.WorkRequest) persistentworker.WorkResponse {
@@ -69,7 +78,7 @@ func (h *deployWorkerHandler) processRequest(ctx context.Context, req persistent
 		return "", fmt.Errorf("unmarshalling deploy manifest: %w", err)
 	}
 
-	vfsBuilder := deployvfs.Builder(dm).WithContainerRegistryOption(registry.WithAuthFromMultiKeychain())
+	vfsBuilder := h.baseBuilder.Clone().WithDeployManifest(dm).WithContext(ctx)
 	for _, layoutPath := range opts.ociLayouts {
 		vfsBuilder = vfsBuilder.WithOCILayout(layoutPath)
 	}
@@ -78,9 +87,6 @@ func (h *deployWorkerHandler) processRequest(ctx context.Context, req persistent
 	}
 	if opts.runfilesPrefix != "" {
 		vfsBuilder = vfsBuilder.WithRunfilesRootSymlinksPrefix(opts.runfilesPrefix)
-	}
-	if h.diskCachePath != "" {
-		vfsBuilder = vfsBuilder.WithDiskCache(h.diskCachePath)
 	}
 	vfs, err := vfsBuilder.Build()
 	if err != nil {

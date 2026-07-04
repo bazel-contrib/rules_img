@@ -1,0 +1,117 @@
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@rules_img//img:image.bzl", "image_manifest")
+load("@rules_img//img:layer.bzl", "file_metadata", "image_layer")
+load("//tests/mtree:defs.bzl", "image_mtree_golden_test")
+
+# gazelle:exclude_from_release
+
+# Fixtures. config.txt and config_dup.txt hold identical content, so the layer
+# tool deduplicates the second into a hardlink -- which the mtree renders as a
+# copy of the first (nlink=2, no link keyword), preserved through the image merge.
+write_file(
+    name = "config_txt",
+    out = "config.txt",
+    content = ["server.port=8080\n"],
+)
+
+write_file(
+    name = "config_dup_txt",
+    out = "config_dup.txt",
+    content = ["server.port=8080\n"],
+)
+
+write_file(
+    name = "tool_sh",
+    out = "tool.sh",
+    content = ["#!/bin/sh\necho hi\n"],
+)
+
+write_file(
+    name = "extra_txt",
+    out = "extra.txt",
+    content = ["extra config\n"],
+)
+
+write_file(
+    name = "data_txt",
+    out = "data.txt",
+    content = ["payload data\n"],
+)
+
+# shared.txt is written by BOTH layers with different content and metadata, so the
+# merged changeset proves last-writer-wins: the upper (app_layer) entry overrides
+# the lower (base_layer) one.
+write_file(
+    name = "shared_v1_txt",
+    out = "shared_v1.txt",
+    content = ["shared v1\n"],
+)
+
+write_file(
+    name = "shared_v2_txt",
+    out = "shared_v2.txt",
+    content = ["shared v2 content\n"],
+)
+
+# Lower layer: files under /etc/app (one of them a deduplicated hardlink) and a
+# binary under /usr/local/bin. No parent-directory entries are emitted, so the
+# image changeset merge synthesizes ./etc, ./etc/app, ./usr, ... on demand.
+image_layer(
+    name = "base_layer",
+    srcs = {
+        "/etc/app/config.txt": ":config_txt",
+        "/etc/app/config_dup.txt": ":config_dup_txt",
+        "/etc/app/shared.txt": ":shared_v1_txt",
+        "/usr/local/bin/tool": ":tool_sh",
+    },
+    default_metadata = file_metadata(
+        gid = 1000,
+        gname = "devs",
+        mode = "0644",
+        mtime = "2023-01-01T00:00:00Z",
+        uid = 1000,
+        uname = "alice",
+    ),
+)
+
+# Upper layer: an extra file under the shared /etc/app directory, a file under a
+# new /opt directory, a symlink, and an override of /etc/app/shared.txt (same path
+# as base_layer, different metadata). Sharing /etc/app with base_layer proves the
+# merge unifies parent directories (they appear once, sorted) rather than
+# concatenating each layer's entries; the shared.txt override proves the upper
+# layer wins.
+image_layer(
+    name = "app_layer",
+    srcs = {
+        "/etc/app/extra.txt": ":extra_txt",
+        "/etc/app/shared.txt": ":shared_v2_txt",
+        "/opt/data.txt": ":data_txt",
+    },
+    default_metadata = file_metadata(
+        gid = 2000,
+        gname = "svc",
+        mode = "0640",
+        mtime = "2024-06-01T00:00:00Z",
+        uid = 2000,
+        uname = "svc",
+    ),
+    symlinks = {"/etc/app/current.txt": "/etc/app/config.txt"},
+)
+
+# A single-platform image. image_mtree_golden_test builds its `mtree` output
+# group (the per-layer mtrees merged, in layer order, as an OCI applied changeset)
+# and asserts it matches expected.mtree both when the layers are materialized tar
+# blobs (compact disabled) and compact streams (enabled).
+image_manifest(
+    name = "image",
+    layers = [
+        ":base_layer",
+        ":app_layer",
+    ],
+)
+
+image_mtree_golden_test(
+    name = "test",
+    golden = "expected.mtree",
+    image = ":image",
+)

@@ -7,12 +7,6 @@ local_path_override(
     path = "../..",
 )
 
-bazel_dep(name = "rules_img_pull_tool")
-local_path_override(
-    module_name = "rules_img_pull_tool",
-    path = "../../pull_tool",
-)
-
 bazel_dep(name = "rules_img_tool")
 local_path_override(
     module_name = "rules_img_tool",
@@ -22,5 +16,5 @@ local_path_override(
 register_toolchains("@rules_img_tool//toolchain:all")
 # END BAZEL_DEP
 
-bazel_dep(name = "rules_go", version = "0.59.0")
-bazel_dep(name = "bazel_skylib", version = "1.8.1")
+bazel_dep(name = "rules_go", version = "0.61.1")
+bazel_dep(name = "bazel_skylib", version = "1.9.0")

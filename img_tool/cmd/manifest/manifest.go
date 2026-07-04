@@ -18,6 +18,7 @@ import (
 	specv1 "github.com/opencontainers/image-spec/specs-go/v1"
 
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/api"
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/kvfile"
 )
 
 var (
@@ -37,6 +38,7 @@ var (
 	digestOutput          string
 	user                  string
 	env                   stringMap
+	envFile               string
 	entrypoint            stringList
 	cmd                   stringList
 	workingDir            string
@@ -47,6 +49,12 @@ var (
 	artifactType          string
 	subjectDescriptor     string
 )
+
+// inheritFromBase is the sentinel value used by the image_manifest rule to
+// distinguish a config field that was left untouched (inherit the base image's
+// value) from one explicitly set to an empty value (unset the field). It matches
+// INHERIT_FROM_BASE in img/private/common/inherit.bzl.
+const inheritFromBase = "<inherit from base>"
 
 func ManifestProcess(_ context.Context, args []string) {
 	flagSet := flag.NewFlagSet("manifest", flag.ExitOnError)
@@ -79,6 +87,7 @@ func ManifestProcess(_ context.Context, args []string) {
 	flagSet.StringVar(&digestOutput, "digest", "", `The (optional) output file for the digest of the manifest. This is useful for postprocessing.`)
 	flagSet.StringVar(&user, "user", "", `The username or UID which the process in the container should run as.`)
 	flagSet.Var(&env, "env", `Environment variables to set in the container (can be specified multiple times as key=value).`)
+	flagSet.StringVar(&envFile, "env-file", "", `A file containing environment variables, as JSON ({"KEY":"value"}, {"KEY":["v1","v2"]}, or ["KEY=value"]) or newline-delimited KEY=VALUE text (blank lines and lines starting with '#' are ignored). Values from --env take precedence over the file.`)
 	flagSet.Var(&entrypoint, "entrypoint", `Command to execute when the container starts (can be specified multiple times).`)
 	flagSet.Var(&cmd, "cmd", `Default arguments to the entrypoint (can be specified multiple times).`)
 	flagSet.StringVar(&workingDir, "working-dir", "", `Working directory inside the container.`)
@@ -335,6 +344,17 @@ func prepareConfig(layers []api.Descriptor, templatesData *ConfigTemplates, crea
 	if createdTime != nil {
 		config.Created = createdTime
 	}
+	for _, layer := range layers {
+		for _, historyEntry := range layer.History {
+			config.History = append(config.History, specv1.History{
+				Created:    historyEntry.Created,
+				CreatedBy:  historyEntry.CreatedBy,
+				Author:     historyEntry.Author,
+				Comment:    historyEntry.Comment,
+				EmptyLayer: historyEntry.EmptyLayer,
+			})
+		}
+	}
 
 	return config, nil
 }
@@ -383,9 +403,9 @@ func overlayConfigFromFile(config *specv1.Image, filePath string, isBase bool) e
 	if configFragment.Architecture != "" {
 		config.Architecture = configFragment.Architecture
 	}
-	if len(configFragment.History) > 0 {
-		config.History = append(config.History, configFragment.History...)
-	}
+	// History is reconstructed from per-layer metadata in prepareConfig; the base
+	// config's redundant copy is intentionally not merged here, otherwise base
+	// layers would be counted twice (history longer than rootfs.diff_ids).
 
 	// merge config.Config
 	if configFragment.Config.User != "" {
@@ -497,15 +517,28 @@ func overlayNewConfigValues(config *specv1.Image, layers []api.Descriptor, templ
 		config.RootFS.DiffIDs[i] = digest.Digest(layer.DiffID)
 	}
 
-	// Apply command-line config values
-	if user != "" {
-		config.Config.User = user
-	}
+	// Apply the image config value from the --user flag with three-way semantics:
+	// the INHERIT_FROM_BASE sentinel inherits the base value, an empty string
+	// unsets it, and any other value overrides it.
+	applyStringConfig(&config.Config.User, user)
 
 	// Apply environment variables from config templates or command line
 	envToApply := env
 	if templatesData != nil && templatesData.Env != nil {
 		envToApply = templatesData.Env
+	}
+
+	// Merge in environment variables from an env file, if provided.
+	// Entries from --env / templates take precedence over file entries.
+	if envFile != "" {
+		fileEnv, err := readEnvFile(envFile)
+		if err != nil {
+			return fmt.Errorf("failed to read env file %s: %w", envFile, err)
+		}
+		merged := make(map[string]string, len(fileEnv)+len(envToApply))
+		maps.Copy(merged, fileEnv)
+		maps.Copy(merged, envToApply)
+		envToApply = merged
 	}
 
 	if len(envToApply) > 0 {
@@ -537,18 +570,38 @@ func overlayNewConfigValues(config *specv1.Image, layers []api.Descriptor, templ
 	// See: https://github.com/bazel-contrib/rules_img/issues/368
 	// See: https://github.com/bazel-contrib/rules_oci/issues/649
 	// See: https://github.com/google/go-containerregistry/blob/c3d1dcc932076c15b65b8b9acfff1d47ded2ebf9/cmd/crane/cmd/mutate.go#L107
-	if len(entrypoint) > 0 {
-		config.Config.Entrypoint = []string(entrypoint)
+	//
+	// Capture the inherited (base + fragment) entrypoint and cmd before either is
+	// modified, so a sentinel item can be expanded to the original base value even
+	// when setting the entrypoint has already cleared the inherited cmd.
+	baseEntrypoint := slices.Clone(config.Config.Entrypoint)
+	baseCmd := slices.Clone(config.Config.Cmd)
+
+	// entrypoint and cmd use three-way semantics driven by the flag values:
+	// a lone sentinel is a no-op (inherit), so inheriting the entrypoint does not
+	// clear an inherited cmd; an empty list unsets the field; any other list is
+	// set after expanding sentinel items against the captured base value. Setting
+	// the entrypoint clears cmd (Docker semantics), matching the historical rule.
+	switch {
+	case isPureInherit(entrypoint):
+		// inherit: leave the base entrypoint (and cmd) untouched
+	case len(entrypoint) == 0:
+		config.Config.Entrypoint = nil // unset; leave cmd to its own resolution
+	default:
+		config.Config.Entrypoint = expandInherit(entrypoint, baseEntrypoint)
 		config.Config.Cmd = nil
 	}
 
-	if len(cmd) > 0 {
-		config.Config.Cmd = []string(cmd)
+	switch {
+	case isPureInherit(cmd):
+		// inherit: leave cmd as-is (base value, or cleared by setting entrypoint)
+	case len(cmd) == 0:
+		config.Config.Cmd = nil // unset
+	default:
+		config.Config.Cmd = expandInherit(cmd, baseCmd)
 	}
 
-	if workingDir != "" {
-		config.Config.WorkingDir = workingDir
-	}
+	applyStringConfig(&config.Config.WorkingDir, workingDir)
 
 	// Apply labels from config templates or command line
 	labelsToApply := labels
@@ -571,9 +624,7 @@ func overlayNewConfigValues(config *specv1.Image, layers []api.Descriptor, templ
 		}
 	}
 
-	if stopSignal != "" {
-		config.Config.StopSignal = stopSignal
-	}
+	applyStringConfig(&config.Config.StopSignal, stopSignal)
 
 	return nil
 }
@@ -583,6 +634,42 @@ type ConfigTemplates struct {
 	Env         map[string]string `json:"env"`
 	Labels      map[string]string `json:"labels"`
 	Annotations map[string]string `json:"annotations"`
+}
+
+// applyStringConfig resolves a scalar config string field from its flag value
+// with three-way semantics: the inheritFromBase sentinel leaves the inherited
+// (base) value in place, an empty string unsets the field, and any other value
+// overrides it.
+func applyStringConfig(field *string, value string) {
+	switch value {
+	case inheritFromBase:
+		// inherit: leave the base value in place
+	case "":
+		*field = "" // unset
+	default:
+		*field = value
+	}
+}
+
+// isPureInherit reports whether a list is exactly the inheritFromBase sentinel,
+// i.e. a plain "inherit from base" with no additional items. Such a list is a
+// no-op so that inheriting the base entrypoint does not clear an inherited cmd.
+func isPureInherit(list []string) bool {
+	return len(list) == 1 && list[0] == inheritFromBase
+}
+
+// expandInherit returns list with every inheritFromBase sentinel item replaced,
+// in place, by the items of base. A sentinel with no base expands to nothing.
+func expandInherit(list, base []string) []string {
+	out := make([]string, 0, len(list))
+	for _, item := range list {
+		if item == inheritFromBase {
+			out = append(out, base...)
+		} else {
+			out = append(out, item)
+		}
+	}
+	return out
 }
 
 // readConfigTemplates reads and parses the config templates JSON file
@@ -599,6 +686,17 @@ func readConfigTemplates(filePath string) (*ConfigTemplates, error) {
 	}
 
 	return &templates, nil
+}
+
+// readEnvFile reads a file containing environment variables in JSON or
+// newline-delimited KEY=VALUE form (see the kvfile package). Duplicate keys
+// keep the last value.
+func readEnvFile(filePath string) (map[string]string, error) {
+	pairs, err := kvfile.ParseFile(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("reading env file: %w", err)
+	}
+	return kvfile.Flatten(pairs), nil
 }
 
 // readCreatedTimestamp reads a file containing a timestamp string and parses it as RFC 3339
@@ -626,7 +724,7 @@ func readCreatedTimestamp(filePath string) (*time.Time, error) {
 func annotationsFromBaseImageDescriptorFile(filePath string, annotations map[string]string) (map[string]string, error) {
 	if len(filePath) == 0 {
 		// We may not have a base image.
-		return nil, nil
+		return annotations, nil
 	}
 	data, err := os.ReadFile(filePath)
 	if err != nil {

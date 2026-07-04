@@ -1,7 +1,7 @@
 """Repository rules for pulling container images."""
 
 load("@bazel_skylib//lib:sets.bzl", "sets")
-load("@pull_hub_repo//:defs.bzl", "tool_for_repository_os")
+load("@img_toolchain//:defs.bzl", "tool_for_repository_os")
 load("//img/private:manifest_media_type.bzl", "get_media_type")
 load("//img/private/platforms:constraints.bzl", "map_os_arch_to_constraints")
 load("//img/private/platforms:platforms.bzl", "has_constraint_setting")
@@ -160,6 +160,7 @@ def _pull_impl(rctx):
         maybe_lazy_layer_download = """
 download_blobs(
     name = "layers",
+    docker_config_path = {docker_config_path},
     digests = {layer_digests},
     sources = {sources},
     tags = ["requires-network"],
@@ -175,6 +176,7 @@ download_blobs(
                 prefix = "    ",
                 indent = "    ",
             ),
+            docker_config_path = repr(rctx.attr.docker_config_path),
         )
 
     # Build target_compatible_with based on discovered platforms
@@ -338,6 +340,16 @@ This attribute controls when and how layer data is fetched from the registry.
 
 * **`bazel`**: Uses Bazel's native HTTP capabilities for downloading manifests and blobs.
 """,
+        ),
+        "credential_helper": attr.string(
+            doc = """Credential helper to use for registry authentication when this repository rule runs the pull tool.
+
+If omitted, the pull tool inherits `$IMG_CREDENTIAL_HELPER` when present.""",
+        ),
+        "docker_config_path": attr.string(
+            doc = """Path to Docker-compatible registry authentication config.
+
+If omitted, the pull tool inherits `$REGISTRY_AUTH_FILE` when present.""",
         ),
         "unsafe_allow_tag_without_digest": attr.bool(
             default = False,

@@ -1,0 +1,11 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+# gazelle:exclude_from_release
+
+go_library(
+    name = "manifest",
+    srcs = ["manifest.go"],
+    importpath = "github.com/bazel-contrib/rules_img/tests/layering/manifest",
+    visibility = ["//tests:__subpackages__"],
+    deps = ["@com_github_klauspost_compress//zstd"],
+)

@@ -107,41 +107,6 @@ prebuilt_collection_hub_repo = repository_rule(
     },
 )
 
-def _prebuilt_pull_hub_repo_impl(rctx):
-    if rctx.attr.source_built != None:
-        fail("pull tool is only used in repository rules and can't make use of compiled targets.")
-    rctx.file("BUILD.bazel", """load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
-
-bzl_library(
-    name = "defs",
-    srcs = ["defs.bzl"],
-    visibility = ["//visibility:public"],
-    deps = ["@rules_img//img/private/platforms:platforms"],
-)""")
-    rctx.file(
-        "defs.bzl",
-        """\
-load("@rules_img//img/private/platforms:platforms.bzl", "platform_for_repository_os")
-
-TOOLS = {}
-
-def tool_for_repository_os(rctx):
-    platform = platform_for_repository_os(rctx)
-    key = platform.name
-    if key not in TOOLS:
-        fail("No pull tool for platform " + key)
-    return Label(TOOLS[key])
-""".format(json.encode_indent(rctx.attr.tools, indent = "    ")),
-    )
-
-prebuilt_pull_hub_repo = repository_rule(
-    implementation = _prebuilt_pull_hub_repo_impl,
-    attrs = {
-        "tools": attr.string_dict(),
-        "source_built": attr.label(),
-    },
-)
-
 def _prebuilt_img_tool_repo_impl(rctx):
     extension = "exe" if rctx.attr.os == "windows" else ""
     dot = "." if len(extension) > 0 else ""
@@ -173,51 +138,14 @@ _prebuilt_attrs = {
     ),
 }
 
-_prebuilt_pull_tool_attrs = {
-    "version": attr.string(mandatory = True),
-    "integrity": attr.string(mandatory = True),
-    "os": attr.string(values = ["darwin", "linux", "windows"]),
-    "cpu": attr.string(values = ["amd64", "arm64", "s390x"]),
-    "url_templates": attr.string_list(
-        default = ["https://github.com/bazel-contrib/rules_img/releases/download/{version}/pull_tool_{os}_{cpu}{dot}{extension}"],
-    ),
-}
-
 prebuilt_img_tool_repo = repository_rule(
     implementation = _prebuilt_img_tool_repo_impl,
     attrs = _prebuilt_attrs,
 )
 
-def _prebuilt_pull_tool_repo_impl(rctx):
-    extension = "exe" if rctx.attr.os == "windows" else ""
-    dot = "." if len(extension) > 0 else ""
-    urls = [template.format(
-        version = rctx.attr.version,
-        os = rctx.attr.os,
-        cpu = rctx.attr.cpu,
-        dot = dot,
-        extension = extension,
-    ) for template in rctx.attr.url_templates]
-    rctx.download(
-        urls,
-        output = "pull_tool.exe",
-        executable = True,
-        integrity = rctx.attr.integrity,
-    )
-    rctx.file(
-        "BUILD.bazel",
-        content = """exports_files(["pull_tool.exe"])""",
-    )
-
-prebuilt_pull_tool_repo = repository_rule(
-    implementation = _prebuilt_pull_tool_repo_impl,
-    attrs = _prebuilt_pull_tool_attrs,
-)
-
 _prebuilt_tool_collection = tag_class(attrs = {"name": attr.string(), "override": attr.bool(default = False)})
 _prebuilt_tool_from_file = tag_class(attrs = {"collection": attr.string(), "file": attr.label()})
 _prebuilt_tool_download = tag_class(attrs = {"collection": attr.string()} | _prebuilt_attrs)
-_prebuilt_pull_tool_download = tag_class(attrs = {"collection": attr.string()} | _prebuilt_pull_tool_attrs)
 _host_tool = tag_class(attrs = {"binary": attr.label()})
 _source_built = tag_class(attrs = {"collection": attr.string(), "target": attr.label()})
 
@@ -271,12 +199,11 @@ def _prebuilt_tool_helper(ctx, tool_path, hub_repo_fn, tool_repo_fn = prebuilt_i
                 fail("Duplicate definitions for prebuilt_img_tool %s. Only root module is allowed to override." % collection_name)
         requested_tools.update(for_module[0])
         collections.update(for_module[1])
-        if mod.name == "rules_img_pull_tool":
-            # only "rules_img_pull_tool" (or the root module)
-            # are allowed to set this
-            host_tool = for_module[2]
         if mod.name == "rules_img_tool":
-            # only "rules_img_tool" is allowed to set this
+            # only "rules_img_tool" (or the root module) is allowed to set the
+            # host_tool (used in repository rules at fetch time) and the
+            # source_built target (used to build the img tool toolchain).
+            host_tool = for_module[2]
             source_built = for_module[3]
     root_module_direct_deps = []
     if root_module != None:
@@ -327,25 +254,6 @@ prebuilt_img_tool = module_extension(
         "collection": _prebuilt_tool_collection,
         "from_file": _prebuilt_tool_from_file,
         "download": _prebuilt_tool_download,
-        "host_tool": _host_tool,
-        "source_built": _source_built,
-    },
-)
-
-def _pull_tool_impl(ctx):
-    return _prebuilt_tool_helper(
-        ctx,
-        tool_path = "pull_tool.exe",
-        hub_repo_fn = prebuilt_pull_hub_repo,
-        tool_repo_fn = prebuilt_pull_tool_repo,
-    )
-
-pull_tool = module_extension(
-    implementation = _pull_tool_impl,
-    tag_classes = {
-        "collection": _prebuilt_tool_collection,
-        "from_file": _prebuilt_tool_from_file,
-        "download": _prebuilt_pull_tool_download,
         "host_tool": _host_tool,
         "source_built": _source_built,
     },

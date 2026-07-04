@@ -10,8 +10,8 @@ Public API for container image layer rules.
 load("@rules_img//img:layer.bzl", "image_layer")
 
 image_layer(<a href="#image_layer-name">name</a>, <a href="#image_layer-srcs">srcs</a>, <a href="#image_layer-annotations">annotations</a>, <a href="#image_layer-annotations_file">annotations_file</a>, <a href="#image_layer-compress">compress</a>, <a href="#image_layer-create_parent_directories">create_parent_directories</a>,
-            <a href="#image_layer-default_metadata">default_metadata</a>, <a href="#image_layer-estargz">estargz</a>, <a href="#image_layer-file_metadata">file_metadata</a>, <a href="#image_layer-include_runfiles">include_runfiles</a>, <a href="#image_layer-media_type">media_type</a>, <a href="#image_layer-symlinks">symlinks</a>,
-            <a href="#image_layer-tree_artifact_handling">tree_artifact_handling</a>)
+            <a href="#image_layer-default_metadata">default_metadata</a>, <a href="#image_layer-estargz">estargz</a>, <a href="#image_layer-file_metadata">file_metadata</a>, <a href="#image_layer-include_runfiles">include_runfiles</a>, <a href="#image_layer-media_type">media_type</a>, <a href="#image_layer-multi_file_layout">multi_file_layout</a>,
+            <a href="#image_layer-symlinks">symlinks</a>, <a href="#image_layer-tree_artifact_handling">tree_artifact_handling</a>)
 </pre>
 
 Creates a container image layer from files, executables, and directories.
@@ -20,7 +20,7 @@ This rule packages files into a layer that can be used in container images. It s
 - Adding files at specific paths in the image
 - Setting file permissions and ownership
 - Creating symlinks
-- Including executables with their runfiles
+- Including executables with their runfiles and any additional default outputs
 - Compression (gzip, zstd) and eStargz optimization
 
 Example:
@@ -66,22 +66,27 @@ image_layer(
 )
 ```
 
+### Output groups
+
+- `mtree`: a single [mtree](https://man.freebsd.org/cgi/man.cgi?mtree(5)) text file
+
 **ATTRIBUTES**
 
 
 | Name  | Description | Type | Mandatory | Default |
 | :------------- | :------------- | :------------- | :------------- | :------------- |
 | <a id="image_layer-name"></a>name |  A unique name for this target.   | <a href="https://bazel.build/concepts/labels#target-names">Name</a> | required |  |
-| <a id="image_layer-srcs"></a>srcs |  Files to include in the layer. Keys are paths in the image (e.g., "/app/bin/server"), values are labels to files or executables. Executables automatically include their runfiles unless include_runfiles is set to False.   | Dictionary: String -> Label | optional |  `{}`  |
+| <a id="image_layer-srcs"></a>srcs |  Files to include in the layer. Keys are paths in the image (e.g., "/app/bin/server"), values are labels to files or executables.<br><br>When a value is an executable, the executable is placed at the path key and its runfiles tree is included (unless include_runfiles is set to False). Any additional default outputs of the target (the rest of `DefaultInfo.files` beyond the executable) are also copied, each placed at the same location relative to the executable that it has in the source tree.<br><br>When a value is a non-executable target that produces more than one default output, the path key is treated as a directory and the outputs are placed inside it according to `multi_file_layout`.   | Dictionary: String -> Label | optional |  `{}`  |
 | <a id="image_layer-annotations"></a>annotations |  Annotations to add to the layer metadata as key-value pairs.   | <a href="https://bazel.build/rules/lib/core/dict">Dictionary: String -> String</a> | optional |  `{}`  |
-| <a id="image_layer-annotations_file"></a>annotations_file |  File containing newline-delimited KEY=VALUE annotations for the layer.<br><br>The file should contain one annotation per line in KEY=VALUE format. Empty lines are ignored. Annotations from this file are merged with annotations specified via the `annotations` attribute.<br><br>Example file content: <pre><code>version=1.0.0&#10;build.date=2024-01-15&#10;source.url=https://github.com/...</code></pre>   | <a href="https://bazel.build/concepts/labels">Label</a> | optional |  `None`  |
+| <a id="image_layer-annotations_file"></a>annotations_file |  File containing annotations for the layer, as JSON or newline-delimited text.<br><br>The file is parsed in one of the following formats, auto-detected from its contents:<br><br>- JSON object with string values: `{"key": "value"}` - JSON object with list values: `{"key": ["value1", "value2"]}` (the last value wins) - JSON array of `KEY=VALUE` strings: `["key=value"]` - newline-delimited `KEY=VALUE` text (one per line; blank lines and `#` comments are ignored)<br><br>Values in JSON objects are used verbatim, so they can encode arbitrary strings including values that contain `=`, spaces, or newlines. The `KEY=VALUE` forms (JSON array and text) split on the first `=` and trim surrounding whitespace from the key and value.<br><br>Annotations from this file are merged with annotations specified via the `annotations` attribute, which take precedence for matching keys.<br><br>Example file content: <pre><code>version=1.0.0&#10;build.date=2024-01-15&#10;source.url=https://github.com/...</code></pre>   | <a href="https://bazel.build/concepts/labels">Label</a> | optional |  `None`  |
 | <a id="image_layer-compress"></a>compress |  Compression algorithm to use. If set to 'auto', uses the global default compression setting.   | String | optional |  `"auto"`  |
 | <a id="image_layer-create_parent_directories"></a>create_parent_directories |  Whether to automatically create parent directory entries in the tar file for all files. If set to 'auto', uses the global default create_parent_directories setting. When enabled, parent directories will be created automatically for all files in the layer.   | String | optional |  `"auto"`  |
 | <a id="image_layer-default_metadata"></a>default_metadata |  JSON-encoded default metadata to apply to all files in the layer. Can include fields like mode, uid, gid, uname, gname, mtime, and pax_records.   | String | optional |  `""`  |
 | <a id="image_layer-estargz"></a>estargz |  Whether to use estargz format. If set to 'auto', uses the global default estargz setting. When enabled, the layer will be optimized for lazy pulling and will be compatible with the estargz format.   | String | optional |  `"auto"`  |
 | <a id="image_layer-file_metadata"></a>file_metadata |  Per-file metadata overrides as a dict mapping file paths to JSON-encoded metadata. The path should match the path in the image (the key in srcs attribute). Metadata specified here overrides any defaults from default_metadata.   | <a href="https://bazel.build/rules/lib/core/dict">Dictionary: String -> String</a> | optional |  `{}`  |
-| <a id="image_layer-include_runfiles"></a>include_runfiles |  Whether to include runfiles for executable targets. When True (default), executables in srcs will include their runfiles tree. When False, only the executable file itself is included, without runfiles.   | Boolean | optional |  `True`  |
+| <a id="image_layer-include_runfiles"></a>include_runfiles |  Whether to include runfiles for executable targets. When True (default), executables in srcs will include their runfiles tree. When False, only the executable file itself is included, without runfiles.<br><br>Either way, any additional default outputs of the target (the rest of `DefaultInfo.files` beyond the executable) are copied into the layer, placed relative to the executable.   | Boolean | optional |  `True`  |
 | <a id="image_layer-media_type"></a>media_type |  Override the layer media type. By default, the media type is auto-detected from the compression algorithm.   | String | optional |  `""`  |
+| <a id="image_layer-multi_file_layout"></a>multi_file_layout |  How to place a non-executable src that produces MORE THAN ONE default output.<br><br>- `"package_relative"` (default): treat the path key as a directory and place each file inside it,   preserving its path relative to the producing target's package. - `"flatten"`: place each file directly in the directory by basename (restores the older behavior).<br><br>A src that produces a single output is always placed exactly at its path key, regardless of this setting.   | String | optional |  `"package_relative"`  |
 | <a id="image_layer-symlinks"></a>symlinks |  Symlinks to create in the layer. Keys are symlink paths in the image, values are the targets they point to.   | <a href="https://bazel.build/rules/lib/core/dict">Dictionary: String -> String</a> | optional |  `{}`  |
 | <a id="image_layer-tree_artifact_handling"></a>tree_artifact_handling |  How to handle duplicate tree artifacts (directories) in the layer. If set to 'full', each tree artifact is stored at its intended path (no deduplication). If set to 'deduplicate_symlink', duplicate tree artifacts are replaced with symlinks to the first occurrence. If set to 'auto', uses the global default from --@rules_img//img/settings:layer_tree_artifact_handling.   | String | optional |  `"auto"`  |
 
@@ -108,6 +113,10 @@ image with Dockerfile-like semantics.
 The binary's `args` attribute becomes the image `cmd`, its `env` attribute (or
 RunEnvironmentInfo provider) becomes `env`, and the binary path becomes the `entrypoint`.
 When include_runfiles is True (default), the working directory is set to the runfiles root.
+
+In addition to the executable and its runfiles, any other default outputs of the binary
+target (the rest of `DefaultInfo.files`) are copied into the layer, each placed at the same
+location relative to the executable that it has in the source tree.
 
 If the binary provides RunfilesGroupInfo (from rules_runfiles_group), the runfiles are split
 into separate layers based on the groups. This allows for better caching: stable layers
@@ -154,6 +163,10 @@ layer_from_binary(
 )
 ```
 
+### Output groups
+
+- `mtree`: one [mtree](https://man.freebsd.org/cgi/man.cgi?mtree(5)) text file per produced layer
+
 **ATTRIBUTES**
 
 
@@ -161,12 +174,12 @@ layer_from_binary(
 | :------------- | :------------- | :------------- | :------------- | :------------- |
 | <a id="layer_from_binary-name"></a>name |  A unique name for this target.   | <a href="https://bazel.build/concepts/labels#target-names">Name</a> | required |  |
 | <a id="layer_from_binary-annotations"></a>annotations |  Annotations to add to the layer metadata as key-value pairs.   | <a href="https://bazel.build/rules/lib/core/dict">Dictionary: String -> String</a> | optional |  `{}`  |
-| <a id="layer_from_binary-annotations_file"></a>annotations_file |  File containing newline-delimited KEY=VALUE annotations for the layer.<br><br>The file should contain one annotation per line in KEY=VALUE format. Empty lines are ignored. Annotations from this file are merged with annotations specified via the `annotations` attribute.<br><br>Example file content: <pre><code>version=1.0.0&#10;build.date=2024-01-15&#10;source.url=https://github.com/...</code></pre>   | <a href="https://bazel.build/concepts/labels">Label</a> | optional |  `None`  |
+| <a id="layer_from_binary-annotations_file"></a>annotations_file |  File containing annotations for the layer, as JSON or newline-delimited text.<br><br>The file is parsed in one of the following formats, auto-detected from its contents:<br><br>- JSON object with string values: `{"key": "value"}` - JSON object with list values: `{"key": ["value1", "value2"]}` (the last value wins) - JSON array of `KEY=VALUE` strings: `["key=value"]` - newline-delimited `KEY=VALUE` text (one per line; blank lines and `#` comments are ignored)<br><br>Values in JSON objects are used verbatim, so they can encode arbitrary strings including values that contain `=`, spaces, or newlines. The `KEY=VALUE` forms (JSON array and text) split on the first `=` and trim surrounding whitespace from the key and value.<br><br>Annotations from this file are merged with annotations specified via the `annotations` attribute, which take precedence for matching keys.<br><br>Example file content: <pre><code>version=1.0.0&#10;build.date=2024-01-15&#10;source.url=https://github.com/...</code></pre>   | <a href="https://bazel.build/concepts/labels">Label</a> | optional |  `None`  |
 | <a id="layer_from_binary-binary"></a>binary |  The *_binary target to package into the layer.<br><br>The binary's `args` and `env` attributes are extracted and provided as image configuration (cmd and env) via ImageLayerConfigInfo. The `data` attribute is used for `$(location)` expansion in args and env values.<br><br>If the binary provides RunfilesGroupInfo, the runfiles are split into separate layers per group.   | <a href="https://bazel.build/concepts/labels">Label</a> | required |  |
 | <a id="layer_from_binary-compress"></a>compress |  Compression algorithm to use. If set to 'auto', uses the global default compression setting.   | String | optional |  `"auto"`  |
 | <a id="layer_from_binary-create_parent_directories"></a>create_parent_directories |  Whether to automatically create parent directory entries in the tar file for all files. If set to 'auto', uses the global default create_parent_directories setting. When enabled, parent directories will be created automatically for all files in the layer.   | String | optional |  `"auto"`  |
 | <a id="layer_from_binary-estargz"></a>estargz |  Whether to use estargz format. If set to 'auto', uses the global default estargz setting. When enabled, the layer will be optimized for lazy pulling and will be compatible with the estargz format.   | String | optional |  `"auto"`  |
-| <a id="layer_from_binary-include_runfiles"></a>include_runfiles |  Whether to include runfiles for executable targets. When True (default), executables in srcs will include their runfiles tree. When False, only the executable file itself is included, without runfiles.   | Boolean | optional |  `True`  |
+| <a id="layer_from_binary-include_runfiles"></a>include_runfiles |  Whether to include runfiles for executable targets. When True (default), executables in srcs will include their runfiles tree. When False, only the executable file itself is included, without runfiles.<br><br>Either way, any additional default outputs of the target (the rest of `DefaultInfo.files` beyond the executable) are copied into the layer, placed relative to the executable.   | Boolean | optional |  `True`  |
 | <a id="layer_from_binary-layer_budget"></a>layer_budget |  Maximum total number of layers produced by this rule. If set to a value > 0 and the binary provides RunfilesGroupInfo, groups are merged using the merge algorithm from rules_runfiles_group. The algorithm respects group rank (only merges within the same rank), do_not_merge flags, and weight hints (lighter groups merge first).<br><br>When a group is marked as executable_group in RunfilesGroupMetadataInfo, the binary executable and supporting files are merged into that group's layer, and the full budget is available for runfiles groups. When no executable_group exists, one layer is reserved for a separate binary layer, and the remaining budget (layer_budget - 1) is used for groups; layer_budget=1 without an executable_group skips the grouped path entirely.<br><br>0 means no limit (all groups become separate layers, plus a binary layer unless an executable_group absorbs it).   | Integer | optional |  `0`  |
 | <a id="layer_from_binary-media_type"></a>media_type |  Override the layer media type. By default, the media type is auto-detected from the compression algorithm.   | String | optional |  `""`  |
 | <a id="layer_from_binary-path"></a>path |  Optional path of the binary inside the image. If the path ends with a slash ("/"), the basename of the binary will be automatically appended. If unset, this defaults to the rlocationpath of the binary (e.g., "_main/cmd/server/server_/server").   | String | optional |  `""`  |
@@ -277,6 +290,10 @@ layer_from_tar(
     },
 )
 ```
+
+### Output groups
+
+- `mtree`: a single [mtree](https://man.freebsd.org/cgi/man.cgi?mtree(5)) text file
 
 **ATTRIBUTES**
 

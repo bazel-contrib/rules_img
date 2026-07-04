@@ -34,6 +34,7 @@ type CAS[HM hashHelper] struct {
 	closed         bool
 	digestFS       *digestfs.FileSystem
 	dirs           map[string]struct{}
+	observer       EntryObserver
 	options
 }
 
@@ -48,6 +49,13 @@ func New[HM hashHelper](appender api.TarAppender, opts ...Option) *CAS[HM] {
 	}
 
 	var helper HM
+	var observer EntryObserver
+	if options.observer != nil {
+		observer = options.observer
+	} else if options.compactStreamWriter != nil {
+		observer = newCompactStreamObserver[HM](options.compactStreamWriter)
+	}
+
 	return &CAS[HM]{
 		tarAppender:    appender,
 		hashOrder:      [][]byte{},
@@ -61,6 +69,7 @@ func New[HM hashHelper](appender api.TarAppender, opts ...Option) *CAS[HM] {
 		firstTreePaths: make(map[string]string),
 		digestFS:       digestfs.New(helper),
 		dirs:           make(map[string]struct{}),
+		observer:       observer,
 		options:        options,
 	}
 }
@@ -73,6 +82,13 @@ func NewWithDigestFS[HM hashHelper](appender api.TarAppender, digestFS *digestfs
 	}
 	for _, opt := range opts {
 		opt.apply(&options)
+	}
+
+	var observer EntryObserver
+	if options.observer != nil {
+		observer = options.observer
+	} else if options.compactStreamWriter != nil {
+		observer = newCompactStreamObserver[HM](options.compactStreamWriter)
 	}
 
 	return &CAS[HM]{
@@ -88,11 +104,22 @@ func NewWithDigestFS[HM hashHelper](appender api.TarAppender, digestFS *digestfs
 		firstTreePaths: make(map[string]string),
 		digestFS:       digestFS,
 		dirs:           make(map[string]struct{}),
+		observer:       observer,
 		options:        options,
 	}
 }
 
-func (c *CAS[HM]) writeHeaderAndData(hdr *tar.Header, data io.Reader) error {
+func (c *CAS[HM]) notifyEntry(hdr *tar.Header, knownDigest []byte) error {
+	if c.observer == nil {
+		return nil
+	}
+	if _, err := c.observer.BeginEntry(hdr, knownDigest); err != nil {
+		return err
+	}
+	return c.observer.EndEntry()
+}
+
+func (c *CAS[HM]) writeHeaderAndData(hdr *tar.Header, data io.Reader, contentDigest []byte) error {
 	var buf bytes.Buffer
 	tw := tar.NewWriter(&buf)
 
@@ -106,15 +133,30 @@ func (c *CAS[HM]) writeHeaderAndData(hdr *tar.Header, data io.Reader) error {
 			if _, ok := c.dirs[dir]; ok {
 				continue
 			}
-			hdr := &tar.Header{
+			dirHdr := &tar.Header{
 				Typeflag: tar.TypeDir,
 				Mode:     0o755,
 				Name:     dir,
 			}
-			if err := tw.WriteHeader(hdr); err != nil {
+
+			if err := c.notifyEntry(dirHdr, nil); err != nil {
+				return err
+			}
+
+			if err := tw.WriteHeader(dirHdr); err != nil {
 				return err
 			}
 			c.dirs[dir] = struct{}{}
+		}
+	}
+
+	// HOOK: begin entry
+	var contentSink io.Writer
+	if c.observer != nil {
+		var err error
+		contentSink, err = c.observer.BeginEntry(hdr, contentDigest)
+		if err != nil {
+			return err
 		}
 	}
 
@@ -124,14 +166,38 @@ func (c *CAS[HM]) writeHeaderAndData(hdr *tar.Header, data io.Reader) error {
 	}
 	if hdr.Typeflag == tar.TypeReg {
 		data = io.LimitReader(data, hdr.Size)
+
+		if contentSink != nil {
+			data = io.TeeReader(data, contentSink)
+		}
+
 		multireader := io.MultiReader(bytes.NewBuffer(buf.Bytes()), data)
 		paddedreader := &paddedReader{
 			Reader:  multireader,
 			padSize: 512, // tar block size
 		}
-		return c.tarAppender.AppendTar(paddedreader)
+		if err := c.tarAppender.AppendTar(paddedreader); err != nil {
+			return err
+		}
+
+		// HOOK: end entry
+		if c.observer != nil {
+			if err := c.observer.EndEntry(); err != nil {
+				return err
+			}
+		}
+
+		return nil
 	} else {
 		tw.Flush()
+
+		// HOOK: end entry
+		if c.observer != nil {
+			if err := c.observer.EndEntry(); err != nil {
+				return err
+			}
+		}
+
 		return c.tarAppender.AppendTar(bytes.NewReader(buf.Bytes()))
 	}
 }
@@ -176,8 +242,14 @@ func (c *CAS[HM]) Close() error {
 
 	c.closed = true
 	for _, hdr := range c.deferredFiles {
-		if err := c.writeHeaderOrDefer(hdr, nil); err != nil {
+		if err := c.writeHeaderOrDefer(hdr, nil, nil); err != nil {
 			return fmt.Errorf("error writing deferred header: %w", err)
+		}
+	}
+
+	if c.observer != nil {
+		if err := c.observer.Close(); err != nil {
+			return fmt.Errorf("error closing entry observer: %w", err)
 		}
 	}
 
@@ -189,14 +261,14 @@ func (c *CAS[HM]) WriteHeader(hdr *tar.Header) error {
 		return errors.New("WriteHeader called with regular file header, use WriteRegular instead")
 	}
 
-	return c.writeHeaderOrDefer(hdr, nil)
+	return c.writeHeaderOrDefer(hdr, nil, nil)
 }
 
 func (c *CAS[HM]) WriteRegular(hdr *tar.Header, r io.Reader) error {
 	if hdr.Typeflag != tar.TypeReg {
 		return fmt.Errorf("WriteRegular called with non-regular header: %s", hdr.Name)
 	}
-	return c.writeHeaderOrDefer(hdr, r)
+	return c.writeHeaderOrDefer(hdr, r, nil)
 }
 
 func (c *CAS[HM]) WriteRegularFromPath(hdr *tar.Header, filePath string) error {
@@ -210,7 +282,7 @@ func (c *CAS[HM]) WriteRegularFromPath(hdr *tar.Header, filePath string) error {
 	}
 	defer df.Close()
 
-	return c.writeHeaderOrDefer(hdr, df)
+	return c.writeHeaderOrDefer(hdr, df, nil)
 }
 
 func (c *CAS[HM]) WriteRegularFromPathDeduplicated(hdr *tar.Header, filePath string) error {
@@ -244,9 +316,9 @@ func (c *CAS[HM]) WriteRegularFromPathDeduplicated(hdr *tar.Header, filePath str
 	var storeErr error
 
 	if isBlobTarHeader(hdr) {
-		linkPath, storeErr = c.StoreKnownHashAndSize(df, hash, size, hdr.Name)
+		linkPath, storeErr = c.storeKnownHashAndSize(df, hash, size, hdr.Name)
 	} else {
-		linkPath, storeErr = c.StoreNodeKnownHash(df, hdr, hash)
+		linkPath, storeErr = c.storeNodeKnownHash(df, hdr, hash)
 	}
 	if storeErr != nil {
 		return storeErr
@@ -262,7 +334,7 @@ func (c *CAS[HM]) WriteRegularFromPathDeduplicated(hdr *tar.Header, filePath str
 	header.Typeflag = tar.TypeLink
 	header.Linkname = linkPath
 	header.Size = 0
-	return c.writeHeaderOrDefer(&header, nil)
+	return c.writeHeaderOrDefer(&header, nil, nil)
 }
 
 func (c *CAS[HM]) WriteRegularDeduplicated(hdr *tar.Header, r io.Reader) error {
@@ -294,7 +366,7 @@ func (c *CAS[HM]) WriteRegularDeduplicated(hdr *tar.Header, r io.Reader) error {
 	header.Typeflag = tar.TypeLink
 	header.Linkname = linkPath
 	header.Size = 0
-	return c.writeHeaderOrDefer(&header, nil)
+	return c.writeHeaderOrDefer(&header, nil, nil)
 }
 
 func (c *CAS[HM]) Store(r io.Reader, intendedPath string) (string, []byte, int64, error) {
@@ -311,6 +383,10 @@ func (c *CAS[HM]) Store(r io.Reader, intendedPath string) (string, []byte, int64
 }
 
 func (c *CAS[HM]) StoreKnownHashAndSize(r io.Reader, hash []byte, size int64, intendedPath string) (string, error) {
+	return c.storeKnownHashAndSize(r, hash, size, intendedPath)
+}
+
+func (c *CAS[HM]) storeKnownHashAndSize(r io.Reader, hash []byte, size int64, intendedPath string) (string, error) {
 	hashStr := string(hash)
 
 	// Check if we've already stored this blob
@@ -327,7 +403,7 @@ func (c *CAS[HM]) StoreKnownHashAndSize(r io.Reader, hash []byte, size int64, in
 		Mode:     0o755,
 	}
 
-	if err := c.writeHeaderAndData(header, r); err != nil {
+	if err := c.writeHeaderAndData(header, r, hash); err != nil {
 		return "", err
 	}
 
@@ -354,23 +430,17 @@ func (c *CAS[HM]) StoreNode(r io.Reader, hdr *tar.Header) (linkPath string, blob
 }
 
 func (c *CAS[HM]) StoreNodeKnownHash(r io.Reader, hdr *tar.Header, blobHash []byte) (linkPath string, err error) {
+	return c.storeNodeKnownHash(r, hdr, blobHash)
+}
+
+func (c *CAS[HM]) storeNodeKnownHash(r io.Reader, hdr *tar.Header, blobHash []byte) (linkPath string, err error) {
 	var helper HM
 
-	// nodes are like blobs (regular files with content),
-	// but they also have metadata (like permissions, owner, group, mtime, xattrs, etc.)
-	// we need to account for that in the hash
-
 	if hdr.Typeflag != tar.TypeReg || strings.HasSuffix(hdr.Name, "/") {
-		// only regular files can be stored as nodes
-		// other kinds cannot be targets of hardlinks
 		return "", fmt.Errorf("invalid node header: %s", hdr.Name)
 	}
 
-	// create a normalized version of the header
 	recordedTarHeader := cloneTarHeader(hdr)
-	// we explicitly leave the name empty for hashing
-	// so that files in different locations can hardlink the same
-	// CAS entry.
 	recordedTarHeader.Name = ""
 	normalizeTarHeader(&recordedTarHeader)
 
@@ -380,16 +450,13 @@ func (c *CAS[HM]) StoreNodeKnownHash(r io.Reader, hdr *tar.Header, blobHash []by
 	nodeHash := hasher.Sum(nil)
 	nodeHashStr := string(nodeHash)
 
-	// Check if we've already stored this node
 	if firstPath, exists := c.firstNodePaths[nodeHashStr]; exists {
-		// Already stored, return the first occurrence path for hardlinking
 		return firstPath, nil
 	}
 
-	// First occurrence - write to the intended path (hdr.Name) as a regular file
 	recordedTarHeader.Name = hdr.Name
 
-	if err := c.writeHeaderAndData(&recordedTarHeader, r); err != nil {
+	if err := c.writeHeaderAndData(&recordedTarHeader, r, blobHash); err != nil {
 		return hdr.Name, err
 	}
 
@@ -417,7 +484,7 @@ func (c *CAS[HM]) StoreFileFromPath(filePath string, intendedPath string) (strin
 		return "", nil, 0, err
 	}
 
-	contentPath, err := c.StoreKnownHashAndSize(df, hash, size, intendedPath)
+	contentPath, err := c.storeKnownHashAndSize(df, hash, size, intendedPath)
 	return contentPath, hash, size, err
 }
 
@@ -438,7 +505,7 @@ func (c *CAS[HM]) StoreNodeFromPath(filePath string, hdr *tar.Header) (linkPath 
 		return "", nil, 0, err
 	}
 
-	linkPath, err = c.StoreNodeKnownHash(df, hdr, hash)
+	linkPath, err = c.storeNodeKnownHash(df, hdr, hash)
 	return linkPath, hash, size, err
 }
 
@@ -467,7 +534,7 @@ func (c *CAS[HM]) StoreTreeKnownHash(fsys fs.FS, intendedPath string, treeHash [
 		Name:     intendedPath + "/",
 		Mode:     0o755,
 	}
-	if err := c.writeHeaderAndData(header, nil); err != nil {
+	if err := c.writeHeaderAndData(header, nil, nil); err != nil {
 		return "", err
 	}
 
@@ -506,7 +573,7 @@ func (c *CAS[HM]) StoreTreeKnownHash(fsys fs.FS, intendedPath string, treeHash [
 			Linkname: linkName,
 			Mode:     0o755,
 		}
-		if err := c.writeHeaderAndData(header, nil); err != nil {
+		if err := c.writeHeaderAndData(header, nil, nil); err != nil {
 			return fmt.Errorf("writing link for %s: %w", p, err)
 		}
 
@@ -521,7 +588,7 @@ func (c *CAS[HM]) StoreTreeKnownHash(fsys fs.FS, intendedPath string, treeHash [
 	return "", nil
 }
 
-func (c *CAS[HM]) writeHeaderOrDefer(hdr *tar.Header, data io.Reader) error {
+func (c *CAS[HM]) writeHeaderOrDefer(hdr *tar.Header, data io.Reader, contentDigest []byte) error {
 	if hdr.Typeflag != tar.TypeReg && c.structure == CASFirst && !c.closed {
 		// Defer writing the header for non-regular files
 		// until Close() is called.
@@ -544,7 +611,7 @@ func (c *CAS[HM]) writeHeaderOrDefer(hdr *tar.Header, data io.Reader) error {
 	// We are either writing a regular files (CAS object)
 	// Or are in intertwined mode (CAS and non-CAS objects are mixed together as they are written)
 	// Or we are in CASFirst mode and we are about to close the tar (so we need to write the deferred files)
-	return c.writeHeaderAndData(hdr, data)
+	return c.writeHeaderAndData(hdr, data, contentDigest)
 }
 
 func callbackModeFromTarType(hdr *tar.Header) WriteHeaderCallbackFilter {

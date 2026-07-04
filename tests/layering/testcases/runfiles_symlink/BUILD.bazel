@@ -1,0 +1,24 @@
+load("@rules_img//img:layer.bzl", "layer_from_binary")
+load("//tests/layering:defs.bzl", "layer_contents_test")
+
+# gazelle:exclude_from_release
+
+# A native (declare_symlink) symlink carried through a binary's runfiles.
+layer_from_binary(
+    name = "layer",
+    binary = "//tests/layering/testcases:runfiles_symlink_tool",
+    path = "/app/bin/tool",
+)
+
+layer_contents_test(
+    name = "test",
+    size = "small",
+    layer = ":layer",
+    manifests = ["expected.ndjson"],
+    # Native unresolved symlinks (declare_symlink) materialize with absolute
+    # host paths on Windows, so the recorded relative linkname is Unix-only.
+    target_compatible_with = select({
+        "@platforms//os:windows": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
+)
