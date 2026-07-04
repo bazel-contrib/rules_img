@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/google/go-containerregistry/pkg/authn"
 )
 
 func TestNew_ReplacesWorkspacePlaceholder(t *testing.T) {
@@ -48,6 +50,18 @@ type TestHelper struct {
 
 func (t *TestHelper) Get(_ context.Context, _ string) (headers map[string][]string, expiresAt time.Time, err error) {
 	return t.Headers, time.Time{}, nil
+}
+
+type testResource struct {
+	registry string
+}
+
+func (r testResource) String() string {
+	return r.registry
+}
+
+func (r testResource) RegistryStr() string {
+	return r.registry
 }
 
 func TestContainerRegistryHelper_WithNilHeaders(t *testing.T) {
@@ -182,5 +196,57 @@ func TestContainerRegistryHelper_WithEmptyAuthHeader(t *testing.T) {
 		t.Fatalf("expected err to be not nil")
 	} else if msg := err.Error(); msg != "no `Authorization` headers" {
 		t.Fatalf("expected error to be \"no `Authorization` headers\", got %s", msg)
+	}
+}
+
+func TestContainerRegistryKeychain_WithBearerAuth(t *testing.T) {
+	helper := TestHelper{
+		Headers: map[string][]string{
+			"Authorization": []string{"Bearer access-token"},
+		},
+	}
+	keychain := ContainerRegistryKeychain(&helper)
+
+	auth, err := keychain.Resolve(testResource{registry: "registry.example.com"})
+	if err != nil {
+		t.Fatalf("expected err to be nil, got %v", err)
+	}
+	cfg, err := authn.Authorization(context.Background(), auth)
+	if err != nil {
+		t.Fatalf("expected err to be nil, got %v", err)
+	}
+	if cfg.RegistryToken != "access-token" {
+		t.Fatalf("expected registry token to be %q, got %q", "access-token", cfg.RegistryToken)
+	}
+	if cfg.IdentityToken != "" {
+		t.Fatalf("expected identity token to be empty, got %q", cfg.IdentityToken)
+	}
+}
+
+func TestContainerRegistryKeychain_WithBasicAuth(t *testing.T) {
+	encoded := base64.StdEncoding.EncodeToString([]byte("test:pass"))
+	helper := TestHelper{
+		Headers: map[string][]string{
+			"Authorization": []string{"Basic " + encoded},
+		},
+	}
+	keychain := ContainerRegistryKeychain(&helper)
+
+	auth, err := keychain.Resolve(testResource{registry: "registry.example.com"})
+	if err != nil {
+		t.Fatalf("expected err to be nil, got %v", err)
+	}
+	cfg, err := authn.Authorization(context.Background(), auth)
+	if err != nil {
+		t.Fatalf("expected err to be nil, got %v", err)
+	}
+	if cfg.Username != "test" {
+		t.Fatalf(`expected username to be "test", got %s`, cfg.Username)
+	}
+	if cfg.Password != "pass" {
+		t.Fatalf(`expected password to be "pass", got %s`, cfg.Password)
+	}
+	if cfg.RegistryToken != "" {
+		t.Fatalf("expected registry token to be empty, got %q", cfg.RegistryToken)
 	}
 }

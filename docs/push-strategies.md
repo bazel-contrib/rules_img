@@ -84,6 +84,12 @@ common --@rules_img//img/settings:credential_helper=tweag-credential-helper
 common --@rules_img//img/settings:remote_instance_name=my-instance-name
 ```
 
+> **WARNING:** `credential_helper` and `IMG_CREDENTIAL_HELPER` use Bazel's
+> credential-helper HTTP header protocol. When the helper returns
+> `Authorization: Bearer ...`, `rules_img` treats the value as a registry access
+> token and sends it through directly; it is not exchanged as an OAuth refresh
+> token.
+
 3. Run your push target:
 ```bash
 # Configure the push utility via environment variables:
@@ -152,6 +158,10 @@ build --remote_cache=grpc://your-cache-server:9092
 # Optionally, configure credential helper via rules_img settings:
 common --@rules_img//img/settings:credential_helper=tweag-credential-helper
 ```
+
+> **WARNING:** The credential helper warning from the lazy strategy also applies
+> here: `Authorization: Bearer ...` must be an access token already, not a
+> refresh token that `rules_img` should exchange.
 
 3. Push to your CAS registry:
 ```bash

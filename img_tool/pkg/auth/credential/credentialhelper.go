@@ -13,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/malt3/go-containerregistry/pkg/authn"
 )
 
 // Helper is the interface for a credential helper.
@@ -178,38 +180,79 @@ func ContainerRegistryHelper(helper Helper) *containerRegistryHelper {
 }
 
 func (c *containerRegistryHelper) Get(serverURL string) (string, string, error) {
-	headers, _, err := c.helper.Get(context.Background(), serverURL)
+	cfg, err := c.authConfig(context.Background(), serverURL)
 	if err != nil {
 		return "", "", err
+	}
+	if cfg.RegistryToken != "" {
+		// WARNING: Docker helper pairs cannot represent RegistryToken directly.
+		// This legacy method can only approximate Bearer as an identity token;
+		// registry auth must use ContainerRegistryKeychain to preserve access-token semantics.
+		return "<token>", cfg.RegistryToken, nil
+	}
+	return cfg.Username, cfg.Password, nil
+}
+
+func (c *containerRegistryHelper) authConfig(ctx context.Context, serverURL string) (authn.AuthConfig, error) {
+	headers, _, err := c.helper.Get(ctx, serverURL)
+	if err != nil {
+		return authn.AuthConfig{}, err
 	} else if headers == nil {
-		return "", "", errors.New("no HTTP headers found")
+		return authn.AuthConfig{}, errors.New("no HTTP headers found")
 	}
 
 	values, ok := headers["Authorization"]
 	if !ok {
-		return "", "", errors.New("no `Authorization` header")
+		return authn.AuthConfig{}, errors.New("no `Authorization` header")
 	}
 
 	for _, header := range values {
 		kind, value, found := strings.Cut(header, " ")
 		if !found {
-			return "", "", fmt.Errorf("no authorization scheme: %s", header)
-		} else if kind == "Basic" {
+			return authn.AuthConfig{}, fmt.Errorf("no authorization scheme: %s", header)
+		} else if strings.EqualFold(kind, "Basic") {
 			decoded, err := base64.StdEncoding.DecodeString(value)
 			if err != nil {
-				return "", "", fmt.Errorf("decode authorisation header: %s: %w", header, err)
+				return authn.AuthConfig{}, fmt.Errorf("decode authorisation header: %s: %w", header, err)
 			}
 			username, password, found := strings.Cut(string(decoded), ":")
 			if !found {
-				return "", "", fmt.Errorf("no semi-colon in basic auth: %s", decoded)
+				return authn.AuthConfig{}, fmt.Errorf("no semi-colon in basic auth: %s", decoded)
 			}
-			return username, password, nil
-		} else if kind == "Bearer" {
-			return "<token>", value, nil
+			return authn.AuthConfig{Username: username, Password: password}, nil
+		} else if strings.EqualFold(kind, "Bearer") {
+			// Bazel credential helpers emit ready-to-send HTTP headers. Treat Bearer as
+			// a registry access token; using IdentityToken would make go-containerregistry
+			// try an OAuth refresh-token exchange instead.
+			return authn.AuthConfig{RegistryToken: value}, nil
 		} else {
-			return "", "", fmt.Errorf("unknown authorization scheme: %s", header)
+			return authn.AuthConfig{}, fmt.Errorf("unknown authorization scheme: %s", header)
 		}
 	}
 
-	return "", "", fmt.Errorf("no `Authorization` headers")
+	return authn.AuthConfig{}, fmt.Errorf("no `Authorization` headers")
+}
+
+// ContainerRegistryKeychain adapts Bazel credential-helper HTTP headers to
+// go-containerregistry authentication without losing Bearer token semantics.
+func ContainerRegistryKeychain(helper Helper) authn.Keychain {
+	return &containerRegistryKeychain{
+		helper: ContainerRegistryHelper(helper),
+	}
+}
+
+type containerRegistryKeychain struct {
+	helper *containerRegistryHelper
+}
+
+func (c *containerRegistryKeychain) Resolve(target authn.Resource) (authn.Authenticator, error) {
+	return c.ResolveContext(context.Background(), target)
+}
+
+func (c *containerRegistryKeychain) ResolveContext(ctx context.Context, target authn.Resource) (authn.Authenticator, error) {
+	cfg, err := c.helper.authConfig(ctx, target.RegistryStr())
+	if err != nil {
+		return authn.Anonymous, nil
+	}
+	return authn.FromConfig(cfg), nil
 }
