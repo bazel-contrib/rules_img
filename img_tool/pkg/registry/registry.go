@@ -29,6 +29,7 @@ import (
 	"math/rand"
 	"net/http"
 	"os"
+	"time"
 
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 )
@@ -101,6 +102,8 @@ func New(opts ...Option) http.Handler {
 		},
 		manifests: manifests{
 			manifests: map[string]map[string]manifest{},
+			expires:   map[string]map[string]time.Time{},
+			now:       defaultManifestClock,
 			log:       log.New(os.Stderr, "", log.LstdFlags),
 		},
 	}
@@ -166,5 +169,26 @@ func WithManifestPutCallback(cb func(repo, target, contentType string, blob []by
 func WithManifestDeleteCallback(cb func(repo, target, contentType string, blob []byte) error) Option {
 	return func(r *registry) {
 		r.manifests.deleteCallback = cb
+	}
+}
+
+// WithManifestTTL bounds the default in-memory manifest store. A zero or
+// negative duration preserves historical behavior and keeps manifests until the
+// process exits or a client explicitly deletes each reference.
+func WithManifestTTL(ttl time.Duration) Option {
+	return func(r *registry) {
+		if ttl <= 0 {
+			r.manifests.ttl = 0
+			return
+		}
+		r.manifests.ttl = ttl
+	}
+}
+
+func withManifestClock(now func() time.Time) Option {
+	return func(r *registry) {
+		if now != nil {
+			r.manifests.now = now
+		}
 	}
 }

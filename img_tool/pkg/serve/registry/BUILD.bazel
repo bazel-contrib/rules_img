@@ -1,4 +1,4 @@
-load("@rules_go//go:def.bzl", "go_library")
+load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "registry",
@@ -13,4 +13,11 @@ go_library(
         "@com_github_google_go_containerregistry//pkg/v1:pkg",
         "@com_github_google_go_containerregistry//pkg/v1/types",
     ],
+)
+
+go_test(
+    name = "registry_test",
+    srcs = ["blobsizecache_test.go"],
+    embed = [":registry"],
+    deps = ["@com_github_google_go_containerregistry//pkg/v1:pkg"],
 )

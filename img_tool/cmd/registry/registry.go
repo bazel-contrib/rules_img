@@ -40,6 +40,7 @@ func Run(ctx context.Context, args []string) {
 	var s3Region string
 	var s3profile string
 	var credentialHelperPath string
+	var cacheTTL time.Duration
 
 	flagSet := flag.NewFlagSet("registry", flag.ExitOnError)
 	flagSet.Usage = func() {
@@ -49,6 +50,7 @@ func Run(ctx context.Context, args []string) {
 		examples := []string{
 			"registry --address 0.0.0.0 --port 8080",
 			"registry --blob-store s3 --blob-store reapi",
+			"registry --blob-store reapi --ttl 6h",
 		}
 		fmt.Fprintf(flagSet.Output(), "\nExamples:\n")
 		for _, example := range examples {
@@ -68,9 +70,15 @@ func Run(ctx context.Context, args []string) {
 	flagSet.StringVar(&s3Region, "s3-region", "", "S3 region to use for the S3 blob store (optional, defaults to auto detect)")
 	flagSet.StringVar(&s3profile, "s3-profile", "", "AWS profile to use for the S3 blob store (optional, defaults to default profile)")
 	flagSet.StringVar(&credentialHelperPath, "credential-helper", "", "Path to credential helper binary (optional, defaults to no helper)")
+	flagSet.DurationVar(&cacheTTL, "ttl", 0, "TTL for in-memory manifest and blob-size cache entries (0 disables eviction)")
 
 	if err := flagSet.Parse(args[1:]); err != nil {
 		fmt.Fprint(os.Stderr, err.Error())
+		flagSet.Usage()
+		os.Exit(1)
+	}
+	if cacheTTL < 0 {
+		fmt.Fprintln(os.Stderr, "Error: --ttl must be non-negative")
 		flagSet.Usage()
 		os.Exit(1)
 	}
@@ -110,7 +118,7 @@ func Run(ctx context.Context, args []string) {
 		s3Opts = append(s3Opts, awsconfig.WithSharedConfigProfile(s3profile))
 	}
 
-	blobSizeCache := combined.NewBlobSizeCache()
+	blobSizeCache := combined.NewBlobSizeCache(combined.WithBlobSizeCacheTTL(cacheTTL))
 	var stores []combined.Handler
 	var nonREAPIStores []combined.Handler
 	var wantREAPI bool
@@ -192,6 +200,7 @@ func Run(ctx context.Context, args []string) {
 	server := &http.Server{
 		Handler: registry.New(
 			registry.WithBlobHandler(combinedStore),
+			registry.WithManifestTTL(cacheTTL),
 			registry.WithManifestPutCallback(callbacker.ManifestPutCallback),
 		),
 		IdleTimeout:       30 * time.Minute,
