@@ -6,6 +6,7 @@ bzl_library(
     visibility = ["//visibility:public"],
     deps = [
         "//img/private/common:build",
+        "//img/private/common:layer_helper",
         "//img/private/common:media_types",
         "//img/private/common:sparse_oci_layout",
         "//img/private/providers:manifest_info",
@@ -19,6 +20,7 @@ bzl_library(
     visibility = ["//visibility:public"],
     deps = [
         "//img/private/common:build",
+        "//img/private/common:layer_helper",
         "//img/private/common:media_types",
         "//img/private/common:sparse_oci_layout",
         "//img/private/providers:index_info",

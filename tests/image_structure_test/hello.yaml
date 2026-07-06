@@ -1,0 +1,28 @@
+schemaVersion: "2.0.0"
+
+metadataTest:
+  envVars:
+    - key: FOO
+      value: bar
+    - key: GREETING
+      value: "^hello.*"
+      isRegex: true
+  labels:
+    - key: org.opencontainers.image.title
+      value: hello
+  workdir: /app
+
+fileExistenceTests:
+  - name: hello file present with expected metadata
+    path: /etc/hello.txt
+    shouldExist: true
+    permissions: "-rw-r--r--"
+    uid: 1000
+    gid: 1000
+  - name: executable tool present
+    path: /usr/local/bin/tool
+    shouldExist: true
+    isExecutableBy: owner
+  - name: no stray file
+    path: /nonexistent
+    shouldExist: false

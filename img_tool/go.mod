@@ -12,6 +12,7 @@ require (
 	github.com/containerd/containerd/api v1.11.1
 	github.com/containerd/platforms v1.0.0-rc.4
 	github.com/containerd/stargz-snapshotter/estargz v0.18.2
+	github.com/goccy/go-yaml v1.19.2
 	github.com/google/go-containerregistry v0.21.7
 	github.com/google/uuid v1.6.0
 	github.com/jedib0t/go-pretty/v6 v6.8.1

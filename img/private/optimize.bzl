@@ -2,7 +2,7 @@
 
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("//img/private/common:build.bzl", "TOOLCHAIN", "TOOLCHAINS")
-load("//img/private/common:layer_helper.bzl", "compression_tuning_args")
+load("//img/private/common:layer_helper.bzl", "IMAGE_MTREE_ATTRS", "compression_tuning_args", "image_mtree_or_none")
 load("//img/private/common:transitions.bzl", "reset_platform_transition")
 load("//img/private/providers:index_info.bzl", "ImageIndexInfo")
 load("//img/private/providers:manifest_info.bzl", "ImageManifestInfo")
@@ -150,6 +150,7 @@ def _optimize_manifest(ctx, manifest, settings, manifest_position = None):
             os = manifest.os,
             variant = manifest.variant,
             layers = layers,
+            mtree = image_mtree_or_none(ctx, ctx.attr.name + suffix, layers),
         ),
         descriptor = descriptor_out,
         digest = digest_out,
@@ -314,43 +315,44 @@ image_optimize(
 )
 ```
 """,
-    attrs = {
-        "image": attr.label(
+    attrs = dict(
+        IMAGE_MTREE_ATTRS,
+        image = attr.label(
             mandatory = True,
             providers = [[ImageManifestInfo], [ImageIndexInfo]],
             doc = "Image manifest or image index to optimize. All layer blobs must be available.",
         ),
-        "compress": attr.string(
+        compress = attr.string(
             default = "auto",
             values = ["auto", "gzip", "zstd", "none"],
             doc = "Compression algorithm to use for rewritten layers. If set to 'auto', uses the global default compression setting.",
         ),
-        "estargz": attr.string(
+        estargz = attr.string(
             default = "auto",
             values = ["auto", "enabled", "disabled"],
             doc = "Whether to rewrite layers using eStargz. If set to 'auto', uses the global default eStargz setting.",
         ),
-        "_default_compression": attr.label(
+        _default_compression = attr.label(
             default = Label("//img/settings:compress"),
             providers = [BuildSettingInfo],
         ),
-        "_default_estargz": attr.label(
+        _default_estargz = attr.label(
             default = Label("//img/settings:estargz"),
             providers = [BuildSettingInfo],
         ),
-        "_compression_jobs": attr.label(
+        _compression_jobs = attr.label(
             default = Label("//img/settings:compression_jobs"),
             providers = [BuildSettingInfo],
         ),
-        "_compression_level": attr.label(
+        _compression_level = attr.label(
             default = Label("//img/settings:compression_level"),
             providers = [BuildSettingInfo],
         ),
-        "_oci_layout_settings": attr.label(
+        _oci_layout_settings = attr.label(
             default = Label("//img/private/settings:oci_layout"),
             providers = [OCILayoutSettingsInfo],
         ),
-    },
+    ),
     toolchains = TOOLCHAINS,
     cfg = reset_platform_transition,
 )

@@ -101,6 +101,13 @@ bzl_library(
     deps = ["//img/private/repository_rules:pull"],
 )
 
+bzl_library(
+    name = "test",
+    srcs = ["test.bzl"],
+    visibility = ["//visibility:public"],
+    deps = ["//img/private:image_structure_test"],
+)
+
 filegroup(
     name = "all_files",
     srcs = glob(["**"]),

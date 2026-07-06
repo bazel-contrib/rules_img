@@ -1,0 +1,17 @@
+schemaVersion: "2.0.0"
+
+# Every assertion here is wrong on purpose, so the test must fail.
+metadataTest:
+  envVars:
+    - key: FOO
+      value: not-bar
+  workdir: /wrong
+
+fileExistenceTests:
+  - name: wrong permissions
+    path: /etc/hello.txt
+    shouldExist: true
+    permissions: "-rwxrwxrwx"
+  - name: file that should be absent but exists
+    path: /etc/hello.txt
+    shouldExist: false

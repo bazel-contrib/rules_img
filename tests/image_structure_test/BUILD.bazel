@@ -1,0 +1,226 @@
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@rules_img//img:convert.bzl", "image_index_from_oci_layout", "image_manifest_from_oci_layout")
+load("@rules_img//img:image.bzl", "image_index", "image_manifest", "image_optimize")
+load("@rules_img//img:layer.bzl", "file_metadata", "image_layer")
+load("@rules_img//img:media_types.bzl", "GZIP_LAYER")
+load("@rules_img//img:test.bzl", "image_structure_test")
+load(":defs.bzl", "mtree_config_output_groups")
+
+# gazelle:exclude_from_release
+
+filegroup(
+    name = "all_files",
+    srcs = glob(["**"]),
+    visibility = ["//img/private/release:__subpackages__"],
+)
+
+write_file(
+    name = "hello_txt",
+    out = "hello.txt",
+    content = ["hello\n"],
+)
+
+write_file(
+    name = "tool_sh",
+    out = "tool.sh",
+    content = ["#!/bin/sh\necho hi\n"],
+)
+
+image_layer(
+    name = "hello_layer",
+    srcs = {"/etc/hello.txt": ":hello_txt"},
+    default_metadata = file_metadata(
+        gid = 1000,
+        mode = "0644",
+        mtime = "2023-01-01T00:00:00Z",
+        uid = 1000,
+    ),
+)
+
+image_layer(
+    name = "tool_layer",
+    srcs = {"/usr/local/bin/tool": ":tool_sh"},
+    default_metadata = file_metadata(
+        mode = "0755",
+        mtime = "2023-01-01T00:00:00Z",
+    ),
+)
+
+image_manifest(
+    name = "hello",
+    env = {
+        "FOO": "bar",
+        "GREETING": "hello-world",
+    },
+    labels = {"org.opencontainers.image.title": "hello"},
+    layers = [
+        ":hello_layer",
+        ":tool_layer",
+    ],
+    working_dir = "/app",
+)
+
+# Single-platform image (rules_img image_manifest -> ImageManifestInfo branch).
+image_structure_test(
+    name = "hello_test",
+    size = "small",
+    configs = ["hello.yaml"],
+    image = ":hello",
+)
+
+# Output-group source: a target that publishes prebuilt `mtree` + `oci_image_config`
+# output groups (and no ImageManifestInfo) -> the aspect's output-group branch.
+mtree_config_output_groups(
+    name = "hello_output_groups",
+    image = ":hello",
+)
+
+image_structure_test(
+    name = "hello_output_groups_test",
+    size = "small",
+    configs = ["hello.yaml"],
+    image = ":hello_output_groups",
+)
+
+# Platforms for the multi-platform index.
+platform(
+    name = "linux_amd64",
+    constraint_values = [
+        "@platforms//cpu:x86_64",
+        "@platforms//os:linux",
+    ],
+)
+
+platform(
+    name = "linux_arm64",
+    constraint_values = [
+        "@platforms//cpu:arm64",
+        "@platforms//os:linux",
+    ],
+)
+
+# Multi-platform image (rules_img image_index -> ImageIndexInfo branch): every
+# config is validated against each single-platform image.
+image_index(
+    name = "hello_index",
+    manifests = [":hello"],
+    platforms = [
+        ":linux_amd64",
+        ":linux_arm64",
+    ],
+)
+
+image_structure_test(
+    name = "hello_index_test",
+    size = "small",
+    configs = ["hello.yaml"],
+    image = ":hello_index",
+)
+
+# rules_oci compatibility (hermetic stand-in): an OCI image layout directory (a
+# tree artifact) exercises the aspect's DefaultInfo tree-artifact branch, driven
+# by `img oci-layout-metadata`. We reuse rules_img's own `oci_layout` output
+# group as a stand-in for a rules_oci `oci_image`; the layout (with blobs) is
+# only an action input to the extraction step and never reaches the test runfiles.
+filegroup(
+    name = "hello_oci_layout",
+    srcs = [":hello"],
+    output_group = "oci_layout",
+)
+
+image_structure_test(
+    name = "hello_oci_test",
+    size = "small",
+    configs = ["hello.yaml"],
+    image = ":hello_oci_layout",
+)
+
+# rules_oci multi-platform stand-in: the `oci_layout` of an image_index is a full
+# OCI layout whose index.json lists every platform manifest -- like a rules_oci
+# `oci_image_index`. This exercises `img oci-layout-metadata`'s multi-manifest
+# path (each config runs against each platform image).
+filegroup(
+    name = "hello_index_oci_layout",
+    srcs = [":hello_index"],
+    output_group = "oci_layout",
+)
+
+image_structure_test(
+    name = "hello_index_oci_test",
+    size = "small",
+    configs = ["hello.yaml"],
+    image = ":hello_index_oci_layout",
+)
+
+# image_optimize -> ImageManifestInfo.mtree computed from the recompressed layers.
+image_optimize(
+    name = "hello_optimized",
+    image = ":hello",
+)
+
+image_structure_test(
+    name = "hello_optimized_test",
+    size = "small",
+    configs = ["hello.yaml"],
+    image = ":hello_optimized",
+)
+
+# image_manifest_from_oci_layout -> mtree rendered from the layout's tar layers.
+# Reuse the fixed-platform index layout and pick its linux/amd64 manifest.
+image_manifest_from_oci_layout(
+    name = "hello_from_layout",
+    src = ":hello_index_oci_layout",
+    architecture = "amd64",
+    layers = [
+        GZIP_LAYER,
+        GZIP_LAYER,
+    ],
+    os = "linux",
+)
+
+image_structure_test(
+    name = "hello_from_layout_test",
+    size = "small",
+    configs = ["hello.yaml"],
+    image = ":hello_from_layout",
+)
+
+# image_index_from_oci_layout -> per-manifest mtree (exercises unique naming).
+image_index_from_oci_layout(
+    name = "hello_index_from_layout",
+    src = ":hello_index_oci_layout",
+    layers = [
+        GZIP_LAYER,
+        GZIP_LAYER,
+    ],
+    manifests = [
+        "linux/amd64",
+        "linux/arm64",
+    ],
+)
+
+image_structure_test(
+    name = "hello_index_from_layout_test",
+    size = "small",
+    configs = ["hello.yaml"],
+    image = ":hello_index_from_layout",
+)
+
+# Negative cases (run manually to confirm the driver fails loudly):
+#   bazel test //tests/image_structure_test:hello_unsupported_test  # -> fails: commandTests unsupported
+#   bazel test //tests/image_structure_test:hello_failing_test      # -> fails: assertion mismatch
+image_structure_test(
+    name = "hello_unsupported_test",
+    size = "small",
+    configs = ["unsupported.yaml"],
+    image = ":hello",
+    tags = ["manual"],
+)
+
+image_structure_test(
+    name = "hello_failing_test",
+    size = "small",
+    configs = ["failing.yaml"],
+    image = ":hello",
+    tags = ["manual"],
+)
