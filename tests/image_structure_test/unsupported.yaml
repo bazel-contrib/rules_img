@@ -1,0 +1,9 @@
+schemaVersion: "2.0.0"
+
+# commandTests cannot be validated from the image config + mtree (they require
+# running the container). Loading this config must fail loudly.
+commandTests:
+  - name: echo works
+    command: /bin/echo
+    args: ["hi"]
+    expectedOutput: ["hi"]

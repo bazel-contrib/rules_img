@@ -447,6 +447,8 @@ This results in a more complex implementation, but also allows for interesting o
     - [`image_push`](docs/push.md#image_push) - Push images to registries
     - [`image_load`](docs/load.md#image_load) - Load images into container daemons
     - [`multi_deploy`](docs/multi_deploy.md#multi_deploy) - Deploy multiple operations as unified command
+  - **Test Rules**
+    - [`image_structure_test`](docs/test.md#image_structure_test) - Validate image structure (config + mtree) using container-structure-test configs
   - **Special artifacts**
     - [`layer_from_file`](docs/layer.md#layer_from_file) - Create layers from custom blobs (not tar files)
     - [`oras_file_layer`](docs/oras.md#oras_file_layer) - Create oras artifact layers from individual files

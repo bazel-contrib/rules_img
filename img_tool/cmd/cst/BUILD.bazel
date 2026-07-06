@@ -1,0 +1,33 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "cst",
+    srcs = [
+        "checks.go",
+        "config.go",
+        "cst.go",
+        "spec.go",
+    ],
+    importpath = "github.com/bazel-contrib/rules_img/img_tool/cmd/cst",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/mtree",
+        "//pkg/structuretest",
+        "@com_github_goccy_go_yaml//:go-yaml",
+        "@com_github_google_go_containerregistry//pkg/v1:pkg",
+        "@rules_go//go/runfiles",
+    ],
+)
+
+go_test(
+    name = "cst_test",
+    srcs = [
+        "checks_test.go",
+        "config_test.go",
+    ],
+    embed = [":cst"],
+    deps = [
+        "//pkg/mtree",
+        "@com_github_google_go_containerregistry//pkg/v1:pkg",
+    ],
+)

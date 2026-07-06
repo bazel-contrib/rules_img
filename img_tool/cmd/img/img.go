@@ -10,6 +10,7 @@ import (
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/casdir"
 	compactstreamcmd "github.com/bazel-contrib/rules_img/img_tool/cmd/compactstream"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/compress"
+	"github.com/bazel-contrib/rules_img/img_tool/cmd/cst"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/deploy"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/deploymetadata"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/dockersave"
@@ -24,6 +25,7 @@ import (
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/manifestfromocilayout"
 	mtreecmd "github.com/bazel-contrib/rules_img/img_tool/cmd/mtree"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/ocilayout"
+	"github.com/bazel-contrib/rules_img/img_tool/cmd/ocilayoutmetadata"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/optimize"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/pull"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/sparseocilayout"
@@ -50,6 +52,7 @@ Commands:
   manifest-from-oci-layout converts an OCI layout to an image manifest
   mtree                    writes an mtree spec of a layer's metadata and merges mtree files
   oci-layout               assembles an OCI layout directory from manifest and layers
+  oci-layout-metadata      extracts per-platform config and mtree from an OCI image layout
   optimize                 rewrites image metadata after layer optimization
   pull                     pulls an image from a registry
   sparse-oci-layout        assembles a sparse OCI layout (without layer blobs) from manifest and layers
@@ -57,6 +60,7 @@ Commands:
   cas-dir                  builds a content-addressed directory (sha256/<hex>) from input files
   sync-oci-ref-graph       syncs OCI reference graph by downloading manifests in parallel
   validate                 validates layers and images
+  image-structure-test     validates an image's structure (config + mtree) against container-structure-test configs
   deploy                   pushes an image to a registry or loads it into a local container runtime
   deploy-metadata          calculates metadata for deploying an image (push/load)
   deploy-merge             merges multiple deploy manifests into a single deployment`
@@ -82,6 +86,10 @@ func Run(ctx context.Context, args []string) {
 		manifestfromocilayout.ManifestFromOCILayoutProcess(ctx, args[2:])
 	case "mtree":
 		mtreecmd.MtreeProcess(ctx, args[2:])
+	case "oci-layout-metadata":
+		ocilayoutmetadata.OCILayoutMetadataProcess(ctx, args[2:])
+	case "image-structure-test":
+		cst.Process(ctx, args[2:])
 	case "index":
 		index.IndexProcess(ctx, args[2:])
 	case "index-from-oci-layout":

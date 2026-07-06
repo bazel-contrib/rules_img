@@ -47,6 +47,11 @@ stardoc_with_diff_test(
     bzl_library_target = "//img:oras",
 )
 
+stardoc_with_diff_test(
+    name = "test",
+    bzl_library_target = "//img:test",
+)
+
 # Update all generated documentation
 update_docs(
     name = "update",

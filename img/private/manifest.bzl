@@ -549,6 +549,17 @@ def _image_manifest_impl(ctx):
     )
 
     sparse_layout = _build_sparse_oci_layout(ctx, "directory", manifest_out, config_out, layers)
+
+    # Merge the per-layer mtree specs (in layer order) into a single image-level
+    # mtree, exposed both as the `mtree` field on ImageManifestInfo and as the
+    # `mtree` output group. Layers built by rules_img layer rules carry their own
+    # mtree; for other layers (pulled/imported base-image layers, raw tars added
+    # via DefaultInfo) an mtree is rendered on the fly from the layer's tar blob.
+    # This is best-effort: a layer with no blob (shallow/lazy) or a non-tar blob is
+    # skipped, so the merged mtree is None only when no layer contributes one.
+    layer_mtrees = image_layer_mtrees(ctx, layers)
+    image_mtree = build_image_mtree(ctx, ctx.label.name, layer_mtrees) if len(layer_mtrees) > 0 else None
+
     manifest_info_provider = ImageManifestInfo(
         descriptor = descriptor_out,
         manifest = manifest_out,
@@ -558,6 +569,7 @@ def _image_manifest_impl(ctx):
         os = os,
         variant = variant,
         layers = layers,
+        mtree = image_mtree,
         sparse_oci_layout = sparse_layout,
     )
     providers.extend([
@@ -587,16 +599,10 @@ def _image_manifest_impl(ctx):
         sparse_oci_layout = depset([sparse_layout]),
     )
 
-    # Merge the per-layer mtree specs (in layer order) into a single image-level
-    # mtree, exposed as the `mtree` output group. Layers built by rules_img layer
-    # rules carry their own mtree; for other layers (pulled/imported base-image
-    # layers, raw tars added via DefaultInfo) an mtree is rendered on the fly from
-    # the layer's tar blob. This is best-effort: a layer with no blob (shallow/lazy)
-    # or a non-tar blob is skipped, and the output group is only produced when at
-    # least one layer contributes an mtree.
-    layer_mtrees = image_layer_mtrees(ctx, layers)
-    if len(layer_mtrees) > 0:
-        output_groups["mtree"] = depset([build_image_mtree(ctx, ctx.label.name, layer_mtrees)])
+    # Expose the image-level mtree (computed above, alongside the provider field)
+    # as the `mtree` output group, when at least one layer contributes one.
+    if image_mtree != None:
+        output_groups["mtree"] = depset([image_mtree])
 
     if deploy_info != None:
         providers.append(deploy_info)

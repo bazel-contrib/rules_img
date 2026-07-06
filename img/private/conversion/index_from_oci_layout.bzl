@@ -1,6 +1,7 @@
 """Rule to convert an OCI layout to an image index."""
 
 load("//img/private/common:build.bzl", "TOOLCHAIN", "TOOLCHAINS")
+load("//img/private/common:layer_helper.bzl", "IMAGE_MTREE_ATTRS", "image_mtree_or_none")
 load("//img/private/common:media_types.bzl", "GZIP_LAYER", "LAYER_TYPES", "UNCOMPRESSED_LAYER", "ZSTD_LAYER")
 load("//img/private/common:sparse_oci_layout.bzl", "build_sparse_oci_layout_for_index", "build_sparse_oci_layout_for_manifest")
 load("//img/private/providers:index_info.bzl", "ImageIndexInfo")
@@ -172,6 +173,7 @@ def _image_index_from_oci_layout(ctx):
             os = info["os"],
             variant = info["variant"],
             layers = all_layer_infos[idx_str],
+            mtree = image_mtree_or_none(ctx, "{}_{}".format(ctx.attr.name, idx_str), all_layer_infos[idx_str]),
             sparse_oci_layout = sparse_layout,
         ))
 
@@ -193,22 +195,23 @@ def _image_index_from_oci_layout(ctx):
 
 image_index_from_oci_layout = rule(
     implementation = _image_index_from_oci_layout,
-    attrs = {
-        "src": attr.label(
+    attrs = dict(
+        IMAGE_MTREE_ATTRS,
+        src = attr.label(
             doc = "The directory containing the OCI layout to convert from.",
             mandatory = True,
             allow_single_file = True,
         ),
-        "layers": attr.string_list(
+        layers = attr.string_list(
             doc = "A list of layer media types. This applies to all manifests. Use the well-defined media types in @rules_img//img:media_types.bzl.",
             mandatory = True,
         ),
-        "manifests": attr.string_list(
+        manifests = attr.string_list(
             doc = """An ordered list of platform specifications in 'os/architecture' or 'os/architecture/variant' format.
             Example: ["linux/arm64", "linux/amd64/v3"]""",
             mandatory = True,
         ),
-    },
+    ),
     provides = [ImageIndexInfo],
     toolchains = TOOLCHAINS,
 )

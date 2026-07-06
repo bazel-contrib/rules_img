@@ -1,6 +1,7 @@
 """Rule to convert an OCI layout to an image manifest."""
 
 load("//img/private/common:build.bzl", "TOOLCHAIN", "TOOLCHAINS")
+load("//img/private/common:layer_helper.bzl", "IMAGE_MTREE_ATTRS", "image_mtree_or_none")
 load("//img/private/common:media_types.bzl", "GZIP_LAYER", "LAYER_TYPES", "UNCOMPRESSED_LAYER", "ZSTD_LAYER")
 load("//img/private/common:sparse_oci_layout.bzl", "build_sparse_oci_layout_for_manifest")
 load("//img/private/providers:manifest_info.bzl", "ImageManifestInfo")
@@ -121,19 +122,21 @@ def _image_manifest_from_oci_layout(ctx):
             os = os,
             variant = variant,
             layers = layer_infos,
+            mtree = image_mtree_or_none(ctx, ctx.attr.name, layer_infos),
             sparse_oci_layout = sparse_layout,
         ),
     ]
 
 image_manifest_from_oci_layout = rule(
     implementation = _image_manifest_from_oci_layout,
-    attrs = {
-        "src": attr.label(
+    attrs = dict(
+        IMAGE_MTREE_ATTRS,
+        src = attr.label(
             doc = "The directory containing the OCI layout to convert from.",
             mandatory = True,
             allow_single_file = True,
         ),
-        "architecture": attr.string(
+        architecture = attr.string(
             doc = "The target architecture for the image manifest.",
             mandatory = True,
             values = [
@@ -146,7 +149,7 @@ image_manifest_from_oci_layout = rule(
                 "riscv64",
             ],
         ),
-        "os": attr.string(
+        os = attr.string(
             doc = "The target operating system for the image manifest.",
             mandatory = True,
             values = [
@@ -161,15 +164,15 @@ image_manifest_from_oci_layout = rule(
                 "windows",
             ],
         ),
-        "layers": attr.string_list(
+        layers = attr.string_list(
             doc = "A list of layer media types. Use the well-defined media types in @rules_img//img:media_types.bzl.",
             mandatory = True,
         ),
-        "variant": attr.string(
+        variant = attr.string(
             doc = "The platform variant (e.g., 'v3' for amd64/v3, 'v8' for arm64/v8).",
             default = "",
         ),
-    },
+    ),
     provides = [ImageManifestInfo],
     toolchains = TOOLCHAINS,
 )

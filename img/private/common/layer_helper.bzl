@@ -16,6 +16,29 @@ extension_to_compression = {
     "tzst": "zstd",
 }
 
+# Hidden build-setting attributes an image rule must expose to compute an
+# image-level mtree via image_mtree_or_none (path prefix and field set are shared
+# with the per-layer mtree; layer/image layouts are separate). Spread this into a
+# rule's `attrs`.
+IMAGE_MTREE_ATTRS = {
+    "_mtree_path_prefix": attr.label(
+        default = Label("//img/settings:mtree_path_prefix"),
+        providers = [BuildSettingInfo],
+    ),
+    "_mtree_options": attr.label(
+        default = Label("//img/settings:mtree_options"),
+        providers = [BuildSettingInfo],
+    ),
+    "_mtree_layer_layout": attr.label(
+        default = Label("//img/settings:mtree_layer_layout"),
+        providers = [BuildSettingInfo],
+    ),
+    "_mtree_image_layout": attr.label(
+        default = Label("//img/settings:mtree_image_layout"),
+        providers = [BuildSettingInfo],
+    ),
+}
+
 def layer_name(label):
     """Returns a label's string form for use as a layer's history created_by.
 
@@ -226,7 +249,7 @@ def media_type_is_tar(media_type):
     """
     return media_type != None and "tar" in media_type
 
-def image_layer_mtrees(ctx, layers):
+def image_layer_mtrees(ctx, layers, name_prefix = None):
     """Ordered per-layer mtree Files for an image, building missing ones on the fly.
 
     For each layer (in image/layer order):
@@ -246,17 +269,45 @@ def image_layer_mtrees(ctx, layers):
     Args:
         ctx: Rule context of an image rule.
         layers: Ordered list of SingleLayerInfo providers.
+        name_prefix: Optional base name for on-the-fly per-layer mtree files
+            (defaults to ctx.label.name). A rule that builds several manifests
+            (e.g. an image index) must pass a per-manifest-unique prefix so the
+            declared `<prefix>_layer_<i>.mtree` files do not collide.
 
     Returns:
         Ordered list of per-layer mtree Files (possibly shorter than `layers`).
     """
+    prefix = name_prefix if name_prefix != None else ctx.label.name
     mtrees = []
     for i, layer in enumerate(layers):
         if layer.mtree != None:
             mtrees.append(layer.mtree)
         elif layer.blob != None and media_type_is_tar(layer.media_type):
-            mtrees.append(build_layer_mtree(ctx, "{}_layer_{}".format(ctx.label.name, i), tar_blob = layer.blob))
+            mtrees.append(build_layer_mtree(ctx, "{}_layer_{}".format(prefix, i), tar_blob = layer.blob))
     return mtrees
+
+def image_mtree_or_none(ctx, name, layers):
+    """Merge an image's per-layer mtrees into a single image mtree, or None.
+
+    Reuses each layer's precomputed mtree and renders any missing one on the fly
+    from the layer's tar blob (see image_layer_mtrees), then merges them in layer
+    order with build_image_mtree. Returns None when no layer contributes an mtree
+    (e.g. every layer is shallow or non-tar). The rule must expose IMAGE_MTREE_ATTRS
+    and the img toolchain; `name` must be unique per manifest (it names the merged
+    output and prefixes any on-the-fly per-layer files).
+
+    Args:
+        ctx: Rule context of an image rule.
+        name: Base name for the merged mtree (and the per-layer mtree prefix).
+        layers: Ordered list of SingleLayerInfo providers.
+
+    Returns:
+        The merged image mtree File, or None.
+    """
+    layer_mtrees = image_layer_mtrees(ctx, layers, name_prefix = name)
+    if len(layer_mtrees) == 0:
+        return None
+    return build_image_mtree(ctx, name, layer_mtrees)
 
 def calculate_layer_info(*, ctx, media_type, tar_file, metadata_file, estargz, annotations = {}, digest_modes = ["digest", "diff_id"], mtree = None):
     """Calculates the layer info for a file.

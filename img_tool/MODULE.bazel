@@ -35,6 +35,7 @@ use_repo(
     "com_github_containerd_containerd_api",
     "com_github_containerd_platforms",
     "com_github_containerd_stargz_snapshotter_estargz",
+    "com_github_goccy_go_yaml",
     "com_github_google_go_containerregistry",
     "com_github_google_uuid",
     "com_github_jedib0t_go_pretty_v6",

@@ -2,7 +2,7 @@
 
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("//img/private/common:build.bzl", "TOOLCHAIN")
-load("//img/private/common:layer_helper.bzl", "build_layer_mtree", "media_type_is_tar")
+load("//img/private/common:layer_helper.bzl", "build_layer_mtree", "image_mtree_or_none", "media_type_is_tar")
 load("//img/private/common:sparse_oci_layout.bzl", "build_sparse_oci_layout_for_index", "build_sparse_oci_layout_for_manifest")
 load("//img/private/common:transitions.bzl", "reset_platform_transition")
 load("//img/private/providers:index_info.bzl", "ImageIndexInfo")
@@ -185,6 +185,10 @@ def _build_manifest_info(ctx, digest, descriptor = None, index_position = None, 
     else:
         sparse_layout = build_sparse_oci_layout_for_manifest(ctx, manifest_file, config_file, layers, suffix = "_" + str(index_position))
 
+    # Use a per-manifest-unique base name so the merged mtree (and any on-the-fly
+    # per-layer mtree) of one manifest in an index does not collide with another's.
+    mtree_name = ctx.attr.name if index_position == None else "{}_{}".format(ctx.attr.name, index_position)
+
     return ImageManifestInfo(
         descriptor = _write_manifest_descriptor(ctx, digest, manifest, platform, descriptor, index_position),
         manifest = manifest_file,
@@ -194,6 +198,7 @@ def _build_manifest_info(ctx, digest, descriptor = None, index_position = None, 
         os = platform.get("os", "unknown"),
         variant = variant,
         layers = layers,
+        mtree = image_mtree_or_none(ctx, mtree_name, layers),
         sparse_oci_layout = sparse_layout,
     )
 
@@ -265,6 +270,10 @@ image_import = rule(
         ),
         "_mtree_layer_layout": attr.label(
             default = Label("//img/settings:mtree_layer_layout"),
+            providers = [BuildSettingInfo],
+        ),
+        "_mtree_image_layout": attr.label(
+            default = Label("//img/settings:mtree_image_layout"),
             providers = [BuildSettingInfo],
         ),
     },

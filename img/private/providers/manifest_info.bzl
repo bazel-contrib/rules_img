@@ -13,6 +13,7 @@ FIELDS = dict(
     os = "The operating system this image runs on.",
     variant = "The platform variant (e.g., 'v3' for amd64/v3, 'v8' for arm64/v8).",
     layers = "Layers of the image as list of SingleLayerInfo.",
+    mtree = "File with the image's mtree (the per-layer mtrees merged in layer order as an OCI applied changeset), or None when no layer contributes one.",
     sparse_oci_layout = "Tree artifact containing the sparse OCI layout for this manifest.",
 )
 
