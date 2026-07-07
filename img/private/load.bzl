@@ -229,6 +229,7 @@ def _image_load_impl(ctx):
             deploy_manifest = deploy_metadata,
             layer_hints = layer_hints,
             include_layers = strategy == "eager",
+            sign_settings = [],
         ),
     ]
 

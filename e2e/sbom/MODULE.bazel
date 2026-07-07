@@ -1,5 +1,15 @@
 module(name = "sbom_e2e")
 
+# Signer plugin bazel_deps live OUTSIDE the BAZEL_DEP markers so they survive
+# the substitution the integration test runner performs (it replaces everything
+# between the markers with a single bazel_dep on the released rules_img). In
+# released/scratch mode they resolve from the offline BCR
+# (//img/private/release:bcr); in local dev mode the local_path_overrides below
+# (inside the markers) build them from source instead. Versions must match
+# module(version = ...) in each plugin's MODULE.bazel.
+bazel_dep(name = "rules_img_signer_cosign", version = "0.0.1")
+bazel_dep(name = "rules_img_signer_notation", version = "0.0.1")
+
 # BEGIN BAZEL_DEP
 bazel_dep(name = "rules_img")
 local_path_override(
@@ -13,8 +23,32 @@ local_path_override(
     path = "../../img_tool",
 )
 
+local_path_override(
+    module_name = "rules_img_signer_cosign",
+    path = "../../modules/rules_img_signer_cosign",
+)
+
+local_path_override(
+    module_name = "rules_img_signer_notation",
+    path = "../../modules/rules_img_signer_notation",
+)
+
 register_toolchains("@rules_img_tool//toolchain:all")
 # END BAZEL_DEP
+
+# Required when building rules_img_signer_cosign from source: gazelle_override is
+# root-module-only and cannot be declared in the cosign module itself.
+bazel_dep(name = "gazelle", version = "0.51.3")
+
+go_deps = use_extension("@gazelle//:extensions.bzl", "go_deps")
+go_deps.gazelle_override(
+    directives = ["gazelle:go_generate_proto false"],
+    path = "github.com/sigstore/rekor-tiles/v2",
+)
+go_deps.gazelle_override(
+    directives = ["gazelle:go_generate_proto false"],
+    path = "github.com/google/certificate-transparency-go",
+)
 
 bazel_dep(name = "bazel_skylib", version = "1.9.0")
 bazel_dep(name = "package_metadata", version = "0.0.13")

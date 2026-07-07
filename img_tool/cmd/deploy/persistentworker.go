@@ -239,6 +239,16 @@ func (h *deployWorkerHandler) routeGlobalSink(ctx context.Context, vfs *deployvf
 	if err != nil {
 		return "", err
 	}
+	// Capture signatures into the shared sink before flushing, so they are
+	// included in the sink and (for distribution) in the referrers listings.
+	// Runtime sign overrides are command-line only; the worker signs per the
+	// manifest's per-operation Sign config discovered from runfiles.
+	if err := signIntoSink(ctx, h.globalSink, pushOps, dm.Settings, signOptions{
+		overrideRegistry:   opts.overrideRegistry,
+		overrideRepository: opts.overrideRepository,
+	}); err != nil {
+		return "", err
+	}
 	if err := h.globalSink.Close(); err != nil {
 		return "", fmt.Errorf("flushing sink: %w", err)
 	}
@@ -265,6 +275,14 @@ func (h *deployWorkerHandler) routePerRequestSink(ctx context.Context, vfs *depl
 		overrideRepository: opts.overrideRepository,
 	})
 	if err != nil {
+		s.Close()
+		return "", err
+	}
+	// Capture signatures into the sink before finalizing (see routeGlobalSink).
+	if err := signIntoSink(ctx, s, pushOps, dm.Settings, signOptions{
+		overrideRegistry:   opts.overrideRegistry,
+		overrideRepository: opts.overrideRepository,
+	}); err != nil {
 		s.Close()
 		return "", err
 	}

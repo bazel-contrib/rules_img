@@ -1,0 +1,72 @@
+# Release a single signer plugin module (independently versioned) when a
+# per-module tag is pushed, e.g. `rules_img_signer_cosign-v0.0.1` or
+# `rules_img_signer_notation-v0.0.2`.
+#
+# Each module version lives in its own MODULE.bazel; publish-to-bcr reads that
+# version and skips versions already in the registry, so bumping one plugin does
+# not re-publish the others.
+name: Release signer plugin
+on:
+  push:
+    tags:
+      - "rules_img_signer_cosign-v*.*.*"
+      - "rules_img_signer_notation-v*.*.*"
+permissions:
+  id-token: write
+  attestations: write
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      basename: ${{ steps.meta.outputs.basename }}
+      module_dir: ${{ steps.meta.outputs.module_dir }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - name: Resolve module from tag
+        id: meta
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          case "${TAG_NAME}" in
+            rules_img_signer_cosign-*)   basename=cosign ;;
+            rules_img_signer_notation-*) basename=notation ;;
+            *) echo "unrecognized tag ${TAG_NAME}"; exit 1 ;;
+          esac
+          echo "basename=${basename}" >> "$GITHUB_OUTPUT"
+          echo "module_dir=modules/rules_img_signer_${basename}" >> "$GITHUB_OUTPUT"
+      - name: Build binaries + source archive
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          ./modules/release_signer_plugin.sh \
+            "${{ steps.meta.outputs.module_dir }}" \
+            "${{ steps.meta.outputs.basename }}" \
+            "${TAG_NAME}"
+      - name: Upload dist
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: |
+            dist/rules_img_signer_${{ needs.build.outputs.basename }}-*.tar.gz
+            dist/${{ needs.build.outputs.basename }}_*
+  publish:
+    needs: release
+    uses: ./.github/workflows/publish.yaml
+    with:
+      tag_name: ${{ github.ref_name }}
+    secrets:
+      publish_token: ${{ secrets.BCR_PUBLISH_TOKEN }}

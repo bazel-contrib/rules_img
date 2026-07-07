@@ -1,4 +1,5 @@
 load("@bazel_skylib//rules:common_settings.bzl", "int_flag", "string_flag")
+load("//img/private:signing_config.bzl", "unset_signing_config")
 
 string_flag(
     name = "compress",
@@ -116,6 +117,32 @@ string_flag(
         "i_know_what_i_am_doing",
     ],
     visibility = ["//img/private:__subpackages__"],
+)
+
+# Global signing mode. Per-target `sign` attributes default to "auto", which
+# defers to this flag.
+string_flag(
+    name = "sign",
+    build_setting_default = "disabled",
+    values = [
+        "enabled",
+        "disabled",
+        "best_effort",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+# Global default signing_config, used when a target enables signing without its
+# own `sign_setting`. Defaults to a sentinel meaning "no signing configured".
+label_flag(
+    name = "sign_setting",
+    build_setting_default = ":unset_sign_setting",
+    visibility = ["//visibility:public"],
+)
+
+unset_signing_config(
+    name = "unset_sign_setting",
+    visibility = ["//visibility:public"],
 )
 
 filegroup(

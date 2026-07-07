@@ -20,6 +20,7 @@ FIELDS = dict(
     stamp = "Stamp preference string ('auto', 'force', 'disabled').",
     stamp_settings = "StampSettingInfo provider for stamp resolution.",
     tracks_content = "Bool: when True, expose the image digest to templates and re-stamp tags on content change.",
+    signing = "struct(config_info, best_effort, targets) describing how to sign this push, or None.",
 )
 
 PushConfigInfo = provider(

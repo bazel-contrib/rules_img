@@ -104,6 +104,45 @@ func (dm *DeployManifest) LoadOperations() ([]IndexedLoadDeployOperation, error)
 type DeploySettings struct {
 	PushStrategy string `json:"push_strategy,omitempty"`
 	LoadStrategy string `json:"load_strategy,omitempty"`
+	// DefaultSignSetting is the content descriptor of the sign_setting config
+	// file used for push operations that request signing but do not carry their
+	// own Sign.Setting. It is resolved at runtime against the discovered
+	// sign_settings and may be overridden by `img deploy --default_sign_setting`.
+	DefaultSignSetting *Descriptor `json:"default_sign_setting,omitempty"`
+}
+
+// Signature artifact / sign_setting media types and target selectors.
+const (
+	// SignSettingMediaType is the media type recorded for a sign_setting config
+	// file descriptor. sign_setting files are small deterministic JSON blobs
+	// produced by the `signing_config` Bazel rule that describe how to invoke a
+	// signer plugin (they never carry key material).
+	SignSettingMediaType = "application/vnd.rules-img.sign-config.v1+json"
+
+	// Sign targets select which descriptors of a push operation are signed.
+	// They are cumulative: "child_manifests" implies "roots", and "referrers"
+	// implies both.
+	SignTargetRoots          = "roots"
+	SignTargetChildManifests = "child_manifests"
+	SignTargetReferrers      = "referrers"
+)
+
+// SignConfig captures, per push operation, whether and how the pushed artifact
+// is signed. It carries no key material: Setting references (by content
+// descriptor) a sign_setting config file shipped in the deploy binary's
+// runfiles, which the deploy tool resolves and hands to a signer plugin.
+type SignConfig struct {
+	// Setting is the content descriptor of the sign_setting config file to use.
+	// When nil, the operation falls back to DeploySettings.DefaultSignSetting
+	// (or the runtime --default_sign_setting override).
+	Setting *Descriptor `json:"setting,omitempty"`
+	// BestEffort, when true, downgrades signing failures for this operation to a
+	// warning instead of aborting the deploy.
+	BestEffort bool `json:"best_effort,omitempty"`
+	// Targets selects which descriptors of the operation to sign (see the
+	// SignTarget* constants). Empty means the default (roots only). The runtime
+	// --sign_targets flag overrides this value.
+	Targets []string `json:"targets,omitempty"`
 }
 
 type BaseCommandOperation struct {
@@ -120,6 +159,14 @@ type BaseCommandOperation struct {
 type PushDeployOperation struct {
 	BaseCommandOperation
 	PushTarget
+	// Sign, when set, requests that the pushed artifact be signed after a
+	// successful push (signatures are attached as OCI referrers). It is only
+	// meaningful for push operations.
+	Sign *SignConfig `json:"sign,omitempty"`
+	// Referrer marks this push operation as a referrer artifact of a preceding
+	// push (e.g. an SBOM). It lets the deploy tool decide whether the
+	// "referrers" sign target applies to this operation.
+	Referrer bool `json:"referrer,omitempty"`
 }
 
 type IndexedPushDeployOperation struct {

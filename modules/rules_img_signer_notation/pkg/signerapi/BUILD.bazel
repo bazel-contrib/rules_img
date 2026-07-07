@@ -1,0 +1,9 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "signerapi",
+    srcs = ["signer.go"],
+    importpath = "github.com/bazel-contrib/rules_img_signer_notation/pkg/signerapi",
+    visibility = ["//visibility:public"],
+    deps = ["@com_github_google_go_containerregistry//pkg/v1:pkg"],
+)

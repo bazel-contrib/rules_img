@@ -88,7 +88,8 @@ def compute_push_metadata(
         manifest_tags_expanded,
         pull_info,
         destination_file,
-        output_prefix):
+        output_prefix,
+        signing = None):
     """Compute push metadata for a deploy operation.
 
     Args:
@@ -104,6 +105,8 @@ def compute_push_metadata(
         pull_info: PullInfo or None (for original registry/repository/tag/digest).
         destination_file: File containing {registry}/{repository}, or None.
         output_prefix: String prefix for declared output files.
+        signing: struct(config_info, best_effort, targets) to enable signing of
+            this push, or None.
 
     Returns:
         Tuple of (metadata_file, layer_hints_file).
@@ -188,6 +191,17 @@ def compute_push_metadata(
                 args.add("--referrer-manifest-path", "{},{}={}".format(ref_idx, i, manifest.manifest.path))
             inputs.append(ref_index_info.index)
             inputs.extend([manifest.manifest for manifest in ref_index_info.manifests])
+
+    # Signing: record the sign_setting config file's descriptor in the operation
+    # so the deploy tool can match it against the sign_settings shipped in
+    # runfiles. The config file itself is added to runfiles by the calling rule.
+    if signing != None:
+        inputs.append(signing.config_info.config_file)
+        args.add("--sign-setting-file", signing.config_info.config_file.path)
+        if signing.best_effort:
+            args.add("--sign-best-effort")
+        for target in signing.targets:
+            args.add("--sign-target", target)
 
     outputs = []
     layer_hints_file = layer_hints_for_deploy_metadata(
@@ -444,6 +458,7 @@ def process_deploy_specs(
     }
 
     deploy_infos = []
+    sign_config_infos = []
 
     for push_idx, deployment in enumerate(push_specs):
         push_config = deployment[PushConfigInfo]
@@ -509,8 +524,11 @@ def process_deploy_specs(
             pull_info = pull_info,
             destination_file = push_config.destination_file,
             output_prefix = "{}.push_deploy.{}".format(ctx.label.name, push_idx),
+            signing = push_config.signing,
         )
         deploy_infos.append(struct(metadata = deploy_metadata, layer_hints = layer_hints))
+        if push_config.signing != None:
+            sign_config_infos.append(push_config.signing.config_info)
 
     for load_idx, deployment in enumerate(load_specs):
         load_config = deployment[LoadConfigInfo]
@@ -566,6 +584,7 @@ def process_deploy_specs(
             deploy_manifest = deploy_infos[0].metadata,
             layer_hints = deploy_infos[0].layer_hints,
             include_layers = include_layers,
+            sign_settings = sign_config_infos,
         )
 
     first_push_strategy = push_specs[0][PushConfigInfo].strategy if push_specs else "auto"
@@ -582,4 +601,5 @@ def process_deploy_specs(
         deploy_manifest = merged_metadata,
         layer_hints = merged_layer_hints,
         include_layers = include_layers,
+        sign_settings = sign_config_infos,
     )

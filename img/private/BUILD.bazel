@@ -84,6 +84,7 @@ bzl_library(
     deps = [
         ":push_metadata",
         ":root_symlinks",
+        ":sign_settings",
         ":stamp",
         "//img:providers",
         "//img/private/common:build",
@@ -279,6 +280,7 @@ bzl_library(
     visibility = ["//img:__subpackages__"],
     deps = [
         ":root_symlinks",
+        ":sign_settings",
         "//img/private/common:build",
         "//img/private/common:default_deploy_tool",
         "//img/private/common:transitions",
@@ -360,6 +362,20 @@ bzl_library(
         "//img/private/providers:layers_info",
         "//img/private/providers:single_layer_info",
     ],
+)
+
+bzl_library(
+    name = "sign_settings",
+    srcs = ["sign_settings.bzl"],
+    visibility = ["//img:__subpackages__"],
+    deps = ["@sha256.bzl//:sha256"],
+)
+
+bzl_library(
+    name = "signing_config",
+    srcs = ["signing_config.bzl"],
+    visibility = ["//img:__subpackages__"],
+    deps = ["//img/private/providers:signing_config_info"],
 )
 
 bzl_library(

@@ -6,6 +6,7 @@ load("//img/private/providers:index_info.bzl", "ImageIndexInfo")
 load("//img/private/providers:load_settings_info.bzl", "LoadSettingsInfo")
 load("//img/private/providers:manifest_info.bzl", "ImageManifestInfo")
 load("//img/private/providers:push_settings_info.bzl", "PushSettingsInfo")
+load("//img/private/providers:signing_config_info.bzl", "SigningConfigInfo")
 load("//img/private/providers:stamp_setting_info.bzl", "StampSettingInfo")
 
 COMMON_PUSH_ATTRS = dict(
@@ -200,6 +201,36 @@ as `{{.digest}}`. Referencing the digest in the tag is optional: the re-stamp
 behavior applies whether or not the tag contains it.
 """,
         default = False,
+    ),
+    sign = attr.string(
+        doc = """Whether `img deploy` signs this image after pushing.
+
+- **`auto`** (default): defer to the global `--@rules_img//img/settings:sign` flag.
+- **`enabled`**: always sign; a signing failure (or missing `sign_setting`) fails the deploy.
+- **`best_effort`**: sign if possible; failures are warnings and do not fail the deploy.
+- **`disabled`**: never sign.
+
+The signing plugin is selected by `sign_setting` (or the global
+`//img/settings:sign_setting`). Signatures are attached as OCI referrers.
+""",
+        default = "auto",
+        values = ["auto", "enabled", "disabled", "best_effort"],
+    ),
+    sign_setting = attr.label(
+        doc = """A `signing_config` target selecting how this image is signed.
+
+Overrides the global `--@rules_img//img/settings:sign_setting`. Only consulted
+when signing is enabled (see `sign`).
+""",
+        providers = [SigningConfigInfo],
+    ),
+    _sign = attr.label(
+        default = Label("//img/settings:sign"),
+        providers = [BuildSettingInfo],
+    ),
+    _sign_setting = attr.label(
+        default = Label("//img/settings:sign_setting"),
+        providers = [SigningConfigInfo],
     ),
     _push_settings = attr.label(
         default = Label("//img/private/settings:push"),

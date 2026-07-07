@@ -4,11 +4,12 @@ load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("@hermetic_launcher//launcher:lib.bzl", "launcher")
 load("//img/private:push_metadata.bzl", "compute_push_metadata")
 load("//img/private:root_symlinks.bzl", "calculate_root_symlinks", "symlink_name_prefix")
+load("//img/private:sign_settings.bzl", "add_sign_setting_symlinks")
 load("//img/private:stamp.bzl", "expand_or_write")
 load("//img/private/common:build.bzl", "TOOLCHAINS")
 load("//img/private/common:default_deploy_tool.bzl", "default_deploy_tool")
 load("//img/private/common:deploy_attrs.bzl", "COMMON_PUSH_ATTRS")
-load("//img/private/common:deploy_helpers.bzl", "content_tracking_json_vars", "extract_cross_mount_from", "extract_referrers", "get_image_providers", "get_tags", "image_target_vars", "resolve_push_registry", "resolve_push_strategy")
+load("//img/private/common:deploy_helpers.bzl", "content_tracking_json_vars", "extract_cross_mount_from", "extract_referrers", "get_image_providers", "get_tags", "image_target_vars", "resolve_push_registry", "resolve_push_strategy", "resolve_signing")
 load("//img/private/common:transitions.bzl", "reset_platform_transition")
 load("//img/private/providers:deploy_info.bzl", "DeployInfo")
 load("//img/private/providers:deploy_tool_info.bzl", "DeployToolInfo")
@@ -34,7 +35,7 @@ def _per_child_manifest_tag_file(*, ctx, child_index, child_info):
         extra_build_settings = extra,
     )
 
-def _compute_push_metadata(*, ctx, configuration_json, destination_file = None):
+def _compute_push_metadata(*, ctx, configuration_json, destination_file = None, signing = None):
     manifest_info, index_info = get_image_providers(ctx)
     pull_info = ctx.attr.image[PullInfo] if PullInfo in ctx.attr.image else None
 
@@ -58,6 +59,7 @@ def _compute_push_metadata(*, ctx, configuration_json, destination_file = None):
         pull_info = pull_info,
         destination_file = destination_file,
         output_prefix = ctx.label.name,
+        signing = signing,
     )
 
 def _image_push_impl(ctx):
@@ -67,6 +69,8 @@ def _image_push_impl(ctx):
 
     if ctx.attr.manifest_tags and index_info == None:
         fail("'manifest_tags' can only be used when 'image' is an image_index")
+
+    signing = resolve_signing(ctx)
 
     registry = resolve_push_registry(ctx)
 
@@ -104,6 +108,7 @@ def _image_push_impl(ctx):
         ctx = ctx,
         configuration_json = configuration_json,
         destination_file = ctx.file.destination_file,
+        signing = signing,
     )
     push_strategy = resolve_push_strategy(ctx)
     root_symlinks_prefix = symlink_name_prefix(ctx)
@@ -127,6 +132,10 @@ def _image_push_impl(ctx):
         ))
     if layer_hints != None:
         root_symlinks["{}layer_hints".format(root_symlinks_prefix)] = layer_hints
+
+    # Ship the sign_setting config file and signer plugin (if signing is active).
+    sign_settings = [signing.config_info] if signing != None else []
+    plugin_runfiles = add_sign_setting_symlinks(root_symlinks, sign_settings)
 
     pusher = ctx.actions.declare_file(ctx.label.name + ".exe")
     deploy_tool_info = ctx.attr.deploy_tool[DeployToolInfo] if ctx.attr.deploy_tool != None else ctx.attr._deploy_tool[DeployToolInfo]
@@ -169,14 +178,17 @@ def _image_push_impl(ctx):
         environment["REGISTRY_AUTH_FILE"] = docker_config_path
 
     direct_runfiles = [deploy_tool_info.img_deploy_exe, deploy_metadata]
+    runfiles = ctx.runfiles(
+        files = direct_runfiles,
+        root_symlinks = root_symlinks,
+    )
+    for pr in plugin_runfiles:
+        runfiles = runfiles.merge(pr)
     return [
         DefaultInfo(
             files = depset([pusher]),
             executable = pusher,
-            runfiles = ctx.runfiles(
-                files = direct_runfiles,
-                root_symlinks = root_symlinks,
-            ),
+            runfiles = runfiles,
         ),
         OutputGroupInfo(
             deploy_manifest = depset([deploy_metadata]),
@@ -190,6 +202,7 @@ def _image_push_impl(ctx):
             deploy_manifest = deploy_metadata,
             layer_hints = layer_hints,
             include_layers = push_strategy == "eager",
+            sign_settings = sign_settings,
         ),
     ]
 

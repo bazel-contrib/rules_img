@@ -1,3 +1,14 @@
 import %workspace%/.bazelrc.common
 
 try-import %workspace%/.bazelrc.user
+
+# Sign images with cosign (Sigstore keyless); supply SIGSTORE_ID_TOKEN at deploy time.
+# Usage: bazel run //:push --config=cosign
+build:cosign --@rules_img//img/settings:sign=enabled
+build:cosign --@rules_img//img/settings:sign_setting=//signer:cosign_keyless
+
+# Sign images with Notation; supply key/cert via $RULES_IMG_NOTATION_KEY and
+# $RULES_IMG_NOTATION_CERTIFICATE_CHAIN (or pass --key/--certificate-chain after --).
+# Usage: bazel run //:push --config=notation
+build:notation --@rules_img//img/settings:sign=enabled
+build:notation --@rules_img//img/settings:sign_setting=//signer:notation

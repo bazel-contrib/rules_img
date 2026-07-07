@@ -1,3 +1,5 @@
 moduleRoots:
   - "."
   - "img_tool"
+  - "modules/rules_img_signer_cosign"
+  - "modules/rules_img_signer_notation"

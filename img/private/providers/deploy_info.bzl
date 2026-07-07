@@ -10,6 +10,7 @@ FIELDS = dict(
     deploy_manifest = "File containing the deploy manifest (JSON).",
     layer_hints = "File containing layer path hints (or None).",
     include_layers = "Bool, whether layer blobs must be present in the run-time file tree (True for eager strategies, False for lazy/CAS strategies).",
+    sign_settings = "list of SigningConfigInfo whose config files and plugin runfiles must be shipped so `img deploy` can sign this operation (may be empty).",
 )
 
 DeployInfo = provider(

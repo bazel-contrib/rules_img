@@ -32,3 +32,11 @@ img_tool/bazel-bin
 img_tool/bazel-img_tool
 img_tool/bazel-out
 img_tool/bazel-testlogs
+modules/rules_img_signer_cosign/bazel-bin
+modules/rules_img_signer_cosign/bazel-out
+modules/rules_img_signer_cosign/bazel-rules_img_signer_cosign
+modules/rules_img_signer_cosign/bazel-testlogs
+modules/rules_img_signer_notation/bazel-bin
+modules/rules_img_signer_notation/bazel-out
+modules/rules_img_signer_notation/bazel-rules_img_signer_notation
+modules/rules_img_signer_notation/bazel-testlogs

@@ -10,6 +10,10 @@ bazel_dep(name = "hermetic_launcher", version = "0.0.10")
 bazel_dep(name = "package_metadata", version = "0.0.10")
 bazel_dep(name = "rules_runfiles_group", version = "0.0.1-rc.5")
 
+# Pure-Starlark sha256, used to derive collision-free basenames for the
+# sign_setting config files shipped into deploy binary runfiles.
+bazel_dep(name = "sha256.bzl", version = "0.0.1")
+
 prebuilt_img_tool = use_extension("@rules_img//img/private/prebuilt:prebuilt.bzl", "prebuilt_img_tool")
 prebuilt_img_tool.collection(
     name = "img_toolchain",

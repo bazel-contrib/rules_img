@@ -84,6 +84,17 @@ common --@rules_img//img/settings:push_strategy=eager
 # Useful for setting a project-wide default so individual push rules don't need to repeat it.
 common --@rules_img//img/settings:destination_registry=gcr.io
 
+# Whether `img deploy` signs images after pushing them.
+# "disabled" (default), "enabled" (signing failures fail the deploy), or
+# "best_effort" (signing failures are warnings). Per-target `sign` attributes
+# default to "auto", which defers to this flag. See docs/image-signing.md.
+common --@rules_img//img/settings:sign=disabled
+
+# The signing_config target selecting how images are signed (which signer plugin
+# and its arguments). Used when a target enables signing without its own
+# `sign_setting` attribute. See docs/image-signing.md.
+common --@rules_img//img/settings:sign_setting=//path/to:release_signer
+
 # The load strategy to use.
 # "eager" or "lazy"
 common --@rules_img//img/settings:load_strategy=eager
@@ -490,6 +501,7 @@ This results in a more complex implementation, but also allows for interesting o
     - [`image_push`](docs/push.md#image_push) - Push images to registries
     - [`image_load`](docs/load.md#image_load) - Load images into container daemons
     - [`multi_deploy`](docs/multi_deploy.md#multi_deploy) - Deploy multiple operations as unified command
+    - [`signing_config`](docs/signing.md#signing_config) - Configure how `img deploy` signs pushed images
   - **Test Rules**
     - [`image_structure_test`](docs/test.md#image_structure_test) - Validate image structure (config + mtree) using container-structure-test configs
   - **Special artifacts**
@@ -497,6 +509,7 @@ This results in a more complex implementation, but also allows for interesting o
     - [`oras_file_layer`](docs/oras.md#oras_file_layer) - Create oras artifact layers from individual files
     - [`oras_layer`](docs/oras.md#oras_layer) - Create oras tree layers from files and directories
 - [Platforms Guide](docs/platforms.md) - Working with Bazel platforms, architecture variants, and multi-platform builds
+- [Image Signing Guide](docs/image-signing.md) - Sign pushed images with pluggable signer plugins (Notation, cosign, or your own)
 - [Compact Stream Representation](docs/compact-stream.md) - On-disk format behind the experimental cache-efficient layers (`experimental_compact_layers`)
 - [Migration Guide from rules_oci](docs/migration-from-rules_oci.md)
 

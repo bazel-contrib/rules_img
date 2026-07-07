@@ -33,6 +33,11 @@ stardoc_with_diff_test(
 )
 
 stardoc_with_diff_test(
+    name = "signing",
+    bzl_library_target = "//img:signing",
+)
+
+stardoc_with_diff_test(
     name = "convert",
     bzl_library_target = "//img:convert",
 )
