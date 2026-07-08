@@ -85,6 +85,10 @@ common --@rules_img//img/settings:credential_helper=tweag-credential-helper
 common --@rules_img//img/settings:remote_instance_name=my-instance-name
 ```
 
+> See [Credential Helpers](credential-helpers.md) for exactly how
+> `credential_helper` / `IMG_CREDENTIAL_HELPER` is used to authenticate this
+> remote-cache traffic.
+
 3. Run your push target:
 ```bash
 # Configure the push utility via environment variables:
@@ -153,6 +157,9 @@ build --remote_cache=grpc://your-cache-server:9092
 # Optionally, configure credential helper via rules_img settings:
 common --@rules_img//img/settings:credential_helper=tweag-credential-helper
 ```
+
+> See [Credential Helpers](credential-helpers.md) — the same
+> credential helper behavior from the lazy strategy applies here.
 
 3. Push to your CAS registry:
 ```bash

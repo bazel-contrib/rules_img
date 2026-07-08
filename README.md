@@ -105,9 +105,9 @@ common --@rules_img//img/settings:remote_cache=grpcs://remote.buildbuddy.io
 # Required by some RBE backends.
 common --@rules_img//img/settings:remote_instance_name=my-instance-name
 
-# Credential helper to use for authenticating gRPC connections during push operations
-# in some push strategies.
-# This can be the same as Bazel's credential helper.
+# Credential helper to use for registry requests and for authenticating gRPC
+# connections during some push strategies.
+# See docs/credential-helpers.md for exactly how rules_img uses it.
 # Falls back to $IMG_CREDENTIAL_HELPER env var.
 common --@rules_img//img/settings:credential_helper=tweag-credential-helper
 
