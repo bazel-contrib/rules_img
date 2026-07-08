@@ -107,10 +107,7 @@ common --@rules_img//img/settings:remote_instance_name=my-instance-name
 
 # Credential helper to use for registry requests and for authenticating gRPC
 # connections during some push strategies.
-# This uses Bazel's credential-helper HTTP header protocol.
-# WARNING: if the helper returns "Authorization: Bearer ...", the value must be
-# a registry access token; rules_img passes it through and does not exchange it
-# as an OAuth refresh token.
+# See docs/credential-helpers.md for exactly how rules_img uses it.
 # Falls back to $IMG_CREDENTIAL_HELPER env var.
 common --@rules_img//img/settings:credential_helper=tweag-credential-helper
 
