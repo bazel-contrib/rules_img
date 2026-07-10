@@ -1,4 +1,4 @@
-load("@rules_go//go:def.bzl", "go_library")
+load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "dockersave",
@@ -10,7 +10,23 @@ go_library(
     importpath = "github.com/bazel-contrib/rules_img/img_tool/cmd/dockersave",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/auth/credential",
+        "//pkg/auth/protohelper",
+        "//pkg/cas",
+        "//pkg/compactstream",
+        "//pkg/deployvfs",
         "//pkg/ocitar",
+        "@com_github_google_go_containerregistry//pkg/v1:pkg",
+        "@com_github_google_go_containerregistry//pkg/v1/types",
+    ],
+)
+
+go_test(
+    name = "dockersave_test",
+    srcs = ["dockersave_test.go"],
+    embed = [":dockersave"],
+    deps = [
+        "//pkg/compactstream",
         "@com_github_google_go_containerregistry//pkg/v1:pkg",
         "@com_github_google_go_containerregistry//pkg/v1/types",
     ],

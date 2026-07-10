@@ -30,6 +30,21 @@ def _compute_load_metadata(*, ctx, configuration_json):
         output_prefix = ctx.label.name,
     )
 
+def _add_docker_save_layer_args(args, inputs, layer):
+    """Add one layer to an `img docker-save` action.
+
+    Compact layers pass only their reconstruction recipe. The docker-save process
+    resolves referenced content from Bazel's disk cache or remote CAS on demand.
+    """
+    if layer.blob != None:
+        args.add("--layer", "{}={}".format(layer.metadata.path, layer.blob.path))
+        inputs.append(layer.metadata)
+        inputs.append(layer.blob)
+    elif layer.compact_stream != None:
+        args.add("--layer", "{}={}".format(layer.metadata.path, layer.compact_stream.path))
+        inputs.append(layer.metadata)
+        inputs.append(layer.compact_stream)
+
 def _build_docker_tarball(ctx, configuration_json, manifest_info = None, index_info = None):
     """Build the Docker save tarball for the image.
 
@@ -70,10 +85,7 @@ def _build_docker_tarball(ctx, configuration_json, manifest_info = None, index_i
 
         # Add layers with metadata=blob mapping
         for layer in manifest_info.layers:
-            if layer.blob != None:
-                args.add("--layer", "{}={}".format(layer.metadata.path, layer.blob.path))
-                inputs.append(layer.metadata)
-                inputs.append(layer.blob)
+            _add_docker_save_layer_args(args, inputs, layer)
 
     if index_info != None:
         args.add("--index", index_info.index.path)
@@ -86,18 +98,23 @@ def _build_docker_tarball(ctx, configuration_json, manifest_info = None, index_i
             inputs.append(manifest.config)
 
             for layer in manifest.layers:
-                if layer.blob != None:
-                    args.add("--layer", "{}={}".format(layer.metadata.path, layer.blob.path))
-                    inputs.append(layer.metadata)
-                    inputs.append(layer.blob)
+                _add_docker_save_layer_args(args, inputs, layer)
 
     img_toolchain_info = ctx.toolchains[TOOLCHAIN].imgtoolchaininfo
+    load_settings = ctx.attr._load_settings[LoadSettingsInfo]
+
+    # Give reconstruction the same remote-CAS connection settings as lazy image loading.
     ctx.actions.run(
         inputs = inputs,
         outputs = [tarball_output],
         executable = img_toolchain_info.tool_exe,
         arguments = [args],
-        env = {"RULES_IMG": "1"},
+        env = {
+            "IMG_CREDENTIAL_HELPER": load_settings.credential_helper,
+            "IMG_REAPI_ENDPOINT": load_settings.remote_cache,
+            "IMG_REAPI_INSTANCE_NAME": load_settings.remote_instance_name,
+            "RULES_IMG": "1",
+        },
         mnemonic = "DockerSave",
     )
 

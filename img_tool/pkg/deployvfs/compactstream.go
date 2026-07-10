@@ -90,15 +90,7 @@ func (b *Builder) layerFromCompactStream(compactStreamPath, casDirPath string, d
 				return nil, fmt.Errorf("opening compact stream %s: %w", compactStreamPath, err)
 			}
 
-			shaDir := ""
-			if casDirPath != "" {
-				shaDir = filepath.Join(casDirPath, "sha256")
-			}
-			store := &casDirStore{
-				shaDir:        shaDir,
-				diskCachePath: builder.diskCachePath,
-				casReader:     builder.casReader,
-			}
+			store := NewCompactStreamBlobStore(casDirPath, builder.diskCachePath, builder.casReader)
 
 			pr, pw := io.Pipe()
 			go func() {
@@ -123,9 +115,30 @@ func (b *Builder) layerFromCompactStream(compactStreamPath, casDirPath string, d
 type casDirStore struct {
 	shaDir        string // <inputfilecas>/sha256, or "" if no input directory was shipped
 	diskCachePath string
-	casReader     casReader
+	casReader     CompactStreamCASReader
 }
 
+// CompactStreamCASReader is the subset of a REAPI CAS client needed to resolve
+// references while reconstructing a compact stream.
+type CompactStreamCASReader interface {
+	ReaderForBlob(ctx context.Context, digest cas.Digest) (io.ReadCloser, error)
+}
+
+// NewCompactStreamBlobStore returns the same local-directory, disk-cache, and
+// remote-CAS resolver used by lazy deploys to reconstruct compact streams.
+func NewCompactStreamBlobStore(casDirPath, diskCachePath string, casReader CompactStreamCASReader) compactstream.BlobStore {
+	shaDir := ""
+	if casDirPath != "" {
+		shaDir = filepath.Join(casDirPath, "sha256")
+	}
+	return &casDirStore{
+		shaDir:        shaDir,
+		diskCachePath: diskCachePath,
+		casReader:     casReader,
+	}
+}
+
+// ReaderForBlob resolves a reference from local inputs, disk cache, then remote CAS.
 func (s *casDirStore) ReaderForBlob(ctx context.Context, digest []byte, size int64) (io.ReadCloser, error) {
 	hexDigest := hex.EncodeToString(digest)
 

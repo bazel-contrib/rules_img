@@ -15,10 +15,28 @@ import (
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/types"
 
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/auth/credential"
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/auth/protohelper"
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/cas"
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/compactstream"
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/deployvfs"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/ocitar"
 )
 
-type blobMap map[string]string // digest -> source path
+// blobSource describes how to open the complete bytes for one content-addressed blob.
+type blobSource struct {
+	// path points to either a complete blob or a compact stream that can reconstruct it.
+	path string
+	// size is the byte size of the complete blob after reconstruction, not the .cstream file.
+	size int64
+	// compactStream indicates that path is a reconstruction recipe rather than the complete blob.
+	compactStream bool
+	// store resolves content references encountered while reconstructing a compact stream.
+	store compactstream.BlobStore
+}
+
+// blobMap indexes complete or reconstructable blob sources by their final digest.
+type blobMap map[string]blobSource
 
 // MissingBlobsError represents an error when one or more blobs are missing
 type MissingBlobsError struct {
@@ -95,12 +113,138 @@ func readTagsFromConfigFile(configPath string) ([]string, error) {
 	return tags, nil
 }
 
+// readLayerDigestAndSize reads the final compressed layer identity from its metadata.
+func readLayerDigestAndSize(metadataPath string) (string, int64, error) {
+	metadataData, err := os.ReadFile(metadataPath)
+	if err != nil {
+		return "", 0, fmt.Errorf("reading layer metadata %s: %w", metadataPath, err)
+	}
+
+	var metadata struct {
+		Digest string `json:"digest"`
+		Size   int64  `json:"size"`
+	}
+	if err := json.Unmarshal(metadataData, &metadata); err != nil {
+		return "", 0, fmt.Errorf("unmarshaling layer metadata %s: %w", metadataPath, err)
+	}
+	if metadata.Digest == "" {
+		return "", 0, fmt.Errorf("layer metadata %s does not contain digest", metadataPath)
+	}
+
+	return strings.TrimPrefix(metadata.Digest, "sha256:"), metadata.Size, nil
+}
+
+// buildLayerCASDirMap indexes optional local compact-stream CAS directories by layer digest.
+func buildLayerCASDirMap(layerCASDirFlags layerMappingFlag) (map[string]string, error) {
+	result := make(map[string]string)
+	for _, layer := range layerCASDirFlags {
+		digest, _, err := readLayerDigestAndSize(layer.metadata)
+		if err != nil {
+			return nil, fmt.Errorf("reading layer CAS directory mapping %s=%s: %w", layer.metadata, layer.blob, err)
+		}
+		result[digest] = layer.blob
+	}
+	return result, nil
+}
+
+// compactStreamResolver owns the cache sources and remote connection shared by all layers.
+type compactStreamResolver struct {
+	diskCachePath string
+	casReader     deployvfs.CompactStreamCASReader
+	close         func() error
+}
+
+// newCompactStreamResolverFromEnv configures disk and remote CAS access only when needed.
+func newCompactStreamResolverFromEnv(layers layerMappingFlag) (*compactStreamResolver, error) {
+	resolver := &compactStreamResolver{diskCachePath: os.Getenv("IMG_DISK_CACHE")}
+
+	// Avoid creating a remote client when every layer is already materialized.
+	var hasCompactStream bool
+	for _, layer := range layers {
+		if strings.HasSuffix(layer.blob, ".cstream") {
+			hasCompactStream = true
+			break
+		}
+	}
+	if !hasCompactStream {
+		return resolver, nil
+	}
+
+	// A missing endpoint leaves local CAS directories and the disk cache as fallbacks.
+	reapiEndpoint := os.Getenv("IMG_REAPI_ENDPOINT")
+	if reapiEndpoint == "" {
+		return resolver, nil
+	}
+
+	// Use the same optional Bazel credential-helper protocol as lazy deploy.
+	credHelper := credential.NopHelper()
+	if credentialHelperPath := os.Getenv("IMG_CREDENTIAL_HELPER"); credentialHelperPath != "" {
+		credHelper = credential.New(credentialHelperPath, nil)
+	}
+	// Build the REAPI client used to stream referenced blobs from remote CAS.
+	grpcConn, err := protohelper.Client(reapiEndpoint, credHelper)
+	if err != nil {
+		return nil, fmt.Errorf("creating gRPC client for compact-stream REAPI access: %w", err)
+	}
+	casReader, err := cas.New(grpcConn, cas.WithInstanceName(os.Getenv("IMG_REAPI_INSTANCE_NAME")))
+	if err != nil {
+		grpcConn.Close()
+		return nil, fmt.Errorf("creating CAS client for compact-stream reconstruction: %w", err)
+	}
+
+	resolver.casReader = casReader
+	resolver.close = grpcConn.Close
+	return resolver, nil
+}
+
+// Close releases the shared REAPI connection when one was created.
+func (r *compactStreamResolver) Close() error {
+	if r.close == nil {
+		return nil
+	}
+	return r.close()
+}
+
+// blobStore creates the lazy resolver chain for a single compact-stream layer.
+func (r *compactStreamResolver) blobStore(casDirPath string) compactstream.BlobStore {
+	return deployvfs.NewCompactStreamBlobStore(casDirPath, r.diskCachePath, r.casReader)
+}
+
+// buildLayerBlobSourceMap converts CLI mappings into sources keyed by final layer digest.
+func buildLayerBlobSourceMap(layers layerMappingFlag, layerCASDirFlags layerMappingFlag, resolver *compactStreamResolver) (map[string]blobSource, error) {
+	layerCASDirsByDigest, err := buildLayerCASDirMap(layerCASDirFlags)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make(map[string]blobSource)
+	for _, layer := range layers {
+		digest, size, err := readLayerDigestAndSize(layer.metadata)
+		if err != nil {
+			return nil, err
+		}
+		isCompactStream := strings.HasSuffix(layer.blob, ".cstream")
+		source := blobSource{
+			path:          layer.blob,
+			size:          size,
+			compactStream: isCompactStream,
+		}
+		// Compact sources resolve referenced bytes lazily instead of opening a complete blob.
+		if isCompactStream {
+			source.store = resolver.blobStore(layerCASDirsByDigest[digest])
+		}
+		result[digest] = source
+	}
+	return result, nil
+}
+
 func DockerSaveProcess(ctx context.Context, args []string) {
 	var manifestPath string
 	var configPath string
 	var outputPath string
 	var format string
 	var layerFlags layerMappingFlag
+	var layerCASDirFlags layerMappingFlag
 	var repoTags stringSliceFlag
 	var useSymlinks bool
 	var allowMissingBlobs bool
@@ -116,6 +260,7 @@ func DockerSaveProcess(ctx context.Context, args []string) {
 		flagSet.PrintDefaults()
 		examples := []string{
 			"img docker-save --manifest manifest.json --config config.json --layer layer1_meta.json=layer1.tar.gz --repo-tag my/image:latest --output docker-save.tar",
+			"IMG_REAPI_ENDPOINT=grpcs://cache.example.com img docker-save --manifest manifest.json --config config.json --layer layer1_meta.json=layer1.tar.gz.cstream --repo-tag my/image:latest --output docker-save.tar",
 			"img docker-save --manifest manifest.json --config config.json --layer layer1_meta.json=layer1.tar.gz --repo-tag my/image:latest --repo-tag my/image:v1.0 --format directory --output docker-save",
 			"img docker-save --manifest manifest.json --config config.json --layer layer1_meta.json=layer1.tar.gz --configuration-file config.json --output docker-save.tar",
 		}
@@ -129,7 +274,8 @@ func DockerSaveProcess(ctx context.Context, args []string) {
 	flagSet.StringVar(&configPath, "config", "", "Path to the image config (required)")
 	flagSet.StringVar(&outputPath, "output", "", "Output path for Docker save format (required). Use '-' for stdout")
 	flagSet.StringVar(&format, "format", "tar", "Output format: 'directory' or 'tar'")
-	flagSet.Var(&layerFlags, "layer", "Layer mapping in format metadata=blob (can be specified multiple times)")
+	flagSet.Var(&layerFlags, "layer", "Layer mapping in format metadata=blob (can be specified multiple times). The blob may be a materialized layer or a .cstream compact stream.")
+	flagSet.Var(&layerCASDirFlags, "layer-cas-dir", "Optional local CAS directory mapping in format metadata=cas_dir for compact streams; disk and remote CAS are used as fallbacks (can be specified multiple times)")
 	flagSet.Var(&repoTags, "repo-tag", "Repository tag for the image (can be specified multiple times)")
 	flagSet.BoolVar(&useSymlinks, "symlink", false, "Use symlinks instead of copying files")
 	flagSet.BoolVar(&allowMissingBlobs, "allow-missing-blobs", false, "Allow missing blobs instead of failing the build")
@@ -194,7 +340,7 @@ func DockerSaveProcess(ctx context.Context, args []string) {
 			fmt.Fprintf(os.Stderr, "Error: --index requires at least one --manifest-path and --config-path\n")
 			os.Exit(1)
 		}
-		err = assembleDockerSaveWithIndex(indexPath, outputPath, format, manifestPaths, configPaths, layerFlags, repoTags, ociTags, useSymlinks, allowMissingBlobs)
+		err = assembleDockerSaveWithIndex(ctx, indexPath, outputPath, format, manifestPaths, configPaths, layerFlags, layerCASDirFlags, repoTags, ociTags, useSymlinks, allowMissingBlobs)
 	} else {
 		// Single manifest mode
 		if manifestPath == "" {
@@ -211,7 +357,7 @@ func DockerSaveProcess(ctx context.Context, args []string) {
 			fmt.Fprintf(os.Stderr, "Error: cannot use --manifest-path or --config-path without --index\n")
 			os.Exit(1)
 		}
-		err = assembleDockerSave(manifestPath, configPath, outputPath, format, layerFlags, repoTags, ociTags, useSymlinks, allowMissingBlobs)
+		err = assembleDockerSave(ctx, manifestPath, configPath, outputPath, format, layerFlags, layerCASDirFlags, repoTags, ociTags, useSymlinks, allowMissingBlobs)
 	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -219,7 +365,7 @@ func DockerSaveProcess(ctx context.Context, args []string) {
 	}
 }
 
-func assembleDockerSave(manifestPath, configPath, outputPath, format string, layers layerMappingFlag, repoTags, ociTags []string, useSymlinks, allowMissingBlobs bool) error {
+func assembleDockerSave(ctx context.Context, manifestPath, configPath, outputPath, format string, layers layerMappingFlag, layerCASDirFlags layerMappingFlag, repoTags, ociTags []string, useSymlinks, allowMissingBlobs bool) error {
 	// Read and parse the manifest
 	manifestData, err := os.ReadFile(manifestPath)
 	if err != nil {
@@ -231,36 +377,33 @@ func assembleDockerSave(manifestPath, configPath, outputPath, format string, lay
 		return fmt.Errorf("unmarshaling manifest: %w", err)
 	}
 
-	// Build a map of available layers by their digest
-	layerBlobsByDigest := make(map[string]string)
-	for _, layer := range layers {
-		metadataData, err := os.ReadFile(layer.metadata)
-		if err != nil {
-			return fmt.Errorf("reading layer metadata %s: %w", layer.metadata, err)
-		}
+	// Share one disk/remote CAS resolver across every compact layer in the image.
+	resolver, err := newCompactStreamResolverFromEnv(layers)
+	if err != nil {
+		return err
+	}
+	defer resolver.Close()
 
-		var metadata struct {
-			Digest string `json:"digest"`
-		}
-		if err := json.Unmarshal(metadataData, &metadata); err != nil {
-			return fmt.Errorf("unmarshaling layer metadata %s: %w", layer.metadata, err)
-		}
-
-		digest := strings.TrimPrefix(metadata.Digest, "sha256:")
-		layerBlobsByDigest[digest] = layer.blob
+	// Build a map of available layers by their digest.
+	layerBlobsByDigest, err := buildLayerBlobSourceMap(layers, layerCASDirFlags, resolver)
+	if err != nil {
+		return err
 	}
 
 	blobs := make(blobMap)
-	blobs[manifest.Config.Digest.Hex] = configPath
+	blobs[manifest.Config.Digest.Hex] = blobSource{path: configPath}
 
 	manifestDigest := hashBytes(manifestData)
-	blobs[manifestDigest.Hex] = manifestPath
+	blobs[manifestDigest.Hex] = blobSource{path: manifestPath}
 
 	// Check for missing blobs
 	var missingBlobs []string
 	for _, layerDesc := range manifest.Layers {
-		if blobPath, ok := layerBlobsByDigest[layerDesc.Digest.Hex]; ok {
-			blobs[layerDesc.Digest.Hex] = blobPath
+		if blob, ok := layerBlobsByDigest[layerDesc.Digest.Hex]; ok {
+			if blob.size == 0 {
+				blob.size = layerDesc.Size
+			}
+			blobs[layerDesc.Digest.Hex] = blob
 		} else if !allowMissingBlobs {
 			missingBlobs = append(missingBlobs, layerDesc.Digest.String())
 		}
@@ -271,12 +414,12 @@ func assembleDockerSave(manifestPath, configPath, outputPath, format string, lay
 	}
 
 	if format == "tar" {
-		return assembleDockerSaveTar(outputPath, &manifest, manifestData, blobs, repoTags, ociTags)
+		return assembleDockerSaveTar(ctx, outputPath, &manifest, manifestData, blobs, repoTags, ociTags)
 	}
-	return assembleDockerSaveDirectory(outputPath, &manifest, manifestData, blobs, repoTags, ociTags, useSymlinks)
+	return assembleDockerSaveDirectory(ctx, outputPath, &manifest, manifestData, blobs, repoTags, ociTags, useSymlinks)
 }
 
-func assembleDockerSaveTar(outputPath string, manifest *v1.Manifest, manifestData []byte, blobs blobMap, repoTags, ociTags []string) error {
+func assembleDockerSaveTar(ctx context.Context, outputPath string, manifest *v1.Manifest, manifestData []byte, blobs blobMap, repoTags, ociTags []string) error {
 	var w *os.File
 	var err error
 	if outputPath == "-" {
@@ -294,10 +437,10 @@ func assembleDockerSaveTar(outputPath string, manifest *v1.Manifest, manifestDat
 		Tags:    repoTags,
 		OCITags: ociTags,
 	}
-	return ocitar.WriteSingleManifest(context.Background(), w, manifest, manifestData, source, opts)
+	return ocitar.WriteSingleManifest(ctx, w, manifest, manifestData, source, opts)
 }
 
-func assembleDockerSaveDirectory(outputPath string, manifest *v1.Manifest, manifestData []byte, blobs blobMap, repoTags, ociTags []string, useSymlinks bool) error {
+func assembleDockerSaveDirectory(ctx context.Context, outputPath string, manifest *v1.Manifest, manifestData []byte, blobs blobMap, repoTags, ociTags []string, useSymlinks bool) error {
 	sink := NewDirectorySink(outputPath)
 	defer sink.Close()
 
@@ -354,14 +497,15 @@ func assembleDockerSaveDirectory(outputPath string, manifest *v1.Manifest, manif
 	if err := sink.CreateDir(filepath.Join("blobs", "sha256")); err != nil {
 		return fmt.Errorf("creating blobs/sha256 directory: %w", err)
 	}
-	if err := copyBlobs(sink, blobs, useSymlinks); err != nil {
+	if err := copyBlobs(ctx, sink, blobs, useSymlinks); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-func copyBlobs(sink DockerSaveSink, blobs blobMap, useSymlinks bool) error {
+// copyBlobs materializes every digest into a directory-format Docker save output.
+func copyBlobs(ctx context.Context, sink DockerSaveSink, blobs blobMap, useSymlinks bool) error {
 	// Sort blob digests to ensure deterministic order
 	digests := make([]string, 0, len(blobs))
 	for digest := range blobs {
@@ -370,25 +514,65 @@ func copyBlobs(sink DockerSaveSink, blobs blobMap, useSymlinks bool) error {
 	sort.Strings(digests)
 
 	for _, digest := range digests {
-		srcPath := blobs[digest]
+		src := blobs[digest]
 		dstPath := filepath.Join("blobs", "sha256", digest)
-		if err := sink.CopyFile(dstPath, srcPath, useSymlinks); err != nil {
+		// Complete blobs retain the existing copy-or-symlink behavior.
+		if !src.compactStream {
+			if err := sink.CopyFile(dstPath, src.path, useSymlinks); err != nil {
+				return fmt.Errorf("copying blob %s: %w", digest, err)
+			}
+			continue
+		}
+
+		// Compact blobs are reconstructed directly into their final digest path.
+		rc, _, err := openBlobSource(ctx, digest, src)
+		if err != nil {
+			return fmt.Errorf("opening compact-stream blob %s: %w", digest, err)
+		}
+		if err := sink.WriteStream(dstPath, rc, 0o644); err != nil {
+			rc.Close()
 			return fmt.Errorf("copying blob %s: %w", digest, err)
+		}
+		if err := rc.Close(); err != nil {
+			return fmt.Errorf("closing compact-stream blob %s: %w", digest, err)
 		}
 	}
 	return nil
 }
 
+// fileBlobSource adapts the digest map to ocitar's streaming BlobSource interface.
 type fileBlobSource struct {
 	blobs blobMap
 }
 
-func (f *fileBlobSource) OpenBlob(_ context.Context, hexDigest string) (io.ReadCloser, int64, error) {
-	path, ok := f.blobs[hexDigest]
-	if !ok {
+// OpenBlob returns a reader over the complete bytes expected for the requested digest.
+func (f *fileBlobSource) OpenBlob(ctx context.Context, hexDigest string) (io.ReadCloser, int64, error) {
+	return openBlobSource(ctx, hexDigest, f.blobs[hexDigest])
+}
+
+// openBlobSource opens materialized blobs directly and compact blobs through reconstruction.
+func openBlobSource(ctx context.Context, hexDigest string, source blobSource) (io.ReadCloser, int64, error) {
+	if source.path == "" {
 		return nil, 0, fmt.Errorf("blob %s not found", hexDigest)
 	}
-	file, err := os.Open(path)
+	// Feed reconstruction through a pipe so the complete layer never lands on disk.
+	if source.compactStream {
+		file, err := os.Open(source.path)
+		if err != nil {
+			return nil, 0, err
+		}
+
+		pr, pw := io.Pipe()
+		go func() {
+			err := compactstream.Reconstruct(ctx, file, source.store, pw)
+			file.Close()
+			pw.CloseWithError(err)
+		}()
+		return pr, source.size, nil
+	}
+
+	// Preserve the direct-file path for existing materialized layer inputs.
+	file, err := os.Open(source.path)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -400,24 +584,18 @@ func (f *fileBlobSource) OpenBlob(_ context.Context, hexDigest string) (io.ReadC
 	return file, info.Size(), nil
 }
 
-func assembleDockerSaveWithIndex(indexPath, outputPath, format string, manifestPaths, configPaths []string, layers layerMappingFlag, repoTags, ociTags []string, useSymlinks, allowMissingBlobs bool) error {
+func assembleDockerSaveWithIndex(ctx context.Context, indexPath, outputPath, format string, manifestPaths, configPaths []string, layers layerMappingFlag, layerCASDirFlags layerMappingFlag, repoTags, ociTags []string, useSymlinks, allowMissingBlobs bool) error {
+	// Share one disk/remote CAS resolver across every compact layer in the index.
+	resolver, err := newCompactStreamResolverFromEnv(layers)
+	if err != nil {
+		return err
+	}
+	defer resolver.Close()
+
 	// Build a map of available layers by their digest
-	layerBlobsByDigest := make(map[string]string)
-	for _, layer := range layers {
-		metadataData, err := os.ReadFile(layer.metadata)
-		if err != nil {
-			return fmt.Errorf("reading layer metadata %s: %w", layer.metadata, err)
-		}
-
-		var metadata struct {
-			Digest string `json:"digest"`
-		}
-		if err := json.Unmarshal(metadataData, &metadata); err != nil {
-			return fmt.Errorf("unmarshaling layer metadata %s: %w", layer.metadata, err)
-		}
-
-		digest := strings.TrimPrefix(metadata.Digest, "sha256:")
-		layerBlobsByDigest[digest] = layer.blob
+	layerBlobsByDigest, err := buildLayerBlobSourceMap(layers, layerCASDirFlags, resolver)
+	if err != nil {
+		return err
 	}
 
 	blobs := make(blobMap)
@@ -437,10 +615,10 @@ func assembleDockerSaveWithIndex(indexPath, outputPath, format string, manifestP
 
 		// Add manifest blob
 		manifestDigest := hashBytes(manifestData)
-		blobs[manifestDigest.Hex] = manifestPaths[i]
+		blobs[manifestDigest.Hex] = blobSource{path: manifestPaths[i]}
 
 		// Add config blob
-		blobs[manifest.Config.Digest.Hex] = configPaths[i]
+		blobs[manifest.Config.Digest.Hex] = blobSource{path: configPaths[i]}
 
 		// Build ManifestInfo
 		info := ocitar.ManifestInfo{
@@ -451,8 +629,11 @@ func assembleDockerSaveWithIndex(indexPath, outputPath, format string, manifestP
 
 		// Check for missing layer blobs
 		for _, layerDesc := range manifest.Layers {
-			if blobPath, ok := layerBlobsByDigest[layerDesc.Digest.Hex]; ok {
-				blobs[layerDesc.Digest.Hex] = blobPath
+			if blob, ok := layerBlobsByDigest[layerDesc.Digest.Hex]; ok {
+				if blob.size == 0 {
+					blob.size = layerDesc.Size
+				}
+				blobs[layerDesc.Digest.Hex] = blob
 			} else if !allowMissingBlobs {
 				allMissingBlobs = append(allMissingBlobs, layerDesc.Digest.String())
 			}
@@ -472,15 +653,15 @@ func assembleDockerSaveWithIndex(indexPath, outputPath, format string, manifestP
 		return fmt.Errorf("reading index file: %w", err)
 	}
 	indexDigest := hashBytes(indexData)
-	blobs[indexDigest.Hex] = indexPath
+	blobs[indexDigest.Hex] = blobSource{path: indexPath}
 
 	if format == "tar" {
-		return assembleDockerSaveWithIndexTar(outputPath, indexData, manifestInfos, blobs, repoTags, ociTags)
+		return assembleDockerSaveWithIndexTar(ctx, outputPath, indexData, manifestInfos, blobs, repoTags, ociTags)
 	}
-	return assembleDockerSaveWithIndexDirectory(outputPath, indexData, indexDigest, manifestInfos, blobs, repoTags, ociTags, useSymlinks)
+	return assembleDockerSaveWithIndexDirectory(ctx, outputPath, indexData, indexDigest, manifestInfos, blobs, repoTags, ociTags, useSymlinks)
 }
 
-func assembleDockerSaveWithIndexTar(outputPath string, indexData []byte, manifestInfos []ocitar.ManifestInfo, blobs blobMap, repoTags, ociTags []string) error {
+func assembleDockerSaveWithIndexTar(ctx context.Context, outputPath string, indexData []byte, manifestInfos []ocitar.ManifestInfo, blobs blobMap, repoTags, ociTags []string) error {
 	var w *os.File
 	var err error
 	if outputPath == "-" {
@@ -498,10 +679,10 @@ func assembleDockerSaveWithIndexTar(outputPath string, indexData []byte, manifes
 		Tags:    repoTags,
 		OCITags: ociTags,
 	}
-	return ocitar.WriteIndex(context.Background(), w, indexData, manifestInfos, source, opts)
+	return ocitar.WriteIndex(ctx, w, indexData, manifestInfos, source, opts)
 }
 
-func assembleDockerSaveWithIndexDirectory(outputPath string, indexData []byte, indexDigest v1.Hash, manifestInfos []ocitar.ManifestInfo, blobs blobMap, repoTags, ociTags []string, useSymlinks bool) error {
+func assembleDockerSaveWithIndexDirectory(ctx context.Context, outputPath string, indexData []byte, indexDigest v1.Hash, manifestInfos []ocitar.ManifestInfo, blobs blobMap, repoTags, ociTags []string, useSymlinks bool) error {
 	sink := NewDirectorySink(outputPath)
 	defer sink.Close()
 
@@ -553,7 +734,7 @@ func assembleDockerSaveWithIndexDirectory(outputPath string, indexData []byte, i
 	if err := sink.CreateDir(filepath.Join("blobs", "sha256")); err != nil {
 		return fmt.Errorf("creating blobs/sha256 directory: %w", err)
 	}
-	if err := copyBlobs(sink, blobs, useSymlinks); err != nil {
+	if err := copyBlobs(ctx, sink, blobs, useSymlinks); err != nil {
 		return err
 	}
 
