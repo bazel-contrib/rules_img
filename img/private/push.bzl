@@ -105,11 +105,12 @@ def _image_push_impl(ctx):
         configuration_json = configuration_json,
         destination_file = ctx.file.destination_file,
     )
+    push_strategy = resolve_push_strategy(ctx)
     root_symlinks_prefix = symlink_name_prefix(ctx)
     root_symlinks = calculate_root_symlinks(
         index_info,
         manifest_info,
-        include_layers = resolve_push_strategy(ctx) == "eager",
+        include_layers = push_strategy == "eager",
         symlink_name_prefix = root_symlinks_prefix,
     )
 
@@ -120,7 +121,7 @@ def _image_push_impl(ctx):
         root_symlinks.update(calculate_root_symlinks(
             ref_index_info,
             ref_manifest_info,
-            include_layers = resolve_push_strategy(ctx) == "eager",
+            include_layers = push_strategy == "eager",
             symlink_name_prefix = root_symlinks_prefix,
             operation_index = ref_idx + 1,
         ))
@@ -184,6 +185,7 @@ def _image_push_impl(ctx):
             image = image_provider,
             deploy_manifest = deploy_metadata,
             layer_hints = layer_hints,
+            include_layers = push_strategy == "eager",
         ),
     ]
 

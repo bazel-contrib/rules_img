@@ -553,11 +553,17 @@ def process_deploy_specs(
         )
         deploy_infos.append(struct(metadata = deploy_metadata, layer_hints = layer_hints))
 
+    include_layers = (
+        any([d[PushConfigInfo].strategy == "eager" for d in push_specs]) or
+        any([d[LoadConfigInfo].strategy == "eager" for d in load_specs])
+    )
+
     if len(deploy_infos) == 1:
         return DeployInfo(
             image = image_info,
             deploy_manifest = deploy_infos[0].metadata,
             layer_hints = deploy_infos[0].layer_hints,
+            include_layers = include_layers,
         )
 
     first_push_strategy = push_specs[0][PushConfigInfo].strategy if push_specs else "auto"
@@ -573,4 +579,5 @@ def process_deploy_specs(
         image = image_info,
         deploy_manifest = merged_metadata,
         layer_hints = merged_layer_hints,
+        include_layers = include_layers,
     )
