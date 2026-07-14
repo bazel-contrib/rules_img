@@ -11,6 +11,7 @@ import (
 	"path"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"golang.org/x/sync/errgroup"
@@ -202,7 +203,7 @@ func DeployWithExtras(ctx context.Context, rawRequest []byte, opts DeployOptions
 			break
 		}
 	}
-	vfsBuilder, err = configureBuilderFromEnv(vfsBuilder, hasLazyStrategy)
+	vfsBuilder, err = configureBuilderFromEnv(vfsBuilder, hasLazyStrategy, opts.Jobs)
 	if err != nil {
 		return err
 	}
@@ -444,7 +445,7 @@ func credentialHelperInstance() credential.Helper {
 	return credential.NopHelper()
 }
 
-func configureBuilderFromEnv(builder *deployvfs.Builder, needsCAS bool) (*deployvfs.Builder, error) {
+func configureBuilderFromEnv(builder *deployvfs.Builder, needsCAS bool, jobs int) (*deployvfs.Builder, error) {
 	diskCachePath := os.Getenv("IMG_DISK_CACHE")
 	if diskCachePath != "" {
 		builder = builder.WithDiskCache(diskCachePath)
@@ -455,19 +456,49 @@ func configureBuilderFromEnv(builder *deployvfs.Builder, needsCAS bool) (*deploy
 		if reapiEndpoint != "" {
 			reapiInstanceName := os.Getenv("IMG_REAPI_INSTANCE_NAME")
 			credHelper := credentialHelperInstance()
-			grpcConn, err := protohelper.Client(reapiEndpoint, credHelper)
-			if err != nil {
-				return nil, fmt.Errorf("creating gRPC client for REAPI: %w", err)
+			// A single gRPC connection multiplexes all CAS reads onto one TCP
+			// connection, which bottlenecks bulk downloads on high-latency
+			// links. Optionally open a pool of connections and round-robin
+			// reads across them (cf. Bazel's --remote_max_connections).
+			numConns := reapiMaxConnections(jobs)
+			members := make([]*cas.CAS, 0, numConns)
+			for range numConns {
+				grpcConn, err := protohelper.Client(reapiEndpoint, credHelper)
+				if err != nil {
+					return nil, fmt.Errorf("creating gRPC client for REAPI: %w", err)
+				}
+				member, err := cas.New(grpcConn, cas.WithInstanceName(reapiInstanceName))
+				if err != nil {
+					return nil, fmt.Errorf("creating CAS client: %w", err)
+				}
+				members = append(members, member)
 			}
-			casReader, err := cas.New(grpcConn, cas.WithInstanceName(reapiInstanceName))
-			if err != nil {
-				return nil, fmt.Errorf("creating CAS client: %w", err)
-			}
-			builder = builder.WithCASReader(casReader)
+			builder = builder.WithCASReader(cas.NewPool(members))
 		}
 	}
 
 	return builder, nil
+}
+
+// reapiMaxConnections returns the size of the gRPC connection pool used to read
+// blobs from the remote CAS. It defaults to jobs (the number of parallel push
+// operations, i.e. the maximum number of concurrent reads in flight), which can
+// be overridden with IMG_REAPI_MAX_CONNECTIONS. Values below 1 or unparseable
+// values fall back to the default with a warning.
+func reapiMaxConnections(jobs int) int {
+	if jobs < 1 {
+		jobs = 1
+	}
+	raw := os.Getenv("IMG_REAPI_MAX_CONNECTIONS")
+	if raw == "" {
+		return jobs
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 1 {
+		fmt.Fprintf(os.Stderr, "WARNING: ignoring invalid IMG_REAPI_MAX_CONNECTIONS=%q, using %d\n", raw, jobs)
+		return jobs
+	}
+	return n
 }
 
 func extractJobsFlag(args []string) int {

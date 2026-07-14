@@ -4,6 +4,7 @@ go_library(
     name = "cas",
     srcs = [
         "error.go",
+        "pool.go",
         "read.go",
         "write.go",
     ],
@@ -22,7 +23,10 @@ go_library(
 go_test(
     name = "cas_test",
     size = "small",
-    srcs = ["read_test.go"],
+    srcs = [
+        "pool_test.go",
+        "read_test.go",
+    ],
     embed = [":cas"],
     deps = [
         "@org_golang_google_genproto_googleapis_bytestream//:bytestream",
