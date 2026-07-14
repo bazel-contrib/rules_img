@@ -8,10 +8,12 @@ import (
 	"os"
 	"slices"
 	"sync"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/keepalive"
 
 	credhelper "github.com/bazel-contrib/rules_img/img_tool/pkg/auth/credential"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/auth/grpcheaderinterceptor"
@@ -48,6 +50,14 @@ func Client(uri string, helper credhelper.Helper, opts ...grpc.DialOption) (*grp
 	}
 
 	opts = append(opts, grpcheaderinterceptor.DialOptions(helper)...)
+
+	// Keep HTTP/2 streams alive during backpressure pauses (e.g. slow compressors
+	// stalling a ByteStream read), which otherwise cause the server to send
+	// RST_STREAM NO_ERROR and tear down the stream mid-transfer.
+	opts = append(opts, grpc.WithKeepaliveParams(keepalive.ClientParameters{
+		Time:    30 * time.Second,
+		Timeout: 10 * time.Second,
+	}))
 
 	return grpc.NewClient(target, opts...)
 }
