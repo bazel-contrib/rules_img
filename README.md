@@ -28,7 +28,7 @@ Supports both **Bzlmod** and **WORKSPACE** setups. For WORKSPACE setup instructi
 Add to your `MODULE.bazel`:
 
 ```starlark
-bazel_dep(name = "rules_img", version = "0.3.15")
+bazel_dep(name = "rules_img", version = "0.3.16")
 ```
 
 <details>
