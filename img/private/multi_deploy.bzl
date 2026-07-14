@@ -137,21 +137,14 @@ def _multi_deploy_impl(ctx):
     # Collect all image providers for root symlinks
     images = _collect_all_image_providers(ctx)
 
-    # Build root symlinks including all layers from all operations
-    # We need to include layers for strategies that require them
-    include_layers = (
-        _multi_deploy_strategy(ctx, "push") == "eager" or
-        _multi_deploy_strategy(ctx, "load") == "eager"
-    )
-
     root_symlinks = {}
 
-    # Add symlinks for all deploy commands
+    # Add symlinks for all deploy commands, using per-operation include_layers from DeployInfo
     for (i, image) in enumerate(images):
         symlinks = calculate_root_symlinks(
             index_info = image["index_info"],
             manifest_info = image["manifest_info"],
-            include_layers = include_layers,
+            include_layers = ctx.attr.operations[i][DeployInfo].include_layers,
             operation_index = i,
             symlink_name_prefix = root_symlinks_prefix,
         )
