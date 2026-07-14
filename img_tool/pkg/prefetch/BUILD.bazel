@@ -1,0 +1,21 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "prefetch",
+    srcs = ["prefetch.go"],
+    importpath = "github.com/bazel-contrib/rules_img/img_tool/pkg/prefetch",
+    visibility = ["//visibility:public"],
+    deps = [
+        "@com_github_google_go_containerregistry//pkg/v1:pkg",
+    ],
+)
+
+go_test(
+    name = "prefetch_test",
+    srcs = ["prefetch_test.go"],
+    embed = [":prefetch"],
+    deps = [
+        "@com_github_google_go_containerregistry//pkg/v1:pkg",
+        "@com_github_google_go_containerregistry//pkg/v1/types",
+    ],
+)
