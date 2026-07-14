@@ -3,11 +3,13 @@ package progress
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"sync"
 	"time"
 
+	registryv1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/jedib0t/go-pretty/v6/progress"
 	"golang.org/x/term"
 )
@@ -276,17 +278,170 @@ func NewIndeterminate(ctx context.Context, message string) *Indeterminate {
 	return &Indeterminate{tracker: tracker}
 }
 
+// StartLogger emits progress updates according to the active output mode:
+// no output when progress is disabled by environment, progress bars on TTYs,
+// and throttled line-oriented logs for non-interactive outputs such as CI.
+func StartLogger(interval time.Duration, prefix string) (chan<- registryv1.Update, func()) {
+	if progressDisabled() {
+		return nil, func() {}
+	}
+
+	updates := make(chan registryv1.Update, 1024)
+	if stderrIsTerminal() {
+		return updates, startBarLogger(updates, prefix)
+	}
+	return updates, startPlainLogger(updates, interval, prefix)
+}
+
+func startBarLogger(updates chan registryv1.Update, prefix string) func() {
+	pw := progress.NewWriter()
+	pw.SetAutoStop(false)
+
+	style := progress.StyleDefault
+	style.Visibility.Time = false
+	style.Visibility.Percentage = true
+	style.Visibility.Speed = true
+	style.Visibility.Tracker = true
+	style.Visibility.Value = true
+	style.Options.DoneString = "complete"
+	pw.SetStyle(style)
+
+	pw.SetTrackerLength(60)
+	pw.SetTrackerPosition(progress.PositionRight)
+	pw.SetUpdateFrequency(100 * time.Millisecond)
+	pw.SetOutputWriter(os.Stderr)
+
+	tracker := &progress.Tracker{
+		Message: prefix,
+		Units:   progress.UnitsBytes,
+	}
+	pw.AppendTracker(tracker)
+	go pw.Render()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for update := range updates {
+			if update.Error != nil {
+				tracker.MarkAsErrored()
+				continue
+			}
+			if update.Total > 0 {
+				tracker.UpdateTotal(update.Total)
+			}
+			tracker.SetValue(update.Complete)
+		}
+		tracker.MarkAsDone()
+		pw.Stop()
+		time.Sleep(110 * time.Millisecond)
+	}()
+
+	return func() {
+		close(updates)
+		<-done
+	}
+}
+
+func startPlainLogger(updates chan registryv1.Update, interval time.Duration, prefix string) func() {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+
+		var latest registryv1.Update
+		haveLatest := false
+		var lastLoggedComplete int64 = -1
+		var lastLoggedTotal int64 = -1
+
+		logLatest := func(final bool) {
+			if !haveLatest {
+				return
+			}
+			if latest.Complete == lastLoggedComplete && latest.Total == lastLoggedTotal && !final {
+				return
+			}
+			lastLoggedComplete = latest.Complete
+			lastLoggedTotal = latest.Total
+
+			status := "progress"
+			if final {
+				status = "complete"
+			}
+			if latest.Total > 0 {
+				percent := float64(latest.Complete) * 100 / float64(latest.Total)
+				fmt.Fprintf(os.Stderr, "%s %s: %s/%s (%.1f%%)\n", prefix, status, formatByteCount(latest.Complete), formatByteCount(latest.Total), percent)
+				return
+			}
+			fmt.Fprintf(os.Stderr, "%s %s: %s transferred\n", prefix, status, formatByteCount(latest.Complete))
+		}
+
+		for {
+			select {
+			case update, ok := <-updates:
+				if !ok {
+					logLatest(true)
+					return
+				}
+				if update.Error != nil {
+					fmt.Fprintf(os.Stderr, "%s progress error: %v\n", prefix, update.Error)
+					continue
+				}
+				latest = update
+				haveLatest = true
+			case <-ticker.C:
+				logLatest(false)
+			}
+		}
+	}()
+	return func() {
+		close(updates)
+		<-done
+	}
+}
+
 var noProgressEnvVars = []string{
 	"NO_PROGRESS",
 	"NO_INTERACTIVE",
 	"NO_COLOR",
 }
 
-var wantProgressBar = sync.OnceValue(func() bool {
+var progressDisabled = sync.OnceValue(func() bool {
 	for _, envVar := range noProgressEnvVars {
 		if _, exists := os.LookupEnv(envVar); exists {
-			return false
+			return true
 		}
 	}
+	return false
+})
+
+var stderrIsTerminal = sync.OnceValue(func() bool {
 	return term.IsTerminal(int(os.Stderr.Fd()))
 })
+
+var wantProgressBar = sync.OnceValue(func() bool {
+	return !progressDisabled() && stderrIsTerminal()
+})
+
+var wantPlainProgress = sync.OnceValue(func() bool {
+	return !progressDisabled() && !stderrIsTerminal()
+})
+
+func WantPlainProgress() bool {
+	return wantPlainProgress()
+}
+
+func formatByteCount(bytes int64) string {
+	const unit = 1024
+	if bytes < unit {
+		return fmt.Sprintf("%d B", bytes)
+	}
+	div := int64(unit)
+	exp := 0
+	for n := bytes / unit; n >= unit && exp < len("KMGTPE")-1; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %ciB", float64(bytes)/float64(div), "KMGTPE"[exp])
+}

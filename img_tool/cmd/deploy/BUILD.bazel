@@ -17,6 +17,7 @@ go_library(
         "//pkg/deployvfs",
         "//pkg/load",
         "//pkg/persistentworker",
+        "//pkg/progress",
         "//pkg/proto/blobcache",
         "//pkg/push",
         "@com_github_google_go_containerregistry//pkg/name",

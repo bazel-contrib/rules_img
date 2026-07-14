@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"golang.org/x/sync/errgroup"
 
@@ -27,6 +28,7 @@ import (
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/deployvfs"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/load"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/persistentworker"
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/progress"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/proto/blobcache"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/push"
 )
@@ -77,6 +79,10 @@ func DeployProcess(ctx context.Context, args []string) {
 
 	if flagSet.NArg() != 0 {
 		flagSet.Usage()
+		os.Exit(1)
+	}
+	if jobs <= 0 {
+		fmt.Fprintf(os.Stderr, "Error: --jobs must be greater than zero, got %d\n", jobs)
 		os.Exit(1)
 	}
 
@@ -215,10 +221,6 @@ func DeployWithExtras(ctx context.Context, rawRequest []byte, opts DeployOptions
 	for digest, filePath := range opts.ExplicitLayers {
 		vfsBuilder = vfsBuilder.WithExplicitLayer(digest, filePath)
 	}
-	vfs, err := vfsBuilder.Build()
-	if err != nil {
-		return fmt.Errorf("building VFS: %w", err)
-	}
 
 	pushOperations, err := req.PushOperations()
 	if err != nil {
@@ -234,6 +236,12 @@ func DeployWithExtras(ctx context.Context, rawRequest []byte, opts DeployOptions
 	}
 	if len(pushOperations) == 0 && len(loadOperations) == 0 && len(registryTagOperations) == 0 {
 		return fmt.Errorf("no push, load, or registry_tag operations found in deploy manifest")
+	}
+	logDeployConfig(req, opts, len(pushOperations), len(loadOperations), len(registryTagOperations))
+
+	vfs, err := vfsBuilder.Build()
+	if err != nil {
+		return fmt.Errorf("building VFS: %w", err)
 	}
 
 	// check if any operation requires a blob cache endpoint
@@ -257,7 +265,14 @@ func DeployWithExtras(ctx context.Context, rawRequest []byte, opts DeployOptions
 	var pusher *remote.Pusher
 	needsPusher := len(pushOperations) > 0 || len(registryTagOperations) > 0
 	if needsPusher && req.Settings.PushStrategy != "bes" {
-		pusher, err = remote.NewPusher(registry.WithAuthFromMultiKeychain(), remote.WithJobs(opts.Jobs))
+		remoteOptions := []remote.Option{registry.WithAuthFromMultiKeychain(), remote.WithJobs(opts.Jobs)}
+		progressUpdates, stopProgressLogger := progress.StartLogger(pushProgressLogInterval, "push")
+		defer stopProgressLogger()
+		if progressUpdates != nil {
+			remoteOptions = append(remoteOptions, remote.WithProgress(progressUpdates))
+		}
+
+		pusher, err = remote.NewPusher(remoteOptions...)
 		if err != nil {
 			return fmt.Errorf("creating pusher: %w", err)
 		}
@@ -335,6 +350,21 @@ func DeployWithExtras(ctx context.Context, rawRequest []byte, opts DeployOptions
 	}
 
 	return nil
+}
+
+const pushProgressLogInterval = time.Minute
+
+func logDeployConfig(req api.DeployManifest, opts DeployOptions, pushOps int, loadOps int, registryTagOps int) {
+	fmt.Fprintf(os.Stderr, "deploy config: jobs=%d push_strategy=%s load_strategy=%s push_ops=%d load_ops=%d registry_tag_ops=%d\n", opts.Jobs, req.Settings.PushStrategy, req.Settings.LoadStrategy, pushOps, loadOps, registryTagOps)
+	if opts.OverrideRegistry != "" {
+		fmt.Fprintf(os.Stderr, "deploy config: override_registry=%s\n", opts.OverrideRegistry)
+	}
+	if opts.OverrideRepository != "" {
+		fmt.Fprintf(os.Stderr, "deploy config: override_repository=%s\n", opts.OverrideRepository)
+	}
+	if len(opts.AdditionalTags) > 0 {
+		fmt.Fprintf(os.Stderr, "deploy config: additional_tags=%s\n", strings.Join(opts.AdditionalTags, ","))
+	}
 }
 
 // applyRegistryTagOperations writes the pre-expanded tags from registry_tag
