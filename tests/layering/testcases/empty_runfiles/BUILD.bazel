@@ -1,0 +1,41 @@
+load("@rules_img//img:layer.bzl", "image_layer", "layer_from_binary")
+load("//tests/layering:defs.bzl", "layer_contents_test")
+
+# gazelle:exclude_from_release
+
+# Regression coverage for runfiles.empty_filenames placement.
+#
+# The fixture binary (@empty_runfiles_fixture//:fixture, built by the
+# empty_runfiles_repo repository rule) carries empty __init__.py runfiles in two
+# namespaces: the main module (short paths with no "../") and an external repo
+# (short paths starting with "../"). Both must be mapped through the same
+# namespace transform as real runfiles, landing under ".runfiles/_main/..." and
+# ".runfiles/<repo>/..." respectively -- never at the runfiles root (which drops
+# the "_main/" anchor and shadows the real tree) nor with a literal "../" that
+# escapes the runfiles tree. Exercised through both layer_from_binary and
+# image_layer, which populate empty files via separate code paths.
+
+layer_from_binary(
+    name = "from_binary_layer",
+    binary = "@empty_runfiles_fixture//:fixture",
+    path = "/app/app",
+)
+
+layer_contents_test(
+    name = "from_binary_test",
+    size = "small",
+    layer = ":from_binary_layer",
+    manifests = ["from_binary.ndjson"],
+)
+
+image_layer(
+    name = "image_layer_layer",
+    srcs = {"/app/app": "@empty_runfiles_fixture//:fixture"},
+)
+
+layer_contents_test(
+    name = "image_layer_test",
+    size = "small",
+    layer = ":image_layer_layer",
+    manifests = ["image_layer.ndjson"],
+)

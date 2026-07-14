@@ -5,6 +5,7 @@ load("//img/private/common:layer_attrs.bzl", "layer_attrs")
 load(
     "//img/private/common:tar_layer.bzl",
     "create_tar_layer",
+    "empty_runfile_short_path",
     "file_type",
     "files_arg",
     "get_repo_mapping_manifest",
@@ -70,7 +71,7 @@ def _image_layer_impl(ctx):
                 empty_files_args = ctx.actions.args()
                 empty_files_args.set_param_file_format("multiline")
                 empty_files_args.use_param_file("--empty-files-from-file=%s", use_always = True)
-                empty_files_args.add_all(runfiles.empty_filenames, format_each = "{}.runfiles/%s".format(path_in_image))
+                empty_files_args.add_all(runfiles.empty_filenames, map_each = empty_runfile_short_path, format_each = "{}.runfiles/%s".format(path_in_image))
                 extra_args.append(empty_files_args)
                 repo_mapping_manifest = get_repo_mapping_manifest(files)
                 if repo_mapping_manifest != None:

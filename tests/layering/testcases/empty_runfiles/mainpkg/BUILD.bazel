@@ -1,0 +1,5 @@
+# gazelle:exclude_from_release
+exports_files(
+    ["mod.py"],
+    visibility = ["//visibility:public"],
+)

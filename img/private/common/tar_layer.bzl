@@ -33,6 +33,17 @@ def to_short_path_pair(f):
         return "{}\0{}{}".format(f.short_path[3:], type, f.path)
     return "_main/{}\0{}{}".format(f.short_path, type, f.path)
 
+def empty_runfile_short_path(empty_filename):
+    # runfiles.empty_filenames use the same convention as File.short_path:
+    # external-repo entries start with "../<repo>/", main-repo entries are
+    # repo-relative. Mirror to_short_path_pair so empty (e.g. __init__.py)
+    # runfiles land in the same namespace as real runfiles: external repos keep
+    # their name and main-repo files are anchored under _main/. Meant to be used
+    # as an add_all(map_each=...) callback ahead of the runfiles-root format_each.
+    if empty_filename.startswith("../"):
+        return empty_filename[3:]
+    return "_main/{}".format(empty_filename)
+
 def root_symlinks_arg(x):
     type = file_type(x.target_file)
     return "{}\0{}{}".format(x.path, type, x.target_file.path)
@@ -44,13 +55,12 @@ def symlinks_arg(x):
 def _rebase_short_path(f):
     """Rebase a File's short_path into the unified runfiles-tree namespace.
 
-    Main-repo files are placed under "_main/", external-repo files (whose
-    short_path starts with "../") keep their repo name. This mirrors the layout
-    produced by to_short_path_pair for runfiles.
+    A File-typed convenience wrapper around empty_runfile_short_path: File
+    short_paths and runfiles.empty_filenames share the same convention, so both
+    rebase the same way (main-repo files under "_main/", external-repo files keep
+    their repo name). Mirrors the layout to_short_path_pair produces for runfiles.
     """
-    if f.short_path.startswith("../"):
-        return f.short_path[3:]
-    return "_main/{}".format(f.short_path)
+    return empty_runfile_short_path(f.short_path)
 
 def _place_files_header(mode, dest, anchor, skip):
     """Build the header line for a --place-files parameter file.

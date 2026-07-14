@@ -14,6 +14,7 @@ load(
     "//img/private/common:tar_layer.bzl",
     "create_tar_layer",
     "create_tar_single_layer",
+    "empty_runfile_short_path",
     "file_type",
     "files_arg",
     "get_repo_mapping_manifest",
@@ -271,7 +272,7 @@ def _create_grouped_layers(ctx, settings, exe, path_in_image, ordered_groups, ru
         empty_args = ctx.actions.args()
         empty_args.set_param_file_format("multiline")
         empty_args.use_param_file("--empty-files-from-file=%s", use_always = True)
-        empty_args.add_all(group.runfiles.empty_filenames, format_each = "{}/%s".format(content_prefix))
+        empty_args.add_all(group.runfiles.empty_filenames, map_each = empty_runfile_short_path, format_each = "{}/%s".format(content_prefix))
         extra_args.append(empty_args)
 
         if i == executable_group_index:
@@ -419,7 +420,7 @@ def _layer_from_binary_impl(ctx):
                     empty_args = ctx.actions.args()
                     empty_args.set_param_file_format("multiline")
                     empty_args.use_param_file("--empty-files-from-file=%s", use_always = True)
-                    empty_args.add_all(runfiles.empty_filenames, format_each = "{}/%s".format(content_prefix))
+                    empty_args.add_all(runfiles.empty_filenames, map_each = empty_runfile_short_path, format_each = "{}/%s".format(content_prefix))
                     extra_args.append(empty_args)
 
                 repo_mapping_manifest = get_repo_mapping_manifest(ctx.attr.binary)
@@ -458,7 +459,7 @@ def _layer_from_binary_impl(ctx):
                     empty_args = ctx.actions.args()
                     empty_args.set_param_file_format("multiline")
                     empty_args.use_param_file("--empty-files-from-file=%s", use_always = True)
-                    empty_args.add_all(runfiles.empty_filenames, format_each = "{}/%s".format(content_prefix))
+                    empty_args.add_all(runfiles.empty_filenames, map_each = empty_runfile_short_path, format_each = "{}/%s".format(content_prefix))
                     extra_args.append(empty_args)
 
                 if runfiles_config.shared and runfiles:
