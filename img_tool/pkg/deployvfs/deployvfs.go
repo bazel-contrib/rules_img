@@ -21,6 +21,7 @@ import (
 
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/api"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/cas"
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/prefetch"
 )
 
 // Stats tracks statistics about blob access in the VFS.
@@ -101,6 +102,12 @@ func (vfs *VFS) Layer(digest registryv1.Hash) (registryv1.Layer, error) {
 		return nil, fmt.Errorf("layer with digest %s not found in VFS", digest.String())
 	}
 
+	// Prefetch layer contents into memory ahead of the consumer so that a slow
+	// consumer (e.g. a network upload) does not stall the underlying blob
+	// source. This wraps the raw blob entry; any MountableLayer shim is applied
+	// on top so remote.Write can still detect it for cross-repo mounts.
+	layer := prefetch.NewLayer(entry)
+
 	if hint, found := vfs.crossMountHints[digest.String()]; found {
 		reg, err := registryname.NewRegistry(hint.Registry, registryname.WithDefaultRegistry(""))
 		if err != nil {
@@ -108,12 +115,12 @@ func (vfs *VFS) Layer(digest registryv1.Hash) (registryv1.Layer, error) {
 		}
 
 		return &remote.MountableLayer{
-			Layer:     entry,
+			Layer:     layer,
 			Reference: reg.Repo(hint.Repository).Digest(digest.String()),
 		}, nil
 	}
 
-	return entry, nil
+	return layer, nil
 }
 
 func (vfs *VFS) ManifestBlob(digest registryv1.Hash) (registryv1.Layer, error) {
