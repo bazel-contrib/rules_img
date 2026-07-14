@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"slices"
 	"sort"
+	"sync"
 
 	"golang.org/x/sync/errgroup"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/api"
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/progress"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/proto/blobcache"
 	blobcache_proto "github.com/bazel-contrib/rules_img/img_tool/pkg/proto/blobcache"
 	remoteexecution_proto "github.com/bazel-contrib/rules_img/img_tool/pkg/proto/remote-apis/build/bazel/remote/execution/v2"
@@ -132,14 +134,40 @@ func (u *uploader) PushAll(ctx context.Context, ops []api.IndexedPushDeployOpera
 		}
 	}
 
+	ctx, stopProgress := progress.InitProgress(ctx, "pushed")
+	prog := progress.NewIndeterminate(ctx, "pushing")
+
+	var progCh chan registryv1.Update
+	var drainWg sync.WaitGroup
+
 	pusher := u.pusher
 	if pusher == nil {
+		progCh = make(chan registryv1.Update, 256)
+		drainWg.Add(1)
+		go func() {
+			defer drainWg.Done()
+			for update := range progCh {
+				prog.SetTotal(update.Total)
+				prog.SetComplete(update.Complete)
+			}
+		}()
 		var err error
-		pusher, err = remote.NewPusher(append(u.remoteOptions, remote.WithJobs(u.jobs))...)
+		pusher, err = remote.NewPusher(append(u.remoteOptions, remote.WithJobs(u.jobs), remote.WithProgress(progCh))...)
 		if err != nil {
+			close(progCh)
+			drainWg.Wait()
 			return nil, fmt.Errorf("creating pusher: %w", err)
 		}
 	}
+
+	defer func() {
+		if progCh != nil {
+			close(progCh)
+			drainWg.Wait()
+		}
+		prog.Done(retErr)
+		stopProgress()
+	}()
 
 	g, ctx := errgroup.WithContext(ctx)
 	g.SetLimit(u.jobs)

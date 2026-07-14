@@ -253,10 +253,10 @@ func DeployWithExtras(ctx context.Context, rawRequest []byte, opts DeployOptions
 		haveBlobCacheCient = true
 	}
 
-	// Create a single persistent pusher for all push operations (including registry_tag)
+	// Create a pusher for registry_tag operations only.
+	// Push operations use an internally-created pusher in PushAll (with progress tracking).
 	var pusher *remote.Pusher
-	needsPusher := len(pushOperations) > 0 || len(registryTagOperations) > 0
-	if needsPusher && req.Settings.PushStrategy != "bes" {
+	if len(registryTagOperations) > 0 && req.Settings.PushStrategy != "bes" {
 		pusher, err = remote.NewPusher(registry.WithAuthFromMultiKeychain(), remote.WithJobs(opts.Jobs))
 		if err != nil {
 			return fmt.Errorf("creating pusher: %w", err)
@@ -269,7 +269,6 @@ func DeployWithExtras(ctx context.Context, rawRequest []byte, opts DeployOptions
 
 	if len(pushOperations) > 0 {
 		uploadBuilder := push.NewBuilder(vfs).
-			WithPusher(pusher).
 			WithJobs(opts.Jobs).
 			WithRemoteOptions(registry.WithAuthFromMultiKeychain())
 		if haveBlobCacheCient {
