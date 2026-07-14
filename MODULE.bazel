@@ -68,6 +68,16 @@ register_toolchains(
 module_version = use_extension("//img/private/config:defs.bzl", "module_version", dev_dependency = True)
 use_repo(module_version, "rules_img_version")
 
+# Fixture repo for the layering test suite: a Python-toolchain-free "binary"
+# whose runfiles carry empty_filenames from both the main module and an external
+# repo, used to regression-test runfiles.empty_filenames placement in layers.
+empty_runfiles_repo = use_repo_rule("//tests/layering:empty_runfiles_repo.bzl", "empty_runfiles_repo")
+
+empty_runfiles_repo(
+    name = "empty_runfiles_fixture",
+    dev_dependency = True,
+)
+
 bazel_binaries = use_extension(
     "@rules_bazel_integration_test//:extensions.bzl",
     "bazel_binaries",
