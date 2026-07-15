@@ -97,8 +97,27 @@ func TestWriteSingleManifest(t *testing.T) {
 	if index.Manifests[0].Annotations["io.containerd.image.name"] != "registry.io/repo:v1.0" {
 		t.Errorf("wrong containerd annotation: %v", index.Manifests[0].Annotations)
 	}
-	if index.Manifests[0].Annotations["org.opencontainers.image.ref.name"] != "v1.0" {
+	if index.Manifests[0].Annotations["org.opencontainers.image.ref.name"] != "registry.io/repo:v1.0" {
 		t.Errorf("wrong ref.name annotation: %v", index.Manifests[0].Annotations)
+	}
+
+	// Verify tagOnly mode produces just the tag
+	var buf2 bytes.Buffer
+	optsTagOnly := Options{
+		Tags:              []string{"registry.io/repo:v1.0"},
+		OCITags:           []string{"registry.io/repo:v1.0"},
+		OCIRefNameTagOnly: true,
+	}
+	if err := WriteSingleManifest(context.Background(), &buf2, manifest, manifestData, source, optsTagOnly); err != nil {
+		t.Fatalf("WriteSingleManifest (tagOnly) failed: %v", err)
+	}
+	filesTagOnly := extractTar(t, &buf2)
+	var indexTagOnly v1.IndexManifest
+	if err := json.Unmarshal(filesTagOnly["index.json"], &indexTagOnly); err != nil {
+		t.Fatalf("parsing tagOnly index.json: %v", err)
+	}
+	if indexTagOnly.Manifests[0].Annotations["org.opencontainers.image.ref.name"] != "v1.0" {
+		t.Errorf("tagOnly: wrong ref.name annotation: %v", indexTagOnly.Manifests[0].Annotations)
 	}
 
 	// Verify manifest.json (Docker format)

@@ -32,10 +32,11 @@ type ManifestDescriptor struct {
 }
 
 type Options struct {
-	Tags           []string
-	OCITags        []string
-	ProgressFunc   func(ctx context.Context, size int64, name string) io.Writer
-	ManifestFilter ManifestFilter
+	Tags              []string
+	OCITags           []string
+	ProgressFunc      func(ctx context.Context, size int64, name string) io.Writer
+	ManifestFilter    ManifestFilter
+	OCIRefNameTagOnly bool // if true, org.opencontainers.image.ref.name is set to just the tag (OCI spec); default is full reference (compatible with skopeo/rules_oci)
 }
 
 type ManifestInfo struct {
@@ -61,7 +62,9 @@ func hashBytes(data []byte) v1.Hash {
 // can recover image names from the descriptors of the root index.json file based on some well-known annotations:
 //   - Containerd uses "io.containerd.image.name" to refer to the full image name (<registry>/<repository>:<tag>)
 //   - Apple Containerization uses "com.apple.containerization.image.name" to refer to the full image name (<registry>/<repository>:<tag>)
-//   - The OCI image spec mentions "org.opencontainers.image.ref.name" to refer to the tag only (i.e. "latest")
+//   - The OCI image spec mentions "org.opencontainers.image.ref.name" to refer to the tag only (i.e. "latest"),
+//     but we set it to the full image reference by default because tools like skopeo require a fully-qualified reference.
+//     Pass tagOnly=true to use the OCI-spec-compliant short tag form instead.
 //
 // Note that the "org.opencontainers.image.ref.name" may not be unique within the index.json file.
 // This is surprising, but allowed by the OCI image spec. Other tools also generate duplicate ref.name attributes.
@@ -70,7 +73,7 @@ func hashBytes(data []byte) v1.Hash {
 //
 // Annotations from the referenced content (data) are copied into the produced descriptors.
 // Tag annotations take precedence over content annotations.
-func DescriptorsForTags(ociTags []string, mediaType types.MediaType, data []byte, digest v1.Hash, artifactType string) []v1.Descriptor {
+func DescriptorsForTags(ociTags []string, mediaType types.MediaType, data []byte, digest v1.Hash, artifactType string, tagOnly bool) []v1.Descriptor {
 	size := int64(len(data))
 
 	var parsed struct {
@@ -92,8 +95,12 @@ func DescriptorsForTags(ociTags []string, mediaType types.MediaType, data []byte
 		maps.Copy(annotations, parsed.Annotations)
 		annotations[api.AnnotationContainerdImageName] = repoTag
 		annotations[api.AnnotationAppleContainerizationImageName] = repoTag
-		if ref, err := name.NewTag(repoTag, name.WithDefaultTag("")); err == nil && ref.TagStr() != "" {
-			annotations[api.AnnotationOCIImageRefName] = ref.TagStr()
+		if tagOnly {
+			if ref, err := name.NewTag(repoTag, name.WithDefaultTag("")); err == nil && ref.TagStr() != "" {
+				annotations[api.AnnotationOCIImageRefName] = ref.TagStr()
+			}
+		} else {
+			annotations[api.AnnotationOCIImageRefName] = repoTag
 		}
 		desc := v1.Descriptor{
 			MediaType:   mediaType,
@@ -120,7 +127,7 @@ func WriteSingleManifest(ctx context.Context, w io.Writer, manifest *v1.Manifest
 	if manifest.Config.MediaType != "" && !manifest.Config.MediaType.IsConfig() {
 		artifactType = string(manifest.Config.MediaType)
 	}
-	indexManifests := DescriptorsForTags(opts.OCITags, manifest.MediaType, manifestData, manifestDigest, artifactType)
+	indexManifests := DescriptorsForTags(opts.OCITags, manifest.MediaType, manifestData, manifestDigest, artifactType, opts.OCIRefNameTagOnly)
 	ociIndex := v1.IndexManifest{
 		SchemaVersion: 2,
 		MediaType:     "application/vnd.oci.image.index.v1+json",
@@ -251,7 +258,7 @@ func WriteIndex(ctx context.Context, w io.Writer, indexData []byte, manifestInfo
 	indexDigest := hashBytes(indexData)
 
 	// Build root OCI index.json (wraps the original index blob)
-	rootManifests := DescriptorsForTags(opts.OCITags, types.OCIImageIndex, indexData, indexDigest, "")
+	rootManifests := DescriptorsForTags(opts.OCITags, types.OCIImageIndex, indexData, indexDigest, "", opts.OCIRefNameTagOnly)
 	rootIndex := v1.IndexManifest{
 		SchemaVersion: 2,
 		MediaType:     "application/vnd.oci.image.index.v1+json",

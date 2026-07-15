@@ -108,6 +108,7 @@ func DockerSaveProcess(ctx context.Context, args []string) {
 	var indexPath string
 	var manifestPaths stringSliceFlag
 	var configPaths stringSliceFlag
+	var ociRefNameTagOnly bool
 
 	flagSet := flag.NewFlagSet("docker-save", flag.ExitOnError)
 	flagSet.Usage = func() {
@@ -137,6 +138,7 @@ func DockerSaveProcess(ctx context.Context, args []string) {
 	flagSet.StringVar(&indexPath, "index", "", "Path to the image index (for multi-platform, mutually exclusive with --manifest and --config)")
 	flagSet.Var(&manifestPaths, "manifest-path", "Path to manifest file (for index, can be specified multiple times)")
 	flagSet.Var(&configPaths, "config-path", "Path to config file (for index, can be specified multiple times)")
+	flagSet.BoolVar(&ociRefNameTagOnly, "oci-ref-name-tag-only", false, "Set org.opencontainers.image.ref.name to just the tag (OCI spec); default uses the full reference (compatible with skopeo and rules_oci)")
 
 	if err := flagSet.Parse(args); err != nil {
 		flagSet.Usage()
@@ -194,7 +196,7 @@ func DockerSaveProcess(ctx context.Context, args []string) {
 			fmt.Fprintf(os.Stderr, "Error: --index requires at least one --manifest-path and --config-path\n")
 			os.Exit(1)
 		}
-		err = assembleDockerSaveWithIndex(indexPath, outputPath, format, manifestPaths, configPaths, layerFlags, repoTags, ociTags, useSymlinks, allowMissingBlobs)
+		err = assembleDockerSaveWithIndex(indexPath, outputPath, format, manifestPaths, configPaths, layerFlags, repoTags, ociTags, useSymlinks, allowMissingBlobs, ociRefNameTagOnly)
 	} else {
 		// Single manifest mode
 		if manifestPath == "" {
@@ -211,7 +213,7 @@ func DockerSaveProcess(ctx context.Context, args []string) {
 			fmt.Fprintf(os.Stderr, "Error: cannot use --manifest-path or --config-path without --index\n")
 			os.Exit(1)
 		}
-		err = assembleDockerSave(manifestPath, configPath, outputPath, format, layerFlags, repoTags, ociTags, useSymlinks, allowMissingBlobs)
+		err = assembleDockerSave(manifestPath, configPath, outputPath, format, layerFlags, repoTags, ociTags, useSymlinks, allowMissingBlobs, ociRefNameTagOnly)
 	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -219,7 +221,7 @@ func DockerSaveProcess(ctx context.Context, args []string) {
 	}
 }
 
-func assembleDockerSave(manifestPath, configPath, outputPath, format string, layers layerMappingFlag, repoTags, ociTags []string, useSymlinks, allowMissingBlobs bool) error {
+func assembleDockerSave(manifestPath, configPath, outputPath, format string, layers layerMappingFlag, repoTags, ociTags []string, useSymlinks, allowMissingBlobs, ociRefNameTagOnly bool) error {
 	// Read and parse the manifest
 	manifestData, err := os.ReadFile(manifestPath)
 	if err != nil {
@@ -271,12 +273,12 @@ func assembleDockerSave(manifestPath, configPath, outputPath, format string, lay
 	}
 
 	if format == "tar" {
-		return assembleDockerSaveTar(outputPath, &manifest, manifestData, blobs, repoTags, ociTags)
+		return assembleDockerSaveTar(outputPath, &manifest, manifestData, blobs, repoTags, ociTags, ociRefNameTagOnly)
 	}
-	return assembleDockerSaveDirectory(outputPath, &manifest, manifestData, blobs, repoTags, ociTags, useSymlinks)
+	return assembleDockerSaveDirectory(outputPath, &manifest, manifestData, blobs, repoTags, ociTags, useSymlinks, ociRefNameTagOnly)
 }
 
-func assembleDockerSaveTar(outputPath string, manifest *v1.Manifest, manifestData []byte, blobs blobMap, repoTags, ociTags []string) error {
+func assembleDockerSaveTar(outputPath string, manifest *v1.Manifest, manifestData []byte, blobs blobMap, repoTags, ociTags []string, ociRefNameTagOnly bool) error {
 	var w *os.File
 	var err error
 	if outputPath == "-" {
@@ -291,13 +293,14 @@ func assembleDockerSaveTar(outputPath string, manifest *v1.Manifest, manifestDat
 
 	source := &fileBlobSource{blobs: blobs}
 	opts := ocitar.Options{
-		Tags:    repoTags,
-		OCITags: ociTags,
+		Tags:              repoTags,
+		OCITags:           ociTags,
+		OCIRefNameTagOnly: ociRefNameTagOnly,
 	}
 	return ocitar.WriteSingleManifest(context.Background(), w, manifest, manifestData, source, opts)
 }
 
-func assembleDockerSaveDirectory(outputPath string, manifest *v1.Manifest, manifestData []byte, blobs blobMap, repoTags, ociTags []string, useSymlinks bool) error {
+func assembleDockerSaveDirectory(outputPath string, manifest *v1.Manifest, manifestData []byte, blobs blobMap, repoTags, ociTags []string, useSymlinks, ociRefNameTagOnly bool) error {
 	sink := NewDirectorySink(outputPath)
 	defer sink.Close()
 
@@ -318,7 +321,7 @@ func assembleDockerSaveDirectory(outputPath string, manifest *v1.Manifest, manif
 	if manifest.Config.MediaType != "" && !manifest.Config.MediaType.IsConfig() {
 		artifactType = string(manifest.Config.MediaType)
 	}
-	manifests := ocitar.DescriptorsForTags(ociTags, manifest.MediaType, manifestData, manifestDigest, artifactType)
+	manifests := ocitar.DescriptorsForTags(ociTags, manifest.MediaType, manifestData, manifestDigest, artifactType, ociRefNameTagOnly)
 	ociIndex := v1.IndexManifest{
 		SchemaVersion: 2,
 		MediaType:     "application/vnd.oci.image.index.v1+json",
@@ -400,7 +403,7 @@ func (f *fileBlobSource) OpenBlob(_ context.Context, hexDigest string) (io.ReadC
 	return file, info.Size(), nil
 }
 
-func assembleDockerSaveWithIndex(indexPath, outputPath, format string, manifestPaths, configPaths []string, layers layerMappingFlag, repoTags, ociTags []string, useSymlinks, allowMissingBlobs bool) error {
+func assembleDockerSaveWithIndex(indexPath, outputPath, format string, manifestPaths, configPaths []string, layers layerMappingFlag, repoTags, ociTags []string, useSymlinks, allowMissingBlobs, ociRefNameTagOnly bool) error {
 	// Build a map of available layers by their digest
 	layerBlobsByDigest := make(map[string]string)
 	for _, layer := range layers {
@@ -475,12 +478,12 @@ func assembleDockerSaveWithIndex(indexPath, outputPath, format string, manifestP
 	blobs[indexDigest.Hex] = indexPath
 
 	if format == "tar" {
-		return assembleDockerSaveWithIndexTar(outputPath, indexData, manifestInfos, blobs, repoTags, ociTags)
+		return assembleDockerSaveWithIndexTar(outputPath, indexData, manifestInfos, blobs, repoTags, ociTags, ociRefNameTagOnly)
 	}
-	return assembleDockerSaveWithIndexDirectory(outputPath, indexData, indexDigest, manifestInfos, blobs, repoTags, ociTags, useSymlinks)
+	return assembleDockerSaveWithIndexDirectory(outputPath, indexData, indexDigest, manifestInfos, blobs, repoTags, ociTags, useSymlinks, ociRefNameTagOnly)
 }
 
-func assembleDockerSaveWithIndexTar(outputPath string, indexData []byte, manifestInfos []ocitar.ManifestInfo, blobs blobMap, repoTags, ociTags []string) error {
+func assembleDockerSaveWithIndexTar(outputPath string, indexData []byte, manifestInfos []ocitar.ManifestInfo, blobs blobMap, repoTags, ociTags []string, ociRefNameTagOnly bool) error {
 	var w *os.File
 	var err error
 	if outputPath == "-" {
@@ -495,13 +498,14 @@ func assembleDockerSaveWithIndexTar(outputPath string, indexData []byte, manifes
 
 	source := &fileBlobSource{blobs: blobs}
 	opts := ocitar.Options{
-		Tags:    repoTags,
-		OCITags: ociTags,
+		Tags:              repoTags,
+		OCITags:           ociTags,
+		OCIRefNameTagOnly: ociRefNameTagOnly,
 	}
 	return ocitar.WriteIndex(context.Background(), w, indexData, manifestInfos, source, opts)
 }
 
-func assembleDockerSaveWithIndexDirectory(outputPath string, indexData []byte, indexDigest v1.Hash, manifestInfos []ocitar.ManifestInfo, blobs blobMap, repoTags, ociTags []string, useSymlinks bool) error {
+func assembleDockerSaveWithIndexDirectory(outputPath string, indexData []byte, indexDigest v1.Hash, manifestInfos []ocitar.ManifestInfo, blobs blobMap, repoTags, ociTags []string, useSymlinks, ociRefNameTagOnly bool) error {
 	sink := NewDirectorySink(outputPath)
 	defer sink.Close()
 
@@ -516,7 +520,7 @@ func assembleDockerSaveWithIndexDirectory(outputPath string, indexData []byte, i
 	}
 
 	// Write new root index.json referencing the pre-built index blob
-	manifests := ocitar.DescriptorsForTags(ociTags, types.OCIImageIndex, indexData, indexDigest, "")
+	manifests := ocitar.DescriptorsForTags(ociTags, types.OCIImageIndex, indexData, indexDigest, "", ociRefNameTagOnly)
 	rootIndex := v1.IndexManifest{
 		SchemaVersion: 2,
 		MediaType:     "application/vnd.oci.image.index.v1+json",
