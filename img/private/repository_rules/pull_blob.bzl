@@ -281,9 +281,15 @@ def _pull_manifest_blob_impl(rctx):
         downloader = rctx.attr.downloader,
         reference = reference,
     )
-    rctx.symlink(
-        manifest_info.path,
+
+    # Write the manifest as a regular file rather than a symlink. An absolute
+    # symlink into the fetch-time output base must not appear in a repo declared
+    # reproducible: under Bazel 9 it poisons the shared repo contents cache and
+    # becomes dangling once the original output base is deleted (see #625).
+    rctx.file(
         "manifest.json",
+        content = manifest_info.data,
+        executable = False,
     )
     rctx.file(
         "digest",
