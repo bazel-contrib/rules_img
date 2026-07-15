@@ -59,6 +59,8 @@ def _build_docker_tarball(ctx, configuration_json, manifest_info = None, index_i
     args.add("--configuration-file", configuration_json.path)
     if ctx.attr._oci_layout_settings[OCILayoutSettingsInfo].allow_shallow_oci_layout:
         args.add("--allow-missing-blobs")
+    if ctx.attr._oci_ref_name[BuildSettingInfo].value == "tag_only":
+        args.add("--oci-ref-name-tag-only")
 
     inputs = [configuration_json]
 
@@ -341,6 +343,10 @@ Available options:
         ),
         _docker_config_path = attr.label(
             default = Label("//img/settings:docker_config_path"),
+            providers = [BuildSettingInfo],
+        ),
+        _oci_ref_name = attr.label(
+            default = Label("//img/settings:oci_ref_name"),
             providers = [BuildSettingInfo],
         ),
     ),

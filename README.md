@@ -155,6 +155,16 @@ common --@rules_img//img/settings:mtree_layer_layout=tar
 # the per-layer files to keep their whiteout markers, so leave mtree_layer_layout
 # at "tar" when using it.
 common --@rules_img//img/settings:mtree_image_layout=oci_layer_filesystem_applied_changeset
+
+# How org.opencontainers.image.ref.name is set in the docker save index.json.
+# "full_reference" (default) writes the full image reference
+# (e.g. registry.io/repo:tag). This is what most tools expect: rules_oci,
+# skopeo, and containerd all use the full reference to identify images.
+# "tag_only" writes just the tag (e.g. "tag"), which is what the OCI image
+# spec technically recommends. Use this if you need strict spec compliance, but
+# note that tools relying on the full reference to look up images will not find
+# them.
+common --@rules_img//img/settings:oci_ref_name=full_reference
 ```
 
 </details>

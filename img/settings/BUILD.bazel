@@ -262,3 +262,17 @@ string_flag(
     ],
     visibility = ["//visibility:public"],
 )
+
+# Controls how org.opencontainers.image.ref.name is set in the docker save index.json.
+# "full_reference" (default) uses the full image reference (e.g. registry.io/repo:tag),
+# which is compatible with skopeo and rules_oci.
+# "tag_only" uses just the tag (e.g. "tag"), which matches the OCI image spec.
+string_flag(
+    name = "oci_ref_name",
+    build_setting_default = "full_reference",
+    values = [
+        "full_reference",
+        "tag_only",
+    ],
+    visibility = ["//img/private:__subpackages__"],
+)
