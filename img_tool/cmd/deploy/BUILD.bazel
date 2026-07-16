@@ -15,6 +15,7 @@ go_library(
         "//pkg/auth/registry",
         "//pkg/cas",
         "//pkg/deployvfs",
+        "//pkg/gateway",
         "//pkg/load",
         "//pkg/persistentworker",
         "//pkg/proto/blobcache",

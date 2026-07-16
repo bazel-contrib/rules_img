@@ -1,0 +1,28 @@
+load("@bazel_skylib//rules:build_test.bzl", "build_test")
+load("@rules_go//go:def.bzl", "go_binary", "go_library")
+
+go_library(
+    name = "oci-distribution-gateway_lib",
+    srcs = [
+        "flagtypes.go",
+        "main.go",
+    ],
+    importpath = "github.com/bazel-contrib/rules_img/img_tool/cmd/oci-distribution-gateway",
+    visibility = ["//visibility:private"],
+    deps = [
+        "//pkg/auth/registry",
+        "//pkg/serve/gateway",
+    ],
+)
+
+go_binary(
+    name = "oci-distribution-gateway",
+    embed = [":oci-distribution-gateway_lib"],
+    pure = "on",
+    visibility = ["//visibility:public"],
+)
+
+build_test(
+    name = "test",
+    targets = [":oci-distribution-gateway"],
+)

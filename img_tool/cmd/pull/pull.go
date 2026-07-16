@@ -13,6 +13,7 @@ import (
 
 	reg "github.com/bazel-contrib/rules_img/img_tool/pkg/auth/registry"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/blobstore"
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/gateway"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/transport/cachedblob"
 	"github.com/google/go-containerregistry/pkg/name"
 	registryv1 "github.com/google/go-containerregistry/pkg/v1"
@@ -78,8 +79,15 @@ func PullProcess(ctx context.Context, args []string) {
 		fmt.Fprintf(os.Stderr, "Error initializing blob store: %v\n", err)
 		os.Exit(1)
 	}
-	// Create a custom HTTP client with cached blob transport
-	transport := cachedblob.NewTransport(outputDir, http.DefaultTransport, cachedblob.WithAirgapped(airgapped))
+	// Create a custom HTTP client with cached blob transport. When a registry
+	// gateway is configured (IMG_REGISTRY_PULL_GATEWAY / IMG_REGISTRY_GATEWAY),
+	// cache misses are routed through it.
+	gatewayBase, err := gateway.WrapTransport(http.DefaultTransport, gateway.ModePull)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error configuring registry gateway: %v\n", err)
+		os.Exit(1)
+	}
+	transport := cachedblob.NewTransport(outputDir, gatewayBase, cachedblob.WithAirgapped(airgapped))
 
 	// Default to docker.io if no registries specified
 	if len(registries) == 0 {
