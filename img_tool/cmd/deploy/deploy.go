@@ -26,6 +26,7 @@ import (
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/auth/registry"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/cas"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/deployvfs"
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/gateway"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/load"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/persistentworker"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/proto/blobcache"
@@ -184,7 +185,22 @@ func DeployWithExtras(ctx context.Context, rawRequest []byte, opts DeployOptions
 		return fmt.Errorf("unmarshalling deploy manifest file: %w", err)
 	}
 
-	vfsBuilder := deployvfs.NewBuilder(req).WithContainerRegistryOption(registry.WithAuthFromMultiKeychain()).WithContext(ctx)
+	// Configure optional registry gateways. When IMG_REGISTRY_*_GATEWAY is set,
+	// push requests and base-image (pull) reads are routed through the gateway.
+	// When unset, WrapTransport returns the base transport unchanged.
+	pushTransport, err := gateway.WrapTransport(remote.DefaultTransport, gateway.ModePush)
+	if err != nil {
+		return fmt.Errorf("configuring push gateway: %w", err)
+	}
+	pullTransport, err := gateway.WrapTransport(remote.DefaultTransport, gateway.ModePull)
+	if err != nil {
+		return fmt.Errorf("configuring pull gateway: %w", err)
+	}
+
+	vfsBuilder := deployvfs.NewBuilder(req).
+		WithContainerRegistryOption(registry.WithAuthFromMultiKeychain()).
+		WithContainerRegistryOption(remote.WithTransport(pullTransport)).
+		WithContext(ctx)
 	hasLazyStrategy := false
 	baseOps, err := req.BaseOperations()
 	if err != nil {
@@ -258,7 +274,7 @@ func DeployWithExtras(ctx context.Context, rawRequest []byte, opts DeployOptions
 	// Push operations use an internally-created pusher in PushAll (with progress tracking).
 	var pusher *remote.Pusher
 	if len(registryTagOperations) > 0 && req.Settings.PushStrategy != "bes" {
-		pusher, err = remote.NewPusher(registry.WithAuthFromMultiKeychain(), remote.WithJobs(opts.Jobs))
+		pusher, err = remote.NewPusher(registry.WithAuthFromMultiKeychain(), remote.WithTransport(pushTransport), remote.WithJobs(opts.Jobs))
 		if err != nil {
 			return fmt.Errorf("creating pusher: %w", err)
 		}
@@ -271,7 +287,7 @@ func DeployWithExtras(ctx context.Context, rawRequest []byte, opts DeployOptions
 	if len(pushOperations) > 0 {
 		uploadBuilder := push.NewBuilder(vfs).
 			WithJobs(opts.Jobs).
-			WithRemoteOptions(registry.WithAuthFromMultiKeychain())
+			WithRemoteOptions(registry.WithAuthFromMultiKeychain(), remote.WithTransport(pushTransport))
 		if haveBlobCacheCient {
 			uploadBuilder = uploadBuilder.WithBlobcacheClient(blobcacheClient)
 		}

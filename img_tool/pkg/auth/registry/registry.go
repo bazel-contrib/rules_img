@@ -26,6 +26,14 @@ func WithAuthFromMultiKeychain() remote.Option {
 	return remote.WithAuthFromKeychain(keychainFromEnvironment())
 }
 
+// Keychain returns the [authn.Keychain] used to resolve registry credentials.
+// It honors the same environment (IMG_CREDENTIAL_HELPER, IMG_AUTH_DEBUG) as
+// WithAuthFromMultiKeychain and is intended for callers that need the raw
+// keychain (for example to run the token exchange flow themselves).
+func Keychain() authn.Keychain {
+	return keychainFromEnvironment()
+}
+
 func keychainFromEnvironment() authn.Keychain {
 	_, debug := os.LookupEnv("IMG_AUTH_DEBUG")
 

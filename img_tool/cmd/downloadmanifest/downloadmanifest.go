@@ -14,6 +14,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 
 	reg "github.com/bazel-contrib/rules_img/img_tool/pkg/auth/registry"
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/gateway"
 )
 
 func DownloadManifestProcess(ctx context.Context, args []string) {
@@ -154,7 +155,11 @@ func downloadManifestByTag(registry, repository, tag, outputPath string, printDi
 }
 
 func downloadManifest(ref name.Reference, outputPath string, printDigest bool, resolvedDigest *string) (retErr error) {
-	descriptor, err := remote.Get(ref, reg.WithAuthFromMultiKeychain())
+	gwTransport, err := gateway.WrapTransport(remote.DefaultTransport, gateway.ModePull)
+	if err != nil {
+		return fmt.Errorf("configuring registry gateway: %w", err)
+	}
+	descriptor, err := remote.Get(ref, reg.WithAuthFromMultiKeychain(), remote.WithTransport(gwTransport))
 	if err != nil {
 		return fmt.Errorf("getting manifest: %w", err)
 	}
