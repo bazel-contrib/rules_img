@@ -65,5 +65,19 @@ oras_layer(
             configurable = False,
             doc = """Annotations to add to the layer metadata as key-value pairs.""",
         ),
+        "compress": attr.string(
+            default = "gzip",
+            values = ["auto", "gzip", "zstd"],
+            doc = """Compression algorithm to use. If set to 'auto', uses the global default compression setting.""",
+        ),
+        "create_parent_directories": attr.string(
+            default = "enabled",
+            values = ["auto", "enabled", "disabled"],
+            doc = """\
+    Whether to automatically create parent directory entries in the tar file for all files.
+    If set to 'auto', uses the global default create_parent_directories setting.
+    When enabled, parent directories will be created automatically for all files in the layer.
+    """,
+        ),
     },
 ) if bazel_features.globals.macro != None else None
