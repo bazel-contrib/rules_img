@@ -81,7 +81,7 @@ image_load(
 # Load alpine base image without modifying it
 image_load(
     name = "load_alpine",
-    image = "@alpine",
+    image = "@alpine//:final",
     tag = "ghcr.io/malt3/rules_img:alpine-sideloaded",
     visibility = ["//visibility:public"],
 )

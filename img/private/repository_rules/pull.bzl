@@ -196,13 +196,19 @@ package_metadata(
 {maybe_lazy_layer_download}
 
 image_import(
-    name = "image",
+    name = "image_import",
     digest = {digest},
     data = {data},
     files = {files},
     registries = {registries},
     repository = {repository},
     tag = {tag},
+    visibility = ["//visibility:private"],
+)
+
+alias(
+    name = "image",
+    actual = ":image_import",
     target_compatible_with = {target_compatible_with},
     visibility = ["//visibility:public"],
 )
@@ -210,6 +216,12 @@ image_import(
 alias(
     name = {name},
     actual = ":image",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "final",
+    actual = ":image_import",
     visibility = ["//visibility:public"],
 )
 """.format(
