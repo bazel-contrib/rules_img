@@ -35,6 +35,14 @@ def auth_environment(ctx, credential_helper = None, docker_config_path = None):
     if credential_helper:
         env["IMG_CREDENTIAL_HELPER"] = credential_helper
 
+    # Pulls are OCI registry operations, so honor the registry-scoped helper from
+    # the environment. The img tool resolves IMG_CREDENTIAL_HELPER_OCI_REGISTRY
+    # ahead of the generic IMG_CREDENTIAL_HELPER, so forwarding it lets it take
+    # precedence for pulls as well.
+    credential_helper_oci_registry = _configured_env(ctx, "IMG_CREDENTIAL_HELPER_OCI_REGISTRY")
+    if credential_helper_oci_registry:
+        env["IMG_CREDENTIAL_HELPER_OCI_REGISTRY"] = credential_helper_oci_registry
+
     docker_config_path = docker_config_path or _configured_attr(ctx, "docker_config_path") or _configured_env(ctx, "REGISTRY_AUTH_FILE")
     if docker_config_path:
         env["REGISTRY_AUTH_FILE"] = docker_config_path

@@ -22,11 +22,16 @@ def _credential_helper_cleared_test_impl(ctx):
     env = analysistest.begin(ctx)
     action = _download_blob_action(env)
     if action != None:
-        asserts.equals(
-            env,
-            "",
-            action.env.get("IMG_CREDENTIAL_HELPER"),
-        )
+        for var in [
+            "IMG_CREDENTIAL_HELPER",
+            "IMG_CREDENTIAL_HELPER_OCI_REGISTRY",
+            "IMG_CREDENTIAL_HELPER_REMOTE_CACHE",
+        ]:
+            asserts.equals(
+                env,
+                "",
+                action.env.get(var),
+            )
     return analysistest.end(env)
 
 _credential_helper_cleared_test = analysistest.make(
@@ -34,6 +39,10 @@ _credential_helper_cleared_test = analysistest.make(
     config_settings = {
         # buildifier: disable=canonical-repository
         "@@//img/settings:credential_helper": "tools/test-credential-helper",
+        # buildifier: disable=canonical-repository
+        "@@//img/settings:credential_helper_oci_registry": "tools/test-credential-helper",
+        # buildifier: disable=canonical-repository
+        "@@//img/settings:credential_helper_remote_cache": "tools/test-credential-helper",
     },
 )
 

@@ -27,6 +27,8 @@ def _download_blob(ctx, output):
     env = {
         # Do not inherit a host-local helper path into a potentially remote action.
         "IMG_CREDENTIAL_HELPER": "",
+        "IMG_CREDENTIAL_HELPER_OCI_REGISTRY": "",
+        "IMG_CREDENTIAL_HELPER_REMOTE_CACHE": "",
     }
     if docker_config_path:
         env["REGISTRY_AUTH_FILE"] = docker_config_path

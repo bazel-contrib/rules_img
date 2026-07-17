@@ -87,7 +87,9 @@ common --@rules_img//img/settings:remote_instance_name=my-instance-name
 
 > See [Credential Helpers](credential-helpers.md) for exactly how
 > `credential_helper` / `IMG_CREDENTIAL_HELPER` is used to authenticate this
-> remote-cache traffic.
+> remote-cache traffic. To scope a helper to the cache without affecting
+> registry auth, use `credential_helper_remote_cache` /
+> `IMG_CREDENTIAL_HELPER_REMOTE_CACHE` instead.
 
 3. Run your push target:
 ```bash

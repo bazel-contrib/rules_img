@@ -111,6 +111,12 @@ common --@rules_img//img/settings:remote_instance_name=my-instance-name
 # Falls back to $IMG_CREDENTIAL_HELPER env var.
 common --@rules_img//img/settings:credential_helper=tweag-credential-helper
 
+# Optionally scope a credential helper to a single kind of operation. Each takes
+# precedence over the generic credential_helper above and falls back to its own
+# env var ($IMG_CREDENTIAL_HELPER_OCI_REGISTRY / $IMG_CREDENTIAL_HELPER_REMOTE_CACHE).
+# common --@rules_img//img/settings:credential_helper_oci_registry=my-registry-helper
+# common --@rules_img//img/settings:credential_helper_remote_cache=my-cache-helper
+
 # Path to Docker configuration file for registry authentication.
 # If set, this will be used as REGISTRY_AUTH_FILE for authenticating to registries
 # when downloading image layers during build time (e.g., for lazy base image pulling).
@@ -320,7 +326,7 @@ For more details on working with platforms, architecture variants, and building 
 
 | Priority | Keychain | Registries | Credential Source |
 |----------|----------|------------|-------------------|
-| 1 | **Bazel credential helper** | Any | `--@rules_img//img/settings:credential_helper` or `IMG_CREDENTIAL_HELPER` env var |
+| 1 | **Bazel credential helper** | Any | `--@rules_img//img/settings:credential_helper_oci_registry` or `credential_helper`; `IMG_CREDENTIAL_HELPER_OCI_REGISTRY` or `IMG_CREDENTIAL_HELPER` env var |
 | 2 | **Docker / Podman config** | Any | `~/.docker/config.json`, `$DOCKER_CONFIG/config.json`, `${XDG_RUNTIME_DIR}/containers/auth.json` |
 | 3 | **Google** | `gcr.io`, `*.pkg.dev` | [Application Default Credentials](https://cloud.google.com/docs/authentication/application-default-credentials) (workload identity, `gcloud auth login`, service account keys) |
 | 4 | **Amazon ECR** | `*.dkr.ecr.*.amazonaws.com` | Ambient AWS credentials (env vars, `~/.aws/`, EC2/ECS instance roles). See [ECR credential helper docs](https://github.com/awslabs/amazon-ecr-credential-helper#usage). |
@@ -368,9 +374,12 @@ aws sso login
 ```bash
 # In .bazelrc
 common --@rules_img//img/settings:credential_helper=my-credential-helper
+
+# Or scope it to registry operations only, so it does not affect the remote cache:
+common --@rules_img//img/settings:credential_helper_oci_registry=my-credential-helper
 ```
 
-This uses the same credential helper protocol as Bazel itself. See the [Bazel credential helper spec](https://github.com/bazelbuild/proposals/blob/main/designs/2022-06-07-bazel-credential-helpers.md) for details.
+This uses the same credential helper protocol as Bazel itself. See the [Bazel credential helper spec](https://github.com/bazelbuild/proposals/blob/main/designs/2022-06-07-bazel-credential-helpers.md) for details, and [docs/credential-helpers.md](docs/credential-helpers.md) for how to scope a helper to the registry or the remote cache with the `credential_helper_oci_registry` / `credential_helper_remote_cache` settings.
 
 #### Bazel Sandbox and Authentication
 

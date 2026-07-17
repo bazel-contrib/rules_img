@@ -22,6 +22,43 @@ Response:
 
 This doc explains exactly where and how `rules_img` invokes such a helper.
 
+## Scoping the credential helper
+
+By default a single credential helper is used for every operation. You can also
+scope a helper to one kind of operation, which is useful when different backends
+need different credentials — for example a workload-identity helper for the
+remote cache, but your Docker config / cloud keychains for the container
+registry.
+
+Three build settings (and matching environment variables) control this:
+
+| Build setting | Environment variable | Used for |
+|---|---|---|
+| `--@rules_img//img/settings:credential_helper` | `IMG_CREDENTIAL_HELPER` | Everything, unless a scoped setting below overrides it. |
+| `--@rules_img//img/settings:credential_helper_oci_registry` | `IMG_CREDENTIAL_HELPER_OCI_REGISTRY` | OCI registry operations (push, pull, tag) only. |
+| `--@rules_img//img/settings:credential_helper_remote_cache` | `IMG_CREDENTIAL_HELPER_REMOTE_CACHE` | gRPC calls to the remote cache / remote execution API only. |
+
+Precedence rules:
+
+- For a registry operation, `credential_helper_oci_registry` is used if set,
+  otherwise `credential_helper`.
+- For a remote-cache gRPC call, `credential_helper_remote_cache` is used if set,
+  otherwise `credential_helper`.
+- Each build setting falls back to its matching environment variable when unset.
+
+When a Bazel credential helper is configured for the registry, it is tried
+**before** the Docker/cloud keychains (see the keychain priority table in the
+README). If you configure a generic `credential_helper` only for the remote
+cache, it will therefore also be used for the registry and can shadow your
+Docker credentials. To scope it to the cache only, use the remote-cache setting
+and leave the others empty:
+
+```bash
+# In .bazelrc: helper authenticates the remote cache; the registry falls back to
+# Docker config / cloud keychains.
+common --@rules_img//img/settings:credential_helper_remote_cache=%workspace%/tools/remote_cache_helper.sh
+```
+
 ## During image pulling
 
 - Through Bazel's own downloader, when a `pull()` repository rule (or the
@@ -33,6 +70,8 @@ This doc explains exactly where and how `rules_img` invokes such a helper.
   repository rule or the module extension. This is configured via
   `--@rules_img//img/settings:credential_helper` (or the `credential_helper`
   attribute on the individual `pull()`), falling back to `$IMG_CREDENTIAL_HELPER`.
+  Because these are registry operations, `$IMG_CREDENTIAL_HELPER_OCI_REGISTRY`
+  takes precedence when set.
 - **Not currently supported** for lazy layer downloads (`layer_handling =
   "lazy"`): those happen inside a build action, and we haven't found a way to
   make a credential helper available there yet.
@@ -41,9 +80,12 @@ This doc explains exactly where and how `rules_img` invokes such a helper.
 
 ### Authenticating to the remote execution system
 
-The primary use of `credential_helper` during `img load` and the `lazy` /
+The primary use of a credential helper during `img load` and the `lazy` /
 `cas_registry` push strategies is authenticating gRPC calls to Bazel's remote
-cache / remote execution API (REAPI). For each call, `rules_img` derives a URI
+cache / remote execution API (REAPI). The helper used here is
+`credential_helper_remote_cache` if set, otherwise the generic
+`credential_helper` (or, for local development, a `tools/credential-helper`
+executable in the workspace root). For each call, `rules_img` derives a URI
 from the gRPC target host and the full method name, and asks the credential
 helper for headers to attach, e.g.:
 
@@ -59,9 +101,11 @@ name is passed through unchanged, not just `Authorization`.
 ### Authenticating to a container registry
 
 For pushing (and for pulling through the `img` tool, as described above),
-`rules_img` also uses `credential_helper` as a container registry keychain via
-[go-containerregistry](https://github.com/google/go-containerregistry). Here
-the helper is queried with the bare registry host as the URI, e.g.:
+`rules_img` also uses a credential helper as a container registry keychain via
+[go-containerregistry](https://github.com/google/go-containerregistry). The
+helper used here is `credential_helper_oci_registry` if set, otherwise the
+generic `credential_helper`. Here the helper is queried with the bare registry
+host as the URI, e.g.:
 
 ```json
 {"uri": "registry.example.com"}

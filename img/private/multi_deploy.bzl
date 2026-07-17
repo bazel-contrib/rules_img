@@ -173,6 +173,14 @@ def _multi_deploy_impl(ctx):
         environment["IMG_CREDENTIAL_HELPER"] = push_settings.credential_helper or load_settings.credential_helper
         inherited_environment.append("IMG_CREDENTIAL_HELPER")
 
+    if push_settings.credential_helper_oci_registry or load_settings.credential_helper_oci_registry:
+        environment["IMG_CREDENTIAL_HELPER_OCI_REGISTRY"] = push_settings.credential_helper_oci_registry or load_settings.credential_helper_oci_registry
+        inherited_environment.append("IMG_CREDENTIAL_HELPER_OCI_REGISTRY")
+
+    if push_settings.credential_helper_remote_cache or load_settings.credential_helper_remote_cache:
+        environment["IMG_CREDENTIAL_HELPER_REMOTE_CACHE"] = push_settings.credential_helper_remote_cache or load_settings.credential_helper_remote_cache
+        inherited_environment.append("IMG_CREDENTIAL_HELPER_REMOTE_CACHE")
+
     # Add REGISTRY_AUTH_FILE if docker_config_path is set
     docker_config_path = ctx.attr._docker_config_path[BuildSettingInfo].value
     if docker_config_path:

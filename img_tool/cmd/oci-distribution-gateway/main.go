@@ -97,8 +97,9 @@ func Run(ctx context.Context, args []string) {
 	}
 
 	if credentialHelperPath != "" {
-		// reg.Keychain() reads IMG_CREDENTIAL_HELPER; wire the flag through it.
-		if err := os.Setenv("IMG_CREDENTIAL_HELPER", credentialHelperPath); err != nil {
+		// reg.Keychain() resolves the OCI-registry credential helper from the
+		// environment; wire the flag through it as the registry-scoped helper.
+		if err := os.Setenv(reg.EnvCredentialHelperOCIRegistry, credentialHelperPath); err != nil {
 			log.Fatalf("Failed to set credential helper: %v", err)
 		}
 	}
