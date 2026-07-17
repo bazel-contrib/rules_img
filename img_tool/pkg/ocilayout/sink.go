@@ -66,7 +66,7 @@ func (d *DirectorySink) WriteFile(path string, data []byte, mode os.FileMode) er
 	return os.WriteFile(full, data, mode)
 }
 
-func (d *DirectorySink) WriteBlob(ctx context.Context, path string, b Blob, opts WriteBlobOptions) error {
+func (d *DirectorySink) WriteBlob(ctx context.Context, path string, b Blob, opts WriteBlobOptions) (err error) {
 	if b.isZero() {
 		return errNoBlobContent
 	}
@@ -91,7 +91,11 @@ func (d *DirectorySink) WriteBlob(ctx context.Context, path string, b Blob, opts
 		if err != nil {
 			return err
 		}
-		defer f.Close()
+		defer func() {
+			if cerr := f.Close(); err == nil && cerr != nil {
+				err = cerr
+			}
+		}()
 		_, err = io.Copy(f, progressReader(ctx, rc, size, path, opts.ProgressFunc))
 		return err
 	}
