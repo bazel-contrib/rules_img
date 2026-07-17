@@ -7,7 +7,8 @@ import (
 	"os"
 )
 
-// tryReflink is not supported on non-Linux platforms, so it just does a regular copy
+// tryReflink is unsupported off Linux and just does a regular copy. Moved
+// verbatim from cmd/ocilayout.
 func tryReflink(src, dst string) error {
 	srcFile, err := os.Open(src)
 	if err != nil {

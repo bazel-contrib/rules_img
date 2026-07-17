@@ -24,7 +24,7 @@ go_library(
         "//cmd/manifest",
         "//cmd/manifestfromocilayout",
         "//cmd/mtree",
-        "//cmd/ocilayout",
+        "//cmd/ocilayoutcmd",
         "//cmd/ocilayoutmetadata",
         "//cmd/optimize",
         "//cmd/pull",

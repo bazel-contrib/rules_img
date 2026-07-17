@@ -1,0 +1,42 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "ocilayout",
+    srcs = [
+        "blob.go",
+        "builder.go",
+        "copy.go",
+        "copy_linux.go",
+        "copy_other.go",
+        "descriptors.go",
+        "doc.go",
+        "editor.go",
+        "engine.go",
+        "errors.go",
+        "format.go",
+        "layermeta.go",
+        "sink.go",
+    ],
+    importpath = "github.com/bazel-contrib/rules_img/img_tool/pkg/ocilayout",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/api",
+        "@com_github_google_go_containerregistry//pkg/name",
+        "@com_github_google_go_containerregistry//pkg/v1:pkg",
+        "@com_github_google_go_containerregistry//pkg/v1/types",
+    ],
+)
+
+go_test(
+    name = "ocilayout_test",
+    srcs = [
+        "builder_test.go",
+        "editor_test.go",
+        "golden_test.go",
+    ],
+    embed = [":ocilayout"],
+    deps = [
+        "@com_github_google_go_containerregistry//pkg/v1:pkg",
+        "@com_github_google_go_containerregistry//pkg/v1/types",
+    ],
+)
