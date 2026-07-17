@@ -360,7 +360,7 @@ _settings_tag = tag_class(
         "credential_helper": attr.string(
             doc = """Credential helper to use for registry authentication when the module extension runs the pull tool.
 
-If omitted, the pull tool inherits `$IMG_CREDENTIAL_HELPER` when present.""",
+If omitted, the pull tool inherits `$IMG_CREDENTIAL_HELPER` (or `$IMG_CREDENTIAL_HELPER_OCI_REGISTRY`, which takes precedence) when present.""",
         ),
         "docker_config_path": attr.string(
             doc = """Path to Docker-compatible registry authentication config.

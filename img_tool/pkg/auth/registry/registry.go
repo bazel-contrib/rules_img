@@ -18,18 +18,61 @@ import (
 // configuration (environment, shared config files, or instance/role metadata).
 var amazonKeychain authn.Keychain = authn.NewKeychainFromHelper(ecr.NewECRHelper(ecr.WithLogger(io.Discard)))
 
+// Environment variables naming the Bazel credential helper to use. The
+// generic EnvCredentialHelper applies to every operation; the scoped variants
+// override it for a single kind of operation and take precedence when set.
+const (
+	// EnvCredentialHelper is the credential helper used for every operation
+	// unless a more specific variable is set.
+	EnvCredentialHelper = "IMG_CREDENTIAL_HELPER"
+	// EnvCredentialHelperOCIRegistry is the credential helper used for OCI
+	// registry operations (push, pull, tag). Takes precedence over
+	// EnvCredentialHelper for registry authentication.
+	EnvCredentialHelperOCIRegistry = "IMG_CREDENTIAL_HELPER_OCI_REGISTRY"
+	// EnvCredentialHelperRemoteCache is the credential helper used to
+	// authenticate gRPC calls to the remote cache / remote execution API.
+	// Takes precedence over EnvCredentialHelper for those calls.
+	EnvCredentialHelperRemoteCache = "IMG_CREDENTIAL_HELPER_REMOTE_CACHE"
+)
+
+// OCIRegistryCredentialHelper returns the credential helper configured for OCI
+// registry operations, honoring EnvCredentialHelperOCIRegistry before falling
+// back to the generic EnvCredentialHelper. Returns "" when neither is set.
+func OCIRegistryCredentialHelper() string {
+	return firstNonEmptyEnv(EnvCredentialHelperOCIRegistry, EnvCredentialHelper)
+}
+
+// RemoteCacheCredentialHelper returns the credential helper configured for
+// remote cache / REAPI gRPC operations, honoring EnvCredentialHelperRemoteCache
+// before falling back to the generic EnvCredentialHelper. Returns "" when
+// neither is set.
+func RemoteCacheCredentialHelper() string {
+	return firstNonEmptyEnv(EnvCredentialHelperRemoteCache, EnvCredentialHelper)
+}
+
+func firstNonEmptyEnv(names ...string) string {
+	for _, name := range names {
+		if value := os.Getenv(name); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
 // WithAuthFromMultiKeychain returns a remote.Option that uses a MultiKeychain.
-// If `IMG_CREDENTIAL_HELPER` is set in the environment, the Bazel credential helper
-// is checked before the default Docker, Google, and Amazon ECR keychains.
+// If a credential helper is configured (IMG_CREDENTIAL_HELPER_OCI_REGISTRY, or
+// the generic IMG_CREDENTIAL_HELPER), the Bazel credential helper is checked
+// before the default Docker, Google, and Amazon ECR keychains.
 // If `IMG_AUTH_DEBUG` is set, each keychain resolution is logged to stderr.
 func WithAuthFromMultiKeychain() remote.Option {
 	return remote.WithAuthFromKeychain(keychainFromEnvironment())
 }
 
 // Keychain returns the [authn.Keychain] used to resolve registry credentials.
-// It honors the same environment (IMG_CREDENTIAL_HELPER, IMG_AUTH_DEBUG) as
-// WithAuthFromMultiKeychain and is intended for callers that need the raw
-// keychain (for example to run the token exchange flow themselves).
+// It honors the same environment (IMG_CREDENTIAL_HELPER_OCI_REGISTRY,
+// IMG_CREDENTIAL_HELPER, IMG_AUTH_DEBUG) as WithAuthFromMultiKeychain and is
+// intended for callers that need the raw keychain (for example to run the token
+// exchange flow themselves).
 func Keychain() authn.Keychain {
 	return keychainFromEnvironment()
 }
@@ -39,7 +82,7 @@ func keychainFromEnvironment() authn.Keychain {
 
 	var keychains []authn.Keychain
 
-	if value, ok := os.LookupEnv("IMG_CREDENTIAL_HELPER"); ok && value != "" {
+	if value := OCIRegistryCredentialHelper(); value != "" {
 		bazel := credential.New(value, &credential.Options{CaptureStderr: true})
 		keychain := credential.ContainerRegistryKeychain(bazel)
 		keychains = append(keychains, namedKeychain("bazel credential helper", keychain, debug))

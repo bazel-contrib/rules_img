@@ -85,6 +85,23 @@ string_flag(
     visibility = ["//img/private:__subpackages__"],
 )
 
+# Credential helper used only for OCI registry operations (push, pull, tag).
+# Takes precedence over the generic credential_helper for registry auth.
+string_flag(
+    name = "credential_helper_oci_registry",
+    build_setting_default = "",
+    visibility = ["//img/private:__subpackages__"],
+)
+
+# Credential helper used only to authenticate gRPC calls to the remote cache /
+# remote execution API. Takes precedence over the generic credential_helper for
+# those calls.
+string_flag(
+    name = "credential_helper_remote_cache",
+    build_setting_default = "",
+    visibility = ["//img/private:__subpackages__"],
+)
+
 string_flag(
     name = "docker_config_path",
     build_setting_default = "",

@@ -149,7 +149,7 @@ If a registry list is empty, it defaults to Docker Hub (index.docker.io).""",
         "credential_helper": attr.string(
             doc = """Credential helper to use for registry authentication when this repository rule runs the pull tool.
 
-If omitted, the pull tool inherits `$IMG_CREDENTIAL_HELPER` when present.""",
+If omitted, the pull tool inherits `$IMG_CREDENTIAL_HELPER` (or `$IMG_CREDENTIAL_HELPER_OCI_REGISTRY`, which takes precedence) when present.""",
         ),
         "docker_config_path": attr.string(
             doc = """Path to Docker-compatible registry authentication config.
@@ -259,7 +259,7 @@ If not specified, defaults to "tgz".""",
         "credential_helper": attr.string(
             doc = """Credential helper to use for registry authentication when this repository rule runs the pull tool.
 
-If omitted, the pull tool inherits `$IMG_CREDENTIAL_HELPER` when present.""",
+If omitted, the pull tool inherits `$IMG_CREDENTIAL_HELPER` (or `$IMG_CREDENTIAL_HELPER_OCI_REGISTRY`, which takes precedence) when present.""",
         ),
         "docker_config_path": attr.string(
             doc = """Path to Docker-compatible registry authentication config.
@@ -389,7 +389,7 @@ Only used if `digest` is not specified. It's recommended to use a digest for rep
         "credential_helper": attr.string(
             doc = """Credential helper to use for registry authentication when this repository rule runs the pull tool.
 
-If omitted, the pull tool inherits `$IMG_CREDENTIAL_HELPER` when present.""",
+If omitted, the pull tool inherits `$IMG_CREDENTIAL_HELPER` (or `$IMG_CREDENTIAL_HELPER_OCI_REGISTRY`, which takes precedence) when present.""",
         ),
         "docker_config_path": attr.string(
             doc = """Path to Docker-compatible registry authentication config.

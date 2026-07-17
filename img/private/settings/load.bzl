@@ -10,6 +10,8 @@ def _load_settings_impl(ctx):
         remote_cache = ctx.attr._remote_cache[BuildSettingInfo].value,
         remote_instance_name = ctx.attr._remote_instance_name[BuildSettingInfo].value,
         credential_helper = ctx.attr._credential_helper[BuildSettingInfo].value,
+        credential_helper_oci_registry = ctx.attr._credential_helper_oci_registry[BuildSettingInfo].value,
+        credential_helper_remote_cache = ctx.attr._credential_helper_remote_cache[BuildSettingInfo].value,
     )]
 
 load_settings = rule(
@@ -33,6 +35,14 @@ load_settings = rule(
         ),
         "_credential_helper": attr.label(
             default = Label("//img/settings:credential_helper"),
+            providers = [BuildSettingInfo],
+        ),
+        "_credential_helper_oci_registry": attr.label(
+            default = Label("//img/settings:credential_helper_oci_registry"),
+            providers = [BuildSettingInfo],
+        ),
+        "_credential_helper_remote_cache": attr.label(
+            default = Label("//img/settings:credential_helper_remote_cache"),
             providers = [BuildSettingInfo],
         ),
     },

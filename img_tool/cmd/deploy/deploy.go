@@ -433,22 +433,18 @@ func (s *stringSliceFlag) Set(value string) error {
 }
 
 func credentialHelperPath() string {
-	credentialHelper := os.Getenv("IMG_CREDENTIAL_HELPER")
-	if credentialHelper != "" {
+	// Registry auth uses IMG_CREDENTIAL_HELPER_OCI_REGISTRY; this path is for
+	// the remote cache / REAPI gRPC connection, so it honors the remote-cache
+	// scoped helper before the generic one.
+	if credentialHelper := registry.RemoteCacheCredentialHelper(); credentialHelper != "" {
 		return credentialHelper
 	}
+	// If no credential helper is configured, look for one in the workspace.
+	// This is useful for local development.
 	workingDirectory := os.Getenv("BUILD_WORKSPACE_DIRECTORY")
-	defaultPathHelper, defaultPathHelperErr := exec.LookPath(filepath.FromSlash(path.Join(workingDirectory, "tools", "credential-helper")))
-	tweagCredentialHelper, tweagErr := exec.LookPath("tweag-credential-helper")
-
-	if defaultPathHelper != "" && defaultPathHelperErr == nil {
-		// If IMG_CREDENTIAL_HELPER is not set, we look for a credential helper in the workspace.
-		// This is useful for local development.
+	defaultPathHelper, err := exec.LookPath(filepath.FromSlash(path.Join(workingDirectory, "tools", "credential-helper")))
+	if err == nil && defaultPathHelper != "" {
 		return defaultPathHelper
-	} else if tweagCredentialHelper != "" && tweagErr == nil {
-		// If there is no credential helper in %workspace%/tools/credential_helper,
-		// we look for the tweag-credential-helper in the PATH.
-		return tweagCredentialHelper
 	}
 	return ""
 }
