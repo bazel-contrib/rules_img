@@ -54,3 +54,9 @@ def rules_img_dependencies():
         strip_prefix = "rules_runfiles_group-0.0.1-rc.3",
         url = "https://github.com/hermeticbuild/rules_runfiles_group/releases/download/v0.0.1-rc.3/rules_runfiles_group-v0.0.1-rc.3.tar.gz",
     )
+
+    http_archive(
+        name = "hermetic_launcher",
+        sha256 = "eeb520ca97697368a4d459e06f37600550971291171a1257f02a33e17fdd2df9",
+        url = "https://github.com/hermeticbuild/hermetic-launcher/releases/download/v0.0.10/hermetic_launcher-v0.0.10.tar.gz",
+    )
