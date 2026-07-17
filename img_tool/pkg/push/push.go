@@ -134,15 +134,13 @@ func (u *uploader) PushAll(ctx context.Context, ops []api.IndexedPushDeployOpera
 		}
 	}
 
-	ctx, stopProgress := progress.InitProgress(ctx, "pushed")
-	prog := progress.NewIndeterminate(ctx, "pushing")
-
-	var progCh chan registryv1.Update
-	var drainWg sync.WaitGroup
-
 	pusher := u.pusher
 	if pusher == nil {
-		progCh = make(chan registryv1.Update, 256)
+		ctx, stopProgress := progress.InitProgress(ctx, "pushed")
+		prog := progress.NewIndeterminate(ctx, "pushing")
+
+		progCh := make(chan registryv1.Update, 256)
+		var drainWg sync.WaitGroup
 		drainWg.Add(1)
 		go func() {
 			defer drainWg.Done()
@@ -156,18 +154,17 @@ func (u *uploader) PushAll(ctx context.Context, ops []api.IndexedPushDeployOpera
 		if err != nil {
 			close(progCh)
 			drainWg.Wait()
+			prog.Done(err)
+			stopProgress()
 			return nil, fmt.Errorf("creating pusher: %w", err)
 		}
-	}
-
-	defer func() {
-		if progCh != nil {
+		defer func() {
 			close(progCh)
 			drainWg.Wait()
-		}
-		prog.Done(retErr)
-		stopProgress()
-	}()
+			prog.Done(retErr)
+			stopProgress()
+		}()
+	}
 
 	g, ctx := errgroup.WithContext(ctx)
 	g.SetLimit(u.jobs)
