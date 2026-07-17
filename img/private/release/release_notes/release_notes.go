@@ -103,6 +103,9 @@ load("@rules_img//img:repositories.bzl", "img_register_prebuilt_toolchains")
 img_register_prebuilt_toolchains()
 register_toolchains("@img_toolchain//:all")
 
+# Register hermetic launcher toolchains
+register_toolchains("@hermetic_launcher//launcher/private/prebuilt:all")
+
 # Example: Pull a base image
 load("@rules_img//img:pull.bzl", "pull")
 pull(

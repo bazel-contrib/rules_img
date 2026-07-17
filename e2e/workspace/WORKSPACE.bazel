@@ -24,6 +24,9 @@ img_register_prebuilt_toolchains()
 
 register_toolchains("@img_toolchain//:all")
 
+# Register hermetic launcher toolchains
+register_toolchains("@hermetic_launcher//launcher/private/prebuilt:all")
+
 # Pull Alpine Linux as base image for WORKSPACE mode test
 load("@rules_img//img:pull.bzl", "pull")
 

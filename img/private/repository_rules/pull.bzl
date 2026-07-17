@@ -152,6 +152,7 @@ def _pull_impl(rctx):
     loads = [
         (str(Label("@package_metadata//rules:package_metadata.bzl")), "package_metadata"),
         (str(Label("@rules_img//img/private:import.bzl")), "image_import"),
+        (str(Label("@rules_img//img:load.bzl")), "image_load"),
     ]
     maybe_lazy_layer_download = ""
     if rctx.attr.layer_handling == "lazy":
@@ -224,6 +225,13 @@ alias(
     actual = ":image_import",
     visibility = ["//visibility:public"],
 )
+
+image_load(
+    name = "load",
+    image = ":final",
+    tag = {load_tag},
+    visibility = ["//visibility:public"],
+)
 """.format(
             target_compatible_with = target_compatible_with,
             loads = "\n".join(
@@ -250,6 +258,7 @@ alias(
             purl = repr(purl),
             repository = repr(rctx.attr.repository),
             tag = repr(rctx.attr.tag) if rctx.attr.tag else "None",
+            load_tag = repr(registries[0] + "/" + rctx.attr.repository + ((":" + rctx.attr.tag) if rctx.attr.tag else ("@" + digest))),
         ),
     )
     rctx.file("REPO.bazel", """\
