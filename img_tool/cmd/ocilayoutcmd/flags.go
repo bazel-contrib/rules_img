@@ -1,4 +1,4 @@
-package ocilayout
+package ocilayoutcmd
 
 import (
 	"fmt"

@@ -24,7 +24,7 @@ import (
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/manifest"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/manifestfromocilayout"
 	mtreecmd "github.com/bazel-contrib/rules_img/img_tool/cmd/mtree"
-	"github.com/bazel-contrib/rules_img/img_tool/cmd/ocilayout"
+	ocilayoutcmd "github.com/bazel-contrib/rules_img/img_tool/cmd/ocilayoutcmd"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/ocilayoutmetadata"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/optimize"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/pull"
@@ -117,7 +117,7 @@ func Run(ctx context.Context, args []string) {
 	case "hash":
 		hash.HashProcess(ctx, args[2:])
 	case "oci-layout":
-		ocilayout.OCILayoutProcess(ctx, args[2:])
+		ocilayoutcmd.OCILayoutProcess(ctx, args[2:])
 	case "optimize":
 		optimize.OptimizeProcess(ctx, args[2:])
 	case "sparse-oci-layout":

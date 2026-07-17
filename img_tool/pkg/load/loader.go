@@ -16,7 +16,7 @@ import (
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/api"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/containerd"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/docker"
-	"github.com/bazel-contrib/rules_img/img_tool/pkg/ocitar"
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/ocilayout"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/progress"
 )
 
@@ -271,16 +271,12 @@ func (l *loader) streamDockerTar(ctx context.Context, op api.IndexedLoadDeployOp
 	}
 
 	blobSource := &vfsBlobSource{vfs: l.vfs}
-	opts := ocitar.Options{
-		Tags:    normalizedTags,
-		OCITags: normalizedTags,
-		ProgressFunc: func(ctx context.Context, size int64, name string) io.Writer {
-			pw, err := progress.Writer(ctx, size, name)
-			if err != nil {
-				return nil
-			}
-			return pw
-		},
+	progressFn := func(ctx context.Context, size int64, name string) io.Writer {
+		pw, err := progress.Writer(ctx, size, name)
+		if err != nil {
+			return nil
+		}
+		return pw
 	}
 
 	if op.RootKind == "index" {
@@ -301,7 +297,13 @@ func (l *loader) streamDockerTar(ctx context.Context, op api.IndexedLoadDeployOp
 			return nil, err
 		}
 
-		var manifestInfos []ocitar.ManifestInfo
+		b := ocilayout.New(ocilayout.DockerSave().WithIndexStyle(ocilayout.IndexWrapping)).
+			WithTags(normalizedTags).
+			WithOCITags(normalizedTags).
+			WithProgress(progressFn).
+			WithManifestFilter(l.makeManifestFilter()).
+			SetRootIndex(ocilayout.BlobFromBytes(rawIndex))
+
 		for _, desc := range indexManifest.Manifests {
 			img, err := l.vfs.Image(desc.Digest)
 			if err != nil {
@@ -315,20 +317,10 @@ func (l *loader) streamDockerTar(ctx context.Context, op api.IndexedLoadDeployOp
 			if err != nil {
 				return nil, fmt.Errorf("getting manifest for %s: %w", desc.Digest, err)
 			}
-			info := ocitar.ManifestInfo{
-				ManifestData: rawManifest,
-				ConfigDigest: manifest.Config.Digest.Hex,
-				MediaType:    desc.MediaType,
-			}
-			for _, layer := range manifest.Layers {
-				info.LayerDigests = append(info.LayerDigests, layer.Digest.Hex)
-			}
-			manifestInfos = append(manifestInfos, info)
+			b.AddManifest(manifestInputFromVFS(blobSource, manifest, rawManifest, desc.Platform))
 		}
 
-		opts.ManifestFilter = l.makeManifestFilter()
-
-		if err := ocitar.WriteIndex(ctx, w, rawIndex, manifestInfos, blobSource, opts); err != nil {
+		if err := b.WriteToWriter(ctx, w); err != nil {
 			return nil, err
 		}
 		return normalizedTags, nil
@@ -352,7 +344,12 @@ func (l *loader) streamDockerTar(ctx context.Context, op api.IndexedLoadDeployOp
 		if err != nil {
 			return nil, err
 		}
-		if err := ocitar.WriteSingleManifest(ctx, w, manifest, rawManifest, blobSource, opts); err != nil {
+		b := ocilayout.New(ocilayout.DockerSave()).
+			WithTags(normalizedTags).
+			WithOCITags(normalizedTags).
+			WithProgress(progressFn).
+			AddManifest(manifestInputFromVFS(blobSource, manifest, rawManifest, nil))
+		if err := b.WriteToWriter(ctx, w); err != nil {
 			return nil, err
 		}
 		return normalizedTags, nil
@@ -361,9 +358,28 @@ func (l *loader) streamDockerTar(ctx context.Context, op api.IndexedLoadDeployOp
 	return nil, fmt.Errorf("no manifest or index provided")
 }
 
-func (l *loader) makeManifestFilter() ocitar.ManifestFilter {
+// manifestInputFromVFS builds an ocilayout.ManifestInput whose config and layer
+// blobs stream from the VFS-backed blob source.
+func manifestInputFromVFS(src ocilayout.BlobSource, manifest *registryv1.Manifest, rawManifest []byte, platform *registryv1.Platform) ocilayout.ManifestInput {
+	mi := ocilayout.ManifestInput{
+		Manifest:     manifest,
+		ManifestData: rawManifest,
+		Config:       ocilayout.BlobFromSource(src, manifest.Config.Digest.Hex, manifest.Config.Size),
+		Platform:     platform,
+	}
+	for _, layer := range manifest.Layers {
+		mi.Layers = append(mi.Layers, ocilayout.LayerInput{
+			Descriptor: layer,
+			Blob:       ocilayout.BlobFromSource(src, layer.Digest.Hex, layer.Size),
+			Present:    true,
+		})
+	}
+	return mi
+}
+
+func (l *loader) makeManifestFilter() ocilayout.ManifestFilter {
 	platforms := l.platforms
-	return func(manifests []ocitar.ManifestDescriptor) ([]int, int) {
+	return func(manifests []ocilayout.ManifestDescriptor) ([]int, int) {
 		if len(manifests) == 0 {
 			return nil, 0
 		}

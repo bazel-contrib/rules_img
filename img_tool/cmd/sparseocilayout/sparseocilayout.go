@@ -1,22 +1,17 @@
 package sparseocilayout
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
-	"path/filepath"
-	"slices"
 	"strings"
 
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 
-	"github.com/bazel-contrib/rules_img/img_tool/cmd/ocilayout"
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/ocilayout"
 )
-
-const SparseOCILayoutVersion = "1.0.0"
 
 func SparseOCILayoutProcess(ctx context.Context, args []string) {
 	var manifestPath string
@@ -79,7 +74,7 @@ func SparseOCILayoutProcess(ctx context.Context, args []string) {
 			fmt.Fprintf(os.Stderr, "Error: --index requires at least one --manifest-path and --config-path\n")
 			os.Exit(1)
 		}
-		err = assembleSparseLayoutWithIndex(indexPath, outputDir, format, manifestPaths, configPaths, layerFlags, layerCompactStreamFlags)
+		err = assembleSparseLayoutWithIndex(ctx, indexPath, outputDir, format, manifestPaths, configPaths, layerFlags, layerCompactStreamFlags)
 	} else {
 		if manifestPath == "" {
 			fmt.Fprintf(os.Stderr, "Error: either --manifest or --index is required\n")
@@ -95,7 +90,7 @@ func SparseOCILayoutProcess(ctx context.Context, args []string) {
 			fmt.Fprintf(os.Stderr, "Error: cannot use --manifest-path or --config-path without --index\n")
 			os.Exit(1)
 		}
-		err = assembleSparseLayout(manifestPath, configPath, outputDir, format, layerFlags, layerCompactStreamFlags)
+		err = assembleSparseLayout(ctx, manifestPath, configPath, outputDir, format, layerFlags, layerCompactStreamFlags)
 	}
 
 	if err != nil {
@@ -104,300 +99,126 @@ func SparseOCILayoutProcess(ctx context.Context, args []string) {
 	}
 }
 
-type blobMap = map[string]string
-
-func createSink(outputPath, format string) (ocilayout.OCILayoutSink, error) {
-	switch format {
-	case "directory":
-		return ocilayout.NewDirectorySink(outputPath), nil
-	case "tar":
-		return ocilayout.NewTarSink(outputPath)
-	default:
-		return nil, fmt.Errorf("unsupported format: %s", format)
-	}
-}
-
-func setupSparseLayout(sink ocilayout.OCILayoutSink) error {
-	if err := sink.CreateDir("blobs"); err != nil {
-		return fmt.Errorf("creating blobs directory: %w", err)
-	}
-	if err := sink.CreateDir(filepath.Join("blobs", "sha256")); err != nil {
-		return fmt.Errorf("creating blobs/sha256 directory: %w", err)
-	}
-
-	layoutMarker := map[string]string{
-		"imageLayoutVersion": SparseOCILayoutVersion,
-	}
-	return writeJSON(sink, "sparse-oci-layout", layoutMarker)
-}
-
-func hashBytes(data []byte) v1.Hash {
-	h, _, _ := v1.SHA256(bytes.NewReader(data))
-	return h
-}
-
-func writeJSON(sink ocilayout.OCILayoutSink, path string, v interface{}) error {
-	data, err := json.MarshalIndent(v, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshaling %s: %w", path, err)
-	}
-	return sink.WriteFile(path, data, 0o644)
-}
-
-func copyBlobs(sink ocilayout.OCILayoutSink, blobs blobMap) error {
-	blobKeys := make([]string, 0, len(blobs))
-	for k := range blobs {
-		blobKeys = append(blobKeys, k)
-	}
-	slices.Sort(blobKeys)
-	for _, digest := range blobKeys {
-		srcPath := blobs[digest]
-		dstPath := filepath.Join("blobs", "sha256", digest)
-		if err := sink.CopyFile(dstPath, srcPath, false); err != nil {
-			return fmt.Errorf("copying blob %s: %w", digest, err)
-		}
-	}
-	return nil
-}
-
-func copyLayerCompactStreams(sink ocilayout.OCILayoutSink, layerCompactStreamByDigest map[string]string) error {
-	digests := make([]string, 0, len(layerCompactStreamByDigest))
-	for k := range layerCompactStreamByDigest {
-		digests = append(digests, k)
-	}
-	slices.Sort(digests)
-	for _, digest := range digests {
-		srcPath := layerCompactStreamByDigest[digest]
-		dstPath := filepath.Join("blobs", "sha256", digest+".cstream")
-		if err := sink.CopyFile(dstPath, srcPath, false); err != nil {
-			return fmt.Errorf("copying compact stream for %s: %w", digest, err)
-		}
-	}
-	return nil
-}
-
-type layerDescriptor struct {
-	MediaType   string            `json:"mediaType"`
-	Digest      string            `json:"digest"`
-	Size        int64             `json:"size"`
-	Annotations map[string]string `json:"annotations,omitempty"`
-}
-
-func writeLayerDescriptors(sink ocilayout.OCILayoutSink, manifest v1.Manifest, layerMetadataByDigest map[string]layerDescriptor) error {
-	for _, layerDesc := range manifest.Layers {
-		desc := layerDescriptor{
-			MediaType:   string(layerDesc.MediaType),
-			Digest:      layerDesc.Digest.String(),
-			Size:        layerDesc.Size,
-			Annotations: layerDesc.Annotations,
-		}
-		if meta, ok := layerMetadataByDigest[layerDesc.Digest.Hex]; ok {
-			desc = meta
-		}
-		descPath := filepath.Join("blobs", "sha256", layerDesc.Digest.Hex+".descriptor.json")
-		if err := writeJSON(sink, descPath, desc); err != nil {
-			return fmt.Errorf("writing layer descriptor for %s: %w", layerDesc.Digest.Hex, err)
-		}
-	}
-	return nil
-}
-
-func readLayerMetadata(path string) (layerDescriptor, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return layerDescriptor{}, fmt.Errorf("reading layer metadata %s: %w", path, err)
-	}
-	var meta struct {
-		MediaType   string            `json:"mediaType"`
-		Digest      string            `json:"digest"`
-		Size        int64             `json:"size"`
-		Annotations map[string]string `json:"annotations,omitempty"`
-	}
-	if err := json.Unmarshal(data, &meta); err != nil {
-		return layerDescriptor{}, fmt.Errorf("unmarshaling layer metadata %s: %w", path, err)
-	}
-	return layerDescriptor{
-		MediaType:   meta.MediaType,
-		Digest:      meta.Digest,
-		Size:        meta.Size,
-		Annotations: meta.Annotations,
-	}, nil
-}
-
-func buildLayerMetadataMap(layers []string) (map[string]layerDescriptor, error) {
-	result := make(map[string]layerDescriptor)
+// buildLayerMetadataMap reads each --layer metadata file into a map from digest
+// hex to a sparse layer descriptor override.
+func buildLayerMetadataMap(layers []string) (map[string]ocilayout.SparseLayerDescriptor, error) {
+	result := make(map[string]ocilayout.SparseLayerDescriptor)
 	for _, path := range layers {
-		meta, err := readLayerMetadata(path)
+		meta, err := ocilayout.ReadLayerMetadata(path)
 		if err != nil {
 			return nil, err
 		}
-		hex := strings.TrimPrefix(meta.Digest, "sha256:")
-		result[hex] = meta
+		result[meta.HexDigest()] = ocilayout.SparseLayerDescriptor{
+			MediaType:   meta.MediaType,
+			Digest:      meta.Digest,
+			Size:        meta.Size,
+			Annotations: meta.Annotations,
+		}
 	}
 	return result, nil
 }
 
-// buildLayerCompactStreamMap parses --layer-compact-stream flags of the form <metadata_path>=<cstream_path>
-// and returns a map from digest hex to compact stream file path.
-func buildLayerCompactStreamMap(layerCompactStreamFlags []string) (map[string]string, error) {
+// buildLayerCompactStreamMap parses --layer-compact-stream flags of the form
+// <metadata_path>=<cstream_path> into a map from digest hex to cstream path.
+func buildLayerCompactStreamMap(entries []string) (map[string]string, error) {
 	result := make(map[string]string)
-	for _, entry := range layerCompactStreamFlags {
+	for _, entry := range entries {
 		sep := strings.Index(entry, "=")
 		if sep < 0 {
 			return nil, fmt.Errorf("invalid --layer-compact-stream value %q: expected <metadata_path>=<cstream_path>", entry)
 		}
 		metadataPath := entry[:sep]
 		compactStreamPath := entry[sep+1:]
-		meta, err := readLayerMetadata(metadataPath)
+		meta, err := ocilayout.ReadLayerMetadata(metadataPath)
 		if err != nil {
 			return nil, fmt.Errorf("reading metadata for --layer-compact-stream %q: %w", entry, err)
 		}
-		hex := strings.TrimPrefix(meta.Digest, "sha256:")
-		result[hex] = compactStreamPath
+		result[meta.HexDigest()] = compactStreamPath
 	}
 	return result, nil
 }
 
-func assembleSparseLayout(manifestPath, configPath, outputPath, format string, layers layerMappingFlag, layerCompactStreamFlags layerMappingFlag) error {
-	sink, err := createSink(outputPath, format)
-	if err != nil {
-		return err
+func sparseManifestInput(manifest *v1.Manifest, manifestData []byte, configPath string, metaByDigest map[string]ocilayout.SparseLayerDescriptor, cstreamByDigest map[string]string) ocilayout.ManifestInput {
+	mi := ocilayout.ManifestInput{
+		Manifest:     manifest,
+		ManifestData: manifestData,
+		Config:       ocilayout.BlobFromPath(configPath),
 	}
-	defer sink.Close()
-
-	if err := setupSparseLayout(sink); err != nil {
-		return err
+	for _, ld := range manifest.Layers {
+		li := ocilayout.LayerInput{Descriptor: ld}
+		if meta, ok := metaByDigest[ld.Digest.Hex]; ok {
+			m := meta
+			li.SparseMeta = &m
+		}
+		if csPath, ok := cstreamByDigest[ld.Digest.Hex]; ok {
+			cs := ocilayout.BlobFromPath(csPath)
+			li.CompactStream = &cs
+		}
+		mi.Layers = append(mi.Layers, li)
 	}
+	return mi
+}
 
+func writeLayout(ctx context.Context, b *ocilayout.Builder, format, outputPath string) error {
+	if format == "tar" {
+		return b.WriteTar(ctx, outputPath)
+	}
+	return b.WriteDir(ctx, outputPath)
+}
+
+func assembleSparseLayout(ctx context.Context, manifestPath, configPath, outputPath, format string, layers, layerCompactStreamFlags layerMappingFlag) error {
 	manifestData, err := os.ReadFile(manifestPath)
 	if err != nil {
 		return fmt.Errorf("reading manifest: %w", err)
 	}
-
 	var manifest v1.Manifest
 	if err := json.Unmarshal(manifestData, &manifest); err != nil {
 		return fmt.Errorf("unmarshaling manifest: %w", err)
 	}
 
-	layerMetadataByDigest, err := buildLayerMetadataMap(layers)
+	metaByDigest, err := buildLayerMetadataMap(layers)
+	if err != nil {
+		return err
+	}
+	cstreamByDigest, err := buildLayerCompactStreamMap(layerCompactStreamFlags)
 	if err != nil {
 		return err
 	}
 
-	layerCompactStreamByDigest, err := buildLayerCompactStreamMap(layerCompactStreamFlags)
-	if err != nil {
-		return err
-	}
-
-	blobs := make(blobMap)
-
-	// Add config blob
-	blobs[manifest.Config.Digest.Hex] = configPath
-
-	// Add manifest blob
-	manifestDigest := hashBytes(manifestData)
-	blobs[manifestDigest.Hex] = manifestPath
-
-	// Write root descriptor
-	rootDesc := v1.Descriptor{
-		MediaType: manifest.MediaType,
-		Digest:    manifestDigest,
-		Size:      int64(len(manifestData)),
-	}
-	if err := writeJSON(sink, "root.descriptor.json", rootDesc); err != nil {
-		return fmt.Errorf("writing root.descriptor.json: %w", err)
-	}
-
-	// Copy non-layer blobs (manifest + config)
-	if err := copyBlobs(sink, blobs); err != nil {
-		return fmt.Errorf("copying blobs: %w", err)
-	}
-
-	// Write layer descriptor files
-	if err := writeLayerDescriptors(sink, manifest, layerMetadataByDigest); err != nil {
-		return err
-	}
-
-	// Copy compact stream files
-	return copyLayerCompactStreams(sink, layerCompactStreamByDigest)
+	b := ocilayout.New(ocilayout.SparseOCILayout()).
+		AddManifest(sparseManifestInput(&manifest, manifestData, configPath, metaByDigest, cstreamByDigest))
+	return writeLayout(ctx, b, format, outputPath)
 }
 
-func assembleSparseLayoutWithIndex(indexPath, outputPath, format string, manifestPaths, configPaths []string, layers layerMappingFlag, layerCompactStreamFlags layerMappingFlag) error {
-	sink, err := createSink(outputPath, format)
-	if err != nil {
-		return err
-	}
-	defer sink.Close()
-
-	if err := setupSparseLayout(sink); err != nil {
-		return err
-	}
-
+func assembleSparseLayoutWithIndex(ctx context.Context, indexPath, outputPath, format string, manifestPaths, configPaths []string, layers, layerCompactStreamFlags layerMappingFlag) error {
 	indexData, err := os.ReadFile(indexPath)
 	if err != nil {
 		return fmt.Errorf("reading index: %w", err)
 	}
 
-	var idx v1.IndexManifest
-	if err := json.Unmarshal(indexData, &idx); err != nil {
-		return fmt.Errorf("unmarshaling index: %w", err)
+	metaByDigest, err := buildLayerMetadataMap(layers)
+	if err != nil {
+		return err
 	}
-
-	layerMetadataByDigest, err := buildLayerMetadataMap(layers)
+	cstreamByDigest, err := buildLayerCompactStreamMap(layerCompactStreamFlags)
 	if err != nil {
 		return err
 	}
 
-	layerCompactStreamByDigest, err := buildLayerCompactStreamMap(layerCompactStreamFlags)
-	if err != nil {
-		return err
-	}
-
-	blobs := make(blobMap)
-
-	// Add index blob
-	indexDigest := hashBytes(indexData)
-	blobs[indexDigest.Hex] = indexPath
-
-	// Write root descriptor pointing to the index
-	rootDesc := v1.Descriptor{
-		MediaType: idx.MediaType,
-		Digest:    indexDigest,
-		Size:      int64(len(indexData)),
-	}
-	if err := writeJSON(sink, "root.descriptor.json", rootDesc); err != nil {
-		return fmt.Errorf("writing root.descriptor.json: %w", err)
-	}
+	b := ocilayout.New(ocilayout.SparseOCILayout()).
+		SetRootIndex(ocilayout.BlobFromBytes(indexData))
 
 	for i := range manifestPaths {
 		manifestData, err := os.ReadFile(manifestPaths[i])
 		if err != nil {
 			return fmt.Errorf("reading manifest %d: %w", i, err)
 		}
-
 		var manifest v1.Manifest
 		if err := json.Unmarshal(manifestData, &manifest); err != nil {
 			return fmt.Errorf("unmarshaling manifest %d: %w", i, err)
 		}
-
-		// Add manifest blob
-		manifestDigest := hashBytes(manifestData)
-		blobs[manifestDigest.Hex] = manifestPaths[i]
-
-		// Add config blob
-		blobs[manifest.Config.Digest.Hex] = configPaths[i]
-
-		// Write layer descriptor files for this manifest
-		if err := writeLayerDescriptors(sink, manifest, layerMetadataByDigest); err != nil {
-			return err
-		}
+		b.AddManifest(sparseManifestInput(&manifest, manifestData, configPaths[i], metaByDigest, cstreamByDigest))
 	}
 
-	// Copy all non-layer blobs
-	if err := copyBlobs(sink, blobs); err != nil {
-		return err
-	}
-
-	// Copy compact stream files
-	return copyLayerCompactStreams(sink, layerCompactStreamByDigest)
+	return writeLayout(ctx, b, format, outputPath)
 }
