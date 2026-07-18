@@ -9,10 +9,15 @@ import (
 
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/api"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/ocilayout"
 )
 
-// readTagsFromConfigFile reads the tags field from a configuration file.
+// readTagsFromConfigFile reads registry/repository/tags from a load
+// configuration file and reconstructs the full image references. When registry
+// and repository are both set, each tag becomes "<registry>/<repository>:<tag>";
+// otherwise the tags are returned verbatim (backwards-compatible full
+// references). See api.QualifyLoadTags.
 func readTagsFromConfigFile(configPath string) ([]string, error) {
 	if configPath == "" {
 		return nil, nil
@@ -42,7 +47,12 @@ func readTagsFromConfigFile(configPath string) ([]string, error) {
 		}
 	}
 
-	return tags, nil
+	registry, _ := config["registry"].(string)
+	repository, _ := config["repository"].(string)
+	if err := api.ValidateLoadDestination(registry, repository); err != nil {
+		return nil, err
+	}
+	return api.QualifyLoadTags(registry, repository, tags), nil
 }
 
 func DockerSaveProcess(ctx context.Context, args []string) {

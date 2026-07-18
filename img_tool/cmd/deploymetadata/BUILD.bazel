@@ -22,6 +22,7 @@ go_test(
     srcs = [
         "layersources_test.go",
         "merge_test.go",
+        "metadata_load_test.go",
     ],
     embed = [":deploymetadata"],
     deps = ["//pkg/api"],

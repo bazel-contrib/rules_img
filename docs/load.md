@@ -26,20 +26,37 @@ image_manifest(
     layers = [":app_layer"],
 )
 
-# Create a load target with a single tag
+# Preferred: the same registry/repository/tag split as image_push. The loaded
+# image name is reconstructed as "my-registry.example.com/my-app:latest".
 image_load(
     name = "load",
+    image = ":my_image",
+    registry = "my-registry.example.com",
+    repository = "my-app",
+    tag = "latest",
+)
+
+# The rules_oci-compatible form still works: when loading into a daemon the image
+# name is just a string, so a single fully-qualified tag (with no
+# registry/repository) is used verbatim.
+image_load(
+    name = "load_legacy",
     image = ":my_image",
     tag = "my-app:latest",
 )
 
-# Load with multiple tags
+# Load with multiple full-reference tags
 image_load(
     name = "load_multi",
     image = ":my_image",
     tag_list = ["my-app:latest", "my-app:v1.0.0"],
 )
 ```
+
+Splitting the name into `registry` / `repository` / `tag` is optional and does
+not change what a local daemon sees; it just keeps the load target aligned with
+a matching `image_push`, making it easy to push the same image to a registry
+later.
 
 Then run:
 ```bash
@@ -68,8 +85,8 @@ bazel run //path/to:load_target -- --platform linux/amd64
 <pre>
 load("@rules_img//img:load.bzl", "image_load")
 
-image_load(<a href="#image_load-name">name</a>, <a href="#image_load-build_settings">build_settings</a>, <a href="#image_load-daemon">daemon</a>, <a href="#image_load-deploy_tool">deploy_tool</a>, <a href="#image_load-image">image</a>, <a href="#image_load-stamp">stamp</a>, <a href="#image_load-strategy">strategy</a>, <a href="#image_load-tag">tag</a>, <a href="#image_load-tag_file">tag_file</a>,
-           <a href="#image_load-tag_list">tag_list</a>, <a href="#image_load-tool_cfg">tool_cfg</a>, <a href="#image_load-tracks_content">tracks_content</a>)
+image_load(<a href="#image_load-name">name</a>, <a href="#image_load-build_settings">build_settings</a>, <a href="#image_load-daemon">daemon</a>, <a href="#image_load-deploy_tool">deploy_tool</a>, <a href="#image_load-image">image</a>, <a href="#image_load-registry">registry</a>, <a href="#image_load-repository">repository</a>, <a href="#image_load-stamp">stamp</a>, <a href="#image_load-strategy">strategy</a>,
+           <a href="#image_load-tag">tag</a>, <a href="#image_load-tag_file">tag_file</a>, <a href="#image_load-tag_list">tag_list</a>, <a href="#image_load-tool_cfg">tool_cfg</a>, <a href="#image_load-tracks_content">tracks_content</a>)
 </pre>
 
 Loads container images into a local daemon (Docker, containerd, or Podman).
@@ -86,6 +103,14 @@ Key features:
 
 The rule produces an executable that can be run with `bazel run`.
 
+Image names: when loading into a local daemon the image name is ultimately just
+a string, so a single fully-qualified `tag` (the rules_oci-compatible form) is
+all a daemon needs. The rule also accepts the same `registry` / `repository` /
+`tag` split as `image_push`; the loaded name is simply reconstructed as
+`{registry}/{repository}:{tag}`. Splitting it out is purely a convenience: it
+keeps the load target aligned with a matching `image_push` so the same image is
+easy to push to a registry later.
+
 Output groups:
 - `tarball`: "docker save" compatible tarball with OCI layout (available for both single and multi-platform images).
   For multi-platform images, the first manifest is used as the default in `manifest.json`,
@@ -98,29 +123,42 @@ Example:
 ```python
 load("@rules_img//img:load.bzl", "image_load")
 
-# Load a single-platform image with a single tag
+# Load using separate registry/repository/tag (same API as image_push).
+# The loaded image name is reconstructed as gcr.io/my-project/my-app:latest.
 image_load(
     name = "load_app",
     image = ":my_app",  # References an image_manifest
+    registry = "gcr.io",
+    repository = "my-project/my-app",
+    tag = "latest",
+)
+
+# Load a multi-platform image with the split API
+image_load(
+    name = "load_multiarch",
+    image = ":my_app_index",  # References an image_index
+    registry = "gcr.io",
+    repository = "my-project/my-app",
+    tag = "latest",
+    daemon = "containerd",  # Explicitly use containerd
+)
+
+# The rules_oci-compatible form still works: a single fully-qualified tag with no
+# registry/repository is used verbatim as the loaded image name.
+image_load(
+    name = "load_legacy",
+    image = ":my_app",
     tag = "my-app:latest",
 )
 
-# Load with multiple tags
+# ...including multiple full-reference tags:
 image_load(
     name = "load_multi",
     image = ":my_app",
     tag_list = ["my-app:latest", "my-app:v1.0.0", "my-app:stable"],
 )
 
-# Load a multi-platform image
-image_load(
-    name = "load_multiarch",
-    image = ":my_app_index",  # References an image_index
-    tag = "my-app:latest",
-    daemon = "containerd",  # Explicitly use containerd
-)
-
-# Load with dynamic tagging
+# Load with dynamic tagging (template expansion works with either form)
 image_load(
     name = "load_dynamic",
     image = ":my_app",
@@ -165,9 +203,11 @@ Performance notes:
 | <a id="image_load-daemon"></a>daemon |  Container daemon to use for loading the image.<br><br>Available options: - **`auto`** (default): Uses the global default setting (usually `docker`) - **`containerd`**: Loads directly into containerd namespace. Supports multi-platform images   and incremental loading. - **`docker`**: Loads via Docker daemon. When Docker uses containerd storage (23.0+),   loads directly into containerd. Otherwise falls back to `docker image load` command which   is slower and limited to single-platform images. - **`podman`**: Loads via Podman daemon using `podman image load` command. Similar to Docker   fallback mode, this is slower than containerd and limited to single-platform images. - **`containerization`**: Loads via Apple's Containerization framework using `container image load`.   Reads a unified OCI+Docker tar from stdin. - **`tar`**: Does not load into any daemon. Instead, streams the unified OCI+Docker tar to stdout.   Useful for piping to other tools or saving to a file. - **`generic`**: Loads via a custom container runtime. The loader will invoke the command   specified in the `LOADER_BINARY` environment variable with `image load` subcommands. For example,   if `LOADER_BINARY=nerdctl`, it will run `nerdctl image load`.   Requires `LOADER_BINARY` to be set at runtime.<br><br>The best performance is achieved with: - Direct containerd access (daemon = "containerd") - Docker 23.0+ with containerd storage enabled and accessible containerd socket   | String | optional |  `"auto"`  |
 | <a id="image_load-deploy_tool"></a>deploy_tool |  Optional label of a deploy tool target providing `DeployToolInfo` (created with `img_deploy_tool` from `@rules_img//img:deploy_tool.bzl`). When set, overrides `tool_cfg`.   | <a href="https://bazel.build/concepts/labels">Label</a> | optional |  `None`  |
 | <a id="image_load-image"></a>image |  Image to load. Should provide ImageManifestInfo or ImageIndexInfo.   | <a href="https://bazel.build/concepts/labels">Label</a> | required |  |
+| <a id="image_load-registry"></a>registry |  Registry component of the image name to load.<br><br>Optional. When set, `repository` must also be set, and each entry in `tag` / `tag_list` / `tag_file` is treated as a bare tag: the loaded image name is reconstructed as `{registry}/{repository}:{tag}` (mirroring `image_push`).<br><br>When omitted (together with `repository`), the tags are used verbatim as full image references, preserving the `rules_oci`-compatible behavior.<br><br>Subject to [template expansion](/docs/templating.md).   | String | optional |  `""`  |
+| <a id="image_load-repository"></a>repository |  Repository component of the image name to load.<br><br>Optional. Must be set together with `registry` (see `registry` for details).<br><br>Subject to [template expansion](/docs/templating.md).   | String | optional |  `""`  |
 | <a id="image_load-stamp"></a>stamp |  Controls build stamping for template expansion.<br><br>- **`auto`** (default): Defers to the global `--@rules_img//img/settings:stamp` setting. - **`force`**: Always stamp if templates contain `{{}}` placeholders, ignoring Bazel's `--stamp` flag. - **`disabled`**: Never include stamp information.<br><br>See [template expansion](/docs/templating.md) for available stamp variables.   | String | optional |  `"auto"`  |
 | <a id="image_load-strategy"></a>strategy |  Strategy for handling image layers during load.<br><br>Available strategies: - **`auto`** (default): Uses the global default load strategy - **`eager`**: Downloads all layers during the build phase. Ensures all layers are   available locally before running the load command. - **`lazy`**: Downloads layers only when needed during the load operation. More   efficient for large images where some layers might already exist in the daemon.   | String | optional |  `"auto"`  |
-| <a id="image_load-tag"></a>tag |  Tag to apply when loading the image.<br><br>Optional - if omitted, the image is loaded without a tag.<br><br>Subject to [template expansion](/docs/templating.md).   | String | optional |  `""`  |
+| <a id="image_load-tag"></a>tag |  Tag to apply when loading the image.<br><br>Optional - if omitted, the image is loaded without a tag.<br><br>When `registry`/`repository` are set, this is a bare tag (e.g. `latest`); otherwise it is a full image reference (e.g. `my-app:latest`).<br><br>Subject to [template expansion](/docs/templating.md).   | String | optional |  `""`  |
 | <a id="image_load-tag_file"></a>tag_file |  File containing newline-delimited tags to apply when loading the image.<br><br>The file should contain one tag per line. Empty lines are ignored. Tags from this file are merged with tags specified via `tag` or `tag_list` attributes.<br><br>Example file content: <pre><code>latest&#10;v1.0.0&#10;stable</code></pre><br><br>Can be combined with `tag` or `tag_list` to merge tags from multiple sources. Each tag is subject to [template expansion](/docs/templating.md).   | <a href="https://bazel.build/concepts/labels">Label</a> | optional |  `None`  |
 | <a id="image_load-tag_list"></a>tag_list |  List of tags to apply when loading the image.<br><br>Useful for applying multiple tags in a single load:<br><br><pre><code class="language-python">tag_list = ["latest", "v1.0.0", "stable"]</code></pre><br><br>Cannot be used together with `tag`. Can be combined with `tag_file` to merge tags from both sources. Each tag is subject to [template expansion](/docs/templating.md).   | List of strings | optional |  `[]`  |
 | <a id="image_load-tool_cfg"></a>tool_cfg |  **Experimental**: This attribute may be removed if we find a way to automatically select the correct loader platform based on the context of use. Configuration of the loader executable. By default, the loader executable is always chosen for the host platform, regardless of the value of `--platforms`. Setting this attribute to 'target' makes the loader match the target platform instead. The `"target"` option is useful when the "image_load" target is used as a data dependency of an integration test.<br><br>Available options: - **`host`** (default): Loader executable matches the host platform. - **`target`**: Loader executable matches the target platform(s) specified via `--platforms`.   | String | optional |  `"host"`  |
@@ -181,14 +221,15 @@ Performance notes:
 <pre>
 load("@rules_img//img:load.bzl", "image_load_spec")
 
-image_load_spec(<a href="#image_load_spec-name">name</a>, <a href="#image_load_spec-build_settings">build_settings</a>, <a href="#image_load_spec-daemon">daemon</a>, <a href="#image_load_spec-stamp">stamp</a>, <a href="#image_load_spec-strategy">strategy</a>, <a href="#image_load_spec-tag">tag</a>, <a href="#image_load_spec-tag_file">tag_file</a>, <a href="#image_load_spec-tag_list">tag_list</a>,
-                <a href="#image_load_spec-tracks_content">tracks_content</a>)
+image_load_spec(<a href="#image_load_spec-name">name</a>, <a href="#image_load_spec-build_settings">build_settings</a>, <a href="#image_load_spec-daemon">daemon</a>, <a href="#image_load_spec-registry">registry</a>, <a href="#image_load_spec-repository">repository</a>, <a href="#image_load_spec-stamp">stamp</a>, <a href="#image_load_spec-strategy">strategy</a>, <a href="#image_load_spec-tag">tag</a>, <a href="#image_load_spec-tag_file">tag_file</a>,
+                <a href="#image_load_spec-tag_list">tag_list</a>, <a href="#image_load_spec-tracks_content">tracks_content</a>)
 </pre>
 
 Defines load configuration for container images without referencing a specific image.
 
-This rule captures daemon, tag, and strategy settings that can be attached to
-`image_manifest` or `image_index` targets via their `load_specs` attribute.
+This rule captures registry, repository, daemon, tag, and strategy settings that
+can be attached to `image_manifest` or `image_index` targets via their
+`load_specs` attribute.
 Template strings using Go template syntax (`{{.VAR}}`) are accepted but not
 expanded — expansion happens when the deployment is consumed by the image rule.
 Note that the template strings `{{.image_target_package}}` and `{{.image_target_name}}` are especially useful here.
@@ -202,9 +243,19 @@ Example:
 ```python
 load("@rules_img//img:load.bzl", "image_load_spec")
 
+# Full image reference in a single tag (rules_oci-compatible).
 image_load_spec(
     name = "load_config",
     tag = "{{.image_target_package}}/{{.image_target_name}}:latest",
+    daemon = "containerd",
+)
+
+# Or split into registry/repository/tag (same API as image_push_spec):
+image_load_spec(
+    name = "load_config_split",
+    registry = "gcr.io",
+    repository = "my-project/{{.image_target_package}}/{{.image_target_name}}",
+    tag = "latest",
     daemon = "containerd",
 )
 
@@ -242,9 +293,11 @@ multi_deploy(
 | <a id="image_load_spec-name"></a>name |  A unique name for this target.   | <a href="https://bazel.build/concepts/labels#target-names">Name</a> | required |  |
 | <a id="image_load_spec-build_settings"></a>build_settings |  Build settings for template expansion.<br><br>Maps template variable names to string_flag targets. These values can be used in tag attributes using `{{.VARIABLE_NAME}}` syntax (Go template).<br><br>See [template expansion](/docs/templating.md) for more details.   | Dictionary: String -> Label | optional |  `{}`  |
 | <a id="image_load_spec-daemon"></a>daemon |  Container daemon to use for loading the image.<br><br>Available options: - **`auto`** (default): Uses the global default setting (usually `docker`) - **`containerd`**: Loads directly into containerd namespace. Supports multi-platform images   and incremental loading. - **`docker`**: Loads via Docker daemon. When Docker uses containerd storage (23.0+),   loads directly into containerd. Otherwise falls back to `docker image load` command which   is slower and limited to single-platform images. - **`podman`**: Loads via Podman daemon using `podman image load` command. Similar to Docker   fallback mode, this is slower than containerd and limited to single-platform images. - **`containerization`**: Loads via Apple's Containerization framework using `container image load`.   Reads a unified OCI+Docker tar from stdin. - **`tar`**: Does not load into any daemon. Instead, streams the unified OCI+Docker tar to stdout.   Useful for piping to other tools or saving to a file. - **`generic`**: Loads via a custom container runtime. The loader will invoke the command   specified in the `LOADER_BINARY` environment variable with `image load` subcommands. For example,   if `LOADER_BINARY=nerdctl`, it will run `nerdctl image load`.   Requires `LOADER_BINARY` to be set at runtime.<br><br>The best performance is achieved with: - Direct containerd access (daemon = "containerd") - Docker 23.0+ with containerd storage enabled and accessible containerd socket   | String | optional |  `"auto"`  |
+| <a id="image_load_spec-registry"></a>registry |  Registry component of the image name to load.<br><br>Optional. When set, `repository` must also be set, and each entry in `tag` / `tag_list` / `tag_file` is treated as a bare tag: the loaded image name is reconstructed as `{registry}/{repository}:{tag}` (mirroring `image_push`).<br><br>When omitted (together with `repository`), the tags are used verbatim as full image references, preserving the `rules_oci`-compatible behavior.<br><br>Subject to [template expansion](/docs/templating.md).   | String | optional |  `""`  |
+| <a id="image_load_spec-repository"></a>repository |  Repository component of the image name to load.<br><br>Optional. Must be set together with `registry` (see `registry` for details).<br><br>Subject to [template expansion](/docs/templating.md).   | String | optional |  `""`  |
 | <a id="image_load_spec-stamp"></a>stamp |  Controls build stamping for template expansion.<br><br>- **`auto`** (default): Defers to the global `--@rules_img//img/settings:stamp` setting. - **`force`**: Always stamp if templates contain `{{}}` placeholders, ignoring Bazel's `--stamp` flag. - **`disabled`**: Never include stamp information.<br><br>See [template expansion](/docs/templating.md) for available stamp variables.   | String | optional |  `"auto"`  |
 | <a id="image_load_spec-strategy"></a>strategy |  Strategy for handling image layers during load.<br><br>Available strategies: - **`auto`** (default): Uses the global default load strategy - **`eager`**: Downloads all layers during the build phase. Ensures all layers are   available locally before running the load command. - **`lazy`**: Downloads layers only when needed during the load operation. More   efficient for large images where some layers might already exist in the daemon.   | String | optional |  `"auto"`  |
-| <a id="image_load_spec-tag"></a>tag |  Tag to apply when loading the image.<br><br>Optional - if omitted, the image is loaded without a tag.<br><br>Subject to [template expansion](/docs/templating.md).   | String | optional |  `""`  |
+| <a id="image_load_spec-tag"></a>tag |  Tag to apply when loading the image.<br><br>Optional - if omitted, the image is loaded without a tag.<br><br>When `registry`/`repository` are set, this is a bare tag (e.g. `latest`); otherwise it is a full image reference (e.g. `my-app:latest`).<br><br>Subject to [template expansion](/docs/templating.md).   | String | optional |  `""`  |
 | <a id="image_load_spec-tag_file"></a>tag_file |  File containing newline-delimited tags to apply when loading the image.<br><br>The file should contain one tag per line. Empty lines are ignored. Tags from this file are merged with tags specified via `tag` or `tag_list` attributes.<br><br>Example file content: <pre><code>latest&#10;v1.0.0&#10;stable</code></pre><br><br>Can be combined with `tag` or `tag_list` to merge tags from multiple sources. Each tag is subject to [template expansion](/docs/templating.md).   | <a href="https://bazel.build/concepts/labels">Label</a> | optional |  `None`  |
 | <a id="image_load_spec-tag_list"></a>tag_list |  List of tags to apply when loading the image.<br><br>Useful for applying multiple tags in a single load:<br><br><pre><code class="language-python">tag_list = ["latest", "v1.0.0", "stable"]</code></pre><br><br>Cannot be used together with `tag`. Can be combined with `tag_file` to merge tags from both sources. Each tag is subject to [template expansion](/docs/templating.md).   | List of strings | optional |  `[]`  |
 | <a id="image_load_spec-tracks_content"></a>tracks_content |  When True, the template expansion action depends on the image digest.<br><br>A template string built from a volatile stamp value (e.g. `{{.BUILD_TIMESTAMP}}`) normally freezes on the first build, because Bazel excludes the volatile workspace-status file from the action cache key. With this enabled, the image descriptor becomes an input to the tag-expansion action, so the tag re-stamps whenever the image content (digest) changes, while unchanged content keeps the cached tag.<br><br>The digest is exposed to the `tag` templates as `{{.digest}}`. Referencing the digest in the tag is optional: the re-stamp behavior applies whether or not the tag contains it.   | Boolean | optional |  `False`  |

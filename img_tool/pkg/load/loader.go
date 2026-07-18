@@ -21,9 +21,11 @@ import (
 )
 
 type builder struct {
-	vfs       vfs
-	platforms []string
-	extraTags []string
+	vfs                vfs
+	platforms          []string
+	extraTags          []string
+	overrideRegistry   string
+	overrideRepository string
 }
 
 func NewBuilder(vfs vfs) *builder {
@@ -40,28 +42,73 @@ func (b *builder) WithExtraTags(tags []string) *builder {
 	return b
 }
 
+// WithOverrideRegistry sets a deploy-time registry override. It only affects
+// operations that already carry a non-empty registry/repository (split mode);
+// see loader.imageNames.
+func (b *builder) WithOverrideRegistry(registry string) *builder {
+	b.overrideRegistry = registry
+	return b
+}
+
+// WithOverrideRepository sets a deploy-time repository override. It only affects
+// operations that already carry a non-empty registry/repository (split mode);
+// see loader.imageNames.
+func (b *builder) WithOverrideRepository(repository string) *builder {
+	b.overrideRepository = repository
+	return b
+}
+
 func (b *builder) Build() *loader {
 	return &loader{
-		vfs:       b.vfs,
-		platforms: b.platforms,
-		extraTags: b.extraTags,
-		taskSet:   newTaskSet(b.vfs, b.platforms),
+		vfs:                b.vfs,
+		platforms:          b.platforms,
+		extraTags:          b.extraTags,
+		overrideRegistry:   b.overrideRegistry,
+		overrideRepository: b.overrideRepository,
+		taskSet:            newTaskSet(b.vfs, b.platforms),
 	}
 }
 
 type loader struct {
-	vfs             vfs
-	platforms       []string
-	extraTags       []string
-	taskSet         *taskSet
-	clientConn      *containerd.Client
-	triedContainerd bool
-	haveContainerd  bool
+	vfs                vfs
+	platforms          []string
+	extraTags          []string
+	overrideRegistry   string
+	overrideRepository string
+	taskSet            *taskSet
+	clientConn         *containerd.Client
+	triedContainerd    bool
+	haveContainerd     bool
 }
 
-// tags returns the combined list of tags from the operation and extra tags
+// imageNames reconstructs the operation's image names, applying the deploy-time
+// registry/repository overrides. Overrides take effect only in split mode, i.e.
+// when the operation's own registry AND repository are non-empty; when they are
+// empty (the rules_oci-compatible fallback) the tags are already full references
+// and are returned verbatim without applying any override.
+func (l *loader) imageNames(op api.IndexedLoadDeployOperation) []string {
+	registry, repository := op.Registry, op.Repository
+	if registry != "" && repository != "" {
+		if l.overrideRegistry != "" {
+			registry = l.overrideRegistry
+		}
+		if l.overrideRepository != "" {
+			repository = l.overrideRepository
+		}
+	}
+	return api.QualifyLoadTags(registry, repository, op.Tags)
+}
+
+// tags returns the combined list of full image references for the operation.
+// The operation's own tags are reconstructed from registry/repository/tags (see
+// imageNames): they are bare tags when a registry/repository is set, and
+// already-full references otherwise. Extra tags supplied at runtime via --tag
+// are always treated as full references and passed through unchanged.
 func (l *loader) tags(op api.IndexedLoadDeployOperation) []string {
-	allTags := append(op.Tags, l.extraTags...)
+	names := l.imageNames(op)
+	allTags := make([]string, 0, len(names)+len(l.extraTags))
+	allTags = append(allTags, names...)
+	allTags = append(allTags, l.extraTags...)
 	return deduplicateAndSort(allTags)
 }
 

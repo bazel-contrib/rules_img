@@ -85,6 +85,30 @@ def resolve_push_registry(ctx):
 
     return registry
 
+def resolve_load_destination(ctx):
+    """Resolve and validate the registry/repository for a load target.
+
+    Unlike push, load has no destination_file or global destination_registry
+    fallback: the registry/repository are taken verbatim from the attributes.
+    They must be set together (to reconstruct `<registry>/<repository>:<tag>`
+    image names) or both left empty (backwards-compatible mode, where the tags
+    are already full image references).
+
+    Args:
+        ctx: Rule context with registry/repository attributes.
+
+    Returns:
+        Tuple (registry, repository) of the (possibly empty) resolved values.
+    """
+    registry = ctx.attr.registry
+    repository = ctx.attr.repository
+    if bool(registry) != bool(repository):
+        fail("image_load/image_load_spec: 'registry' and 'repository' must be set together (or neither); got registry = {}, repository = {}".format(
+            repr(registry),
+            repr(repository),
+        ))
+    return registry, repository
+
 def resolve_push_strategy(ctx):
     """Determine the push strategy, resolving 'auto' from settings.
 

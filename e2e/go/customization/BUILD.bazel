@@ -121,10 +121,16 @@ image_push(
 
 image_load(
     name = "load",
+    build_settings = {
+        "registry": ":registry",
+        "repo": ":repo",
+    },
     image = ":go_image",
+    registry = "{{.registry}}",
+    repository = "{{.repo}}",
     tag_list = [
-        "go-image:latest",
-        "go-image:dgst-sha256-{{slice .digest 7}}",
+        "latest",
+        "dgst-sha256-{{slice .digest 7}}",
     ],
     tracks_content = True,
     visibility = ["//:__pkg__"],
@@ -148,10 +154,16 @@ image_push_spec(
 
 image_load_spec(
     name = "load_spec",
+    build_settings = {
+        "registry": ":registry",
+        "repo": ":repo",
+    },
+    registry = "{{.registry}}",
+    repository = "{{.repo}}",
     stamp = "force",
     tag_list = [
-        "go-image-spec:latest",
-        "go-image-spec:dgst-sha256-{{slice .digest 7}}",
+        "spec",
+        "dgst-sha256-{{slice .digest 7}}",
     ],
     tracks_content = True,
 )

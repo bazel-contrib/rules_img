@@ -8,7 +8,7 @@ load("//img/private:stamp.bzl", "expand_or_write")
 load("//img/private/common:build.bzl", "TOOLCHAIN", "TOOLCHAINS")
 load("//img/private/common:default_deploy_tool.bzl", "default_deploy_tool")
 load("//img/private/common:deploy_attrs.bzl", "COMMON_LOAD_ATTRS")
-load("//img/private/common:deploy_helpers.bzl", "content_tracking_json_vars", "get_image_providers", "get_tags", "image_target_vars", "resolve_daemon", "resolve_load_strategy")
+load("//img/private/common:deploy_helpers.bzl", "content_tracking_json_vars", "get_image_providers", "get_tags", "image_target_vars", "resolve_daemon", "resolve_load_destination", "resolve_load_strategy")
 load("//img/private/common:transitions.bzl", "reset_platform_transition")
 load("//img/private/providers:deploy_info.bzl", "DeployInfo")
 load("//img/private/providers:deploy_tool_info.bzl", "DeployToolInfo")
@@ -116,7 +116,10 @@ def _image_load_impl(ctx):
     root_symlinks_prefix = symlink_name_prefix(ctx)
     root_symlinks = calculate_root_symlinks(index_info, manifest_info, include_layers = include_layers, symlink_name_prefix = root_symlinks_prefix)
 
+    registry, repository = resolve_load_destination(ctx)
     templates = dict(
+        registry = registry,
+        repository = repository,
         tags = get_tags(ctx),
         daemon = resolve_daemon(ctx),
     )
@@ -245,6 +248,14 @@ Key features:
 
 The rule produces an executable that can be run with `bazel run`.
 
+Image names: when loading into a local daemon the image name is ultimately just
+a string, so a single fully-qualified `tag` (the rules_oci-compatible form) is
+all a daemon needs. The rule also accepts the same `registry` / `repository` /
+`tag` split as `image_push`; the loaded name is simply reconstructed as
+`{registry}/{repository}:{tag}`. Splitting it out is purely a convenience: it
+keeps the load target aligned with a matching `image_push` so the same image is
+easy to push to a registry later.
+
 Output groups:
 - `tarball`: "docker save" compatible tarball with OCI layout (available for both single and multi-platform images).
   For multi-platform images, the first manifest is used as the default in `manifest.json`,
@@ -257,29 +268,42 @@ Example:
 ```python
 load("@rules_img//img:load.bzl", "image_load")
 
-# Load a single-platform image with a single tag
+# Load using separate registry/repository/tag (same API as image_push).
+# The loaded image name is reconstructed as gcr.io/my-project/my-app:latest.
 image_load(
     name = "load_app",
     image = ":my_app",  # References an image_manifest
+    registry = "gcr.io",
+    repository = "my-project/my-app",
+    tag = "latest",
+)
+
+# Load a multi-platform image with the split API
+image_load(
+    name = "load_multiarch",
+    image = ":my_app_index",  # References an image_index
+    registry = "gcr.io",
+    repository = "my-project/my-app",
+    tag = "latest",
+    daemon = "containerd",  # Explicitly use containerd
+)
+
+# The rules_oci-compatible form still works: a single fully-qualified tag with no
+# registry/repository is used verbatim as the loaded image name.
+image_load(
+    name = "load_legacy",
+    image = ":my_app",
     tag = "my-app:latest",
 )
 
-# Load with multiple tags
+# ...including multiple full-reference tags:
 image_load(
     name = "load_multi",
     image = ":my_app",
     tag_list = ["my-app:latest", "my-app:v1.0.0", "my-app:stable"],
 )
 
-# Load a multi-platform image
-image_load(
-    name = "load_multiarch",
-    image = ":my_app_index",  # References an image_index
-    tag = "my-app:latest",
-    daemon = "containerd",  # Explicitly use containerd
-)
-
-# Load with dynamic tagging
+# Load with dynamic tagging (template expansion works with either form)
 image_load(
     name = "load_dynamic",
     image = ":my_app",

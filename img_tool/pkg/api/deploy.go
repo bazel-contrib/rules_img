@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 )
 
 type DeployManifest struct {
@@ -140,10 +141,58 @@ type IndexedRegistryTagDeployOperation struct {
 	RegistryTagDeployOperation
 }
 
+// LoadDeployOperation describes loading an image into a local daemon. It mirrors
+// PushTarget's Registry/Repository/Tags shape, but keeps every destination field
+// optional: when only Tags are set (the rules_oci-compatible mode) the tags are
+// already full image references and Registry/Repository are omitted entirely.
+// When Registry and Repository are both set, Tags are bare tags and the full
+// image names are reconstructed as "<registry>/<repository>:<tag>" (see
+// ImageNames).
 type LoadDeployOperation struct {
 	BaseCommandOperation
-	Tags   []string `json:"tags,omitempty"`
-	Daemon string   `json:"daemon,omitempty"`
+	Registry   string   `json:"registry,omitempty"`
+	Repository string   `json:"repository,omitempty"`
+	Tags       []string `json:"tags,omitempty"`
+	Daemon     string   `json:"daemon,omitempty"`
+}
+
+// ImageNames returns the fully-qualified image reference(s) this load operation
+// applies. See QualifyLoadTags for the reconstruction rules.
+func (o LoadDeployOperation) ImageNames() []string {
+	return QualifyLoadTags(o.Registry, o.Repository, o.Tags)
+}
+
+// ValidateLoadDestination reports an error when exactly one of registry and
+// repository is set. Both-set (split mode) and both-empty (verbatim,
+// rules_oci-compatible mode) are valid; a lone registry or repository is a
+// misconfiguration (for example a Go template that expanded to the empty string)
+// that would otherwise silently fall back to verbatim mode. This mirrors the
+// hard error the push path raises for a missing registry/repository, and must be
+// checked against the post-template-expansion values (the Starlark-level guard
+// only sees the raw, unexpanded strings).
+func ValidateLoadDestination(registry, repository string) error {
+	if (registry == "") != (repository == "") {
+		return fmt.Errorf("load configuration: 'registry' and 'repository' must be set together or both empty; got registry=%q repository=%q", registry, repository)
+	}
+	return nil
+}
+
+// QualifyLoadTags reconstructs full image names for a load operation. When both
+// registry and repository are set, each tag is expanded to
+// "<registry>/<repository>:<tag>". When either is empty (backwards-compatible
+// mode) the tags are returned verbatim, because they are already full image
+// references. The returned slice is always a fresh copy so callers may mutate
+// it freely.
+func QualifyLoadTags(registry, repository string, tags []string) []string {
+	if registry == "" || repository == "" {
+		return append([]string(nil), tags...)
+	}
+	base := registry + "/" + repository
+	names := make([]string, len(tags))
+	for i, tag := range tags {
+		names[i] = base + ":" + tag
+	}
+	return names
 }
 
 type IndexedLoadDeployOperation struct {

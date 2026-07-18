@@ -254,6 +254,30 @@ Run with:
 bazel run //:push
 ```
 
+### 4. Load into a Local Daemon
+
+```starlark
+load("@rules_img//img:load.bzl", "image_load")
+
+image_load(
+    name = "load",
+    image = ":image",
+    registry = "ghcr.io",
+    repository = "my-project/app",
+    tag = "latest",
+)
+```
+
+Run with:
+```bash
+bazel run //:load
+```
+
+`image_load` takes the same `registry` / `repository` / `tag` split as
+`image_push`, so the same image is easy to push to a registry later. A single
+fully-qualified `tag` (with no `registry`/`repository`) also works for
+`rules_oci` compatibility.
+
 ### Composing Images from Layers
 
 For more control over the image contents, you can compose images from individual layers using `image_layer` and `image_manifest`:

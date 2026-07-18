@@ -886,8 +886,22 @@ func loadOperation(baseCommand api.BaseCommandOperation, config map[string]any) 
 		return api.LoadDeployOperation{}, fmt.Errorf("configuration file must contain a non-empty 'daemon' field")
 	}
 
+	// registry and repository are optional. When both are set, the loader and
+	// docker-save reconstruct full image names as "<registry>/<repository>:<tag>".
+	// When absent (the rules_oci-compatible mode) the tags are already full
+	// references and only the 'tags' field is emitted (registry/repository are
+	// omitempty on LoadDeployOperation). Exactly one being set (e.g. a template
+	// that expanded to empty) is a hard error, mirroring the push path.
+	registry, _ := config["registry"].(string)
+	repository, _ := config["repository"].(string)
+	if err := api.ValidateLoadDestination(registry, repository); err != nil {
+		return api.LoadDeployOperation{}, err
+	}
+
 	return api.LoadDeployOperation{
 		BaseCommandOperation: baseCommand,
+		Registry:             registry,
+		Repository:           repository,
 		Tags:                 tags,
 		Daemon:               daemon,
 	}, nil

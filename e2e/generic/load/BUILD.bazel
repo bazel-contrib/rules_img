@@ -44,11 +44,13 @@ image_index(
 image_load(
     name = "load_image",
     image = ":image",
-    tag = "ghcr.io/malt3/rules_img:sideloaded",
+    registry = "ghcr.io",
+    repository = "malt3/rules_img",
+    tag = "sideloaded",
     visibility = ["//visibility:public"],
 )
 
-# load an image with template variables
+# load an image with template variables (split registry/repository/tag)
 image_load(
     name = "load_image_templated",
     build_settings = {
@@ -57,7 +59,9 @@ image_load(
         "TAG": "//build_settings:tag",
     },
     image = ":image",
-    tag = "{{.REGISTRY}}/{{.USER}}/rules_img:{{.TAG}}",
+    registry = "{{.REGISTRY}}",
+    repository = "{{.USER}}/rules_img",
+    tag = "{{.TAG}}",
     visibility = ["//visibility:public"],
 )
 
@@ -65,15 +69,18 @@ image_load(
 image_load(
     name = "load_index",
     image = ":index",
-    tag = "ghcr.io/malt3/rules_img:sideloaded",
+    registry = "ghcr.io",
+    repository = "malt3/rules_img",
+    tag = "sideloaded",
     visibility = ["//visibility:public"],
 )
 
-# Test loading with a name that needs normalization
+# Legacy (rules_oci-compatible) mode: a single full reference with no
+# registry/repository. Demonstrates that a bare name is normalized (loaded as
+# docker.io/library/funny_name:sideloaded).
 image_load(
     name = "load_normalized",
     image = ":index",
-    # this will be loaded as docker.io/library/funny_name:sideloaded
     tag = "funny_name:sideloaded",
     visibility = ["//visibility:public"],
 )
@@ -82,7 +89,9 @@ image_load(
 image_load(
     name = "load_alpine",
     image = "@alpine//:final",
-    tag = "ghcr.io/malt3/rules_img:alpine-sideloaded",
+    registry = "ghcr.io",
+    repository = "malt3/rules_img",
+    tag = "alpine-sideloaded",
     visibility = ["//visibility:public"],
 )
 
@@ -90,37 +99,44 @@ image_load(
 image_load(
     name = "load_cuda",
     image = "@cuda",
-    tag = "ghcr.io/malt3/rules_img:cuda-sideloaded",
+    registry = "ghcr.io",
+    repository = "malt3/rules_img",
+    tag = "cuda-sideloaded",
     visibility = ["//visibility:public"],
 )
 
 image_load(
     name = "load_envoy",
     image = "@envoy",
-    tag = "ghcr.io/malt3/rules_img:envoy-sideloaded",
+    registry = "ghcr.io",
+    repository = "malt3/rules_img",
+    tag = "envoy-sideloaded",
     visibility = ["//visibility:public"],
 )
 
-# Load with multiple tags
+# Load with multiple (bare) tags under a shared registry/repository
 image_load(
     name = "load_multi_tags",
     image = ":image",
+    registry = "ghcr.io",
+    repository = "malt3/rules_img",
     tag_list = [
-        "ghcr.io/malt3/rules_img:multi-latest",
-        "ghcr.io/malt3/rules_img:multi-v1.0.0",
-        "ghcr.io/malt3/rules_img:multi-stable",
+        "multi-latest",
+        "multi-v1.0.0",
+        "multi-stable",
     ],
     visibility = ["//visibility:public"],
 )
 
-# File containing multiple tags (one per line)
+# File containing multiple bare tags (one per line), combined with a
+# registry/repository split.
 write_file(
     name = "tags_file",
     out = "tags.txt",
     content = [
-        "ghcr.io/malt3/rules_img:from-file-v1",
-        "ghcr.io/malt3/rules_img:from-file-v2",
-        "ghcr.io/malt3/rules_img:from-file-stable",
+        "from-file-v1",
+        "from-file-v2",
+        "from-file-stable",
     ],
 )
 
@@ -128,7 +144,39 @@ write_file(
 image_load(
     name = "load_tag_file",
     image = ":image",
+    registry = "ghcr.io",
+    repository = "malt3/rules_img",
     tag_file = ":tags_file",
+    visibility = ["//visibility:public"],
+)
+
+# Scratch image (no remote base) so the split registry/repository behavior can be
+# built and validated without network access.
+image_manifest(
+    name = "scratch_image",
+    cmd = [
+        "/bin/cat",
+        "/hello.txt",
+    ],
+    layers = [":layer"],
+    visibility = ["//visibility:public"],
+)
+
+image_load(
+    name = "load_scratch_split",
+    image = ":scratch_image",
+    registry = "ghcr.io",
+    repository = "malt3/rules_img",
+    tag = "scratch-split",
+    visibility = ["//visibility:public"],
+)
+
+# Backwards-compatible mode on the same scratch image: a full-reference tag with
+# no registry/repository must be preserved verbatim (network-free regression).
+image_load(
+    name = "load_scratch_compat",
+    image = ":scratch_image",
+    tag = "scratch-app:compat",
     visibility = ["//visibility:public"],
 )
 
@@ -143,5 +191,7 @@ build_test(
         ":load_normalized",
         ":load_multi_tags",
         ":load_tag_file",
+        ":load_scratch_split",
+        ":load_scratch_compat",
     ],
 )

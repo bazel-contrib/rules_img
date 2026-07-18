@@ -1,4 +1,4 @@
-load("@rules_go//go:def.bzl", "go_library")
+load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "load",
@@ -19,4 +19,11 @@ go_library(
         "@com_github_opencontainers_go_digest//:go-digest",
         "@com_github_opencontainers_image_spec//specs-go/v1:specs-go",
     ],
+)
+
+go_test(
+    name = "load_test",
+    srcs = ["loader_test.go"],
+    embed = [":load"],
+    deps = ["//pkg/api"],
 )

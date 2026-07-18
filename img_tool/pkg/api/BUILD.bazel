@@ -1,4 +1,4 @@
-load("@rules_go//go:def.bzl", "go_library")
+load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "api",
@@ -10,4 +10,10 @@ go_library(
     ],
     importpath = "github.com/bazel-contrib/rules_img/img_tool/pkg/api",
     visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "api_test",
+    srcs = ["deploy_test.go"],
+    embed = [":api"],
 )
