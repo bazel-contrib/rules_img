@@ -2,6 +2,7 @@ package deployvfs
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -13,6 +14,122 @@ import (
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/cas"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/compactstream"
 )
+
+// WithCompactStreamLayer registers a .cstream index file that reconstructs the
+// layer with the given digest. Unlike WithExplicitLayer (which serves a raw
+// compressed blob verbatim), the layer is rebuilt on demand from the stream.
+func (b *Builder) WithCompactStreamLayer(digest string, filePath string) *Builder {
+	if b.compactStreamLayers == nil {
+		b.compactStreamLayers = make(map[string]string)
+	}
+	b.compactStreamLayers[digest] = filePath
+	return b
+}
+
+// WithLayer classifies a single --layer spec and registers it with the builder.
+// The spec is either "digest=path" or a bare "path". The file at path may be a
+// raw compressed layer blob or a compact stream (.cstream) index:
+//
+//   - compact stream: reconstructed on demand (WithCompactStreamLayer). For a
+//     bare path the layer digest is taken from the stream's embedded compressed
+//     digest, which is therefore required; a "digest=path" spec supplies it
+//     explicitly (and, when the stream also embeds one, the two must match).
+//   - raw layer blob: served verbatim (WithExplicitLayer). For a bare path the
+//     digest is computed by hashing the file; a "digest=path" spec supplies it.
+//
+// Classification does file I/O; any error is deferred to Build() via
+// layerSpecErr so the fluent With* chain stays error-free. The first error wins.
+func (b *Builder) WithLayer(spec string) *Builder {
+	if b.layerSpecErr != nil {
+		return b
+	}
+	digest, filePath, hasDigest := strings.Cut(spec, "=")
+	if !hasDigest {
+		filePath = spec
+		digest = ""
+	}
+
+	f, err := os.Open(filePath)
+	if err != nil {
+		b.layerSpecErr = fmt.Errorf("--layer %q: %w", spec, err)
+		return b
+	}
+	defer f.Close()
+
+	// Detect a compact stream by its leading magic. A short read just means the
+	// file is not a compact stream (a raw blob may be smaller than the magic).
+	var prefix [compactstream.MagicSize]byte
+	n, readErr := io.ReadFull(f, prefix[:])
+	if readErr == nil && compactstream.HasMagic(prefix[:n]) {
+		if _, err := f.Seek(0, io.SeekStart); err != nil {
+			b.layerSpecErr = fmt.Errorf("--layer %q: %w", spec, err)
+			return b
+		}
+		header, err := compactstream.ReadHeader(f)
+		if err != nil {
+			b.layerSpecErr = fmt.Errorf("--layer %q: reading compact stream header: %w", spec, err)
+			return b
+		}
+		var embedded string
+		if header.HasCompressedStreamInfo {
+			embedded = "sha256:" + hex.EncodeToString(header.CompressedStreamDigest)
+		}
+		key := digest
+		if !hasDigest {
+			if embedded == "" {
+				b.layerSpecErr = fmt.Errorf("--layer %q: compact stream does not embed a compressed digest; pass it as digest=path", spec)
+				return b
+			}
+			key = embedded
+		} else if embedded != "" && !strings.EqualFold(embedded, digest) {
+			b.layerSpecErr = fmt.Errorf("--layer %q: provided digest %s does not match compact stream's embedded compressed digest %s", spec, digest, embedded)
+			return b
+		}
+		return b.WithCompactStreamLayer(key, filePath)
+	}
+
+	// Not a compact stream: treat as a raw compressed layer blob. A real read
+	// error (as opposed to a short file / EOF, which just means "not a compact
+	// stream") is fatal.
+	if readErr != nil && readErr != io.EOF && readErr != io.ErrUnexpectedEOF {
+		b.layerSpecErr = fmt.Errorf("--layer %q: %w", spec, readErr)
+		return b
+	}
+	key := digest
+	if !hasDigest {
+		// A bare raw layer path is self-describing only by its content, so derive
+		// the layer digest by hashing the file from disk.
+		if _, err := f.Seek(0, io.SeekStart); err != nil {
+			b.layerSpecErr = fmt.Errorf("--layer %q: %w", spec, err)
+			return b
+		}
+		h := sha256.New()
+		if _, err := io.Copy(h, f); err != nil {
+			b.layerSpecErr = fmt.Errorf("--layer %q: hashing layer file: %w", spec, err)
+			return b
+		}
+		key = "sha256:" + hex.EncodeToString(h.Sum(nil))
+	}
+	return b.WithExplicitLayer(key, filePath)
+}
+
+// layerFromExplicitCompactStream reconstructs a layer from a .cstream registered
+// via the --layer flag (see WithLayer / WithCompactStreamLayer). The stream ships
+// without a content-addressed input directory, so its CAS references are resolved
+// from the disk cache / remote cache (see casDirStore).
+func (b *Builder) layerFromExplicitCompactStream(desc api.Descriptor) (blobEntry, error) {
+	if len(b.compactStreamLayers) == 0 {
+		return blobEntry{}, &BlobSourceError{Source: "explicit compact stream", Digest: desc.Digest, Kind: BlobSourceUnconfigured, Message: "no compact stream layers configured"}
+	}
+	compactStreamPath, found := b.compactStreamLayers[desc.Digest]
+	if !found {
+		return blobEntry{}, &BlobSourceError{Source: "explicit compact stream", Digest: desc.Digest, Kind: BlobSourceBlobMissing, Message: fmt.Sprintf("digest not in compact stream layer map (%d entries)", len(b.compactStreamLayers))}
+	}
+	if _, err := os.Stat(compactStreamPath); err != nil {
+		return blobEntry{}, &BlobSourceError{Source: "explicit compact stream", Digest: desc.Digest, Kind: BlobSourceOther, Message: fmt.Sprintf("file %s", compactStreamPath), Err: err}
+	}
+	return b.layerFromCompactStream(compactStreamPath, "", desc), nil
+}
 
 // layerFromOCILayoutCompactStream reconstructs a layer from a compact stream stored
 // inside an explicit OCI layout directory (--oci-layout). The stream is looked up at

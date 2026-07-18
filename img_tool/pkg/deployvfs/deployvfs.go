@@ -318,9 +318,15 @@ type Builder struct {
 	containerRegistryOptions   []remote.Option
 	runfilesRootSymlinksPrefix string
 	ociLayouts                 []string            // paths to OCI layout directories (sparse or standard)
-	explicitLayers             map[string]string   // digest -> file path
+	explicitLayers             map[string]string   // digest -> file path (raw compressed layer blob)
+	compactStreamLayers        map[string]string   // layer digest -> .cstream file path (reconstructed on demand)
 	layerHints                 map[string][]string // digest -> []paths
 	stats                      *Stats
+	// layerSpecErr holds the first error encountered while classifying a --layer
+	// spec in WithLayer (detecting a compact stream, reading its embedded digest,
+	// or hashing a raw layer file). It is deferred until Build() so the fluent
+	// With* chain stays error-free, mirroring how layer hints surface at Build().
+	layerSpecErr error
 	// ctx scopes long-running, lazily-triggered work created by the resulting
 	// VFS — notably on-demand compact-stream reconstruction, which may fetch CAS
 	// blobs from the remote cache. It is captured into blob openers so that
@@ -344,6 +350,12 @@ func (b *Builder) Clone() *Builder {
 		clone.explicitLayers = make(map[string]string, len(b.explicitLayers))
 		for k, v := range b.explicitLayers {
 			clone.explicitLayers[k] = v
+		}
+	}
+	if b.compactStreamLayers != nil {
+		clone.compactStreamLayers = make(map[string]string, len(b.compactStreamLayers))
+		for k, v := range b.compactStreamLayers {
+			clone.compactStreamLayers[k] = v
 		}
 	}
 	clone.layerHints = nil
@@ -416,6 +428,11 @@ func (b *Builder) rlocation(runfilesPath string) (string, error) {
 }
 
 func (b *Builder) Build() (*VFS, error) {
+	// Surface any error captured while classifying a --layer spec (see WithLayer).
+	if b.layerSpecErr != nil {
+		return nil, b.layerSpecErr
+	}
+
 	// Try to load layer hints if available
 	if err := b.loadLayerHints(); err != nil {
 		// Layer hints are optional, log but don't fail
@@ -585,15 +602,16 @@ func (b *Builder) ingest() (map[string]blobEntry, map[string]blobEntry, map[stri
 func (b *Builder) layerBlob(operationIndex int, manifestIndex int, layerIndex int, strategy string, layer api.LayerBlob) (blobEntry, error) {
 	// we try the following sources, in order:
 	// 1. OCI layouts (--oci-layout flags, supports both sparse and standard formats)
-	// 2. explicit layer files (--layer flags)
+	// 2. explicit layer files (--layer flags pointing at a raw compressed blob)
 	// 3. runfiles tree
-	// 4. compact stream in an OCI layout (--oci-layout, <layout>/blobs/<algo>/<hex>.cstream)
-	// 5. compact stream in runfiles (.cstream + .inputfilecas content-addressed directory)
-	// 6. registry (if the layer records upstream sources, i.e. it came from a pulled base image)
-	// 7. layer hints (local paths from BUILD_WORKSPACE_DIRECTORY, populated by lazy builds)
-	// 8. bazel disk cache (if configured via IMG_DISK_CACHE)
-	// 9. bazel remote cache (if configured via IMG_REAPI_ENDPOINT)
-	// 10. stub blob (cas_registry strategy where all blobs are assumed to already be in the remote CAS)
+	// 4. explicit compact stream (--layer flag pointing at a .cstream index)
+	// 5. compact stream in an OCI layout (--oci-layout, <layout>/blobs/<algo>/<hex>.cstream)
+	// 6. compact stream in runfiles (.cstream + .inputfilecas content-addressed directory)
+	// 7. registry (if the layer records upstream sources, i.e. it came from a pulled base image)
+	// 8. layer hints (local paths from BUILD_WORKSPACE_DIRECTORY, populated by lazy builds)
+	// 9. bazel disk cache (if configured via IMG_DISK_CACHE)
+	// 10. bazel remote cache (if configured via IMG_REAPI_ENDPOINT)
+	// 11. stub blob (cas_registry strategy where all blobs are assumed to already be in the remote CAS)
 
 	desc := layer.Descriptor
 
@@ -610,6 +628,11 @@ func (b *Builder) layerBlob(operationIndex int, manifestIndex int, layerIndex in
 		sourceErrors = append(sourceErrors, err.(*BlobSourceError))
 	}
 	if entry, err := b.layerFromFile(operationIndex, manifestIndex, layerIndex, desc); err == nil {
+		return entry, nil
+	} else {
+		sourceErrors = append(sourceErrors, err.(*BlobSourceError))
+	}
+	if entry, err := b.layerFromExplicitCompactStream(desc); err == nil {
 		return entry, nil
 	} else {
 		sourceErrors = append(sourceErrors, err.(*BlobSourceError))

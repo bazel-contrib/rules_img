@@ -299,3 +299,237 @@ func TestBuilderContext(t *testing.T) {
 		t.Error("Clone did not carry the context")
 	}
 }
+
+// buildCompactStreamFileAt writes a compact stream to path that reconstructs to
+// prefix + casBlob + suffix via a single CAS reference to casBlob. When
+// embedDigest is true it records the reconstructed bytes' digest and size in the
+// header (SetCompressedStreamInfo), which is what a bare `--layer=<path>` relies
+// on to learn the layer digest. It returns the layer descriptor (digest = sha256
+// of the reconstructed bytes; no re-compression) and the reconstructed bytes.
+func buildCompactStreamFileAt(t *testing.T, path string, prefix, casBlob, suffix []byte, embedDigest bool) (api.Descriptor, []byte) {
+	t.Helper()
+	casDigest := sha256.Sum256(casBlob)
+	reconstructed := append(append(append([]byte(nil), prefix...), casBlob...), suffix...)
+	layerDigest := sha256.Sum256(reconstructed)
+
+	var buf bytes.Buffer
+	w := compactstream.NewWriter(&buf, compactstream.HashAlgoSHA256, 32, compactstream.StreamCompressionNone, compactstream.OriginalCompressionInfo{}, 0)
+	if err := w.WriteStreamBytes(prefix); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.WriteCASRef(casDigest[:], uint64(len(casBlob))); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.WriteStreamBytes(suffix); err != nil {
+		t.Fatal(err)
+	}
+	if embedDigest {
+		if err := w.SetCompressedStreamInfo(layerDigest[:], uint64(len(reconstructed))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	writeBlobFile(t, path, buf.Bytes())
+
+	return api.Descriptor{Digest: "sha256:" + hex.EncodeToString(layerDigest[:]), Size: int64(len(reconstructed))}, reconstructed
+}
+
+// shipDiskCacheBlob writes a content-addressed blob into a Bazel disk cache so
+// that compact-stream reconstruction can resolve a CAS reference from it.
+func shipDiskCacheBlob(t *testing.T, diskCache string, content []byte) {
+	t.Helper()
+	d := sha256.Sum256(content)
+	writeBlobFile(t, diskCacheBlobPath(diskCache, "sha256:"+hex.EncodeToString(d[:])), content)
+}
+
+// TestWithLayerBareCompactStream verifies a bare `--layer=<path>.cstream` is
+// detected, keyed by its embedded compressed digest, and reconstructs (resolving
+// its CAS reference from the disk cache).
+func TestWithLayerBareCompactStream(t *testing.T) {
+	csPath := filepath.Join(t.TempDir(), "layer.cstream")
+	casBlob := []byte("bare-input-content")
+	desc, want := buildCompactStreamFileAt(t, csPath, []byte("A"), casBlob, []byte("Z"), true)
+
+	diskCache := t.TempDir()
+	shipDiskCacheBlob(t, diskCache, casBlob)
+
+	b := NewBuilder(api.DeployManifest{}).WithDiskCache(diskCache).WithLayer(csPath)
+	if b.layerSpecErr != nil {
+		t.Fatalf("WithLayer: %v", b.layerSpecErr)
+	}
+	if got, ok := b.compactStreamLayers[desc.Digest]; !ok || got != csPath {
+		t.Fatalf("compactStreamLayers[%s] = %q (ok=%v), want %q", desc.Digest, got, ok, csPath)
+	}
+	entry, err := b.layerFromExplicitCompactStream(desc)
+	if err != nil {
+		t.Fatalf("layerFromExplicitCompactStream: %v", err)
+	}
+	if entry.Location != "compact_stream" {
+		t.Errorf("Location = %q, want compact_stream", entry.Location)
+	}
+	if got := readAllClose(t, mustOpen(t, entry)); !bytes.Equal(got, want) {
+		t.Fatalf("reconstructed = %q, want %q", got, want)
+	}
+	if n := b.stats.BlobsFromCompactStream.Load(); n != 1 {
+		t.Errorf("BlobsFromCompactStream = %d, want 1", n)
+	}
+}
+
+// TestWithLayerBareCompactStreamMissingEmbeddedDigest verifies that a bare path
+// to a compact stream without an embedded compressed digest is rejected (there
+// is no other way to learn which layer it reconstructs).
+func TestWithLayerBareCompactStreamMissingEmbeddedDigest(t *testing.T) {
+	csPath := filepath.Join(t.TempDir(), "layer.cstream")
+	buildCompactStreamFileAt(t, csPath, []byte("A"), []byte("in"), []byte("Z"), false /* embedDigest */)
+
+	_, err := NewBuilder(api.DeployManifest{}).WithLayer(csPath).Build()
+	if err == nil || !strings.Contains(err.Error(), "does not embed a compressed digest") {
+		t.Fatalf("expected embedded-digest error, got %v", err)
+	}
+}
+
+// TestWithLayerCompactStreamDigestForm verifies the `digest=path` form for a
+// compact stream: a matching digest reconstructs, and a mismatching digest is
+// rejected against the stream's embedded compressed digest.
+func TestWithLayerCompactStreamDigestForm(t *testing.T) {
+	csPath := filepath.Join(t.TempDir(), "layer.cstream")
+	casBlob := []byte("digest-form-input")
+	desc, want := buildCompactStreamFileAt(t, csPath, []byte("A"), casBlob, []byte("Z"), true)
+
+	diskCache := t.TempDir()
+	shipDiskCacheBlob(t, diskCache, casBlob)
+
+	b := NewBuilder(api.DeployManifest{}).WithDiskCache(diskCache).WithLayer(desc.Digest + "=" + csPath)
+	if b.layerSpecErr != nil {
+		t.Fatalf("WithLayer (matching digest): %v", b.layerSpecErr)
+	}
+	entry, err := b.layerFromExplicitCompactStream(desc)
+	if err != nil {
+		t.Fatalf("layerFromExplicitCompactStream: %v", err)
+	}
+	if got := readAllClose(t, mustOpen(t, entry)); !bytes.Equal(got, want) {
+		t.Fatalf("reconstructed = %q, want %q", got, want)
+	}
+
+	wrong := "sha256:" + strings.Repeat("a", 64)
+	_, err = NewBuilder(api.DeployManifest{}).WithLayer(wrong + "=" + csPath).Build()
+	if err == nil || !strings.Contains(err.Error(), "does not match") {
+		t.Fatalf("expected digest-mismatch error, got %v", err)
+	}
+}
+
+// TestLayerFromExplicitCompactStreamResolvesRefsFromRemoteCAS verifies that a
+// `--layer` compact stream resolves its CAS references from the remote cache
+// when no input directory or disk cache ships them.
+func TestLayerFromExplicitCompactStreamResolvesRefsFromRemoteCAS(t *testing.T) {
+	csPath := filepath.Join(t.TempDir(), "layer.cstream")
+	casBlob := []byte("remote-input-content")
+	desc, want := buildCompactStreamFileAt(t, csPath, []byte("<"), casBlob, []byte(">"), true)
+
+	casDigest := sha256.Sum256(casBlob)
+	remote := &stubCASReader{blobs: map[string][]byte{hex.EncodeToString(casDigest[:]): casBlob}}
+
+	b := NewBuilder(api.DeployManifest{}).WithCASReader(remote).WithLayer(csPath)
+	if b.layerSpecErr != nil {
+		t.Fatalf("WithLayer: %v", b.layerSpecErr)
+	}
+	entry, err := b.layerFromExplicitCompactStream(desc)
+	if err != nil {
+		t.Fatalf("layerFromExplicitCompactStream: %v", err)
+	}
+	if got := readAllClose(t, mustOpen(t, entry)); !bytes.Equal(got, want) {
+		t.Fatalf("reconstructed = %q, want %q", got, want)
+	}
+}
+
+// TestWithLayerBareRawLayerHashesFile verifies a bare `--layer=<path>` to a raw
+// (non-cstream) layer blob is hashed from disk to derive its digest and served
+// verbatim via the explicit-layer source.
+func TestWithLayerBareRawLayerHashesFile(t *testing.T) {
+	blob := []byte("this is a raw compressed layer blob, not a compact stream")
+	blobPath := filepath.Join(t.TempDir(), "layer.tar.gz")
+	writeBlobFile(t, blobPath, blob)
+	sum := sha256.Sum256(blob)
+	desc := api.Descriptor{Digest: "sha256:" + hex.EncodeToString(sum[:]), Size: int64(len(blob))}
+
+	b := NewBuilder(api.DeployManifest{}).WithLayer(blobPath)
+	if b.layerSpecErr != nil {
+		t.Fatalf("WithLayer: %v", b.layerSpecErr)
+	}
+	entry, err := b.layerFromExplicit(desc)
+	if err != nil {
+		t.Fatalf("layerFromExplicit: %v", err)
+	}
+	if entry.Location != "file" {
+		t.Errorf("Location = %q, want file", entry.Location)
+	}
+	if got := readAllClose(t, mustOpen(t, entry)); !bytes.Equal(got, blob) {
+		t.Fatalf("blob = %q, want %q", got, blob)
+	}
+}
+
+// TestWithLayerRawLayerDigestFormIsTrusted verifies the `digest=path` form for a
+// raw layer registers under the supplied digest without hashing the file.
+func TestWithLayerRawLayerDigestFormIsTrusted(t *testing.T) {
+	blob := []byte("raw blob bytes")
+	blobPath := filepath.Join(t.TempDir(), "layer.bin")
+	writeBlobFile(t, blobPath, blob)
+
+	// A digest that does NOT match the file's hash; digest=path is trusted as-is.
+	desc := api.Descriptor{Digest: "sha256:" + strings.Repeat("b", 64), Size: int64(len(blob))}
+	b := NewBuilder(api.DeployManifest{}).WithLayer(desc.Digest + "=" + blobPath)
+	if b.layerSpecErr != nil {
+		t.Fatalf("WithLayer: %v", b.layerSpecErr)
+	}
+	entry, err := b.layerFromExplicit(desc)
+	if err != nil {
+		t.Fatalf("layerFromExplicit: %v", err)
+	}
+	if got := readAllClose(t, mustOpen(t, entry)); !bytes.Equal(got, blob) {
+		t.Fatalf("blob = %q, want %q", got, blob)
+	}
+}
+
+// TestWithLayerOpenError verifies an unreadable --layer path surfaces at Build().
+func TestWithLayerOpenError(t *testing.T) {
+	if _, err := NewBuilder(api.DeployManifest{}).WithLayer(filepath.Join(t.TempDir(), "nope")).Build(); err == nil {
+		t.Fatal("expected error for nonexistent --layer path")
+	}
+}
+
+// TestLayerFromExplicitCompactStreamErrors covers the structured error kinds the
+// source returns (it is aggregated by layerBlob, which requires *BlobSourceError).
+func TestLayerFromExplicitCompactStreamErrors(t *testing.T) {
+	desc := api.Descriptor{Digest: "sha256:" + strings.Repeat("a", 64)}
+	var bse *BlobSourceError
+
+	// Nothing configured -> unconfigured.
+	if _, err := NewBuilder(api.DeployManifest{}).layerFromExplicitCompactStream(desc); !errors.As(err, &bse) || bse.Kind != BlobSourceUnconfigured {
+		t.Fatalf("expected BlobSourceUnconfigured, got %v", err)
+	}
+
+	// Configured, but this digest is not registered -> blob missing.
+	other := NewBuilder(api.DeployManifest{}).WithCompactStreamLayer("sha256:"+strings.Repeat("c", 64), "/some.cstream")
+	if _, err := other.layerFromExplicitCompactStream(desc); !errors.As(err, &bse) || bse.Kind != BlobSourceBlobMissing {
+		t.Fatalf("expected BlobSourceBlobMissing, got %v", err)
+	}
+
+	// Registered but the file is gone -> other.
+	missing := NewBuilder(api.DeployManifest{}).WithCompactStreamLayer(desc.Digest, filepath.Join(t.TempDir(), "gone.cstream"))
+	if _, err := missing.layerFromExplicitCompactStream(desc); !errors.As(err, &bse) || bse.Kind != BlobSourceOther {
+		t.Fatalf("expected BlobSourceOther, got %v", err)
+	}
+}
+
+// TestCloneCopiesCompactStreamLayers verifies Clone() deep-copies the
+// compact-stream layer map so per-request worker clones do not leak into the base.
+func TestCloneCopiesCompactStreamLayers(t *testing.T) {
+	b := NewBuilder(api.DeployManifest{}).WithCompactStreamLayer("sha256:abc", "/p")
+	clone := b.Clone()
+	clone.WithCompactStreamLayer("sha256:def", "/q")
+	if _, leaked := b.compactStreamLayers["sha256:def"]; leaked {
+		t.Fatal("mutating clone leaked into the original compactStreamLayers")
+	}
+}

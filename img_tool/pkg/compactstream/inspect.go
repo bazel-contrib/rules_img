@@ -91,6 +91,18 @@ func (i *Info) ReconstructedSize() uint64 {
 	return i.StreamUncompressedSize + i.ReferencedBytes()
 }
 
+// MagicSize is the number of leading bytes that identify a compact stream.
+// A caller can peek this many bytes and pass them to HasMagic to detect a
+// compact stream without parsing the full header.
+const MagicSize = len(magic)
+
+// HasMagic reports whether prefix begins with the compact stream signature.
+// It only inspects the first MagicSize bytes, so a shorter prefix (e.g. from a
+// truncated read) reports false rather than erroring.
+func HasMagic(prefix []byte) bool {
+	return len(prefix) >= MagicSize && string(prefix[:MagicSize]) == magic
+}
+
 // ReadHeader reads and validates the fixed-size compact stream header from
 // r. It consumes exactly headerSize bytes, leaving r positioned at the start
 // of the CAS reference table.
