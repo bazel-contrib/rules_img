@@ -30,6 +30,13 @@ const (
 	// IndexRootDescriptor writes root.descriptor.json instead of index.json
 	// (sparse layout).
 	IndexRootDescriptor
+	// IndexMultiRoot writes a generated annotated index.json referencing every
+	// root added via Builder.AddRoot: image-manifest roots are referenced
+	// directly, index roots are stored as nested blobs and referenced by their
+	// own index digest. Unlike the single-root styles it accepts N independent
+	// roots, so it is used by the deploy oci-tar/docker-save sinks that combine
+	// all operations into one layout.
+	IndexMultiRoot
 )
 
 // BlobPolicy selects whether layer bodies are written.

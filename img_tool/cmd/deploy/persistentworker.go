@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 
 	"golang.org/x/sync/errgroup"
 
@@ -28,9 +29,15 @@ type deployWorkerHandler struct {
 	jobs          int
 	baseBuilder   *deployvfs.Builder
 	pushTransport http.RoundTripper
+
+	// globalSink, when set, redirects every request's operations into a shared
+	// local sink (distribution/oci) instead of a registry. It is not
+	// concurrency-safe, so access is serialized by sinkMu.
+	globalSink sink
+	sinkMu     sync.Mutex
 }
 
-func newDeployWorkerHandler(jobs int) (*deployWorkerHandler, error) {
+func newDeployWorkerHandler(jobs int, sinkSpec string) (*deployWorkerHandler, error) {
 	// Configure optional registry gateways. When IMG_REGISTRY_*_GATEWAY is set,
 	// push and base-image (pull) requests are routed through the gateway; when
 	// unset, WrapTransport returns the base transport unchanged.
@@ -54,12 +61,30 @@ func newDeployWorkerHandler(jobs int) (*deployWorkerHandler, error) {
 		fmt.Fprintf(os.Stderr, "warning: failed to configure VFS from environment: %v\n", err)
 	}
 
+	h := &deployWorkerHandler{jobs: jobs, baseBuilder: baseBuilder, pushTransport: pushTransport}
+
+	if sinkSpec != "" {
+		// A global distribution/oci sink redirects every request; no pusher is
+		// created because no registry I/O is performed.
+		kind, path, err := parseSink(sinkSpec)
+		if err != nil {
+			return nil, err
+		}
+		s, err := newSink(kind, path)
+		if err != nil {
+			return nil, fmt.Errorf("creating global sink: %w", err)
+		}
+		h.globalSink = s
+		return h, nil
+	}
+
 	opts := []remote.Option{registry.WithAuthFromMultiKeychain(), remote.WithTransport(pushTransport), remote.WithJobs(jobs)}
 	p, err := remote.NewPusher(opts...)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "warning: failed to create persistent pusher: %v\n", err)
 	}
-	return &deployWorkerHandler{pusher: p, jobs: jobs, baseBuilder: baseBuilder, pushTransport: pushTransport}, nil
+	h.pusher = p
+	return h, nil
 }
 
 func (h *deployWorkerHandler) HandleRequest(ctx context.Context, req persistentworker.WorkRequest) persistentworker.WorkResponse {
@@ -107,6 +132,18 @@ func (h *deployWorkerHandler) processRequest(ctx context.Context, req persistent
 	vfs, err := vfsBuilder.Build()
 	if err != nil {
 		return "", fmt.Errorf("building VFS: %w", err)
+	}
+
+	// Sink routing bypasses the pusher/loader/tagger entirely (no registry or
+	// daemon network I/O for the destination).
+	if h.globalSink != nil {
+		if opts.sink != "" {
+			return "", fmt.Errorf("--sink cannot be set in a work request when img deploy was started with a global --sink")
+		}
+		return h.routeGlobalSink(ctx, vfs, dm, opts)
+	}
+	if opts.sink != "" {
+		return h.routePerRequestSink(ctx, vfs, dm, opts)
 	}
 
 	var output strings.Builder
@@ -164,6 +201,86 @@ func (h *deployWorkerHandler) processRequest(ctx context.Context, req persistent
 	}
 
 	return output.String(), nil
+}
+
+// sinkOperations extracts the push, load and registry_tag operations from a
+// deploy manifest.
+func sinkOperations(dm api.DeployManifest) ([]api.IndexedPushDeployOperation, []api.IndexedLoadDeployOperation, []api.IndexedRegistryTagDeployOperation, error) {
+	pushOps, err := dm.PushOperations()
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	loadOps, err := dm.LoadOperations()
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	tagOps, err := dm.RegistryTagOperations()
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return pushOps, loadOps, tagOps, nil
+}
+
+// routeGlobalSink captures a request's operations into the shared global sink.
+// Access is serialized because the incremental dir sinks are not concurrency-
+// safe, and the sink is flushed after each request so its on-disk state stays
+// valid between requests.
+func (h *deployWorkerHandler) routeGlobalSink(ctx context.Context, vfs *deployvfs.VFS, dm api.DeployManifest, opts *workerOpts) (string, error) {
+	pushOps, loadOps, tagOps, err := sinkOperations(dm)
+	if err != nil {
+		return "", err
+	}
+	h.sinkMu.Lock()
+	defer h.sinkMu.Unlock()
+	refs, err := routeToSink(ctx, h.globalSink, vfs, pushOps, loadOps, tagOps, sinkRouteOptions{
+		overrideRegistry:   opts.overrideRegistry,
+		overrideRepository: opts.overrideRepository,
+	})
+	if err != nil {
+		return "", err
+	}
+	if err := h.globalSink.Close(); err != nil {
+		return "", fmt.Errorf("flushing sink: %w", err)
+	}
+	return refsOutput(refs), nil
+}
+
+// routePerRequestSink captures a request's operations into an isolated,
+// request-scoped oci-tar/docker-save sink.
+func (h *deployWorkerHandler) routePerRequestSink(ctx context.Context, vfs *deployvfs.VFS, dm api.DeployManifest, opts *workerOpts) (string, error) {
+	kind, path, err := parseSink(opts.sink)
+	if err != nil {
+		return "", err
+	}
+	s, err := newSink(kind, path)
+	if err != nil {
+		return "", fmt.Errorf("creating sink: %w", err)
+	}
+	pushOps, loadOps, tagOps, err := sinkOperations(dm)
+	if err != nil {
+		return "", err
+	}
+	refs, err := routeToSink(ctx, s, vfs, pushOps, loadOps, tagOps, sinkRouteOptions{
+		overrideRegistry:   opts.overrideRegistry,
+		overrideRepository: opts.overrideRepository,
+	})
+	if err != nil {
+		s.Close()
+		return "", err
+	}
+	if err := s.Close(); err != nil {
+		return "", fmt.Errorf("finalizing sink: %w", err)
+	}
+	return refsOutput(refs), nil
+}
+
+func refsOutput(refs []string) string {
+	var output strings.Builder
+	for _, ref := range refs {
+		output.WriteString(ref)
+		output.WriteByte('\n')
+	}
+	return output.String()
 }
 
 func (h *deployWorkerHandler) pushOps(ctx context.Context, vfs *deployvfs.VFS, ops []api.IndexedPushDeployOperation, strategy string, opts *workerOpts) ([]string, error) {
@@ -251,6 +368,7 @@ type workerOpts struct {
 	overrideRegistry   string
 	overrideRepository string
 	platforms          []string
+	sink               string
 }
 
 func parseWorkerArgs(args []string) (*workerOpts, error) {
@@ -333,6 +451,22 @@ func parseWorkerArgs(args []string) (*workerOpts, error) {
 			for j, p := range opts.platforms {
 				opts.platforms[j] = strings.TrimSpace(p)
 			}
+		case key == "--sink":
+			if !hasValue {
+				if i+1 >= len(args) {
+					return nil, fmt.Errorf("--sink requires a value")
+				}
+				i++
+				value = args[i]
+			}
+			kind, _, err := parseSink(value)
+			if err != nil {
+				return nil, err
+			}
+			if kind.globalOnly() {
+				return nil, fmt.Errorf("--sink %q may only be set on the img deploy command line, not in a work request", value)
+			}
+			opts.sink = value
 		}
 	}
 
@@ -342,8 +476,8 @@ func parseWorkerArgs(args []string) (*workerOpts, error) {
 	return opts, nil
 }
 
-func persistentWorker(jobs int) error {
-	handler, err := newDeployWorkerHandler(jobs)
+func persistentWorker(jobs int, sinkSpec string) error {
+	handler, err := newDeployWorkerHandler(jobs, sinkSpec)
 	if err != nil {
 		return err
 	}

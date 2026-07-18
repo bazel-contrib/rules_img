@@ -364,7 +364,7 @@ func (l *loader) streamDockerTar(ctx context.Context, op api.IndexedLoadDeployOp
 			if err != nil {
 				return nil, fmt.Errorf("getting manifest for %s: %w", desc.Digest, err)
 			}
-			b.AddManifest(manifestInputFromVFS(blobSource, manifest, rawManifest, desc.Platform))
+			b.AddManifest(ocilayout.ManifestInputFromVFS(blobSource, manifest, rawManifest, desc.Platform))
 		}
 
 		if err := b.WriteToWriter(ctx, w); err != nil {
@@ -395,7 +395,7 @@ func (l *loader) streamDockerTar(ctx context.Context, op api.IndexedLoadDeployOp
 			WithTags(normalizedTags).
 			WithOCITags(normalizedTags).
 			WithProgress(progressFn).
-			AddManifest(manifestInputFromVFS(blobSource, manifest, rawManifest, nil))
+			AddManifest(ocilayout.ManifestInputFromVFS(blobSource, manifest, rawManifest, nil))
 		if err := b.WriteToWriter(ctx, w); err != nil {
 			return nil, err
 		}
@@ -403,25 +403,6 @@ func (l *loader) streamDockerTar(ctx context.Context, op api.IndexedLoadDeployOp
 	}
 
 	return nil, fmt.Errorf("no manifest or index provided")
-}
-
-// manifestInputFromVFS builds an ocilayout.ManifestInput whose config and layer
-// blobs stream from the VFS-backed blob source.
-func manifestInputFromVFS(src ocilayout.BlobSource, manifest *registryv1.Manifest, rawManifest []byte, platform *registryv1.Platform) ocilayout.ManifestInput {
-	mi := ocilayout.ManifestInput{
-		Manifest:     manifest,
-		ManifestData: rawManifest,
-		Config:       ocilayout.BlobFromSource(src, manifest.Config.Digest.Hex, manifest.Config.Size),
-		Platform:     platform,
-	}
-	for _, layer := range manifest.Layers {
-		mi.Layers = append(mi.Layers, ocilayout.LayerInput{
-			Descriptor: layer,
-			Blob:       ocilayout.BlobFromSource(src, layer.Digest.Hex, layer.Size),
-			Present:    true,
-		})
-	}
-	return mi
 }
 
 func (l *loader) makeManifestFilter() ocilayout.ManifestFilter {
