@@ -9,7 +9,8 @@ Public API for container image multi deploy rule.
 <pre>
 load("@rules_img//img:multi_deploy.bzl", "multi_deploy")
 
-multi_deploy(<a href="#multi_deploy-name">name</a>, <a href="#multi_deploy-deploy_tool">deploy_tool</a>, <a href="#multi_deploy-load_strategy">load_strategy</a>, <a href="#multi_deploy-operations">operations</a>, <a href="#multi_deploy-push_strategy">push_strategy</a>, <a href="#multi_deploy-tool_cfg">tool_cfg</a>)
+multi_deploy(<a href="#multi_deploy-name">name</a>, <a href="#multi_deploy-deploy_operations">deploy_operations</a>, <a href="#multi_deploy-deploy_tool">deploy_tool</a>, <a href="#multi_deploy-load_strategy">load_strategy</a>, <a href="#multi_deploy-operations">operations</a>, <a href="#multi_deploy-push_strategy">push_strategy</a>,
+             <a href="#multi_deploy-tool_cfg">tool_cfg</a>)
 </pre>
 
 Deploys multiple container images in a single coordinated command.
@@ -66,6 +67,7 @@ bazel run //path/to:deploy_all
 | Name  | Description | Type | Mandatory | Default |
 | :------------- | :------------- | :------------- | :------------- | :------------- |
 | <a id="multi_deploy-name"></a>name |  A unique name for this target.   | <a href="https://bazel.build/concepts/labels#target-names">Name</a> | required |  |
+| <a id="multi_deploy-deploy_operations"></a>deploy_operations |  Which kinds of deploy operations to perform.<br><br>Acts as a filter when assembling the final deploy manifest from all `operations`:<br><br>- `"push"`: include push operations (and their associated registry tag operations). - `"load"`: include load operations.<br><br>Defaults to `["push", "load"]`, performing every operation contributed by the `operations` targets. Narrow it when your images carry both `push_specs` and `load_specs` but a particular deployment should only push or only load -- for example, `["push"]` to push without loading, or `["load"]` to load without pushing.   | List of strings | optional |  `["push", "load"]`  |
 | <a id="multi_deploy-deploy_tool"></a>deploy_tool |  Optional label of a deploy tool target providing `DeployToolInfo` (created with `img_deploy_tool` from `@rules_img//img:deploy_tool.bzl`). When set, overrides `tool_cfg`.   | <a href="https://bazel.build/concepts/labels">Label</a> | optional |  `None`  |
 | <a id="multi_deploy-load_strategy"></a>load_strategy |  Load strategy to use for all load operations in the deployment.<br><br>Available strategies: - **`auto`** (default): Uses the global default load strategy - **`eager`**: Downloads all layers during the build phase - **`lazy`**: Downloads layers only when needed during the load operation   | String | optional |  `"auto"`  |
 | <a id="multi_deploy-operations"></a>operations |  List of operations to deploy together.<br><br>Each operation must provide DeployInfo (typically from image_push, image_load, image_manifest with push_specs/load_specs, or image_index with push_specs/load_specs). All operations will be merged and executed in the order specified.   | <a href="https://bazel.build/concepts/labels">List of labels</a> | required |  |
