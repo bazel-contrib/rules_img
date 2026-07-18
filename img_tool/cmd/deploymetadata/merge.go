@@ -42,6 +42,16 @@ func DeployMergeProcess(ctx context.Context, args []string) {
 	}
 	flagSet.StringVar(&pushStrategy, "push-strategy", "lazy", `Push strategy to use for all push operations. One of "eager", "lazy", "cas_registry", or "bes".`)
 	flagSet.StringVar(&loadStrategy, "load-strategy", "lazy", `Load strategy to use for all load operations. One of "eager", "lazy".`)
+	var operations []string
+	flagSet.Func("operation", `(Optional, repeatable) restrict the merged operations to a kind: "push" or "load". If omitted, all operations are kept.`, func(value string) error {
+		switch value {
+		case "push", "load":
+			operations = append(operations, value)
+			return nil
+		default:
+			return fmt.Errorf("invalid operation %q (want %q or %q)", value, "push", "load")
+		}
+	})
 	flagSet.Func("layer-hints-input", `(Optional) path to layer hints file to merge. Can be specified multiple times.`, func(value string) error {
 		mergeLayerHintsInputPaths = append(mergeLayerHintsInputPaths, value)
 		return nil
@@ -96,13 +106,41 @@ func DeployMergeProcess(ctx context.Context, args []string) {
 		}
 	}
 
-	if err := MergeDeployManifests(ctx, inputPaths, outputPath); err != nil {
+	if err := MergeDeployManifests(ctx, inputPaths, outputPath, operations); err != nil {
 		fmt.Fprintf(os.Stderr, "Error merging deploy manifests: %v\n", err)
 		os.Exit(1)
 	}
 }
 
-func MergeDeployManifests(ctx context.Context, inputPaths []string, outputPath string) error {
+// keepOperation reports whether an operation with the given command should be
+// retained given the requested operation kinds. Push, registry_tag, and referrer
+// (also command "push") operations count as the "push" kind; load operations
+// count as "load". Unrecognized commands are always kept so unknown operation
+// types are never silently dropped.
+func keepOperation(command string, kinds map[string]bool) bool {
+	switch command {
+	case "load":
+		return kinds["load"]
+	case "push", "registry_tag":
+		return kinds["push"]
+	default:
+		return true
+	}
+}
+
+// MergeDeployManifests concatenates the operations of every input manifest into a
+// single manifest written to outputPath. When operations is non-empty, only the
+// requested operation kinds ("push" and/or "load") are retained; an empty
+// operations slice keeps every operation.
+func MergeDeployManifests(ctx context.Context, inputPaths []string, outputPath string, operations []string) error {
+	var kinds map[string]bool
+	if len(operations) > 0 {
+		kinds = make(map[string]bool, len(operations))
+		for _, kind := range operations {
+			kinds[kind] = true
+		}
+	}
+
 	var allOperations []json.RawMessage
 
 	// Read and merge all input deploy manifests
@@ -117,8 +155,22 @@ func MergeDeployManifests(ctx context.Context, inputPaths []string, outputPath s
 			return fmt.Errorf("unmarshalling deploy manifest from %s: %w", inputPath, err)
 		}
 
-		// Append all operations from this manifest
-		allOperations = append(allOperations, deployManifest.Operations...)
+		// Append the operations from this manifest, keeping only the requested
+		// kinds when a filter was provided.
+		for _, rawOp := range deployManifest.Operations {
+			if kinds != nil {
+				var head struct {
+					Command string `json:"command"`
+				}
+				if err := json.Unmarshal(rawOp, &head); err != nil {
+					return fmt.Errorf("unmarshalling operation command from %s: %w", inputPath, err)
+				}
+				if !keepOperation(head.Command, kinds) {
+					continue
+				}
+			}
+			allOperations = append(allOperations, rawOp)
+		}
 	}
 
 	// Create merged deploy manifest with unified settings

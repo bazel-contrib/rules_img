@@ -68,6 +68,74 @@ func TestDeployMergeProcessExpandsArgfile(t *testing.T) {
 	}
 }
 
+func TestMergeDeployManifestsFiltersByOperation(t *testing.T) {
+	tmp := t.TempDir()
+	// A manifest carrying every operation kind we filter on. registry_tag rides
+	// along with push; referrer operations also use the "push" command.
+	input := writeDeployManifest(t, filepath.Join(tmp, "in.json"), "push", "registry_tag", "load")
+
+	cases := []struct {
+		name       string
+		operations []string
+		want       []string
+	}{
+		{"push only", []string{"push"}, []string{"push", "registry_tag"}},
+		{"load only", []string{"load"}, []string{"load"}},
+		{"both", []string{"push", "load"}, []string{"push", "registry_tag", "load"}},
+		{"no filter keeps all", nil, []string{"push", "registry_tag", "load"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			output := filepath.Join(tmp, tc.name+".json")
+			if err := MergeDeployManifests(context.Background(), []string{input}, output, tc.operations); err != nil {
+				t.Fatalf("MergeDeployManifests: %v", err)
+			}
+			if got := mergedCommands(t, output); !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("filtered commands = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// An unrecognized command must never be dropped, even when a filter is active.
+func TestMergeDeployManifestsKeepsUnknownCommands(t *testing.T) {
+	tmp := t.TempDir()
+	input := writeDeployManifest(t, filepath.Join(tmp, "in.json"), "push", "mystery", "load")
+	output := filepath.Join(tmp, "out.json")
+
+	if err := MergeDeployManifests(context.Background(), []string{input}, output, []string{"load"}); err != nil {
+		t.Fatalf("MergeDeployManifests: %v", err)
+	}
+	if got, want := mergedCommands(t, output), []string{"mystery", "load"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("filtered commands = %v, want %v", got, want)
+	}
+}
+
+// mergedCommands reads a merged deploy manifest and returns the command of each
+// operation in order.
+func mergedCommands(t *testing.T, path string) []string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading output manifest: %v", err)
+	}
+	var got api.DeployManifest
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("unmarshalling output manifest: %v", err)
+	}
+	var commands []string
+	for _, raw := range got.Operations {
+		var op struct {
+			Command string `json:"command"`
+		}
+		if err := json.Unmarshal(raw, &op); err != nil {
+			t.Fatalf("unmarshalling operation %s: %v", raw, err)
+		}
+		commands = append(commands, op.Command)
+	}
+	return commands
+}
+
 func writeDeployManifest(t *testing.T, path string, commands ...string) string {
 	t.Helper()
 

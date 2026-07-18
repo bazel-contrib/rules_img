@@ -51,6 +51,11 @@ def _compute_multi_deploy_metadata(*, ctx):
     merge_args.add("--push-strategy", _multi_deploy_strategy(ctx, "push"))
     merge_args.add("--load-strategy", _multi_deploy_strategy(ctx, "load"))
 
+    # Filter the assembled operations by kind. push_specs contribute push (and
+    # their associated registry_tag) operations; load_specs contribute load
+    # operations. Only the requested kinds are merged into the final manifest.
+    merge_args.add_all(ctx.attr.deploy_operations, before_each = "--operation")
+
     # Add layer hints inputs and output if any exist
     layer_hints_out = None
     if layer_hints_files:
@@ -104,6 +109,12 @@ def _multi_deploy_impl(ctx):
     """Implementation of the multi_deploy rule."""
     if not ctx.attr.operations:
         fail("operations attribute cannot be empty")
+
+    if not ctx.attr.deploy_operations:
+        fail("deploy_operations attribute cannot be empty; specify [\"push\"], [\"load\"], or [\"push\", \"load\"]")
+    for operation in ctx.attr.deploy_operations:
+        if operation not in ("push", "load"):
+            fail("deploy_operations may only contain \"push\" and/or \"load\", got \"{}\"".format(operation))
 
     for operation in ctx.attr.operations:
         if DeployInfo not in operation:
@@ -289,6 +300,21 @@ Available strategies:
 """,
             default = "auto",
             values = ["auto", "eager", "lazy"],
+        ),
+        "deploy_operations": attr.string_list(
+            doc = """Which kinds of deploy operations to perform.
+
+Acts as a filter when assembling the final deploy manifest from all `operations`:
+
+- `"push"`: include push operations (and their associated registry tag operations).
+- `"load"`: include load operations.
+
+Defaults to `["push", "load"]`, performing every operation contributed by the
+`operations` targets. Narrow it when your images carry both `push_specs` and
+`load_specs` but a particular deployment should only push or only load -- for
+example, `["push"]` to push without loading, or `["load"]` to load without pushing.
+""",
+            default = ["push", "load"],
         ),
         "_push_settings": attr.label(
             default = Label("//img/private/settings:push"),
