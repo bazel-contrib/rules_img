@@ -3,6 +3,7 @@
   "extends": [
     "config:recommended"
   ],
+  "dependencyDashboard": true,
   "labels": ["dependencies"],
   "packageRules": [
     {
@@ -19,6 +20,10 @@
       "groupName": "Go dependencies",
       "matchManagers": ["gomod"],
       "excludePackageNames": ["github.com/malt3/go-containerregistry"]
+    },
+    {
+      "matchPackagePatterns": ["*"],
+      "enabled": false
     }
   ]
 }
