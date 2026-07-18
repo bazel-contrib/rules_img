@@ -65,8 +65,8 @@ func DeployProcess(ctx context.Context, args []string) {
 	flagSet.StringVar(&runfilesRootSymlinksPrefix, "runfiles-root-symlinks-prefix", "", "Prefix for runfiles root symlinks")
 	flagSet.Var(&additionalTags, "tag", "Additional tag to apply (can be used multiple times)")
 	flagSet.Var(&additionalTags, "t", "Additional tag to apply (can be used multiple times)")
-	flagSet.StringVar(&overrideRegistry, "registry", "", "Override registry to push to")
-	flagSet.StringVar(&overrideRepository, "repository", "", "Override repository to push to")
+	flagSet.StringVar(&overrideRegistry, "registry", "", "Override registry for push and split-mode load operations (load ops with a registry/repository set; the rules_oci tag-only fallback is left unchanged)")
+	flagSet.StringVar(&overrideRepository, "repository", "", "Override repository for push and split-mode load operations (load ops with a registry/repository set; the rules_oci tag-only fallback is left unchanged)")
 	flagSet.StringVar(&platforms, "platform", "", "Comma-separated list of platforms to load (e.g., linux/amd64). If not set, loads the platform closest to the host (or the single available platform). Use 'all' to load the full multi-platform index. Doesn't affect push, only load.")
 	flagSet.Var(&ociLayouts, "oci-layout", "Path to an OCI layout directory, sparse or standard (can be used multiple times)")
 	flagSet.Var(&explicitLayers, "layer", "Explicit layer in digest=path format (can be used multiple times)")
@@ -319,6 +319,14 @@ func DeployWithExtras(ctx context.Context, rawRequest []byte, opts DeployOptions
 			}
 			if len(opts.AdditionalTags) > 0 {
 				builder = builder.WithExtraTags(opts.AdditionalTags)
+			}
+			// Overrides apply only to split-mode load ops (non-empty
+			// registry/repository); the loader leaves the rules_oci fallback alone.
+			if opts.OverrideRegistry != "" {
+				builder = builder.WithOverrideRegistry(opts.OverrideRegistry)
+			}
+			if opts.OverrideRepository != "" {
+				builder = builder.WithOverrideRepository(opts.OverrideRepository)
 			}
 			// LoadAll prints the loaded tags itself, so we discard the return value
 			_, err := builder.Build().LoadAll(groupCtx, loadOperations)

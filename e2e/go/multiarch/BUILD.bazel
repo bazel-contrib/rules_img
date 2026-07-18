@@ -62,7 +62,9 @@ image_push(
 image_load(
     name = "load",
     image = ":multiarch_image",
-    tag = "go-multiarch:latest",
+    registry = "ghcr.io",
+    repository = "malt3/rules_img/go",
+    tag = "go-multiarch",
 )
 
 build_test(

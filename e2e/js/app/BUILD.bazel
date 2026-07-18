@@ -41,7 +41,9 @@ image_index(
 image_load(
     name = "load",
     image = ":multiarch_image",
-    tag = "302232432727.dkr.ecr.us-east-2.amazonaws.com/account_access_app:latest",
+    registry = "302232432727.dkr.ecr.us-east-2.amazonaws.com",
+    repository = "account_access_app",
+    tag = "latest",
 )
 
 image_push(

@@ -24,20 +24,37 @@ image_manifest(
     layers = [":app_layer"],
 )
 
-# Create a load target with a single tag
+# Preferred: the same registry/repository/tag split as image_push. The loaded
+# image name is reconstructed as "my-registry.example.com/my-app:latest".
 image_load(
     name = "load",
+    image = ":my_image",
+    registry = "my-registry.example.com",
+    repository = "my-app",
+    tag = "latest",
+)
+
+# The rules_oci-compatible form still works: when loading into a daemon the image
+# name is just a string, so a single fully-qualified tag (with no
+# registry/repository) is used verbatim.
+image_load(
+    name = "load_legacy",
     image = ":my_image",
     tag = "my-app:latest",
 )
 
-# Load with multiple tags
+# Load with multiple full-reference tags
 image_load(
     name = "load_multi",
     image = ":my_image",
     tag_list = ["my-app:latest", "my-app:v1.0.0"],
 )
 ```
+
+Splitting the name into `registry` / `repository` / `tag` is optional and does
+not change what a local daemon sees; it just keeps the load target aligned with
+a matching `image_push`, making it easy to push the same image to a registry
+later.
 
 Then run:
 ```bash

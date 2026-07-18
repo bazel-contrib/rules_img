@@ -50,13 +50,17 @@ image_index(
 image_load(
     name = "load_single_arch",
     image = ":image",
-    tag = "ghcr.io/malt3/rules_img/python:sideloaded",
+    registry = "ghcr.io",
+    repository = "malt3/rules_img/python",
+    tag = "sideloaded",
 )
 
 image_load(
     name = "load",
     image = ":multiarch_image",
-    tag = "ghcr.io/malt3/rules_img/python:sideloaded",
+    registry = "ghcr.io",
+    repository = "malt3/rules_img/python",
+    tag = "sideloaded",
 )
 
 image_push(

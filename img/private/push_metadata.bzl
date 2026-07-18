@@ -516,6 +516,8 @@ def process_deploy_specs(
         load_config = deployment[LoadConfigInfo]
 
         templates = dict(
+            registry = load_config.registry,
+            repository = load_config.repository,
             tags = load_config.tags,
             daemon = load_config.daemon,
         )

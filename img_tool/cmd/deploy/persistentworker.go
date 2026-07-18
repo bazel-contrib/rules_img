@@ -150,6 +150,14 @@ func (h *deployWorkerHandler) processRequest(ctx context.Context, req persistent
 		if len(opts.platforms) > 0 {
 			builder = builder.WithPlatforms(opts.platforms)
 		}
+		// Overrides apply only to split-mode load ops (non-empty
+		// registry/repository); the loader leaves the rules_oci fallback alone.
+		if opts.overrideRegistry != "" {
+			builder = builder.WithOverrideRegistry(opts.overrideRegistry)
+		}
+		if opts.overrideRepository != "" {
+			builder = builder.WithOverrideRepository(opts.overrideRepository)
+		}
 		if _, err := builder.Build().LoadAll(ctx, loadOps); err != nil {
 			return "", fmt.Errorf("load: %w", err)
 		}

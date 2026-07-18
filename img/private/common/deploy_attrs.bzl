@@ -244,10 +244,34 @@ The best performance is achieved with:
         default = "auto",
         values = ["auto", "docker", "containerd", "podman", "containerization", "tar", "generic"],
     ),
+    registry = attr.string(
+        doc = """Registry component of the image name to load.
+
+Optional. When set, `repository` must also be set, and each entry in
+`tag` / `tag_list` / `tag_file` is treated as a bare tag: the loaded image name
+is reconstructed as `{registry}/{repository}:{tag}` (mirroring `image_push`).
+
+When omitted (together with `repository`), the tags are used verbatim as full
+image references, preserving the `rules_oci`-compatible behavior.
+
+Subject to [template expansion](/docs/templating.md).
+""",
+    ),
+    repository = attr.string(
+        doc = """Repository component of the image name to load.
+
+Optional. Must be set together with `registry` (see `registry` for details).
+
+Subject to [template expansion](/docs/templating.md).
+""",
+    ),
     tag = attr.string(
         doc = """Tag to apply when loading the image.
 
 Optional - if omitted, the image is loaded without a tag.
+
+When `registry`/`repository` are set, this is a bare tag (e.g. `latest`);
+otherwise it is a full image reference (e.g. `my-app:latest`).
 
 Subject to [template expansion](/docs/templating.md).
 """,

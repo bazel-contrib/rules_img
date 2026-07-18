@@ -229,7 +229,9 @@ alias(
 image_load(
     name = "load",
     image = ":final",
-    tag = {load_tag},
+    registry = {load_registry},
+    repository = {repository},
+    tag = {tag},
     visibility = ["//visibility:public"],
 )
 """.format(
@@ -258,7 +260,7 @@ image_load(
             purl = repr(purl),
             repository = repr(rctx.attr.repository),
             tag = repr(rctx.attr.tag) if rctx.attr.tag else "None",
-            load_tag = repr(registries[0] + "/" + rctx.attr.repository + ((":" + rctx.attr.tag) if rctx.attr.tag else ("@" + digest))),
+            load_registry = repr(registries[0]),
         ),
     )
     rctx.file("REPO.bazel", """\

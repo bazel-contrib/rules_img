@@ -31,7 +31,9 @@ image_push(
 image_load(
     name = "load",
     image = ":go_image",
-    tag = "foobar:baz",
+    registry = "ghcr.io",
+    repository = "malt3/rules_img/go",
+    tag = "loaded",
     visibility = ["//:__pkg__"],
 )
 
