@@ -123,8 +123,8 @@ func (h *deployWorkerHandler) processRequest(ctx context.Context, req persistent
 	for _, layoutPath := range opts.ociLayouts {
 		vfsBuilder = vfsBuilder.WithOCILayout(layoutPath)
 	}
-	for digest, filePath := range opts.explicitLayers {
-		vfsBuilder = vfsBuilder.WithExplicitLayer(digest, filePath)
+	for _, spec := range opts.layers {
+		vfsBuilder = vfsBuilder.WithLayer(spec)
 	}
 	if opts.runfilesPrefix != "" {
 		vfsBuilder = vfsBuilder.WithRunfilesRootSymlinksPrefix(opts.runfilesPrefix)
@@ -363,7 +363,7 @@ func (h *deployWorkerHandler) registryTagOps(ctx context.Context, vfs *deployvfs
 type workerOpts struct {
 	requestFiles       []string
 	ociLayouts         []string
-	explicitLayers     map[string]string
+	layers             []string // raw --layer specs: "digest=path" or bare "path" (raw blob or .cstream)
 	runfilesPrefix     string
 	overrideRegistry   string
 	overrideRepository string
@@ -372,9 +372,7 @@ type workerOpts struct {
 }
 
 func parseWorkerArgs(args []string) (*workerOpts, error) {
-	opts := &workerOpts{
-		explicitLayers: make(map[string]string),
-	}
+	opts := &workerOpts{}
 
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
@@ -407,11 +405,7 @@ func parseWorkerArgs(args []string) (*workerOpts, error) {
 				i++
 				value = args[i]
 			}
-			digest, path, ok := strings.Cut(value, "=")
-			if !ok {
-				return nil, fmt.Errorf("--layer must be in format digest=path, got %q", value)
-			}
-			opts.explicitLayers[digest] = path
+			opts.layers = append(opts.layers, value)
 		case key == "--runfiles-root-symlinks-prefix":
 			if !hasValue {
 				if i+1 >= len(args) {

@@ -85,7 +85,7 @@ func DeployProcess(ctx context.Context, args []string) {
 	flagSet.StringVar(&overrideRepository, "repository", "", "Override repository for push and split-mode load operations (load ops with a registry/repository set; the rules_oci tag-only fallback is left unchanged)")
 	flagSet.StringVar(&platforms, "platform", "", "Comma-separated list of platforms to load (e.g., linux/amd64). If not set, loads the platform closest to the host (or the single available platform). Use 'all' to load the full multi-platform index. Doesn't affect push, only load.")
 	flagSet.Var(&ociLayouts, "oci-layout", "Path to an OCI layout directory, sparse or standard (can be used multiple times)")
-	flagSet.Var(&explicitLayers, "layer", "Explicit layer in digest=path format (can be used multiple times)")
+	flagSet.Var(&explicitLayers, "layer", "Layer as digest=path or a bare path (can be used multiple times). The file may be a raw compressed layer blob or a compact stream (.cstream), auto-detected. For a bare path: a raw blob is hashed to derive its digest; a .cstream must embed its compressed digest.")
 	flagSet.IntVar(&jobs, "jobs", 16, "Maximum number of parallel push operations")
 	flagSet.StringVar(&sink, "sink", "", "Override the destination of all push/load/registry_tag operations for testing. Format: <type>:<path> where type is one of oci-tar, docker-save, oci, distribution, distribution-flat. No registry or daemon network I/O is performed.")
 
@@ -103,17 +103,6 @@ func DeployProcess(ctx context.Context, args []string) {
 		fmt.Fprintln(os.Stderr, "Error: at least one --request-file is required")
 		flagSet.Usage()
 		os.Exit(1)
-	}
-
-	// Parse explicit layers into a map
-	layerMap := make(map[string]string)
-	for _, layerFlag := range explicitLayers {
-		digest, filePath, ok := strings.Cut(layerFlag, "=")
-		if !ok {
-			fmt.Fprintf(os.Stderr, "Error: --layer must be in format digest=path, got %q\n", layerFlag)
-			os.Exit(1)
-		}
-		layerMap[digest] = filePath
 	}
 
 	// Parse platforms
@@ -140,7 +129,7 @@ func DeployProcess(ctx context.Context, args []string) {
 		PlatformList:               platformList,
 		RunfilesRootSymlinksPrefix: runfilesRootSymlinksPrefix,
 		OCILayouts:                 []string(ociLayouts),
-		ExplicitLayers:             layerMap,
+		Layers:                     []string(explicitLayers),
 		Jobs:                       jobs,
 		Sink:                       sink,
 	}
@@ -191,7 +180,7 @@ type DeployOptions struct {
 	PlatformList               []string
 	RunfilesRootSymlinksPrefix string
 	OCILayouts                 []string
-	ExplicitLayers             map[string]string
+	Layers                     []string // raw --layer specs: "digest=path" or bare "path" (raw blob or .cstream)
 	Jobs                       int
 	Sink                       string
 }
@@ -248,8 +237,8 @@ func DeployWithExtras(ctx context.Context, rawRequest []byte, opts DeployOptions
 	for _, layoutPath := range opts.OCILayouts {
 		vfsBuilder = vfsBuilder.WithOCILayout(layoutPath)
 	}
-	for digest, filePath := range opts.ExplicitLayers {
-		vfsBuilder = vfsBuilder.WithExplicitLayer(digest, filePath)
+	for _, spec := range opts.Layers {
+		vfsBuilder = vfsBuilder.WithLayer(spec)
 	}
 	vfs, err := vfsBuilder.Build()
 	if err != nil {
