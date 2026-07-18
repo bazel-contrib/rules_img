@@ -106,7 +106,21 @@ func (e *Editor) AddManifest(ctx context.Context, m ManifestInput, tags ...strin
 	if e.index == nil {
 		return fmt.Errorf("ocilayout: AddManifest requires an index.json root layout")
 	}
+	if err := e.AddManifestBlobs(ctx, m); err != nil {
+		return err
+	}
+	descs := DescriptorsForTags(tags, m.Manifest.MediaType, m.ManifestData, hashBytes(m.ManifestData), artifactTypeOf(m.Manifest), e.format.tagOnly())
+	for _, d := range descs {
+		e.AddIndexEntry(d)
+	}
+	return nil
+}
 
+// AddManifestBlobs writes the manifest, config and layer blobs of m (each via
+// the idempotent AddBlob) without touching index.json. Use it for the child
+// manifests of an index root, whose blobs must be present but which should not
+// appear as top-level index.json entries.
+func (e *Editor) AddManifestBlobs(ctx context.Context, m ManifestInput) error {
 	mfstDigest := hashBytes(m.ManifestData)
 	if err := e.AddBlob(ctx, mfstDigest, BlobFromBytes(m.ManifestData)); err != nil {
 		return fmt.Errorf("adding manifest blob: %w", err)
@@ -121,11 +135,6 @@ func (e *Editor) AddManifest(ctx context.Context, m ManifestInput, tags ...strin
 		if err := e.AddBlob(ctx, l.Descriptor.Digest, l.Blob); err != nil {
 			return fmt.Errorf("adding layer blob %s: %w", l.Descriptor.Digest, err)
 		}
-	}
-
-	descs := DescriptorsForTags(tags, m.Manifest.MediaType, m.ManifestData, mfstDigest, artifactTypeOf(m.Manifest), e.format.tagOnly())
-	for _, d := range descs {
-		e.AddIndexEntry(d)
 	}
 	return nil
 }

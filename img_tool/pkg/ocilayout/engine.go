@@ -105,7 +105,7 @@ func (b *Builder) buildPlan(ctx context.Context) (*plan, error) {
 		if err != nil {
 			return nil, fmt.Errorf("reading root index: %w", err)
 		}
-	} else if len(b.manifests) == 0 {
+	} else if len(b.manifests) == 0 && b.format.indexStyle != IndexMultiRoot {
 		return nil, fmt.Errorf("ocilayout: no manifest provided")
 	}
 
@@ -193,20 +193,62 @@ func (b *Builder) buildPlan(ctx context.Context) (*plan, error) {
 			b.addManifestBlobs(p, m)
 		}
 
+	case IndexMultiRoot:
+		// One combined index.json referencing every root. Image-manifest roots
+		// are referenced directly; index roots are stored as nested blobs and
+		// referenced by their own digest. Descriptors are deduplicated on
+		// (digest, ref.name) so re-adding the same root/tag is a no-op.
+		seen := make(map[string]struct{})
+		descs := make([]v1.Descriptor, 0, len(b.roots))
+		for _, r := range b.roots {
+			rootDigest := hashBytes(r.ManifestData)
+			for _, d := range DescriptorsForTags(r.OCITags, r.MediaType, r.ManifestData, rootDigest, r.ArtifactType, b.format.tagOnly()) {
+				key := d.Digest.String() + "|" + refName(d)
+				if _, ok := seen[key]; ok {
+					continue
+				}
+				seen[key] = struct{}{}
+				descs = append(descs, d)
+			}
+			if r.IsIndex {
+				p.blobs = append(p.blobs, blobEntry{blobPath(rootDigest.Hex), BlobFromBytes(r.ManifestData)})
+			}
+			for i := range r.Children {
+				b.addManifestBlobs(p, r.Children[i])
+			}
+		}
+		data, err := marshalIndent(v1.IndexManifest{SchemaVersion: 2, MediaType: mediaTypeOCIImageIndex, Manifests: descs})
+		if err != nil {
+			return nil, err
+		}
+		p.rootFile = fileEntry{"index.json", data}
+
 	default:
 		return nil, fmt.Errorf("ocilayout: unknown index style %d", b.format.indexStyle)
 	}
 
 	if b.format.dockerManifest {
-		def := b.manifests[0]
-		if indexMode {
-			def = b.manifests[defaultIdx]
+		var def ManifestInput
+		if b.format.indexStyle == IndexMultiRoot {
+			// Point manifest.json at the first single-architecture image
+			// manifest: the first manifest root, else the first child of the
+			// first index root.
+			def = firstSingleArchManifest(b.roots)
+		} else {
+			def = b.manifests[0]
+			if indexMode {
+				def = b.manifests[defaultIdx]
+			}
 		}
-		data, err := dockerManifestBytes(def, b.repoTags)
-		if err != nil {
-			return nil, err
+		// A multi-root layout with no image manifests (zero ops) has nothing to
+		// reference from manifest.json; skip it rather than emit a broken entry.
+		if def.Manifest != nil {
+			data, err := dockerManifestBytes(def, b.repoTags)
+			if err != nil {
+				return nil, err
+			}
+			p.dockerFile = &fileEntry{"manifest.json", data}
 		}
-		p.dockerFile = &fileEntry{"manifest.json", data}
 	}
 
 	return p, nil
@@ -247,6 +289,24 @@ func sparseLayerDescriptor(l LayerInput) SparseLayerDescriptor {
 		Size:        l.Descriptor.Size,
 		Annotations: l.Descriptor.Annotations,
 	}
+}
+
+// firstSingleArchManifest picks the manifest a Docker manifest.json should
+// reference for an IndexMultiRoot layout: the first manifest root, else the
+// first child of the first index root. Returns a zero ManifestInput (nil
+// Manifest) when there are no image manifests at all.
+func firstSingleArchManifest(roots []RootInput) ManifestInput {
+	for _, r := range roots {
+		if !r.IsIndex && len(r.Children) > 0 {
+			return r.Children[0]
+		}
+	}
+	for _, r := range roots {
+		if len(r.Children) > 0 {
+			return r.Children[0]
+		}
+	}
+	return ManifestInput{}
 }
 
 func dockerManifestBytes(m ManifestInput, repoTags []string) ([]byte, error) {

@@ -9,6 +9,7 @@ go_library(
         "copy_linux.go",
         "copy_other.go",
         "descriptors.go",
+        "distribution.go",
         "doc.go",
         "editor.go",
         "engine.go",
@@ -31,8 +32,10 @@ go_test(
     name = "ocilayout_test",
     srcs = [
         "builder_test.go",
+        "distribution_test.go",
         "editor_test.go",
         "golden_test.go",
+        "multiroot_test.go",
     ],
     embed = [":ocilayout"],
     deps = [

@@ -40,9 +40,24 @@ func DeployProcess(ctx context.Context, args []string) {
 		fmt.Fprintf(os.Stderr, "Error parsing args: %v\n", err)
 		os.Exit(1)
 	}
+	sinkSpec := extractSinkFlag(processedArgs)
+	// A global oci-tar/docker-save sink cannot run under the persistent worker,
+	// so specifying one on the command line forces one-shot mode. A global
+	// distribution/oci sink is compatible with the worker and is applied to
+	// every incoming request.
+	if isPersistentWorker && sinkSpec != "" {
+		kind, _, err := parseSink(sinkSpec)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		if !kind.globalOnly() {
+			isPersistentWorker = false
+		}
+	}
 	if isPersistentWorker {
 		jobs := extractJobsFlag(processedArgs)
-		if err := persistentWorker(jobs); err != nil {
+		if err := persistentWorker(jobs, sinkSpec); err != nil {
 			fmt.Fprintf(os.Stderr, "Error in persistent worker: %v\n", err)
 			os.Exit(1)
 		}
@@ -59,6 +74,7 @@ func DeployProcess(ctx context.Context, args []string) {
 	var ociLayouts stringSliceFlag
 	var explicitLayers stringSliceFlag
 	var jobs int
+	var sink string
 
 	flagSet := flag.NewFlagSet("deploy", flag.ContinueOnError)
 	flagSet.Var(&requestFiles, "request-file", "Deploy manifest JSON request file (can be used multiple times)")
@@ -71,6 +87,7 @@ func DeployProcess(ctx context.Context, args []string) {
 	flagSet.Var(&ociLayouts, "oci-layout", "Path to an OCI layout directory, sparse or standard (can be used multiple times)")
 	flagSet.Var(&explicitLayers, "layer", "Explicit layer in digest=path format (can be used multiple times)")
 	flagSet.IntVar(&jobs, "jobs", 16, "Maximum number of parallel push operations")
+	flagSet.StringVar(&sink, "sink", "", "Override the destination of all push/load/registry_tag operations for testing. Format: <type>:<path> where type is one of oci-tar, docker-save, oci, distribution, distribution-flat. No registry or daemon network I/O is performed.")
 
 	if err := flagSet.Parse(args); err != nil {
 		flagSet.Usage()
@@ -125,6 +142,7 @@ func DeployProcess(ctx context.Context, args []string) {
 		OCILayouts:                 []string(ociLayouts),
 		ExplicitLayers:             layerMap,
 		Jobs:                       jobs,
+		Sink:                       sink,
 	}
 
 	if err := DeployWithExtras(ctx, rawRequest, opts); err != nil {
@@ -175,6 +193,7 @@ type DeployOptions struct {
 	OCILayouts                 []string
 	ExplicitLayers             map[string]string
 	Jobs                       int
+	Sink                       string
 }
 
 func DeployWithExtras(ctx context.Context, rawRequest []byte, opts DeployOptions) error {
@@ -249,6 +268,15 @@ func DeployWithExtras(ctx context.Context, rawRequest []byte, opts DeployOptions
 	if err != nil {
 		return err
 	}
+
+	// When a --sink override is active, capture every operation into the local
+	// sink instead of pushing to a registry or loading into a daemon. This
+	// performs no registry/daemon network I/O for the destination (source blobs
+	// are still resolved from the VFS as usual).
+	if opts.Sink != "" {
+		return deployToSink(ctx, opts.Sink, vfs, pushOperations, loadOperations, registryTagOperations, opts)
+	}
+
 	if len(pushOperations) == 0 && len(loadOperations) == 0 && len(registryTagOperations) == 0 {
 		return fmt.Errorf("no push, load, or registry_tag operations found in deploy manifest")
 	}
@@ -535,4 +563,52 @@ func extractJobsFlag(args []string) int {
 		}
 	}
 	return 16
+}
+
+// extractSinkFlag pre-scans args for --sink so DeployProcess can decide whether
+// a global oci-tar/docker-save sink must force one-shot mode before the normal
+// flag set is parsed.
+func extractSinkFlag(args []string) string {
+	for i := 0; i < len(args); i++ {
+		key, value, hasValue := strings.Cut(args[i], "=")
+		if key == "--sink" {
+			if !hasValue && i+1 < len(args) {
+				value = args[i+1]
+			}
+			return value
+		}
+	}
+	return ""
+}
+
+// deployToSink builds the requested sink, routes every operation into it, and
+// prints the resulting image references. It performs no registry/daemon network
+// I/O for the destination.
+func deployToSink(ctx context.Context, spec string, vfs *deployvfs.VFS, pushOps []api.IndexedPushDeployOperation, loadOps []api.IndexedLoadDeployOperation, tagOps []api.IndexedRegistryTagDeployOperation, opts DeployOptions) error {
+	kind, path, err := parseSink(spec)
+	if err != nil {
+		return err
+	}
+	s, err := newSink(kind, path)
+	if err != nil {
+		return fmt.Errorf("creating sink: %w", err)
+	}
+	refs, err := routeToSink(ctx, s, vfs, pushOps, loadOps, tagOps, sinkRouteOptions{
+		overrideRegistry:   opts.OverrideRegistry,
+		overrideRepository: opts.OverrideRepository,
+		additionalTags:     opts.AdditionalTags,
+	})
+	if err != nil {
+		s.Close()
+		return err
+	}
+	if err := s.Close(); err != nil {
+		return fmt.Errorf("finalizing sink: %w", err)
+	}
+	stats := vfs.Stats()
+	fmt.Fprintf(os.Stderr, "    blob transfers: %d from disk, %d from disk cache, %d from container registry, %d from remote cache, %d from compact stream\n", stats.BlobsFromLocalDisk.Load(), stats.BlobsFromDiskCache.Load(), stats.BlobsFromRegistry.Load(), stats.BlobsFromRemoteCache.Load(), stats.BlobsFromCompactStream.Load())
+	for _, ref := range refs {
+		fmt.Println(ref)
+	}
+	return nil
 }

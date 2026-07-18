@@ -6,6 +6,7 @@ import (
 	"os"
 
 	v1 "github.com/google/go-containerregistry/pkg/v1"
+	"github.com/google/go-containerregistry/pkg/v1/types"
 )
 
 // ManifestInput is everything the builder needs about one image manifest,
@@ -44,6 +45,52 @@ type LayerInput struct {
 	SparseMeta *SparseLayerDescriptor
 }
 
+// ManifestInputFromVFS builds a ManifestInput whose config and layer blobs
+// stream from src (typically a VFS-backed BlobSource). It is shared by the load
+// pipeline and the deploy sinks so a single copy of the VFS→layout conversion
+// exists.
+func ManifestInputFromVFS(src BlobSource, manifest *v1.Manifest, rawManifest []byte, platform *v1.Platform) ManifestInput {
+	mi := ManifestInput{
+		Manifest:     manifest,
+		ManifestData: rawManifest,
+		Config:       BlobFromSource(src, manifest.Config.Digest.Hex, manifest.Config.Size),
+		Platform:     platform,
+	}
+	for _, layer := range manifest.Layers {
+		mi.Layers = append(mi.Layers, LayerInput{
+			Descriptor: layer,
+			Blob:       BlobFromSource(src, layer.Digest.Hex, layer.Size),
+			Present:    true,
+		})
+	}
+	return mi
+}
+
+// RootInput describes one root of an IndexMultiRoot layout. A root is either a
+// single image manifest or a multi-arch index; in both cases Children carries
+// the concrete image manifests whose config and layer blobs must be written
+// (for a manifest root, Children holds that single manifest).
+type RootInput struct {
+	// ManifestData is the exact raw bytes of the root object (an image manifest
+	// or an image index). It is hashed for the digest and, for an index root,
+	// written as a nested blob.
+	ManifestData []byte
+	// MediaType is the media type of the root object.
+	MediaType types.MediaType
+	// ArtifactType is set for non-image config media types; "" otherwise.
+	ArtifactType string
+	// IsIndex reports whether ManifestData is an image index (vs a manifest).
+	IsIndex bool
+	// OCITags are the full image names used for this root's index.json
+	// annotations. Empty produces a single clean descriptor.
+	OCITags []string
+	// Children are the image manifests referenced by this root, in order. Their
+	// manifest/config/layer blobs are written to the layout.
+	Children []ManifestInput
+	// Platform is carried for the first-single-arch docker-manifest selection.
+	Platform *v1.Platform
+}
+
 // Builder accumulates manifests, tags and a Format, then writes a complete
 // layout in one go.
 type Builder struct {
@@ -60,6 +107,7 @@ type Builder struct {
 	missingHint  string // MissingBlobsError.OutputGroup
 
 	manifests []ManifestInput
+	roots     []RootInput // IndexMultiRoot roots (added via AddRoot)
 	rootIndex *Blob
 }
 
@@ -111,6 +159,13 @@ func (b *Builder) WithMissingBlobsHint(outputGroup string) *Builder {
 // AddManifest adds an image manifest to the layout.
 func (b *Builder) AddManifest(m ManifestInput) *Builder {
 	b.manifests = append(b.manifests, m)
+	return b
+}
+
+// AddRoot adds one root to an IndexMultiRoot layout. Call it once per image or
+// index to be referenced from the combined index.json.
+func (b *Builder) AddRoot(r RootInput) *Builder {
+	b.roots = append(b.roots, r)
 	return b
 }
 
