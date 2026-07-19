@@ -8,6 +8,16 @@ on:
       tag_name:
         required: true
         type: string
+      tag_prefix:
+        description: Prefix stripped from the tag to compute the module version (e.g. 'v', or 'rules_img_signer_cosign-v' for a signer plugin).
+        required: false
+        default: "v"
+        type: string
+      module_roots:
+        description: Newline-separated module roots to publish, overriding .bcr/config.yml. Empty publishes the config.yml default set.
+        required: false
+        default: ""
+        type: string
     secrets:
       publish_token:
         required: true
@@ -19,11 +29,28 @@ on:
         description: git tag being released
         required: true
         type: string
+      tag_prefix:
+        description: Prefix stripped from the tag to compute the module version (e.g. 'v', or 'rules_img_signer_cosign-v' for a signer plugin).
+        required: false
+        default: "v"
+        type: string
+      module_roots:
+        description: Newline-separated module roots to publish, overriding .bcr/config.yml. Empty publishes the config.yml default set.
+        required: false
+        default: ""
+        type: string
 jobs:
   publish:
-    uses: bazel-contrib/publish-to-bcr/.github/workflows/publish.yaml@v1.2.0
+    uses: bazel-contrib/publish-to-bcr/.github/workflows/publish.yaml@v1.4.2
     with:
       tag_name: ${{ inputs.tag_name }}
+      # For a signer plugin tag (e.g. rules_img_signer_cosign-v0.0.1) the module
+      # version is the tag with tag_prefix stripped; the main release keeps 'v'.
+      tag_prefix: ${{ inputs.tag_prefix }}
+      # Restrict the publish to these module roots (empty = the .bcr/config.yml
+      # default set), so an independently-versioned plugin release publishes only
+      # itself and not the co-versioned rules_img/img_tool modules.
+      module_roots: ${{ inputs.module_roots }}
       # GitHub repository which is a fork of the upstream where the Pull Request will be opened.
       registry_fork: bazel-contrib/bazel-central-registry
       draft: false

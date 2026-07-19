@@ -33,6 +33,7 @@ release_files(
     basename = "cosign",
     executable = "@rules_img_signer_cosign//cmd/cosign",
     lockfile_name = "modules/rules_img_signer_cosign/prebuilt_lockfile.json",
+    tag_template = "rules_img_signer_cosign-v{version}",
     tags = ["manual"],
     version = "@rules_img//img/private/release:signer_cosign_version",
 )
@@ -42,6 +43,7 @@ release_files(
     basename = "notation",
     executable = "@rules_img_signer_notation//cmd/notation",
     lockfile_name = "modules/rules_img_signer_notation/prebuilt_lockfile.json",
+    tag_template = "rules_img_signer_notation-v{version}",
     tags = ["manual"],
     version = "@rules_img//img/private/release:signer_notation_version",
 )

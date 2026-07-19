@@ -87,12 +87,17 @@ versioned_filename_info(
 )
 
 # Signer plugin modules, packaged into the offline BCR used by the e2e
-# integration tests (see //e2e/sbom). Released for real via the standalone
-# modules/release_signer_plugin.sh. Here we prebuild the plugin the same way as
-# the img tool: source_bundle injects the populated prebuilt_lockfile.json
-# (produced by @rules_img_internal_tools//release:signer_*_prebuilt) into the
-# packaged module source, so the scratch workspace downloads the prebuilt plugin
-# from the airgapped distdir instead of building it from source at test time.
+# integration tests (see //e2e/sbom) and released for real via the
+# signer_{cosign,notation}_dist_tar targets below (built by the "Release signer
+# plugin" GitHub workflow). We prebuild the plugin the same way as the img tool:
+# source_bundle injects the populated prebuilt_lockfile.json (produced by
+# @rules_img_internal_tools//release:signer_*_prebuilt) into the packaged module
+# source, so a consumer (the e2e scratch workspace, or a real user of the
+# published module) downloads the prebuilt plugin instead of building it from
+# source. Building from this repo's root is what lets the release be fully
+# Bazel-native: the root MODULE.bazel carries the (root-only) gazelle proto
+# overrides the cosign plugin needs to compile, so the packaged plugin
+# MODULE.bazel stays clean and no MODULE.bazel rewriting is required.
 # They are versioned independently of rules_img, so pin their BCR versions to
 # match module(version = ...) in each MODULE.bazel.
 version(
@@ -177,6 +182,34 @@ pkg_tar(
         ":versioned_tool_tar",
     ],
     out = "rules_img-dist.tar",
+    mode = "0755",
+    tags = ["manual"],
+)
+
+# Per-plugin release bundles, mirroring dist_tar for the img tool: the prebuilt
+# per-platform binaries (release assets, named <basename>_<os>_<cpu>[.exe]) plus
+# the versioned BCR source archive (rules_img_signer_<basename>-v<version>.tar.gz
+# with the populated prebuilt_lockfile.json baked in). The "Release signer
+# plugin" workflow builds one of these, extracts it into dist/, and uploads the
+# contents as the GitHub release assets that publish-to-bcr then consumes.
+pkg_tar(
+    name = "signer_cosign_dist_tar",
+    srcs = [
+        ":versioned_signer_cosign_tar",
+        "@rules_img_internal_tools//release:signer_cosign_prebuilt",
+    ],
+    out = "rules_img_signer_cosign-dist.tar",
+    mode = "0755",
+    tags = ["manual"],
+)
+
+pkg_tar(
+    name = "signer_notation_dist_tar",
+    srcs = [
+        ":versioned_signer_notation_tar",
+        "@rules_img_internal_tools//release:signer_notation_prebuilt",
+    ],
+    out = "rules_img_signer_notation-dist.tar",
     mode = "0755",
     tags = ["manual"],
 )

@@ -148,13 +148,20 @@ BCRModuleVersionInfo = provider(
 def _release_files(ctx):
     output_group_info = {}
     version = ctx.attr.version[ModuleVersionInfo].version
+
+    # The git tag the prebuilt binaries are published under. For the img tool
+    # this is "v<version>" (e.g. v0.3.17); the independently-versioned signer
+    # plugins override it to their per-module tag (e.g.
+    # rules_img_signer_cosign-v<version>). It is recorded verbatim in the
+    # lockfile so the prebuilt download URL resolves to the right release.
+    tag = ctx.attr.tag_template.format(version = version)
     module_version = ctx.actions.declare_file("%s_module_version" % ctx.attr.name)
     git_tag = ctx.actions.declare_file("%s_git_tag" % ctx.attr.name)
     ctx.actions.write(module_version, content = version)
-    ctx.actions.write(git_tag, content = "v" + version)
+    ctx.actions.write(git_tag, content = tag)
     output_group_info["version"] = depset([module_version, git_tag])
     lockfile_args = ctx.actions.args()
-    lockfile_args.add("--version", version)
+    lockfile_args.add("--tag", tag)
     dest_src_map = {}
     attributes = {}
     distdir_contents = {}
@@ -222,6 +229,13 @@ release_files = rule(
         ),
         "lockfile_name": attr.string(
             mandatory = True,
+        ),
+        "tag_template": attr.string(
+            default = "v{version}",
+            doc = "Template for the release tag the prebuilt binaries are published under. " +
+                  "'{version}' is substituted with the module version. Defaults to 'v{version}' " +
+                  "(the img tool release tag); independently-versioned modules such as the signer " +
+                  "plugins set it to their per-module tag, e.g. 'rules_img_signer_cosign-v{version}'.",
         ),
         "module_bazel": attr.label(
             allow_single_file = True,

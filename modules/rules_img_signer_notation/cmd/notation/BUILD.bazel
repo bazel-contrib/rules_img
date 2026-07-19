@@ -1,15 +1,5 @@
 load("@rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
 
-# Platforms for which prebuilt release binaries are produced.
-_PLATFORMS = [
-    ("linux", "amd64"),
-    ("linux", "arm64"),
-    ("darwin", "amd64"),
-    ("darwin", "arm64"),
-    ("windows", "amd64"),
-    ("windows", "arm64"),
-]
-
 go_library(
     name = "notation_lib",
     srcs = ["notation.go"],
@@ -36,19 +26,6 @@ go_binary(
     pure = "on",
     visibility = ["//visibility:public"],
 )
-
-# Per-platform binaries used to produce prebuilt release assets.
-[
-    go_binary(
-        name = "notation_{}_{}".format(os, arch),
-        embed = [":notation_lib"],
-        goarch = arch,
-        goos = os,
-        pure = "on",
-        visibility = ["//visibility:public"],
-    )
-    for os, arch in _PLATFORMS
-]
 
 go_test(
     name = "notation_test",

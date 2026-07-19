@@ -1,5 +1,8 @@
+# Module roots published by the main release (tag v<version>): rules_img and its
+# co-versioned img_tool. The signer plugins are versioned independently and
+# published from their own `rules_img_signer_<basename>-v*` tags via the
+# module_roots override in .github/workflows/release_signer_plugins.yaml, so they
+# are intentionally not part of this default set.
 moduleRoots:
   - "."
   - "img_tool"
-  - "modules/rules_img_signer_cosign"
-  - "modules/rules_img_signer_notation"

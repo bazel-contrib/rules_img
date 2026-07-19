@@ -50,16 +50,20 @@ type lockfileItem struct {
 }
 
 var (
-	version  string
+	tag      string
 	binaries platformBinaries
 )
 
 func main() {
-	flag.StringVar(&version, "version", "0.0.0", "Version of the project.")
+	flag.StringVar(&tag, "tag", "", "Release tag the prebuilt binaries are published under (e.g. v0.3.17 or rules_img_signer_cosign-v0.0.1). Recorded verbatim as each entry's version so the prebuilt download URL resolves.")
 	flag.Var(&binaries, "tool", "Key-value pairs of platform name to tool binary path.")
 	flag.Parse()
 	if flag.NArg() != 1 {
 		fmt.Fprintln(os.Stderr, "expected lockfile output")
+		os.Exit(1)
+	}
+	if tag == "" {
+		fmt.Fprintln(os.Stderr, "missing required --tag")
 		os.Exit(1)
 	}
 	var lockfileItems []lockfileItem
@@ -70,7 +74,7 @@ func main() {
 			os.Exit(1)
 		}
 		lockfileItems = append(lockfileItems, lockfileItem{
-			Version:   "v" + version,
+			Version:   tag,
 			Integrity: sri,
 			OS:        bin.os,
 			CPU:       bin.cpu,

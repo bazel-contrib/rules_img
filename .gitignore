@@ -12,7 +12,9 @@ prebuilt_lockfile.json
 # ...except the signer plugin modules, which commit their lockfile as source
 # (an empty list `[]`) so the module can be built from source — e.g. from the
 # offline BCR the //e2e/sbom integration test resolves them through. The real
-# release digests are produced out-of-tree by modules/release_signer_plugin.sh.
+# release digests are produced hermetically by Bazel (the signer_*_dist_tar
+# targets in //img/private/release bake the populated lockfile into the released
+# source archive), never touching the working tree.
 !modules/rules_img_signer_cosign/prebuilt_lockfile.json
 !modules/rules_img_signer_notation/prebuilt_lockfile.json
 tools/bazel

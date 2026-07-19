@@ -1,5 +1,4 @@
 {
     "integrity": "",
-    "url": "https://github.com/{OWNER}/{REPO}/releases/download/{TAG}/rules_img_signer_notation-{VERSION}.tar.gz",
-    "strip_prefix": "rules_img_signer_notation"
+    "url": "https://github.com/{OWNER}/{REPO}/releases/download/{TAG}/{TAG}.tar.gz"
 }
