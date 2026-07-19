@@ -1,23 +1,11 @@
 load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
-load("@rules_go//go:def.bzl", "go_library")
 load(":release_files_updated.bzl", "release_files_test")
 
 # gazelle:exclude_from_release
 
-go_library(
-    name = "gazelle_plugin",
-    srcs = ["all_files.go"],
-    importpath = "github.com/bazel-contrib/rules_img/img/private/release/gazelle_plugin",
-    visibility = ["//visibility:public"],
-    deps = [
-        "@gazelle//config",
-        "@gazelle//label",
-        "@gazelle//language",
-        "@gazelle//repo",
-        "@gazelle//resolve",
-        "@gazelle//rule",
-    ],
-)
+# The `all_files` gazelle plugin Go library and the `update_release_files` Go
+# binary live in the rules_img_internal_tools module (the top-level module owns
+# no binaries). The gazelle_binary that embeds the plugin is //util:gazelle_bin.
 
 exports_files([
     "test_wrapper.sh",
@@ -30,22 +18,7 @@ release_files_test(
         "@platforms//os:windows": ["@platforms//:incompatible"],
         "//conditions:default": [],
     }),
-    update_release_files_binary = "//img/private/release/gazelle_plugin/cmd/update_release_files",
-)
-
-go_library(
-    name = "all_files",
-    srcs = ["all_files.go"],
-    importpath = "",
-    visibility = ["//visibility:public"],
-    deps = [
-        "@gazelle//config",
-        "@gazelle//label",
-        "@gazelle//language",
-        "@gazelle//repo",
-        "@gazelle//resolve",
-        "@gazelle//rule",
-    ],
+    update_release_files_binary = "@rules_img_internal_tools//release/gazelle_plugin/cmd/update_release_files",
 )
 
 bzl_library(

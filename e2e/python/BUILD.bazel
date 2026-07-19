@@ -3,6 +3,7 @@ load("@bazel_skylib//rules:build_test.bzl", "build_test")
 load("@pip//:requirements.bzl", "requirement")
 load("@rules_img//img:image.bzl", "image_index", "image_manifest")
 load("@rules_img//img:load.bzl", "image_load")
+load("@rules_img//img:multi_deploy.bzl", "multi_deploy")
 load("@rules_img//img:push.bzl", "image_push")
 
 py_library(
@@ -50,25 +51,34 @@ image_index(
 image_load(
     name = "load_single_arch",
     image = ":image",
-    registry = "ghcr.io",
+    # Set the destination registry per-image here, or globally in .bazelrc via
+    # --@rules_img//img/settings:destination_registry=docker.acme.tld
+    # registry = "docker.acme.tld",
     repository = "malt3/rules_img/python",
     tag = "sideloaded",
+    visibility = ["//visibility:public"],
 )
 
 image_load(
-    name = "load",
+    name = "load_image",
     image = ":multiarch_image",
-    registry = "ghcr.io",
+    # Set the destination registry per-image here, or globally in .bazelrc via
+    # --@rules_img//img/settings:destination_registry=docker.acme.tld
+    # registry = "docker.acme.tld",
     repository = "malt3/rules_img/python",
     tag = "sideloaded",
+    visibility = ["//visibility:public"],
 )
 
 image_push(
-    name = "push",
+    name = "push_image",
     image = ":multiarch_image",
-    registry = "ghcr.io",
+    # Set the destination registry per-image here, or globally in .bazelrc via
+    # --@rules_img//img/settings:destination_registry=docker.acme.tld
+    # registry = "docker.acme.tld",
     repository = "malt3/rules_img/python",
     tag = "latest",
+    visibility = ["//visibility:public"],
 )
 
 build_test(
@@ -80,7 +90,39 @@ build_test(
         ":image",
         ":multiarch_image",
         "load_single_arch",
-        ":load",
-        ":push",
+        ":load_image",
+        ":push_image",
+    ],
+)
+
+multi_deploy(
+    name = "deploy",
+    operations = [
+        "//:load_image",
+        "//:load_single_arch",
+        "//:push_image",
+        "//image_from_binary_example:push",
+    ],
+)
+
+multi_deploy(
+    name = "push",
+    deploy_operations = [
+        "push",
+    ],
+    operations = [
+        "//:push_image",
+        "//image_from_binary_example:push",
+    ],
+)
+
+multi_deploy(
+    name = "load",
+    deploy_operations = [
+        "load",
+    ],
+    operations = [
+        "//:load_image",
+        "//:load_single_arch",
     ],
 )

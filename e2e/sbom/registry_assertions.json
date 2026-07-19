@@ -1,0 +1,32 @@
+{
+  "images": [
+    {
+      "repository": "malt3/supply-chain-example",
+      "tag": "latest",
+      "structure": {
+        "kind": "index",
+        "platforms": ["linux/amd64", "linux/arm64/v8"]
+      },
+      "closure_intact": true,
+      "referrers": [
+        {
+          "artifact_type": "application/vnd.cyclonedx+json",
+          "count": 1,
+          "kind": "manifest"
+        }
+      ]
+    }
+  ],
+  "signatures": {
+    "cosign": {
+      "repository": "malt3/supply-chain-example",
+      "tag": "latest",
+      "artifact_type": "application/vnd.dev.sigstore.bundle.v0.3+json"
+    },
+    "notation": {
+      "repository": "malt3/supply-chain-example",
+      "tag": "latest",
+      "artifact_type": "application/vnd.cncf.notary.signature"
+    }
+  }
+}

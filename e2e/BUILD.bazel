@@ -1,9 +1,9 @@
 load("@bazel_binaries//:defs.bzl", "bazel_binaries")
 load(
     "@rules_bazel_integration_test//bazel_integration_test:defs.bzl",
-    "bazel_integration_tests",
     "integration_test_utils",
 )
+load(":integration_test.bzl", "img_integration_tests")
 
 # gazelle:exclude cc
 # gazelle:exclude go
@@ -16,41 +16,57 @@ load(
 
 TAGS = integration_test_utils.DEFAULT_INTEGRATION_TEST_TAGS + ["requires-network"]
 
-bazel_integration_tests(
+# BUILD/MODULE files of every e2e workspace, consumed by the main-repo
+# @rules_img_internal_tools//e2e_consistency:consistency_test to verify that each workspace's root
+# deploy/push/load multi_deploy targets reference every push/load target.
+filegroup(
+    name = "consistency_srcs",
+    srcs = glob(
+        [
+            "**/BUILD.bazel",
+            "**/MODULE.bazel",
+            "**/WORKSPACE.bazel",
+        ],
+        allow_empty = False,
+    ),
+    visibility = ["@rules_img_internal_tools//e2e_consistency:__pkg__"],
+)
+
+img_integration_tests(
     name = "go",
     bazel_versions = bazel_binaries.versions.all,
     tags = TAGS,
-    test_runner = "//img/private/integration_test_runner",
+    test_runner = "@rules_img_internal_tools//integration_test_runner",
     workspace_files = integration_test_utils.glob_workspace_files("go") + [
         "//img/private/release/source_files:release_src_files",
     ],
     workspace_path = "go",
 )
 
-bazel_integration_tests(
+img_integration_tests(
     name = "cc",
     bazel_versions = bazel_binaries.versions.all,
     tags = TAGS,
     target_compatible_with = ["@platforms//os:linux"],
-    test_runner = "//img/private/integration_test_runner",
+    test_runner = "@rules_img_internal_tools//integration_test_runner",
     workspace_files = integration_test_utils.glob_workspace_files("cc") + [
         "//img/private/release/source_files:release_src_files",
     ],
     workspace_path = "cc",
 )
 
-bazel_integration_tests(
+img_integration_tests(
     name = "generic",
     bazel_versions = bazel_binaries.versions.all,
     tags = TAGS,
-    test_runner = "//img/private/integration_test_runner",
+    test_runner = "@rules_img_internal_tools//integration_test_runner",
     workspace_files = integration_test_utils.glob_workspace_files("generic") + [
         "//img/private/release/source_files:release_src_files",
     ],
     workspace_path = "generic",
 )
 
-bazel_integration_tests(
+img_integration_tests(
     name = "js",
     bazel_versions = [
         "8.7.0",
@@ -73,14 +89,14 @@ bazel_integration_tests(
         "@platforms//os:windows": ["@platforms//:incompatible"],
         "//conditions:default": [],
     }),
-    test_runner = "//img/private/integration_test_runner",
+    test_runner = "@rules_img_internal_tools//integration_test_runner",
     workspace_files = integration_test_utils.glob_workspace_files("js") + [
         "//img/private/release/source_files:release_src_files",
     ],
     workspace_path = "js",
 )
 
-bazel_integration_tests(
+img_integration_tests(
     name = "python",
     bazel_versions = [
         "8.7.0",
@@ -94,35 +110,37 @@ bazel_integration_tests(
         "@platforms//os:windows": ["@platforms//:incompatible"],
         "//conditions:default": [],
     }),
-    test_runner = "//img/private/integration_test_runner",
+    test_runner = "@rules_img_internal_tools//integration_test_runner",
     workspace_files = integration_test_utils.glob_workspace_files("python") + [
         "//img/private/release/source_files:release_src_files",
     ],
     workspace_path = "python",
 )
 
-bazel_integration_tests(
+img_integration_tests(
     name = "sbom",
     # Supply chain security tooling is still WIP.
     # It doesn't make sense to target older
     # Bazel versions.
     bazel_versions = ["9.1.1"],
+    # Exercises the cosign/notation signed-push + verification phases.
+    supports_signing = True,
     tags = TAGS,
-    test_runner = "//img/private/integration_test_runner",
+    test_runner = "@rules_img_internal_tools//integration_test_runner",
     workspace_files = integration_test_utils.glob_workspace_files("sbom") + [
         "//img/private/release/source_files:release_src_files",
     ],
     workspace_path = "sbom",
 )
 
-bazel_integration_tests(
+img_integration_tests(
     name = "workspace",
     # bazel 9 drops WORKSPACE support.
     bazel_versions = [
         "7.4.0",
     ],
     tags = TAGS,
-    test_runner = "//img/private/integration_test_runner",
+    test_runner = "@rules_img_internal_tools//integration_test_runner",
     workspace_files = integration_test_utils.glob_workspace_files("workspace") + [
         "//img/private/release/source_files:release_src_files",
     ],

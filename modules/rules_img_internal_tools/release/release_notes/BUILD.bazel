@@ -1,0 +1,17 @@
+load("@rules_go//go:def.bzl", "go_binary", "go_library")
+
+# gazelle:exclude_from_release
+
+go_binary(
+    name = "release_notes",
+    embed = [":release_notes_lib"],
+    # Used as the release-notes generator by @rules_img//img/private/release.
+    visibility = ["//visibility:public"],
+)
+
+go_library(
+    name = "release_notes_lib",
+    srcs = ["release_notes.go"],
+    importpath = "github.com/bazel-contrib/rules_img/modules/rules_img_internal_tools/release/release_notes",
+    visibility = ["//visibility:private"],
+)

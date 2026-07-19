@@ -44,7 +44,9 @@ image_index(
 image_load(
     name = "load_image",
     image = ":image",
-    registry = "ghcr.io",
+    # Set the destination registry per-image here, or globally in .bazelrc via
+    # --@rules_img//img/settings:destination_registry=docker.acme.tld
+    # registry = "docker.acme.tld",
     repository = "malt3/rules_img",
     tag = "sideloaded",
     visibility = ["//visibility:public"],
@@ -59,7 +61,9 @@ image_load(
         "TAG": "//build_settings:tag",
     },
     image = ":image",
-    registry = "{{.REGISTRY}}",
+    # Set the destination registry per-image here, or globally in .bazelrc via
+    # --@rules_img//img/settings:destination_registry=docker.acme.tld
+    # registry = "docker.acme.tld",
     repository = "{{.USER}}/rules_img",
     tag = "{{.TAG}}",
     visibility = ["//visibility:public"],
@@ -69,7 +73,9 @@ image_load(
 image_load(
     name = "load_index",
     image = ":index",
-    registry = "ghcr.io",
+    # Set the destination registry per-image here, or globally in .bazelrc via
+    # --@rules_img//img/settings:destination_registry=docker.acme.tld
+    # registry = "docker.acme.tld",
     repository = "malt3/rules_img",
     tag = "sideloaded",
     visibility = ["//visibility:public"],
@@ -89,7 +95,9 @@ image_load(
 image_load(
     name = "load_alpine",
     image = "@alpine//:final",
-    registry = "ghcr.io",
+    # Set the destination registry per-image here, or globally in .bazelrc via
+    # --@rules_img//img/settings:destination_registry=docker.acme.tld
+    # registry = "docker.acme.tld",
     repository = "malt3/rules_img",
     tag = "alpine-sideloaded",
     visibility = ["//visibility:public"],
@@ -99,7 +107,9 @@ image_load(
 image_load(
     name = "load_cuda",
     image = "@cuda",
-    registry = "ghcr.io",
+    # Set the destination registry per-image here, or globally in .bazelrc via
+    # --@rules_img//img/settings:destination_registry=docker.acme.tld
+    # registry = "docker.acme.tld",
     repository = "malt3/rules_img",
     tag = "cuda-sideloaded",
     visibility = ["//visibility:public"],
@@ -108,7 +118,9 @@ image_load(
 image_load(
     name = "load_envoy",
     image = "@envoy",
-    registry = "ghcr.io",
+    # Set the destination registry per-image here, or globally in .bazelrc via
+    # --@rules_img//img/settings:destination_registry=docker.acme.tld
+    # registry = "docker.acme.tld",
     repository = "malt3/rules_img",
     tag = "envoy-sideloaded",
     visibility = ["//visibility:public"],
@@ -118,7 +130,9 @@ image_load(
 image_load(
     name = "load_multi_tags",
     image = ":image",
-    registry = "ghcr.io",
+    # Set the destination registry per-image here, or globally in .bazelrc via
+    # --@rules_img//img/settings:destination_registry=docker.acme.tld
+    # registry = "docker.acme.tld",
     repository = "malt3/rules_img",
     tag_list = [
         "multi-latest",
@@ -144,7 +158,9 @@ write_file(
 image_load(
     name = "load_tag_file",
     image = ":image",
-    registry = "ghcr.io",
+    # Set the destination registry per-image here, or globally in .bazelrc via
+    # --@rules_img//img/settings:destination_registry=docker.acme.tld
+    # registry = "docker.acme.tld",
     repository = "malt3/rules_img",
     tag_file = ":tags_file",
     visibility = ["//visibility:public"],
@@ -165,7 +181,9 @@ image_manifest(
 image_load(
     name = "load_scratch_split",
     image = ":scratch_image",
-    registry = "ghcr.io",
+    # Set the destination registry per-image here, or globally in .bazelrc via
+    # --@rules_img//img/settings:destination_registry=docker.acme.tld
+    # registry = "docker.acme.tld",
     repository = "malt3/rules_img",
     tag = "scratch-split",
     visibility = ["//visibility:public"],

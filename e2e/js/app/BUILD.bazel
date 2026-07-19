@@ -41,17 +41,23 @@ image_index(
 image_load(
     name = "load",
     image = ":multiarch_image",
-    registry = "302232432727.dkr.ecr.us-east-2.amazonaws.com",
+    # Set the destination registry per-image here, or globally in .bazelrc via
+    # --@rules_img//img/settings:destination_registry=docker.acme.tld
+    # registry = "docker.acme.tld",
     repository = "account_access_app",
     tag = "latest",
+    visibility = ["//visibility:public"],
 )
 
 image_push(
     name = "push",
     image = ":multiarch_image",
-    registry = "ghcr.io",
+    # Set the destination registry per-image here, or globally in .bazelrc via
+    # --@rules_img//img/settings:destination_registry=docker.acme.tld
+    # registry = "docker.acme.tld",
     repository = "malt3/rules_img/js",
     tag = "latest",
+    visibility = ["//visibility:public"],
 )
 
 build_test(

@@ -197,7 +197,7 @@ identical to the disabled build's layer blob. Set to False only for layer rules
 that never emit a compact stream (e.g. layer_from_tar).""",
         ),
         "_verifier": attr.label(
-            default = "//tests/layering/verifier",
+            default = "@rules_img_internal_tools//tests/layering/verifier",
             executable = True,
             cfg = "target",
         ),

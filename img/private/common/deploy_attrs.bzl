@@ -282,8 +282,13 @@ Optional. When set, `repository` must also be set, and each entry in
 `tag` / `tag_list` / `tag_file` is treated as a bare tag: the loaded image name
 is reconstructed as `{registry}/{repository}:{tag}` (mirroring `image_push`).
 
-When omitted (together with `repository`), the tags are used verbatim as full
-image references, preserving the `rules_oci`-compatible behavior.
+When omitted but `repository` is set, the global
+`--@rules_img//img/settings:destination_registry` flag is used as a fallback
+(again mirroring `image_push`).
+
+When omitted together with `repository`, the tags are used verbatim as full
+image references, preserving the `rules_oci`-compatible behavior. In this mode
+the `destination_registry` fallback does not apply.
 
 Subject to [template expansion](/docs/templating.md).
 """,
@@ -395,5 +400,9 @@ tag contains it.
     _stamp_settings = attr.label(
         default = Label("//img/private/settings:stamp"),
         providers = [StampSettingInfo],
+    ),
+    _destination_registry = attr.label(
+        default = Label("//img/settings:destination_registry"),
+        providers = [BuildSettingInfo],
     ),
 )

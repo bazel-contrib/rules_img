@@ -1,5 +1,6 @@
 load("@bazel_skylib//rules:build_test.bzl", "build_test")
 load("@rules_img//img:image.bzl", "image_from_binary", "image_manifest")
+load("@rules_img//img:multi_deploy.bzl", "multi_deploy")
 load("@rules_img//img:oras.bzl", "oras_file_layer")
 load("@rules_img//img:push.bzl", "image_push")
 load("@supply_chain_tools//sbom:cyclonedx.bzl", "cyclonedx")
@@ -57,12 +58,35 @@ image_manifest(
 )
 
 image_push(
-    name = "push",
+    name = "push_image",
     image = ":image",
     referrers = [":sbom_manifest"],
-    registry = "ghcr.io",
+    # Set the destination registry per-image here, or globally in .bazelrc via
+    # --@rules_img//img/settings:destination_registry=docker.acme.tld
+    # registry = "docker.acme.tld",
     repository = "malt3/supply-chain-example",
     tag = "latest",
+    visibility = ["//visibility:public"],
+)
+
+# Standardized deploy entrypoints. The integration test runner runs `//:push`
+# against an ephemeral local registry (destination_registry injected via
+# .bazelrc.generated). `deploy` performs every operation; `push`/`load` filter.
+multi_deploy(
+    name = "deploy",
+    operations = [":push_image"],
+)
+
+multi_deploy(
+    name = "push",
+    deploy_operations = ["push"],
+    operations = [":push_image"],
+)
+
+multi_deploy(
+    name = "load",
+    deploy_operations = ["load"],
+    operations = [":push_image"],
 )
 
 # Note:
@@ -81,7 +105,10 @@ build_test(
         "//:image_sbom",
         "//:image_sbom_cdx",
         "//:image",
+        "//:deploy",
         "//:push",
+        "//:load",
+        "//:push_image",
         "//:sbom_layer",
         "//:sbom_manifest",
     ],

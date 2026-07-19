@@ -203,6 +203,7 @@ def _image_push_impl(ctx):
             layer_hints = layer_hints,
             include_layers = push_strategy == "eager",
             sign_settings = sign_settings,
+            referrers = extract_referrers(ctx),
         ),
     ]
 

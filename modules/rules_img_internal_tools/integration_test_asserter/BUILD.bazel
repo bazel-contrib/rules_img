@@ -1,0 +1,31 @@
+load("@bazel_skylib//rules:build_test.bzl", "build_test")
+load("@rules_go//go:def.bzl", "go_binary", "go_library")
+
+go_library(
+    name = "integration_test_asserter_lib",
+    srcs = [
+        "checks.go",
+        "main.go",
+        "registry_client.go",
+        "spec.go",
+        "verify.go",
+    ],
+    importpath = "github.com/bazel-contrib/rules_img/modules/rules_img_internal_tools/integration_test_asserter",
+    visibility = ["//visibility:private"],
+    deps = [
+        "@com_github_google_go_containerregistry//pkg/v1:pkg",
+        "@com_github_google_go_containerregistry//pkg/v1/types",
+    ],
+)
+
+go_binary(
+    name = "integration_test_asserter",
+    embed = [":integration_test_asserter_lib"],
+    pure = "on",
+    visibility = ["//visibility:public"],
+)
+
+build_test(
+    name = "test",
+    targets = [":integration_test_asserter"],
+)

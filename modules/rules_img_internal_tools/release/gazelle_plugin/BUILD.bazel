@@ -1,0 +1,18 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+# gazelle:exclude_from_release
+
+go_library(
+    name = "gazelle_plugin",
+    srcs = ["all_files.go"],
+    importpath = "github.com/bazel-contrib/rules_img/modules/rules_img_internal_tools/release/gazelle_plugin",
+    visibility = ["//visibility:public"],
+    deps = [
+        "@gazelle//config",
+        "@gazelle//label",
+        "@gazelle//language",
+        "@gazelle//repo",
+        "@gazelle//resolve",
+        "@gazelle//rule",
+    ],
+)

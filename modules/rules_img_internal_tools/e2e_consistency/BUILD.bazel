@@ -1,0 +1,28 @@
+load("@rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
+
+# gazelle:exclude_from_release
+
+go_library(
+    name = "e2e_consistency_lib",
+    srcs = [
+        "consistency.go",
+        "main.go",
+    ],
+    importpath = "github.com/bazel-contrib/rules_img/modules/rules_img_internal_tools/e2e_consistency",
+    visibility = ["//visibility:private"],
+    deps = ["@com_github_bazelbuild_buildtools//build"],
+)
+
+go_binary(
+    name = "e2e_consistency",
+    embed = [":e2e_consistency_lib"],
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "consistency_test",
+    srcs = ["consistency_test.go"],
+    data = ["@rules_img//e2e:consistency_srcs"],
+    embed = [":e2e_consistency_lib"],
+    deps = ["@rules_go//go/runfiles"],
+)

@@ -459,18 +459,29 @@ func (m *manifests) handleReferrers(resp http.ResponseWriter, req *http.Request)
 		if referenceDigest.String() != target {
 			continue
 		}
-		// At this point, we know the current digest references the target
+		// At this point, we know the current digest references the target.
+		// Per the OCI spec, the referrers descriptor's artifactType is the
+		// referring manifest's artifactType when present, otherwise the config
+		// descriptor's mediaType. Annotations are propagated so clients can
+		// filter referrers without fetching each manifest.
 		var imageAsArtifact struct {
-			Config struct {
+			ArtifactType string `json:"artifactType"`
+			Config       struct {
 				MediaType string `json:"mediaType"`
 			} `json:"config"`
+			Annotations map[string]string `json:"annotations"`
 		}
 		json.Unmarshal(manifest.blob, &imageAsArtifact)
+		artifactType := imageAsArtifact.ArtifactType
+		if artifactType == "" {
+			artifactType = imageAsArtifact.Config.MediaType
+		}
 		im.Manifests = append(im.Manifests, v1.Descriptor{
 			MediaType:    types.MediaType(manifest.contentType),
 			Size:         int64(len(manifest.blob)),
 			Digest:       h,
-			ArtifactType: imageAsArtifact.Config.MediaType,
+			ArtifactType: artifactType,
+			Annotations:  imageAsArtifact.Annotations,
 		})
 	}
 	msg, _ := json.Marshal(&im)

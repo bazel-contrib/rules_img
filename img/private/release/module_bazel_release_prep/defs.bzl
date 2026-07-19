@@ -12,7 +12,7 @@ def clean_module_bazel(name, src, **kwargs):
         name = name,
         srcs = [src],
         outs = [name + ".bazel"],
-        cmd = "$(location //img/private/release/module_bazel_release_prep:module_bazel_release_prep) $(SRCS) $@",
-        tools = ["//img/private/release/module_bazel_release_prep:module_bazel_release_prep"],
+        cmd = "$(location @rules_img_internal_tools//release/module_bazel_release_prep:module_bazel_release_prep) $(SRCS) $@",
+        tools = ["@rules_img_internal_tools//release/module_bazel_release_prep:module_bazel_release_prep"],
         **kwargs
     )

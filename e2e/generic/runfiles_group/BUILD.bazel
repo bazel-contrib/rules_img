@@ -4,7 +4,9 @@ load("@rules_img//img:push.bzl", "image_push_spec")
 
 image_push_spec(
     name = "push_spec",
-    registry = "ghcr.io",
+    # Set the destination registry per-image here, or globally in .bazelrc via
+    # --@rules_img//img/settings:destination_registry=docker.acme.tld
+    # registry = "docker.acme.tld",
     repository = "malt3/{{.image_target_name}}",
     tag = "latest",
 )
@@ -13,12 +15,14 @@ image_from_binary(
     name = "3p_deps_demo",
     binary = "@rules_runfiles_group_example//src:3p_deps_demo",
     push_specs = [":push_spec"],
+    visibility = ["//visibility:public"],
 )
 
 image_from_binary(
     name = "adder",
     binary = "@rules_runfiles_group_example//src:adder",
     push_specs = [":push_spec"],
+    visibility = ["//visibility:public"],
 )
 
 image_from_binary(
@@ -30,12 +34,14 @@ image_from_binary(
     name = "hasher",
     binary = "@rules_runfiles_group_example//src:hasher",
     push_specs = [":push_spec"],
+    visibility = ["//visibility:public"],
 )
 
 image_from_binary(
     name = "merge_demo",
     binary = "@rules_runfiles_group_example//src:merge_demo",
     push_specs = [":push_spec"],
+    visibility = ["//visibility:public"],
 )
 
 image_from_binary(
@@ -43,6 +49,7 @@ image_from_binary(
     binary = "@rules_runfiles_group_example//src:merge_demo",
     layer_budget = 4,
     push_specs = [":push_spec"],
+    visibility = ["//visibility:public"],
 )
 
 multi_deploy(

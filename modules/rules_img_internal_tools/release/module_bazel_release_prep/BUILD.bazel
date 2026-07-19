@@ -1,0 +1,16 @@
+load("@rules_go//go:def.bzl", "go_binary", "go_library")
+
+# gazelle:exclude_from_release
+
+go_library(
+    name = "module_bazel_release_prep_lib",
+    srcs = ["main.go"],
+    importpath = "github.com/bazel-contrib/rules_img/modules/rules_img_internal_tools/release/module_bazel_release_prep",
+    visibility = ["//visibility:private"],
+)
+
+go_binary(
+    name = "module_bazel_release_prep",
+    embed = [":module_bazel_release_prep_lib"],
+    visibility = ["//visibility:public"],
+)

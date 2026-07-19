@@ -217,7 +217,7 @@ release_files = rule(
         "basename": attr.string(),
         "lockfile_generator": attr.label(
             executable = True,
-            default = Label("//img/private/release/lockfile"),
+            default = Label("@rules_img_internal_tools//release/lockfile"),
             cfg = "exec",
         ),
         "lockfile_name": attr.string(
@@ -271,7 +271,7 @@ offline_bundle = rule(
         ),
         "distdir_generator": attr.label(
             executable = True,
-            default = Label("//img/private/release/distdir"),
+            default = Label("@rules_img_internal_tools//release/distdir"),
             cfg = "exec",
         ),
     },
@@ -291,6 +291,23 @@ def _source_bundle_impl(ctx):
         override = override[OverrideSourceFilesInfo]
         attributes.update(override.attributes)
         dest_src_map.update(override.dest_src_map)
+
+    # Strip a leading path prefix from every destination (both source files and
+    # override entries) so a module living in a subdirectory (e.g. a signer
+    # plugin under modules/rules_img_signer_*) is packaged relative to its own
+    # module root. Callers set matching override keys (e.g. release_files'
+    # lockfile_name) to the pre-strip path so the override lands correctly.
+    strip_prefix = ctx.attr.strip_prefix
+    if strip_prefix:
+        stripped_dest_src = {}
+        stripped_attributes = {}
+        for dest, f in dest_src_map.items():
+            stripped = dest.removeprefix(strip_prefix)
+            stripped_dest_src[stripped] = f
+            stripped_attributes[stripped] = attributes[dest]
+        dest_src_map = stripped_dest_src
+        attributes = stripped_attributes
+
     return [
         DefaultInfo(files = depset(dest_src_map.values())),
         PackageFilesInfo(attributes = attributes, dest_src_map = dest_src_map),
@@ -301,6 +318,9 @@ source_bundle = rule(
     attrs = {
         "srcs": attr.label_list(allow_files = True),
         "overrides": attr.label_list(providers = [OverrideSourceFilesInfo]),
+        "strip_prefix": attr.string(
+            doc = "Leading path prefix stripped from every packaged destination.",
+        ),
     },
 )
 
@@ -384,7 +404,7 @@ versioned_filename_info = rule(
         ),
         "_release_notes_generator": attr.label(
             executable = True,
-            default = Label("//img/private/release/release_notes"),
+            default = Label("@rules_img_internal_tools//release/release_notes"),
             cfg = "exec",
         ),
     },
@@ -440,7 +460,7 @@ offline_bcr = rule(
         ),
         "bcr_generator": attr.label(
             executable = True,
-            default = Label("//img/private/release/bcr"),
+            default = Label("@rules_img_internal_tools//release/bcr"),
             cfg = "exec",
         ),
     },

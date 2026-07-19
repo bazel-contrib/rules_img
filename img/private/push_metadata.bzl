@@ -585,6 +585,7 @@ def process_deploy_specs(
             layer_hints = deploy_infos[0].layer_hints,
             include_layers = include_layers,
             sign_settings = sign_config_infos,
+            referrers = [],
         )
 
     first_push_strategy = push_specs[0][PushConfigInfo].strategy if push_specs else "auto"

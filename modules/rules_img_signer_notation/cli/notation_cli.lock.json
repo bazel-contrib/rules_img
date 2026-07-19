@@ -1,0 +1,10 @@
+{
+  "version": "v1.3.2",
+  "platforms": [
+    {"os": "linux", "cpu": "amd64", "integrity": "sha256-4aDwYDCAhr+AILLTHe+3xTSPEzyg26ahp4IO88u23+U="},
+    {"os": "linux", "cpu": "arm64", "integrity": "sha256-NBQ8e4FqUBBIJCeAgKXPErv4VUiOAD9i5qzyftJcQjw="},
+    {"os": "darwin", "cpu": "amd64", "integrity": "sha256-cvreLMsHZeL/JrU8nKZj3TPcTyAgsrhJPnA6nM9hdKI="},
+    {"os": "darwin", "cpu": "arm64", "integrity": "sha256-BUv26fsmGTkNq5x05dbFEb3nYJ86Bg7lEsaurSRAwhQ="},
+    {"os": "windows", "cpu": "amd64", "integrity": "sha256-AU8lpTDu4XUgyOHrc4DkvQL/b8BEeaB6iQlU47fd/cc="}
+  ]
+}

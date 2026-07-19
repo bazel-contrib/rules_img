@@ -32,3 +32,10 @@ build --experimental_rule_extension_api
 # enable protobuf toolchain resolution
 # docs: https://bazel.build/reference/command-line-reference#common_options-flag--incompatible_enable_proto_toolchain_resolution
 common --incompatible_enable_proto_toolchain_resolution
+
+# Convenience configs for choosing a destination registry globally, instead of
+# hardcoding `registry = ...` on every image_push/image_load target. Select one
+# with e.g. `bazel run //:push --config=ghcr`.
+# docs: --@rules_img//img/settings:destination_registry=<registry>
+common --@rules_img//img/settings:destination_registry=ttl.sh
+common:ghcr --@rules_img//img/settings:destination_registry=ghcr.io

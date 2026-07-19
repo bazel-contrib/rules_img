@@ -44,6 +44,10 @@ offline_bundle(
     name = "airgapped",
     distdir_contents = [
         ":prebuilt_toolchain",
+        # Prebuilt signer plugin binaries so the e2e scratch workspace downloads
+        # them from the distdir instead of building the plugin from source.
+        "@rules_img_internal_tools//release:signer_cosign_prebuilt",
+        "@rules_img_internal_tools//release:signer_notation_prebuilt",
     ],
 )
 
@@ -82,12 +86,15 @@ versioned_filename_info(
     tags = ["manual"],
 )
 
-# Signer plugin modules, packaged only into the offline BCR used by the e2e
+# Signer plugin modules, packaged into the offline BCR used by the e2e
 # integration tests (see //e2e/sbom). Released for real via the standalone
-# modules/release_signer_plugin.sh (which ships prebuilt binaries); here we
-# just make the module *source* resolvable so the scratch workspace can build
-# the plugin from source. They are versioned independently of rules_img, so pin
-# their BCR versions to match module(version = ...) in each MODULE.bazel.
+# modules/release_signer_plugin.sh. Here we prebuild the plugin the same way as
+# the img tool: source_bundle injects the populated prebuilt_lockfile.json
+# (produced by @rules_img_internal_tools//release:signer_*_prebuilt) into the
+# packaged module source, so the scratch workspace downloads the prebuilt plugin
+# from the airgapped distdir instead of building it from source at test time.
+# They are versioned independently of rules_img, so pin their BCR versions to
+# match module(version = ...) in each MODULE.bazel.
 version(
     name = "signer_cosign_version",
     tags = ["manual"],
@@ -100,23 +107,37 @@ version(
     version = "0.0.1",
 )
 
+source_bundle(
+    name = "signer_cosign_srcs",
+    srcs = ["//:signer_cosign_source_files"],
+    overrides = ["@rules_img_internal_tools//release:signer_cosign_prebuilt"],
+    strip_prefix = "modules/rules_img_signer_cosign/",
+    tags = ["manual"],
+)
+
 pkg_tar(
     name = "signer_cosign_src_tar",
-    srcs = ["//:signer_cosign_source_files"],
+    srcs = [":signer_cosign_srcs"],
     out = "rules_img_signer_cosign.tar.gz",
     extension = "tar.gz",
     mode = "0755",
-    strip_prefix = "/modules/rules_img_signer_cosign",
+    tags = ["manual"],
+)
+
+source_bundle(
+    name = "signer_notation_srcs",
+    srcs = ["//:signer_notation_source_files"],
+    overrides = ["@rules_img_internal_tools//release:signer_notation_prebuilt"],
+    strip_prefix = "modules/rules_img_signer_notation/",
     tags = ["manual"],
 )
 
 pkg_tar(
     name = "signer_notation_src_tar",
-    srcs = ["//:signer_notation_source_files"],
+    srcs = [":signer_notation_srcs"],
     out = "rules_img_signer_notation.tar.gz",
     extension = "tar.gz",
     mode = "0755",
-    strip_prefix = "/modules/rules_img_signer_notation",
     tags = ["manual"],
 )
 

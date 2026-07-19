@@ -1,0 +1,43 @@
+"""The official notation CLI, selected for the target platform.
+
+`@rules_img_signer_notation//notation` is a `bazel run`-able alias to the
+upstream notation release binary for the current platform. The per-platform
+binaries are downloaded by the `notation_cli` module extension (see //cli).
+"""
+
+_PLATFORMS = [
+    ("linux", "amd64", "x86_64"),
+    ("linux", "arm64", "aarch64"),
+    ("darwin", "amd64", "x86_64"),
+    ("darwin", "arm64", "aarch64"),
+    ("windows", "amd64", "x86_64"),
+]
+
+[
+    config_setting(
+        name = "{}_{}".format(os, cpu),
+        constraint_values = [
+            "@platforms//os:{}".format("macos" if os == "darwin" else os),
+            "@platforms//cpu:{}".format(bazel_cpu),
+        ],
+    )
+    for (os, cpu, bazel_cpu) in _PLATFORMS
+]
+
+alias(
+    name = "notation",
+    actual = select(
+        {
+            ":{}_{}".format(
+                platform[0],
+                platform[1],
+            ): "@notation_cli_{}_{}//:binary".format(
+                platform[0],
+                platform[1],
+            )
+            for platform in _PLATFORMS
+        },
+        no_match_error = "notation CLI is not available for this platform; supported: linux/darwin on amd64+arm64, windows on amd64",
+    ),
+    visibility = ["//visibility:public"],
+)
