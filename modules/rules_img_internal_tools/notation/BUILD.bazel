@@ -1,0 +1,14 @@
+"""Re-export of the official notation CLI from the signer plugin module.
+
+`@rules_img_internal_tools//notation` is a public alias to
+`@rules_img_signer_notation//notation:notation` (the upstream notation release
+binary, selected for the target platform). It lets the top-level module depend
+on the notation CLI transitively through this module instead of a direct
+bazel_dep on the signer plugin.
+"""
+
+alias(
+    name = "notation",
+    actual = "@rules_img_signer_notation//notation:notation",
+    visibility = ["//visibility:public"],
+)

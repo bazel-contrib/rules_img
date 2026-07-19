@@ -24,8 +24,11 @@ image_manifest_from_oci_layout(
 image_push(
     name = "push_converted",
     image = ":converted_manifest",
-    registry = "ghcr.io",
+    # Set the destination registry per-image here, or globally in .bazelrc via
+    # --@rules_img//img/settings:destination_registry=docker.acme.tld
+    # registry = "docker.acme.tld",
     repository = "malt3/rules_img/e2e-generic-converted",
+    visibility = ["//visibility:public"],
 )
 
 # Extract the OCI layout from a multi-platform index
@@ -51,8 +54,11 @@ image_index_from_oci_layout(
 image_push(
     name = "push_converted_index",
     image = ":converted_index",
-    registry = "ghcr.io",
+    # Set the destination registry per-image here, or globally in .bazelrc via
+    # --@rules_img//img/settings:destination_registry=docker.acme.tld
+    # registry = "docker.acme.tld",
     repository = "malt3/rules_img/e2e-generic-converted-index",
+    visibility = ["//visibility:public"],
 )
 
 # Build test to ensure both conversions work

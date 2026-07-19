@@ -1,26 +1,14 @@
 load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
-load("@rules_go//go:def.bzl", "go_binary", "go_library")
 load(":defs.bzl", "clean_module_bazel")
 
 # gazelle:exclude_from_release
 
+# The `module_bazel_release_prep` Go binary that this genrule invokes lives in
+# the rules_img_internal_tools module (the top-level module owns no binaries).
 clean_module_bazel(
     name = "cleaned_module",
     src = "//:MODULE.bazel",
     visibility = ["//visibility:public"],
-)
-
-go_binary(
-    name = "module_bazel_release_prep",
-    embed = [":module_bazel_release_prep_lib"],
-    visibility = ["//visibility:public"],
-)
-
-go_library(
-    name = "module_bazel_release_prep_lib",
-    srcs = ["main.go"],
-    importpath = "github.com/bazel-contrib/rules_img/img/private/release/module_bazel_release_prep",
-    visibility = ["//visibility:private"],
 )
 
 bzl_library(

@@ -13,6 +13,21 @@ signing_config(
     tool = "@rules_img_signer_cosign",
 )
 
+# Cosign signer, key-based & fully offline: never contacts Fulcio/Rekor
+# (--tlog-upload=false). The private key comes from $RULES_IMG_COSIGN_KEY at
+# deploy time. Used by the integration test runner, which generates a short-lived
+# key and points the deploy at a local registry. Enable with --config=cosign.
+signing_config(
+    name = "cosign_key",
+    args = ["--tlog-upload=false"],
+    targets = [
+        "roots",
+        "child_manifests",
+        "referrers",
+    ],
+    tool = "@rules_img_signer_cosign",
+)
+
 # Notation signer: supply key and certificate chain at deploy time via
 # $RULES_IMG_NOTATION_KEY and $RULES_IMG_NOTATION_CERTIFICATE_CHAIN.
 # Enable with --config=notation (see .bazelrc).

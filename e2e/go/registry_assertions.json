@@ -1,0 +1,25 @@
+{
+  "images": [
+    {
+      "repository": "malt3/rules_img/go",
+      "tag": "native",
+      "structure": {
+        "kind": "manifest"
+      },
+      "closure_intact": true
+    },
+    {
+      "repository": "malt3/rules_img/go",
+      "tag": "multiarch",
+      "structure": {
+        "kind": "index"
+      },
+      "closure_intact": true
+    },
+    {
+      "repository": "malt3/rules_img/go",
+      "tag": "layer_from_binary_example",
+      "closure_intact": true
+    }
+  ]
+}

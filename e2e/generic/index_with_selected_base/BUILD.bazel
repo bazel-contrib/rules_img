@@ -43,8 +43,11 @@ image_index(
 image_push(
     name = "push",
     image = ":index",
-    registry = "ghcr.io",
+    # Set the destination registry per-image here, or globally in .bazelrc via
+    # --@rules_img//img/settings:destination_registry=docker.acme.tld
+    # registry = "docker.acme.tld",
     repository = "malt3/rules_img/index_with_selected_base",
+    visibility = ["//visibility:public"],
 )
 
 build_test(

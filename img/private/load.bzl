@@ -230,6 +230,7 @@ def _image_load_impl(ctx):
             layer_hints = layer_hints,
             include_layers = strategy == "eager",
             sign_settings = [],
+            referrers = [],
         ),
     ]
 

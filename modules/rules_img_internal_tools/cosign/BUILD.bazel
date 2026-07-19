@@ -1,0 +1,14 @@
+"""Re-export of the official cosign CLI from the signer plugin module.
+
+`@rules_img_internal_tools//cosign` is a public alias to
+`@rules_img_signer_cosign//cosign:cosign` (the upstream cosign release binary,
+selected for the target platform). It lets the top-level module depend on the
+cosign CLI transitively through this module instead of a direct bazel_dep on the
+signer plugin.
+"""
+
+alias(
+    name = "cosign",
+    actual = "@rules_img_signer_cosign//cosign:cosign",
+    visibility = ["//visibility:public"],
+)

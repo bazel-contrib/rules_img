@@ -34,7 +34,7 @@ gazelle_binary(
         "@gazelle//language/go",
         "@gazelle//language/proto",
         "@bazel_skylib_gazelle_plugin//bzl",
-        "//img/private/release/gazelle_plugin:gazelle_plugin",
+        "@rules_img_internal_tools//release/gazelle_plugin:gazelle_plugin",
     ],
 )
 

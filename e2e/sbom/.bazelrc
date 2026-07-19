@@ -2,10 +2,15 @@ import %workspace%/.bazelrc.common
 
 try-import %workspace%/.bazelrc.user
 
-# Sign images with cosign (Sigstore keyless); supply SIGSTORE_ID_TOKEN at deploy time.
+# Sign images with cosign; supply a key via $RULES_IMG_COSIGN_KEY. The
+# integration test runner generates a short-lived key and signs offline against
+# a local registry (the //signer:cosign_key config sets --tlog-upload=false so
+# cosign never contacts Fulcio/Rekor). For keyless Sigstore signing against a
+# real registry, point sign_setting at //signer:cosign_keyless and supply
+# SIGSTORE_ID_TOKEN instead.
 # Usage: bazel run //:push --config=cosign
 build:cosign --@rules_img//img/settings:sign=enabled
-build:cosign --@rules_img//img/settings:sign_setting=//signer:cosign_keyless
+build:cosign --@rules_img//img/settings:sign_setting=//signer:cosign_key
 
 # Sign images with Notation; supply key/cert via $RULES_IMG_NOTATION_KEY and
 # $RULES_IMG_NOTATION_CERTIFICATE_CHAIN (or pass --key/--certificate-chain after --).

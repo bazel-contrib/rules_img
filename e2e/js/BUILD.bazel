@@ -1,3 +1,32 @@
 load("@npm//:defs.bzl", "npm_link_all_packages")
+load("@rules_img//img:multi_deploy.bzl", "multi_deploy")
 
 npm_link_all_packages(name = "node_modules")
+
+multi_deploy(
+    name = "deploy",
+    operations = [
+        "//app:load",
+        "//app:push",
+    ],
+)
+
+multi_deploy(
+    name = "push",
+    deploy_operations = [
+        "push",
+    ],
+    operations = [
+        "//app:push",
+    ],
+)
+
+multi_deploy(
+    name = "load",
+    deploy_operations = [
+        "load",
+    ],
+    operations = [
+        "//app:load",
+    ],
+)

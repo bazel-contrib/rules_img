@@ -3,6 +3,7 @@ load("@bazel_skylib//rules:copy_directory.bzl", "copy_directory")
 load("@bazel_skylib//rules:write_file.bzl", "write_file")
 load("@rules_img//img:image.bzl", "image_index", "image_manifest", "image_optimize")
 load("@rules_img//img:layer.bzl", "file_metadata", "image_layer")
+load("@rules_img//img:multi_deploy.bzl", "multi_deploy")
 load("@rules_img//img:push.bzl", "image_push")
 load("@rules_img_images.bzl", "image")
 load("@rules_pkg//pkg:tar.bzl", "pkg_tar")
@@ -198,7 +199,9 @@ image_manifest(
 image_push(
     name = "push_single_layer",
     image = ":single_layer_manifest",
-    registry = "ghcr.io",
+    # Set the destination registry per-image here, or globally in .bazelrc via
+    # --@rules_img//img/settings:destination_registry=docker.acme.tld
+    # registry = "docker.acme.tld",
     repository = "malt3/rules_img/e2e-generic-single-layer",
     visibility = ["//visibility:public"],
 )
@@ -232,7 +235,9 @@ image_manifest(
 image_push(
     name = "push_multi_layer",
     image = ":multi_layer_manifest",
-    registry = "ghcr.io",
+    # Set the destination registry per-image here, or globally in .bazelrc via
+    # --@rules_img//img/settings:destination_registry=docker.acme.tld
+    # registry = "docker.acme.tld",
     repository = "malt3/rules_img/e2e-generic-multi-layer",
     visibility = ["//visibility:public"],
 )
@@ -255,7 +260,9 @@ image_manifest(
 image_push(
     name = "push_annotated",
     image = ":annotated_manifest",
-    registry = "ghcr.io",
+    # Set the destination registry per-image here, or globally in .bazelrc via
+    # --@rules_img//img/settings:destination_registry=docker.acme.tld
+    # registry = "docker.acme.tld",
     repository = "malt3/rules_img/e2e-generic-annotated",
     visibility = ["//visibility:public"],
 )
@@ -346,7 +353,9 @@ image_index(
 image_push(
     name = "push_index",
     image = ":multi_platform_index",
-    registry = "ghcr.io",
+    # Set the destination registry per-image here, or globally in .bazelrc via
+    # --@rules_img//img/settings:destination_registry=docker.acme.tld
+    # registry = "docker.acme.tld",
     repository = "malt3/rules_img/e2e-generic-index",
     visibility = ["//visibility:public"],
 )
@@ -480,7 +489,9 @@ image_manifest(
 image_push(
     name = "push_complex",
     image = ":complex_manifest",
-    registry = "ghcr.io",
+    # Set the destination registry per-image here, or globally in .bazelrc via
+    # --@rules_img//img/settings:destination_registry=docker.acme.tld
+    # registry = "docker.acme.tld",
     repository = "malt3/rules_img/e2e-generic-complex",
     visibility = ["//visibility:public"],
 )
@@ -534,7 +545,9 @@ image_manifest(
 image_push(
     name = "push_with_created",
     image = ":manifest_with_created",
-    registry = "ghcr.io",
+    # Set the destination registry per-image here, or globally in .bazelrc via
+    # --@rules_img//img/settings:destination_registry=docker.acme.tld
+    # registry = "docker.acme.tld",
     repository = "malt3/rules_img/e2e-generic-with-created",
     visibility = ["//visibility:public"],
 )
@@ -554,7 +567,9 @@ write_file(
 image_push(
     name = "push_tag_file",
     image = ":single_layer_manifest",
-    registry = "ghcr.io",
+    # Set the destination registry per-image here, or globally in .bazelrc via
+    # --@rules_img//img/settings:destination_registry=docker.acme.tld
+    # registry = "docker.acme.tld",
     repository = "malt3/rules_img/e2e-generic-tag-file",
     tag_file = ":push_tags_file",
     visibility = ["//visibility:public"],
@@ -573,6 +588,9 @@ image_push(
     destination_file = ":push_destination_file",
     image = ":single_layer_manifest",
     tag = "latest",
+    # Reads its destination from a file, so it cannot be redirected to the
+    # integration test's local registry; keep it out of the aggregate deploy.
+    tags = ["no-multi-deploy"],
     visibility = ["//visibility:public"],
 )
 
@@ -708,7 +726,9 @@ image_manifest(
 image_push(
     name = "push_gcr_based",
     image = ":manifest_extending_gcr_base",
-    registry = "ghcr.io",
+    # Set the destination registry per-image here, or globally in .bazelrc via
+    # --@rules_img//img/settings:destination_registry=docker.acme.tld
+    # registry = "docker.acme.tld",
     repository = "malt3/rules_img/e2e-generic-gcr-based",
     visibility = ["//visibility:public"],
 )
@@ -722,5 +742,85 @@ build_test(
         ":push_tests",
         ":optimize_tests",
         ":platform_transition_tests",
+    ],
+)
+
+multi_deploy(
+    name = "deploy",
+    operations = [
+        "//:push_annotated",
+        "//:push_complex",
+        "//:push_gcr_based",
+        "//:push_index",
+        "//:push_multi_layer",
+        "//:push_single_layer",
+        "//:push_tag_file",
+        "//:push_with_created",
+        "//convert_oci:push_converted",
+        "//convert_oci:push_converted_index",
+        "//cross_mount:push_app",
+        "//cross_mount:push_base",
+        "//custom_distroless_base_image:push_python_distroless",
+        "//extend:push",
+        "//index_with_selected_base:push",
+        "//load:load_alpine",
+        "//load:load_cuda",
+        "//load:load_envoy",
+        "//load:load_image",
+        "//load:load_image_templated",
+        "//load:load_index",
+        "//load:load_multi_tags",
+        "//load:load_normalized",
+        "//load:load_scratch_compat",
+        "//load:load_scratch_split",
+        "//load:load_tag_file",
+        "//multi_deploy:nginx",
+        "//not-a-container-image/oras:push",
+    ],
+)
+
+multi_deploy(
+    name = "push",
+    deploy_operations = [
+        "push",
+    ],
+    operations = [
+        "//:push_annotated",
+        "//:push_complex",
+        "//:push_gcr_based",
+        "//:push_index",
+        "//:push_multi_layer",
+        "//:push_single_layer",
+        "//:push_tag_file",
+        "//:push_with_created",
+        "//convert_oci:push_converted",
+        "//convert_oci:push_converted_index",
+        "//cross_mount:push_app",
+        "//cross_mount:push_base",
+        "//custom_distroless_base_image:push_python_distroless",
+        "//extend:push",
+        "//index_with_selected_base:push",
+        "//multi_deploy:nginx",
+        "//not-a-container-image/oras:push",
+    ],
+)
+
+multi_deploy(
+    name = "load",
+    deploy_operations = [
+        "load",
+    ],
+    operations = [
+        "//load:load_alpine",
+        "//load:load_cuda",
+        "//load:load_envoy",
+        "//load:load_image",
+        "//load:load_image_templated",
+        "//load:load_index",
+        "//load:load_multi_tags",
+        "//load:load_normalized",
+        "//load:load_scratch_compat",
+        "//load:load_scratch_split",
+        "//load:load_tag_file",
     ],
 )

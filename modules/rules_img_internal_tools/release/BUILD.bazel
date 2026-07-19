@@ -1,0 +1,47 @@
+# Loading @rules_img's release rules across the module boundary is intentional:
+# the release orchestration stays in @rules_img (it globs @rules_img source and
+# defines the platform-split build setting); only the Go generators and these
+# signer-prebuild instantiations live here.
+# buildifier: disable=bzl-visibility
+load("@rules_img//img/private/release:defs.bzl", "release_files")
+
+# gazelle:exclude_from_release
+
+package(default_visibility = ["//visibility:public"])
+
+# Prebuilt signer plugin binaries for the e2e offline bundle.
+#
+# This mirrors how the img tool is prebuilt (//img/private/release:prebuilt_toolchain
+# in @rules_img): build the plugin for every release platform, hash the binaries
+# into a prebuilt_lockfile.json, and expose them for the airgapped distdir.
+# @rules_img's release BUILD (//img/private/release) injects the populated
+# lockfile into the signer module source (via source_bundle) and adds the
+# binaries to the offline distdir, so the e2e scratch workspace downloads the
+# prebuilt plugin instead of building it from source at test time.
+#
+# These targets live here (not in @rules_img) because building the plugin
+# references @rules_img_signer_cosign//cmd/cosign directly, and only this module
+# depends on the signer plugins; the top-level module depends on them only
+# transitively. release_files itself is defined in @rules_img and its platform
+# split-transition references @rules_img//img/private/release:release_platform.
+#
+# lockfile_name is the *pre-strip* source path of the file being overridden so
+# that @rules_img's source_bundle(strip_prefix = ...) lands it at the module
+# root of the packaged source archive.
+release_files(
+    name = "signer_cosign_prebuilt",
+    basename = "cosign",
+    executable = "@rules_img_signer_cosign//cmd/cosign",
+    lockfile_name = "modules/rules_img_signer_cosign/prebuilt_lockfile.json",
+    tags = ["manual"],
+    version = "@rules_img//img/private/release:signer_cosign_version",
+)
+
+release_files(
+    name = "signer_notation_prebuilt",
+    basename = "notation",
+    executable = "@rules_img_signer_notation//cmd/notation",
+    lockfile_name = "modules/rules_img_signer_notation/prebuilt_lockfile.json",
+    tags = ["manual"],
+    version = "@rules_img//img/private/release:signer_notation_version",
+)

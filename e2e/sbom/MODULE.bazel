@@ -33,9 +33,6 @@ local_path_override(
     path = "../../modules/rules_img_signer_notation",
 )
 
-register_toolchains("@rules_img_tool//toolchain:all")
-# END BAZEL_DEP
-
 # Required when building rules_img_signer_cosign from source: gazelle_override is
 # root-module-only and cannot be declared in the cosign module itself.
 bazel_dep(name = "gazelle", version = "0.51.3")
@@ -49,6 +46,9 @@ go_deps.gazelle_override(
     directives = ["gazelle:go_generate_proto false"],
     path = "github.com/google/certificate-transparency-go",
 )
+
+register_toolchains("@rules_img_tool//toolchain:all")
+# END BAZEL_DEP
 
 bazel_dep(name = "bazel_skylib", version = "1.9.0")
 bazel_dep(name = "package_metadata", version = "0.0.13")

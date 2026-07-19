@@ -104,7 +104,9 @@ image_push(
         "is_production": ":is_production",
     },
     image = ":go_image",
-    registry = "{{.registry}}",
+    # Set the destination registry per-image here, or globally in .bazelrc via
+    # --@rules_img//img/settings:destination_registry=docker.acme.tld
+    # registry = "docker.acme.tld",
     repository = "{{.repo}}",
     stamp = "force",
     tag_list = [
@@ -116,7 +118,7 @@ image_push(
         "another-tag-just-for-fun",
     ],
     tracks_content = True,
-    visibility = ["//:__pkg__"],
+    visibility = ["//visibility:public"],
 )
 
 image_load(
@@ -126,14 +128,16 @@ image_load(
         "repo": ":repo",
     },
     image = ":go_image",
-    registry = "{{.registry}}",
+    # Set the destination registry per-image here, or globally in .bazelrc via
+    # --@rules_img//img/settings:destination_registry=docker.acme.tld
+    # registry = "docker.acme.tld",
     repository = "{{.repo}}",
     tag_list = [
         "latest",
         "dgst-sha256-{{slice .digest 7}}",
     ],
     tracks_content = True,
-    visibility = ["//:__pkg__"],
+    visibility = ["//visibility:public"],
 )
 
 image_push_spec(
@@ -142,7 +146,9 @@ image_push_spec(
         "registry": ":registry",
         "repo": ":repo",
     },
-    registry = "{{.registry}}",
+    # Set the destination registry per-image here, or globally in .bazelrc via
+    # --@rules_img//img/settings:destination_registry=docker.acme.tld
+    # registry = "docker.acme.tld",
     repository = "{{.repo}}",
     stamp = "force",
     tag_list = [
@@ -158,7 +164,9 @@ image_load_spec(
         "registry": ":registry",
         "repo": ":repo",
     },
-    registry = "{{.registry}}",
+    # Set the destination registry per-image here, or globally in .bazelrc via
+    # --@rules_img//img/settings:destination_registry=docker.acme.tld
+    # registry = "docker.acme.tld",
     repository = "{{.repo}}",
     stamp = "force",
     tag_list = [
@@ -176,6 +184,7 @@ image_manifest(
     ],
     load_specs = [":load_spec"],
     push_specs = [":push_spec"],
+    visibility = ["//visibility:public"],
 )
 
 # The spec-based deploy metadata (and thus the {{.digest}} expand-template

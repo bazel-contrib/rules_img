@@ -1,0 +1,39 @@
+module(
+    name = "rules_img_internal_tools",
+    version = "0.0.1",
+)
+
+# Internal, unpublished dev tooling for the rules_img repository: the e2e
+# integration test runner, registry/asserter test helpers, the release
+# generators, the layering test tools, and the e2e consistency checker.
+#
+# It exists so the top-level `rules_img` module owns no binaries and no Go code
+# beyond an (empty) go.mod. The module is a dev_dependency of the root and is
+# resolved from this directory via `--override_module` in the root `.bazelrc`.
+# It is never published to a registry.
+
+bazel_dep(name = "bazel_skylib", version = "1.9.0")
+bazel_dep(name = "platforms", version = "1.0.0")
+bazel_dep(name = "rules_go", version = "0.61.1")
+bazel_dep(name = "gazelle", version = "0.51.3")
+
+# rules_img (the root module) and its sibling modules. rules_img_signer_* are a
+# direct dep here (not in the root) so the root depends on them only transitively
+# through this module, and so the signer CLIs / plugins can be re-exported and
+# prebuilt for the e2e tests.
+bazel_dep(name = "rules_img", version = "0.3.17")
+bazel_dep(name = "rules_img_tool", version = "0.3.17")
+bazel_dep(name = "rules_img_signer_cosign", version = "0.0.1")
+bazel_dep(name = "rules_img_signer_notation", version = "0.0.1")
+
+go_sdk = use_extension("@rules_go//go:extensions.bzl", "go_sdk")
+go_sdk.from_file(go_mod = "//:go.mod")
+
+go_deps = use_extension("@gazelle//:extensions.bzl", "go_deps")
+go_deps.from_file(go_mod = "//:go.mod")
+use_repo(
+    go_deps,
+    "com_github_bazelbuild_buildtools",
+    "com_github_google_go_containerregistry",
+    "com_github_klauspost_compress",
+)

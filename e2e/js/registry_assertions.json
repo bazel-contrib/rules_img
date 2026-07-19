@@ -1,0 +1,13 @@
+{
+  "images": [
+    {
+      "repository": "malt3/rules_img/js",
+      "tag": "latest",
+      "structure": {
+        "kind": "index",
+        "platforms": ["linux/amd64", "linux/arm64/v8"]
+      },
+      "closure_intact": true
+    }
+  ]
+}

@@ -1,0 +1,45 @@
+load("@rules_go//go:def.bzl", "go_binary", "go_library")
+
+# gazelle:exclude_from_release
+
+go_library(
+    name = "integration_test_runner_lib",
+    srcs = [
+        "integration_test_runner.go",
+        "keys.go",
+        "registry.go",
+    ],
+    importpath = "github.com/bazel-contrib/rules_img/modules/rules_img_internal_tools/integration_test_runner",
+    visibility = ["//visibility:private"],
+    deps = ["@rules_go//go/runfiles"],
+)
+
+go_binary(
+    name = "integration_test_runner",
+    data = [
+        ":bazel_dep_rules_img",
+        "//cosign",
+        "//integration_test_asserter",
+        "//integration_test_registry",
+        "//notation",
+        "@rules_img//img/private/release:airgapped",
+        "@rules_img//img/private/release:bcr",
+    ],
+    embed = [":integration_test_runner_lib"],
+    pure = "on",
+    visibility = ["//visibility:public"],
+    x_defs = {
+        "registryRlocationPath": "$(rlocationpath //integration_test_registry)",
+        "asserterRlocationPath": "$(rlocationpath //integration_test_asserter)",
+        "cosignCLIRlocationPath": "$(rlocationpath //cosign:cosign)",
+        "notationCLIRlocationPath": "$(rlocationpath //notation:notation)",
+    },
+)
+
+filegroup(
+    name = "bazel_dep_rules_img",
+    srcs = [
+        "@rules_img//img/private/release:bcr",
+    ],
+    output_group = "rules_img",
+)

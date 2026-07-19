@@ -1,0 +1,8 @@
+common --override_module=rules_img=%workspace%/../..
+common --override_module=rules_img_tool=%workspace%/../../img_tool
+common --override_module=rules_img_signer_cosign=%workspace%/../rules_img_signer_cosign
+common --override_module=rules_img_signer_notation=%workspace%/../rules_img_signer_notation
+
+import %workspace%/.bazelrc.common
+
+try-import %workspace%/.bazelrc.user

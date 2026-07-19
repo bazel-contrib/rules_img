@@ -87,24 +87,49 @@ def _compute_multi_deploy_metadata(*, ctx):
     )
     return metadata_out, layer_hints_out
 
-def _collect_all_image_providers(ctx):
-    """Collect all image providers from operations to build root symlinks."""
-    images = []
+def _split_image(image):
+    """Split an image provider into (index_info, manifest_info); exactly one is non-None."""
+    if hasattr(image, "manifests"):
+        return image, None
+    return None, image
+
+def _collect_operation_root_symlinks(ctx, *, symlink_name_prefix):
+    """Build the runfiles symlink tree for all operations.
+
+    The deploy tool resolves each operation's runfiles by its *position* in the
+    merged deploy manifest (see deployvfs). `deploy-merge` concatenates every
+    operation contributed by each target in order: an image_push contributes its
+    main image first, then one operation per referrer. We reproduce that exact
+    ordering here with a running operation index, so a referrer's layers land at
+    the operation index the deploy tool will look them up under. (With no
+    referrers this reduces to one index per operation, matching the historical
+    behavior.)
+    """
+    root_symlinks = {}
+    operation_index = 0
     for operation in ctx.attr.operations:
         deploy_info = operation[DeployInfo]
-        if hasattr(deploy_info.image, "manifests"):
-            # It's an index
-            images.append(dict(
-                index_info = deploy_info.image,
-                manifest_info = None,
+        index_info, manifest_info = _split_image(deploy_info.image)
+        root_symlinks.update(calculate_root_symlinks(
+            index_info = index_info,
+            manifest_info = manifest_info,
+            include_layers = deploy_info.include_layers,
+            operation_index = operation_index,
+            symlink_name_prefix = symlink_name_prefix,
+        ))
+        operation_index += 1
+
+        # Referrers are additional deploy operations attached to this push.
+        for referrer in getattr(deploy_info, "referrers", []):
+            root_symlinks.update(calculate_root_symlinks(
+                index_info = referrer.index_info,
+                manifest_info = referrer.manifest_info,
+                include_layers = deploy_info.include_layers,
+                operation_index = operation_index,
+                symlink_name_prefix = symlink_name_prefix,
             ))
-        else:
-            # It's a manifest
-            images.append(dict(
-                index_info = None,
-                manifest_info = deploy_info.image,
-            ))
-    return images
+            operation_index += 1
+    return root_symlinks
 
 def _multi_deploy_impl(ctx):
     """Implementation of the multi_deploy rule."""
@@ -147,20 +172,7 @@ def _multi_deploy_impl(ctx):
     )
 
     # Collect all image providers for root symlinks
-    images = _collect_all_image_providers(ctx)
-
-    root_symlinks = {}
-
-    # Add symlinks for all deploy commands, using per-operation include_layers from DeployInfo
-    for (i, image) in enumerate(images):
-        symlinks = calculate_root_symlinks(
-            index_info = image["index_info"],
-            manifest_info = image["manifest_info"],
-            include_layers = ctx.attr.operations[i][DeployInfo].include_layers,
-            operation_index = i,
-            symlink_name_prefix = root_symlinks_prefix,
-        )
-        root_symlinks.update(symlinks)
+    root_symlinks = _collect_operation_root_symlinks(ctx, symlink_name_prefix = root_symlinks_prefix)
 
     # Add merged layer hints to root symlinks if present
     if layer_hints != None:

@@ -89,11 +89,15 @@ def resolve_push_registry(ctx):
 def resolve_load_destination(ctx):
     """Resolve and validate the registry/repository for a load target.
 
-    Unlike push, load has no destination_file or global destination_registry
-    fallback: the registry/repository are taken verbatim from the attributes.
-    They must be set together (to reconstruct `<registry>/<repository>:<tag>`
-    image names) or both left empty (backwards-compatible mode, where the tags
-    are already full image references).
+    Like push, load supports the global `destination_registry` fallback, but
+    only for the split `registry`/`repository` form: when `repository` is set
+    and `registry` is empty, the `--@rules_img//img/settings:destination_registry`
+    flag fills in the registry. The registry/repository must end up set together
+    (to reconstruct `<registry>/<repository>:<tag>` image names) or both empty
+    (backwards-compatible mode, where the tags are already full image
+    references). In the backwards-compatible mode (empty `repository`) the
+    fallback deliberately does not apply, so legacy `rules_oci`-style targets
+    never get a registry injected.
 
     Args:
         ctx: Rule context with registry/repository attributes.
@@ -103,6 +107,13 @@ def resolve_load_destination(ctx):
     """
     registry = ctx.attr.registry
     repository = ctx.attr.repository
+
+    # Fall back to the global destination_registry only for the split
+    # registry/repository/tag form. Legacy usage (a single full-reference `tag`
+    # with empty registry+repository) must NOT get a registry injected.
+    if not registry and repository:
+        registry = ctx.attr._destination_registry[BuildSettingInfo].value
+
     if bool(registry) != bool(repository):
         fail("image_load/image_load_spec: 'registry' and 'repository' must be set together (or neither); got registry = {}, repository = {}".format(
             repr(registry),

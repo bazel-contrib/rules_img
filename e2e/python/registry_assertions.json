@@ -1,0 +1,17 @@
+{
+  "images": [
+    {
+      "repository": "malt3/rules_img/python",
+      "tag": "latest",
+      "structure": {
+        "kind": "index"
+      },
+      "closure_intact": true
+    },
+    {
+      "repository": "malt3/rules_img/python",
+      "tag": "image_from_binary_example",
+      "closure_intact": true
+    }
+  ]
+}

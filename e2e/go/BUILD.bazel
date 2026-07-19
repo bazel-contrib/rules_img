@@ -30,11 +30,46 @@ go_binary(
 )
 
 multi_deploy(
-    name = "deploy_all",
+    name = "deploy",
     operations = [
+        "//customization:go_image_with_specs",
+        "//customization:load",
         "//customization:push",
         "//image:load",
         "//image:push",
+        "//image_from_binary_example:push",
+        "//layer_from_binary_example:push",
+        "//multiarch:load",
         "//multiarch:push",
+        "//multiarch:push_with_manifest_tags",
+    ],
+)
+
+multi_deploy(
+    name = "push",
+    deploy_operations = [
+        "push",
+    ],
+    operations = [
+        "//customization:go_image_with_specs",
+        "//customization:push",
+        "//image:push",
+        "//image_from_binary_example:push",
+        "//layer_from_binary_example:push",
+        "//multiarch:push",
+        "//multiarch:push_with_manifest_tags",
+    ],
+)
+
+multi_deploy(
+    name = "load",
+    deploy_operations = [
+        "load",
+    ],
+    operations = [
+        "//customization:go_image_with_specs",
+        "//customization:load",
+        "//image:load",
+        "//multiarch:load",
     ],
 )

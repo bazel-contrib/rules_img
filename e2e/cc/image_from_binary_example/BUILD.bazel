@@ -22,8 +22,10 @@ image_from_binary(
 image_push(
     name = "push",
     image = ":image",
-    registry = "ghcr.io",
+    # Set the destination registry per-image here, or globally in .bazelrc via
+    # --@rules_img//img/settings:destination_registry=docker.acme.tld
+    # registry = "docker.acme.tld",
     repository = "malt3/rules_img/cc",
     tag = "image_from_binary_example",
-    visibility = ["//:__pkg__"],
+    visibility = ["//visibility:public"],
 )

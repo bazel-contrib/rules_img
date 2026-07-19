@@ -31,3 +31,17 @@ prebuilt.from_file(
 )
 prebuilt.source(target = "//cmd/notation")
 use_repo(prebuilt, "rules_img_signer_notation_resolved")
+
+# Download the official upstream notation CLI (kept in sync with the
+# notation-core-go library in go.mod) so integration tests can verify signatures
+# with the real tool. Exposed as @rules_img_signer_notation//notation.
+notation_cli = use_extension("//cli:cli.bzl", "notation_cli")
+notation_cli.from_file(lockfile = "//cli:notation_cli.lock.json")
+use_repo(
+    notation_cli,
+    "notation_cli_darwin_amd64",
+    "notation_cli_darwin_arm64",
+    "notation_cli_linux_amd64",
+    "notation_cli_linux_arm64",
+    "notation_cli_windows_amd64",
+)

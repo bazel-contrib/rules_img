@@ -31,7 +31,9 @@ go_binary(
 
 image_push_spec(
     name = "push_spec",
-    registry = "ghcr.io",
+    # Set the destination registry per-image here, or globally in .bazelrc via
+    # --@rules_img//img/settings:destination_registry=docker.acme.tld
+    # registry = "docker.acme.tld",
     repository = "malt3/compact-layers",
     tag_list = ["latest"],
     tags = ["manual"],
@@ -44,6 +46,7 @@ image_from_binary(
     platforms = ["//platform:linux_amd64"],
     push_specs = [":push_spec"],
     tags = ["manual"],
+    visibility = ["//visibility:public"],
 )
 
 multi_deploy(

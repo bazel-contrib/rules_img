@@ -1,0 +1,9 @@
+{
+  "images": [
+    {
+      "repository": "malt3/rules_img/python_distroless",
+      "tag": "latest",
+      "closure_intact": true
+    }
+  ]
+}
