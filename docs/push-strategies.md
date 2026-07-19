@@ -108,7 +108,7 @@ bazel run //your:push_target
 
 ### Overview
 The CAS (Content Addressable Storage) registry push strategy uses a special container registry that is directly integrated with Bazel's remote cache. This eliminates data duplication and provides the fastest possible push performance. Please note that the remote cache may evict cached data at any time, as per [the specification][reapi-spec-cas-lifetime]. For that reason, using a remote cache as the backend of your container registry is only recommended during development.
-Also note that the regsitry doesn't offer TLS nor authentication, so it should only listen on localhost, or be protected by a VPN or other gateway.
+Also note that the registry doesn't offer TLS nor authentication, so it should only listen on localhost, or be protected by a VPN or other gateway.
 
 ### How it Works
 1. The special registry reads blobs directly from Bazel's CAS

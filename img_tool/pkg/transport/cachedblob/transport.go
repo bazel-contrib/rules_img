@@ -25,6 +25,13 @@ var blobURLPattern = regexp.MustCompile(`^/v2/([a-z0-9]+((\.|_|__|-+)[a-z0-9]+)*
 // [a-z0-9]+((\.|_|__|-+)[a-z0-9]+)*(\/[a-z0-9]+((\.|_|__|-+)[a-z0-9]+)*)*
 var manifestURLPattern = regexp.MustCompile(`^/v2/([a-z0-9]+((\.|_|__|-+)[a-z0-9]+)*(\/[a-z0-9]+((\.|_|__|-+)[a-z0-9]+)*)*)/manifests/(sha256:[a-f0-9]{64})$`)
 
+// sha256HexPattern matches a bare lowercase-hex sha256 sum (the value left after
+// the "sha256:" prefix is stripped from a digest). Blob digests reaching this
+// package are already constrained by blobURLPattern/manifestURLPattern, but the
+// sum is used to build an on-disk path, so we re-validate it here as
+// defense-in-depth against path traversal.
+var sha256HexPattern = regexp.MustCompile(`^[a-f0-9]{64}$`)
+
 type fatalCacheError struct {
 	inner error
 }
@@ -248,6 +255,9 @@ func (t *Transport) serveFromCache(digest string, isManifest bool) (*http.Respon
 
 		// Data is too large, read from disk
 		sha256sum := strings.TrimPrefix(digest, "sha256:")
+		if !sha256HexPattern.MatchString(sha256sum) {
+			return nil, &fatalCacheError{inner: fmt.Errorf("invalid blob digest %q", digest)}
+		}
 		blobPath := filepath.Join(t.BlobDir, "blobs", "sha256", sha256sum)
 		blobFile, err := os.Open(blobPath)
 		if err != nil {
@@ -273,6 +283,9 @@ func (t *Transport) serveFromCache(digest string, isManifest bool) (*http.Respon
 func (t *Transport) addToCache(digest string, isManifest bool) (*http.Response, error) {
 	// we already know the blob is not in cache, so read from disk
 	sha256sum := strings.TrimPrefix(digest, "sha256:")
+	if !sha256HexPattern.MatchString(sha256sum) {
+		return nil, &fatalCacheError{inner: fmt.Errorf("invalid blob digest %q", digest)}
+	}
 	blobPath := filepath.Join(t.BlobDir, "blobs", "sha256", sha256sum)
 	blobFile, err := os.Open(blobPath)
 	if err != nil {

@@ -67,7 +67,11 @@ func reconstructProcess(ctx context.Context, args []string) {
 	store := &dirStore{shaDir: filepath.Join(casDir, "sha256")}
 	if err := compactstream.Reconstruct(ctx, indexFile, store, output); err != nil {
 		if outputFile != nil {
-			outputFile.Close()
+			// Reconstruction failed, so the output is partial/corrupt; surface a
+			// close error too, but keep the reconstruction error as the primary one.
+			if cerr := outputFile.Close(); cerr != nil {
+				fmt.Fprintf(os.Stderr, "Error closing output %s: %v\n", outputPath, cerr)
+			}
 		}
 		fmt.Fprintf(os.Stderr, "Error reconstructing tar from compact stream: %v\n", err)
 		os.Exit(1)
