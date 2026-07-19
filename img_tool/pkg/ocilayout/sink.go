@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // Sink is the single output target for a layout. It merges the two former sink
@@ -214,10 +215,7 @@ func progressReader(ctx context.Context, r io.Reader, size int64, name string, p
 	if progress == nil {
 		return r
 	}
-	short := name
-	if i := len("blobs/sha256/"); len(name) > i {
-		short = name[i:]
-	}
+	short := strings.TrimPrefix(name, "blobs/sha256/")
 	if len(short) > 12 {
 		short = short[:12]
 	}

@@ -12,6 +12,11 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+# Least-privilege default for all jobs; jobs that need more (e.g. id-token for
+# integration tests) opt in with their own permissions block.
+permissions:
+  contents: read
+
 jobs:
   buildifier_check:
     runs-on: ubuntu-24.04

@@ -42,6 +42,12 @@ func TestLoaderTags(t *testing.T) {
 			want:      []string{"gcr.io/proj/app:latest", "local/name:dev"},
 		},
 		{
+			name:      "split mode duplicate with extra tag is removed",
+			op:        indexedLoadOp("gcr.io", "proj/app", []string{"latest"}),
+			extraTags: []string{"gcr.io/proj/app:latest"},
+			want:      []string{"gcr.io/proj/app:latest"},
+		},
+		{
 			name:      "duplicates removed and sorted",
 			op:        indexedLoadOp("", "", []string{"b:2", "a:1"}),
 			extraTags: []string{"a:1"},
@@ -65,6 +71,17 @@ func TestLoaderTagsDoesNotMutateOp(t *testing.T) {
 	l := &loader{extraTags: []string{"extra:tag"}}
 	_ = l.tags(op)
 	if !reflect.DeepEqual(op.Tags, []string{"my-app:latest"}) {
+		t.Fatalf("tags() mutated op.Tags: %v", op.Tags)
+	}
+}
+
+// TestLoaderTagsWithOverridesDoesNotMutateOp guards against aliasing the
+// operation's Tags backing array in split mode when overrides are applied.
+func TestLoaderTagsWithOverridesDoesNotMutateOp(t *testing.T) {
+	op := indexedLoadOp("gcr.io", "proj/app", []string{"latest"})
+	l := &loader{overrideRegistry: "reg.example.com", overrideRepository: "team/app"}
+	_ = l.tags(op)
+	if !reflect.DeepEqual(op.Tags, []string{"latest"}) {
 		t.Fatalf("tags() mutated op.Tags: %v", op.Tags)
 	}
 }

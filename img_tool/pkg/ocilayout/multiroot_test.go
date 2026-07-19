@@ -29,7 +29,10 @@ func tarEntries(t *testing.T, data []byte) map[string][]byte {
 			out[hdr.Name] = nil
 			continue
 		}
-		b, _ := io.ReadAll(tr)
+		b, err := io.ReadAll(tr)
+		if err != nil {
+			t.Fatalf("reading tar entry %q: %v", hdr.Name, err)
+		}
 		out[hdr.Name] = b
 	}
 	return out
