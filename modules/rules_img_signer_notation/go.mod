@@ -16,5 +16,5 @@ require (
 	github.com/klauspost/compress v1.18.6 // indirect
 	github.com/veraison/go-cose v1.3.0 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
-	golang.org/x/crypto v0.37.0 // indirect
+	golang.org/x/crypto v0.52.0 // indirect
 )
