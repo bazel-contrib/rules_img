@@ -1,0 +1,64 @@
+load("@rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
+
+# Platforms for which prebuilt release binaries are produced.
+_PLATFORMS = [
+    ("linux", "amd64"),
+    ("linux", "arm64"),
+    ("darwin", "amd64"),
+    ("darwin", "arm64"),
+    ("windows", "amd64"),
+    ("windows", "arm64"),
+]
+
+go_library(
+    name = "cosign_lib",
+    srcs = ["cosign.go"],
+    importpath = "github.com/bazel-contrib/rules_img_signer_cosign/cmd/cosign",
+    visibility = ["//visibility:private"],
+    deps = [
+        "//pkg/plugin",
+        "//pkg/signerapi",
+        "@com_github_google_go_containerregistry//pkg/v1:pkg",
+        "@com_github_sigstore_protobuf_specs//gen/pb-go/common/v1:common",
+        "@com_github_sigstore_sigstore//pkg/cryptoutils",
+        "@com_github_sigstore_sigstore//pkg/signature",
+        "@com_github_sigstore_sigstore//pkg/signature/kms",
+        "@com_github_sigstore_sigstore_go//pkg/sign",
+        "@com_github_sigstore_sigstore_pkg_signature_kms_aws//:aws",
+        "@com_github_sigstore_sigstore_pkg_signature_kms_azure//:azure",
+        "@com_github_sigstore_sigstore_pkg_signature_kms_gcp//:gcp",
+        "@com_github_sigstore_sigstore_pkg_signature_kms_hashivault//:hashivault",
+        "@org_golang_google_protobuf//encoding/protojson",
+    ],
+)
+
+go_binary(
+    name = "cosign",
+    embed = [":cosign_lib"],
+    pure = "on",
+    visibility = ["//visibility:public"],
+)
+
+[
+    go_binary(
+        name = "cosign_{}_{}".format(os, arch),
+        embed = [":cosign_lib"],
+        goarch = arch,
+        goos = os,
+        pure = "on",
+        visibility = ["//visibility:public"],
+    )
+    for os, arch in _PLATFORMS
+]
+
+go_test(
+    name = "cosign_test",
+    srcs = ["cosign_test.go"],
+    embed = [":cosign_lib"],
+    deps = [
+        "@com_github_google_go_containerregistry//pkg/v1:pkg",
+        "@com_github_sigstore_sigstore//pkg/cryptoutils",
+        "@com_github_sigstore_sigstore//pkg/signature/kms/fake",
+        "@com_github_sigstore_sigstore_go//pkg/bundle",
+    ],
+)

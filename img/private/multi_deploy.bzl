@@ -3,6 +3,7 @@
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("@hermetic_launcher//launcher:lib.bzl", "launcher")
 load("//img/private:root_symlinks.bzl", "calculate_root_symlinks", "symlink_name_prefix")
+load("//img/private:sign_settings.bzl", "add_sign_setting_symlinks")
 load("//img/private/common:build.bzl", "TOOLCHAIN", "TOOLCHAINS")
 load("//img/private/common:default_deploy_tool.bzl", "default_deploy_tool")
 load("//img/private/common:transitions.bzl", "reset_platform_transition")
@@ -165,6 +166,15 @@ def _multi_deploy_impl(ctx):
     if layer_hints != None:
         root_symlinks["{}layer_hints".format(root_symlinks_prefix)] = layer_hints
 
+    # Collect sign_setting config files from all operations and ship them (plus
+    # their signer plugins) into the deployer's runfiles.
+    sign_config_infos = []
+    for operation in ctx.attr.operations:
+        deploy_info = operation[DeployInfo]
+        if hasattr(deploy_info, "sign_settings"):
+            sign_config_infos.extend(deploy_info.sign_settings)
+    plugin_runfiles = add_sign_setting_symlinks(root_symlinks, sign_config_infos)
+
     # Merge environment settings from push and load
     environment = {}
     inherited_environment = ["DOCKER_CONFIG", "IMG_AUTH_DEBUG"]
@@ -207,7 +217,7 @@ def _multi_deploy_impl(ctx):
                     deploy_metadata,
                 ],
                 root_symlinks = root_symlinks,
-            ),
+            ).merge_all(plugin_runfiles),
         ),
         OutputGroupInfo(
             deploy_manifest = depset([deploy_metadata]),

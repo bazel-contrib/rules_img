@@ -1,0 +1,55 @@
+module(
+    name = "rules_img_signer_cosign",
+    version = "0.0.1",
+)
+
+bazel_dep(name = "bazel_skylib", version = "1.9.0")
+bazel_dep(name = "platforms", version = "1.0.0")
+bazel_dep(name = "rules_go", version = "0.61.1")
+bazel_dep(name = "gazelle", version = "0.51.3")
+
+go_sdk = use_extension("@rules_go//go:extensions.bzl", "go_sdk")
+go_sdk.from_file(go_mod = "//:go.mod")
+
+go_deps = use_extension("@gazelle//:extensions.bzl", "go_deps")
+go_deps.from_file(go_mod = "//:go.mod")
+use_repo(
+    go_deps,
+    "com_github_google_go_containerregistry",
+    "com_github_sigstore_protobuf_specs",
+    "com_github_sigstore_sigstore",
+    "com_github_sigstore_sigstore_go",
+    "com_github_sigstore_sigstore_pkg_signature_kms_aws",
+    "com_github_sigstore_sigstore_pkg_signature_kms_azure",
+    "com_github_sigstore_sigstore_pkg_signature_kms_gcp",
+    "com_github_sigstore_sigstore_pkg_signature_kms_hashivault",
+    "org_golang_google_protobuf",
+)
+
+# NOTE: building this module *from source* requires disabling gazelle proto
+# generation for a couple of sigstore transitive deps whose .proto sources do
+# not build cleanly. gazelle_override is a ROOT-module-only tag, so it cannot be
+# declared here. When building from source (e.g. a git_override), add the
+# following to your ROOT MODULE.bazel:
+#
+#   go_deps = use_extension("@gazelle//:extensions.bzl", "go_deps")
+#   go_deps.gazelle_override(
+#       directives = ["gazelle:go_generate_proto false"],
+#       path = "github.com/sigstore/rekor-tiles/v2",
+#   )
+#   go_deps.gazelle_override(
+#       directives = ["gazelle:go_generate_proto false"],
+#       path = "github.com/google/certificate-transparency-go",
+#   )
+#
+# Released versions ship a prebuilt binary and need none of this.
+
+# Resolve the plugin binary: prebuilt download for released versions, or the
+# source-built go_binary for any other commit / local / git_override build.
+prebuilt = use_extension("//prebuilt:prebuilt.bzl", "prebuilt_signer")
+prebuilt.from_file(
+    basename = "cosign",
+    lockfile = "//:prebuilt_lockfile.json",
+)
+prebuilt.source(target = "//cmd/cosign")
+use_repo(prebuilt, "rules_img_signer_cosign_resolved")

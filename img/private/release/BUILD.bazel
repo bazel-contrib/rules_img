@@ -1,5 +1,6 @@
 load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
 load("@rules_pkg//pkg:tar.bzl", "pkg_tar")
+load("//img/private/config:defs.bzl", "version")
 load(":defs.bzl", "PLATFORMS", "go_to_constraint_value", "offline_bcr", "offline_bundle", "release_files", "release_platform_flag", "source_bundle", "versioned_filename_info", name = "platform_name")
 
 # gazelle:exclude_from_release
@@ -81,11 +82,69 @@ versioned_filename_info(
     tags = ["manual"],
 )
 
+# Signer plugin modules, packaged only into the offline BCR used by the e2e
+# integration tests (see //e2e/sbom). Released for real via the standalone
+# modules/release_signer_plugin.sh (which ships prebuilt binaries); here we
+# just make the module *source* resolvable so the scratch workspace can build
+# the plugin from source. They are versioned independently of rules_img, so pin
+# their BCR versions to match module(version = ...) in each MODULE.bazel.
+version(
+    name = "signer_cosign_version",
+    tags = ["manual"],
+    version = "0.0.1",
+)
+
+version(
+    name = "signer_notation_version",
+    tags = ["manual"],
+    version = "0.0.1",
+)
+
+pkg_tar(
+    name = "signer_cosign_src_tar",
+    srcs = ["//:signer_cosign_source_files"],
+    out = "rules_img_signer_cosign.tar.gz",
+    extension = "tar.gz",
+    mode = "0755",
+    strip_prefix = "/modules/rules_img_signer_cosign",
+    tags = ["manual"],
+)
+
+pkg_tar(
+    name = "signer_notation_src_tar",
+    srcs = ["//:signer_notation_source_files"],
+    out = "rules_img_signer_notation.tar.gz",
+    extension = "tar.gz",
+    mode = "0755",
+    strip_prefix = "/modules/rules_img_signer_notation",
+    tags = ["manual"],
+)
+
+versioned_filename_info(
+    name = "versioned_signer_cosign_tar",
+    src = ":signer_cosign_src_tar",
+    extension = "tar.gz",
+    module_name = "rules_img_signer_cosign",
+    tags = ["manual"],
+    version = ":signer_cosign_version",
+)
+
+versioned_filename_info(
+    name = "versioned_signer_notation_tar",
+    src = ":signer_notation_src_tar",
+    extension = "tar.gz",
+    module_name = "rules_img_signer_notation",
+    tags = ["manual"],
+    version = ":signer_notation_version",
+)
+
 offline_bcr(
     name = "bcr",
     src_tars = [
         ":versioned_src_tar",
         ":versioned_tool_tar",
+        ":versioned_signer_cosign_tar",
+        ":versioned_signer_notation_tar",
     ],
 )
 

@@ -1,0 +1,28 @@
+load("@rules_img//img:signing.bzl", "signing_config")
+
+# Cosign signer: keyless by default; supply SIGSTORE_ID_TOKEN at deploy time.
+# You can also specify a signing key via $RULES_IMG_COSIGN_KEY.
+# Enable with --config=cosign (see .bazelrc).
+signing_config(
+    name = "cosign_keyless",
+    targets = [
+        "roots",
+        "child_manifests",
+        "referrers",
+    ],
+    tool = "@rules_img_signer_cosign",
+)
+
+# Notation signer: supply key and certificate chain at deploy time via
+# $RULES_IMG_NOTATION_KEY and $RULES_IMG_NOTATION_CERTIFICATE_CHAIN.
+# Enable with --config=notation (see .bazelrc).
+signing_config(
+    name = "notation",
+    args = ["--signature-format=cose"],
+    targets = [
+        "roots",
+        "child_manifests",
+        "referrers",
+    ],
+    tool = "@rules_img_signer_notation",
+)

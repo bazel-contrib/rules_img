@@ -54,6 +54,14 @@ var (
 	referrerRootPaths     *indexedStringFlag
 	referrerRootKinds     *indexedStringFlag
 	referrerManifestPaths *doubleIndexedStringFlag
+
+	// Signing: the sign_setting config file for this push operation (hashed to a
+	// descriptor recorded in the operation), whether failures are best-effort,
+	// the sign-target selection, and an optional manifest-level default setting.
+	signSettingFile        string
+	signBestEffort         bool
+	signTargets            []string
+	defaultSignSettingFile string
 )
 
 func DeployMetadataProcess(ctx context.Context, args []string) {
@@ -63,6 +71,7 @@ func DeployMetadataProcess(ctx context.Context, args []string) {
 	layerCompactStreams = newDoubleIndexedStringFlag()
 	manifestTagFiles = nil
 	layerSourcesForManifest = nil
+	signTargets = nil
 
 	flagSet := flag.NewFlagSet("deploy-metadata", flag.ExitOnError)
 	flagSet.Usage = func() {
@@ -133,6 +142,18 @@ func DeployMetadataProcess(ctx context.Context, args []string) {
 	flagSet.Var(referrerRootKinds, "referrer-root-kind", `Kind of a referrer root. Format: index=kind (e.g., 0=manifest). Can be specified multiple times.`)
 	flagSet.Var(referrerManifestPaths, "referrer-manifest-path", `Path to a referrer child manifest file. Format: referrer_idx,manifest_idx=path (e.g., 0,0=manifest.json). Can be specified multiple times.`)
 	flagSet.Var(layerCompactStreams, "layer-compact-stream", `(Optional) compact-stream (.cstream) file for a layer. Format: manifest_idx,layer_idx=path. The file's CAS digest is recorded so the layer can be reconstructed from it (used by the bes strategy). Can be specified multiple times.`)
+	flagSet.StringVar(&signSettingFile, "sign-setting-file", "", `(Optional) path to the sign_setting config file for this push operation. Its content descriptor is recorded so the deploy tool can match it against the sign_settings shipped in runfiles.`)
+	flagSet.BoolVar(&signBestEffort, "sign-best-effort", false, `(Optional) when set, signing failures for this operation are warnings instead of hard errors.`)
+	flagSet.Func("sign-target", `(Optional) a descriptor selection to sign for this operation: "roots" (default), "child_manifests", "referrers", or "all". Can be specified multiple times.`, func(value string) error {
+		switch value {
+		case api.SignTargetRoots, api.SignTargetChildManifests, api.SignTargetReferrers, "all":
+			signTargets = append(signTargets, value)
+			return nil
+		default:
+			return fmt.Errorf("invalid --sign-target %q", value)
+		}
+	})
+	flagSet.StringVar(&defaultSignSettingFile, "default-sign-setting-file", "", `(Optional) path to a sign_setting config file used as the manifest-level default for operations that request signing but carry no setting of their own.`)
 
 	if err := flagSet.Parse(args); err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())
@@ -381,6 +402,26 @@ func WriteMetadata(ctx context.Context, outputPath string) error {
 			return err
 		}
 
+		// Attach signing intent. The sign_setting config file's content
+		// descriptor is recorded here (build time) and matched at deploy time
+		// against the sign_settings shipped in runfiles.
+		signSetting, err := signConfigDescriptor(signSettingFile)
+		if err != nil {
+			return err
+		}
+		if signSetting != nil {
+			operation.Sign = &api.SignConfig{
+				Setting:    signSetting,
+				BestEffort: signBestEffort,
+				Targets:    append([]string(nil), signTargets...),
+			}
+		}
+		defaultSignSetting, err := signConfigDescriptor(defaultSignSettingFile)
+		if err != nil {
+			return err
+		}
+		deploySettings.DefaultSignSetting = defaultSignSetting
+
 		operationBytes, err = json.Marshal(operation)
 		if err != nil {
 			return fmt.Errorf("marshalling push operation: %w", err)
@@ -418,7 +459,16 @@ func WriteMetadata(ctx context.Context, outputPath string) error {
 		// Collect all known digests from the main image for subject validation
 		knownDigests := collectKnownDigests(rootDescriptor, manifests)
 
-		referrerOps, err := processReferrers(knownDigests, config)
+		// When the main image's sign targets include referrers, propagate the
+		// signing intent to the referrer push operations so they are signed too.
+		var referrerSign *api.SignConfig
+		if signSetting, err := signConfigDescriptor(signSettingFile); err != nil {
+			return err
+		} else if signSetting != nil && targetsIncludeReferrers(signTargets) {
+			referrerSign = &api.SignConfig{Setting: signSetting, BestEffort: signBestEffort}
+		}
+
+		referrerOps, err := processReferrers(knownDigests, config, referrerSign)
 		if err != nil {
 			return fmt.Errorf("processing referrers: %w", err)
 		}
@@ -453,7 +503,7 @@ func collectKnownDigests(root api.Descriptor, manifests []api.ManifestDeployInfo
 // processReferrers creates push operations for each referrer.
 // Each referrer is validated to have a subject whose digest matches a known digest
 // of the main image.
-func processReferrers(knownDigests map[string]bool, config map[string]any) ([]json.RawMessage, error) {
+func processReferrers(knownDigests map[string]bool, config map[string]any, referrerSign *api.SignConfig) ([]json.RawMessage, error) {
 	// Sort referrer indices for deterministic output
 	indices := make([]int, 0, len(referrerRootPaths.values))
 	for idx := range referrerRootPaths.values {
@@ -569,7 +619,7 @@ func processReferrers(knownDigests map[string]bool, config map[string]any) ([]js
 		}
 
 		// Create push operation with same registry/repository but no tags
-		refOp, err := referrerPushOperation(refBaseCommand, config)
+		refOp, err := referrerPushOperation(refBaseCommand, config, referrerSign)
 		if err != nil {
 			return nil, fmt.Errorf("referrer %d: creating push operation: %w", refIdx, err)
 		}
@@ -609,7 +659,7 @@ func validateSubject(refIdx int, rootData []byte, knownDigests map[string]bool) 
 
 // referrerPushOperation creates a push operation for a referrer using the same
 // registry and repository as the main image, but with no tags.
-func referrerPushOperation(baseCommand api.BaseCommandOperation, config map[string]any) (api.PushDeployOperation, error) {
+func referrerPushOperation(baseCommand api.BaseCommandOperation, config map[string]any, sign *api.SignConfig) (api.PushDeployOperation, error) {
 	var registry, repository string
 
 	if destinationFilePath != "" {
@@ -638,7 +688,39 @@ func referrerPushOperation(baseCommand api.BaseCommandOperation, config map[stri
 			Repository: repository,
 			// No tags for referrers — they are discovered via the referrers API
 		},
+		Sign:     sign,
+		Referrer: true,
 	}, nil
+}
+
+// signConfigDescriptor hashes a sign_setting config file and returns its content
+// descriptor, or nil when path is empty. The digest computed here must match the
+// one the deploy tool computes at runtime over the same bytes.
+func signConfigDescriptor(path string) (*api.Descriptor, error) {
+	if path == "" {
+		return nil, nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("reading sign_setting file %s: %w", path, err)
+	}
+	sum := sha256.Sum256(data)
+	return &api.Descriptor{
+		MediaType: api.SignSettingMediaType,
+		Digest:    fmt.Sprintf("sha256:%x", sum),
+		Size:      int64(len(data)),
+	}, nil
+}
+
+// targetsIncludeReferrers reports whether the sign-target selection covers
+// referrer artifacts (either explicitly or via "all").
+func targetsIncludeReferrers(targets []string) bool {
+	for _, t := range targets {
+		if t == api.SignTargetReferrers || t == "all" {
+			return true
+		}
+	}
+	return false
 }
 
 func checkCrossMountSource(targetRegistry string, sourceRegistry string, sourceRepository string) *api.CrossMountSource {

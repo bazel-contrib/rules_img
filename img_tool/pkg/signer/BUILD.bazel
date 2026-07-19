@@ -1,0 +1,38 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "signer",
+    srcs = [
+        "layout.go",
+        "push.go",
+        "settings.go",
+        "subprocess.go",
+    ],
+    importpath = "github.com/bazel-contrib/rules_img/img_tool/pkg/signer",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/api",
+        "@com_github_google_go_containerregistry//pkg/name",
+        "@com_github_google_go_containerregistry//pkg/v1:pkg",
+        "@com_github_google_go_containerregistry//pkg/v1/partial",
+        "@com_github_google_go_containerregistry//pkg/v1/remote",
+        "@com_github_google_go_containerregistry//pkg/v1/types",
+        "@rules_go//go/runfiles",
+    ],
+)
+
+go_test(
+    name = "signer_test",
+    srcs = [
+        "artifact_test.go",
+        "layout_test.go",
+        "settings_test.go",
+        "subprocess_test.go",
+    ],
+    embed = [":signer"],
+    deps = [
+        "//pkg/api",
+        "@com_github_google_go_containerregistry//pkg/v1:pkg",
+        "@com_github_google_go_containerregistry//pkg/v1/types",
+    ],
+)

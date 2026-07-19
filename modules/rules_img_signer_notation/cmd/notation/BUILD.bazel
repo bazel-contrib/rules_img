@@ -1,0 +1,63 @@
+load("@rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
+
+# Platforms for which prebuilt release binaries are produced.
+_PLATFORMS = [
+    ("linux", "amd64"),
+    ("linux", "arm64"),
+    ("darwin", "amd64"),
+    ("darwin", "arm64"),
+    ("windows", "amd64"),
+    ("windows", "arm64"),
+]
+
+go_library(
+    name = "notation_lib",
+    srcs = ["notation.go"],
+    importpath = "github.com/bazel-contrib/rules_img_signer_notation/cmd/notation",
+    visibility = ["//visibility:private"],
+    deps = [
+        "//pkg/plugin",
+        "//pkg/signerapi",
+        "@com_github_google_go_containerregistry//pkg/v1:pkg",
+        "@com_github_notaryproject_notation_core_go//revocation",
+        "@com_github_notaryproject_notation_core_go//revocation/purpose",
+        "@com_github_notaryproject_notation_core_go//signature",
+        "@com_github_notaryproject_notation_core_go//signature/cose",
+        "@com_github_notaryproject_notation_core_go//signature/jws",
+        "@com_github_notaryproject_tspclient_go//:tspclient-go",
+        "@com_github_opencontainers_go_digest//:go-digest",
+        "@com_github_opencontainers_image_spec//specs-go/v1:specs-go",
+    ],
+)
+
+go_binary(
+    name = "notation",
+    embed = [":notation_lib"],
+    pure = "on",
+    visibility = ["//visibility:public"],
+)
+
+# Per-platform binaries used to produce prebuilt release assets.
+[
+    go_binary(
+        name = "notation_{}_{}".format(os, arch),
+        embed = [":notation_lib"],
+        goarch = arch,
+        goos = os,
+        pure = "on",
+        visibility = ["//visibility:public"],
+    )
+    for os, arch in _PLATFORMS
+]
+
+go_test(
+    name = "notation_test",
+    srcs = ["notation_test.go"],
+    embed = [":notation_lib"],
+    deps = [
+        "@com_github_google_go_containerregistry//pkg/v1:pkg",
+        "@com_github_notaryproject_notation_core_go//signature",
+        "@com_github_notaryproject_notation_core_go//signature/cose",
+        "@com_github_notaryproject_notation_core_go//signature/jws",
+    ],
+)

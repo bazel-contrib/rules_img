@@ -2,7 +2,7 @@
 
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("//img/private/common:deploy_attrs.bzl", "COMMON_PUSH_ATTRS")
-load("//img/private/common:deploy_helpers.bzl", "extract_cross_mount_from", "extract_referrers", "get_tags", "resolve_push_registry", "resolve_push_strategy")
+load("//img/private/common:deploy_helpers.bzl", "extract_cross_mount_from", "extract_referrers", "get_tags", "resolve_push_registry", "resolve_push_strategy", "resolve_signing")
 load("//img/private/common:transitions.bzl", "reset_platform_transition")
 load("//img/private/providers:push_config_info.bzl", "PushConfigInfo")
 load("//img/private/providers:push_settings_info.bzl", "PushSettingsInfo")
@@ -32,6 +32,7 @@ def _image_push_spec_impl(ctx):
         stamp = ctx.attr.stamp,
         stamp_settings = ctx.attr._stamp_settings[StampSettingInfo],
         tracks_content = ctx.attr.tracks_content,
+        signing = resolve_signing(ctx),
     )]
 
 image_push_spec = rule(

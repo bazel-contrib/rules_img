@@ -27,6 +27,30 @@ filegroup(
     visibility = ["//img/private/release:__subpackages__"],
 )
 
+# Source files for the signer plugin modules, packaged into the offline BCR so
+# `img deploy` signing can be exercised end-to-end (see //e2e/sbom). These are
+# their own Bazel modules (own MODULE.bazel); their packages are listed in
+# --deleted_packages so the root module can glob their source without building
+# them here. The bazel-* convenience symlinks (created when a module is built
+# standalone) are excluded via .bazelignore.
+filegroup(
+    name = "signer_cosign_source_files",
+    srcs = glob(
+        ["modules/rules_img_signer_cosign/**"],
+        allow_empty = True,
+    ),
+    visibility = ["//img/private/release:__subpackages__"],
+)
+
+filegroup(
+    name = "signer_notation_source_files",
+    srcs = glob(
+        ["modules/rules_img_signer_notation/**"],
+        allow_empty = True,
+    ),
+    visibility = ["//img/private/release:__subpackages__"],
+)
+
 exports_files([
     ".bcr/metadata.template.json",
     "prebuilt_lockfile.json",

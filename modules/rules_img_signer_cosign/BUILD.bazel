@@ -1,0 +1,10 @@
+# The short form `@rules_img_signer_cosign` resolves to this alias, which points
+# at the plugin binary — a prebuilt download for released versions, or the
+# source-built go_binary for any other commit / local / git_override build.
+alias(
+    name = "rules_img_signer_cosign",
+    actual = "@rules_img_signer_cosign_resolved//:binary",
+    visibility = ["//visibility:public"],
+)
+
+exports_files(["prebuilt_lockfile.json"])

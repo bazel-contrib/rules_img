@@ -75,6 +75,10 @@ func DeployProcess(ctx context.Context, args []string) {
 	var explicitLayers stringSliceFlag
 	var jobs int
 	var sink string
+	var signSettingFiles stringSliceFlag
+	var defaultSignSetting string
+	var signForce bool
+	var signTargetsFlag string
 
 	flagSet := flag.NewFlagSet("deploy", flag.ContinueOnError)
 	flagSet.Var(&requestFiles, "request-file", "Deploy manifest JSON request file (can be used multiple times)")
@@ -88,6 +92,10 @@ func DeployProcess(ctx context.Context, args []string) {
 	flagSet.Var(&explicitLayers, "layer", "Layer as digest=path or a bare path (can be used multiple times). The file may be a raw compressed layer blob or a compact stream (.cstream), auto-detected. For a bare path: a raw blob is hashed to derive its digest; a .cstream must embed its compressed digest.")
 	flagSet.IntVar(&jobs, "jobs", 16, "Maximum number of parallel push operations")
 	flagSet.StringVar(&sink, "sink", "", "Override the destination of all push/load/registry_tag operations for testing. Format: <type>:<path> where type is one of oci-tar, docker-save, oci, distribution, distribution-flat. No registry or daemon network I/O is performed.")
+	flagSet.Var(&signSettingFiles, "sign_setting_file", "Additional sign_setting config file to ingest for signing (can be used multiple times)")
+	flagSet.StringVar(&defaultSignSetting, "default_sign_setting", "", "Default sign_setting for operations without one: a path to a config file, or sha256:<hex> referencing a discovered setting")
+	flagSet.BoolVar(&signForce, "sign_force", false, "Sign every push operation using the default sign_setting, even operations not configured to sign at build time")
+	flagSet.StringVar(&signTargetsFlag, "sign_targets", "", "Override which descriptors are signed: a comma-separated list of roots,child_manifests,referrers or 'all'")
 
 	if err := flagSet.Parse(args); err != nil {
 		flagSet.Usage()
@@ -132,6 +140,10 @@ func DeployProcess(ctx context.Context, args []string) {
 		Layers:                     []string(explicitLayers),
 		Jobs:                       jobs,
 		Sink:                       sink,
+		SignSettingFiles:           []string(signSettingFiles),
+		DefaultSignSetting:         defaultSignSetting,
+		SignForce:                  signForce,
+		SignTargets:                splitCommaList(signTargetsFlag),
 	}
 
 	if err := DeployWithExtras(ctx, rawRequest, opts); err != nil {
@@ -183,6 +195,12 @@ type DeployOptions struct {
 	Layers                     []string // raw --layer specs: "digest=path" or bare "path" (raw blob or .cstream)
 	Jobs                       int
 	Sink                       string
+
+	// Signing options.
+	SignSettingFiles   []string // extra sign_setting config files to ingest
+	DefaultSignSetting string   // path or "sha256:<hex>" default setting
+	SignForce          bool     // sign all push ops using the default setting
+	SignTargets        []string // override sign-target selection (roots/child_manifests/referrers/all)
 }
 
 func DeployWithExtras(ctx context.Context, rawRequest []byte, opts DeployOptions) error {
@@ -263,7 +281,7 @@ func DeployWithExtras(ctx context.Context, rawRequest []byte, opts DeployOptions
 	// performs no registry/daemon network I/O for the destination (source blobs
 	// are still resolved from the VFS as usual).
 	if opts.Sink != "" {
-		return deployToSink(ctx, opts.Sink, vfs, pushOperations, loadOperations, registryTagOperations, opts)
+		return deployToSink(ctx, opts.Sink, vfs, pushOperations, loadOperations, registryTagOperations, req.Settings, opts)
 	}
 
 	if len(pushOperations) == 0 && len(loadOperations) == 0 && len(registryTagOperations) == 0 {
@@ -364,6 +382,25 @@ func DeployWithExtras(ctx context.Context, rawRequest []byte, opts DeployOptions
 		fmt.Println(tag)
 	}
 	// Note: loadedTags are already printed by the loader itself
+
+	// Sign pushed artifacts (referrers require the subjects to already exist in
+	// the registry, so this runs after the push errgroup completes). Signing
+	// creates its own pusher — the top-level pusher above is scoped to
+	// registry_tag ops, and PushAll uses its own internal pusher.
+	if len(pushOperations) > 0 {
+		if err := applySignOperations(ctx, pushOperations, req.Settings, signOptions{
+			settingFiles:       opts.SignSettingFiles,
+			defaultSetting:     opts.DefaultSignSetting,
+			force:              opts.SignForce,
+			targetOverride:     opts.SignTargets,
+			overrideRegistry:   opts.OverrideRegistry,
+			overrideRepository: opts.OverrideRepository,
+			pushTransport:      pushTransport,
+			jobs:               opts.Jobs,
+		}); err != nil {
+			return err
+		}
+	}
 
 	if len(registryTagOperations) > 0 {
 		extraTagNames, err := applyRegistryTagOperations(ctx, vfs, pusher, registryTagOperations, req.Settings.PushStrategy, opts.OverrideRegistry, opts.OverrideRepository, opts.Jobs)
@@ -573,7 +610,7 @@ func extractSinkFlag(args []string) string {
 // deployToSink builds the requested sink, routes every operation into it, and
 // prints the resulting image references. It performs no registry/daemon network
 // I/O for the destination.
-func deployToSink(ctx context.Context, spec string, vfs *deployvfs.VFS, pushOps []api.IndexedPushDeployOperation, loadOps []api.IndexedLoadDeployOperation, tagOps []api.IndexedRegistryTagDeployOperation, opts DeployOptions) error {
+func deployToSink(ctx context.Context, spec string, vfs *deployvfs.VFS, pushOps []api.IndexedPushDeployOperation, loadOps []api.IndexedLoadDeployOperation, tagOps []api.IndexedRegistryTagDeployOperation, settings api.DeploySettings, opts DeployOptions) error {
 	kind, path, err := parseSink(spec)
 	if err != nil {
 		return err
@@ -588,6 +625,20 @@ func deployToSink(ctx context.Context, spec string, vfs *deployvfs.VFS, pushOps 
 		additionalTags:     opts.AdditionalTags,
 	})
 	if err != nil {
+		s.Close()
+		return err
+	}
+	// Sign into the sink before Close: the signature artifacts are captured as
+	// referrer manifests of their subjects, and the distribution sinks only
+	// generate their referrers/ listings from the on-disk manifests at Close.
+	if err := signIntoSink(ctx, s, pushOps, settings, signOptions{
+		settingFiles:       opts.SignSettingFiles,
+		defaultSetting:     opts.DefaultSignSetting,
+		force:              opts.SignForce,
+		targetOverride:     opts.SignTargets,
+		overrideRegistry:   opts.OverrideRegistry,
+		overrideRepository: opts.OverrideRepository,
+	}); err != nil {
 		s.Close()
 		return err
 	}

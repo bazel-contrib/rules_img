@@ -6,6 +6,7 @@ load("//img/private/providers:index_info.bzl", "ImageIndexInfo")
 load("//img/private/providers:load_settings_info.bzl", "LoadSettingsInfo")
 load("//img/private/providers:manifest_info.bzl", "ImageManifestInfo")
 load("//img/private/providers:push_settings_info.bzl", "PushSettingsInfo")
+load("//img/private/providers:signing_config_info.bzl", "SigningConfigInfo")
 
 def get_tags(ctx):
     """Get the list of tags from the context, validating mutual exclusivity.
@@ -200,3 +201,34 @@ def resolve_daemon(ctx):
     if daemon == "auto":
         daemon = load_settings.daemon
     return daemon
+
+def resolve_signing(ctx):
+    """Resolve whether and how this push target is signed.
+
+    Combines the per-target `sign` attribute (auto -> global //img/settings:sign)
+    with the `sign_setting` attribute (or global //img/settings:sign_setting).
+
+    Args:
+        ctx: Rule context with sign/sign_setting attributes and _sign/_sign_setting.
+
+    Returns:
+        A struct(config_info, best_effort, targets) when signing is active, or
+        None when signing is disabled or best-effort with no configured setting.
+    """
+    mode = ctx.attr.sign
+    if mode == "auto":
+        mode = ctx.attr._sign[BuildSettingInfo].value
+    if mode == "disabled":
+        return None
+
+    config_info = ctx.attr.sign_setting[SigningConfigInfo] if ctx.attr.sign_setting != None else ctx.attr._sign_setting[SigningConfigInfo]
+    if config_info.config_file == None:
+        if mode == "enabled":
+            fail("sign is 'enabled' but no sign_setting is configured; set the 'sign_setting' attribute or --@rules_img//img/settings:sign_setting")
+        return None  # best_effort with no configured setting: nothing to sign
+
+    return struct(
+        config_info = config_info,
+        best_effort = mode == "best_effort",
+        targets = config_info.targets,
+    )
