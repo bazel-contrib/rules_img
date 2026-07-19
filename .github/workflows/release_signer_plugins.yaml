@@ -2,9 +2,10 @@
 # per-module tag is pushed, e.g. `rules_img_signer_cosign-v0.0.1` or
 # `rules_img_signer_notation-v0.0.2`.
 #
-# Each module version lives in its own MODULE.bazel; publish-to-bcr reads that
-# version and skips versions already in the registry, so bumping one plugin does
-# not re-publish the others.
+# Each module version lives in its own MODULE.bazel. The publish job strips the
+# `rules_img_signer_<basename>-v` prefix from the tag to derive the module version
+# and passes module_roots so publish-to-bcr publishes only this plugin, leaving
+# the other modules (and their already-published versions) untouched.
 name: Release signer plugin
 on:
   push:
@@ -20,7 +21,6 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       basename: ${{ steps.meta.outputs.basename }}
-      module_dir: ${{ steps.meta.outputs.module_dir }}
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
       - name: Resolve module from tag
@@ -34,15 +34,21 @@ jobs:
             *) echo "unrecognized tag ${TAG_NAME}"; exit 1 ;;
           esac
           echo "basename=${basename}" >> "$GITHUB_OUTPUT"
-          echo "module_dir=modules/rules_img_signer_${basename}" >> "$GITHUB_OUTPUT"
       - name: Build binaries + source archive
         env:
-          TAG_NAME: ${{ github.ref_name }}
+          BASENAME: ${{ steps.meta.outputs.basename }}
         run: |
-          ./modules/release_signer_plugin.sh \
-            "${{ steps.meta.outputs.module_dir }}" \
-            "${{ steps.meta.outputs.basename }}" \
-            "${TAG_NAME}"
+          # Everything is produced hermetically by Bazel: the prebuilt
+          # per-platform binaries and the versioned BCR source archive (with the
+          # populated prebuilt_lockfile.json). We only extract the resulting
+          # tarball into dist/ with plain `tar -xf` (portable across platforms;
+          # no awk/sed/tar --transform). Building from the repo root is what lets
+          # the cosign plugin compile without rewriting its MODULE.bazel.
+          target="//img/private/release:signer_${BASENAME}_dist_tar"
+          bazel build "${target}"
+          tarball="$(bazel cquery --output=files "${target}")"
+          mkdir -p dist
+          tar -xf "${tarball}" -C dist
       - name: Upload dist
         uses: actions/upload-artifact@v4
         with:
@@ -64,9 +70,14 @@ jobs:
             dist/rules_img_signer_${{ needs.build.outputs.basename }}-*.tar.gz
             dist/${{ needs.build.outputs.basename }}_*
   publish:
-    needs: release
+    needs: [build, release]
     uses: ./.github/workflows/publish.yaml
     with:
       tag_name: ${{ github.ref_name }}
+      # The tag is rules_img_signer_<basename>-v<version>; strip that prefix so
+      # publish-to-bcr derives the module version (e.g. 0.0.1), and publish only
+      # this plugin's module root (not the co-versioned rules_img/img_tool set).
+      tag_prefix: rules_img_signer_${{ needs.build.outputs.basename }}-v
+      module_roots: modules/rules_img_signer_${{ needs.build.outputs.basename }}
     secrets:
       publish_token: ${{ secrets.BCR_PUBLISH_TOKEN }}
