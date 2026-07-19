@@ -1,6 +1,6 @@
 module github.com/bazel-contrib/rules_img_signer_notation
 
-go 1.25.0
+go 1.26.5
 
 require (
 	github.com/google/go-containerregistry v0.21.7
@@ -11,10 +11,10 @@ require (
 )
 
 require (
-	github.com/fxamacker/cbor/v2 v2.8.0 // indirect
+	github.com/fxamacker/cbor/v2 v2.9.2 // indirect
 	github.com/golang-jwt/jwt/v4 v4.5.2 // indirect
-	github.com/klauspost/compress v1.18.6 // indirect
+	github.com/klauspost/compress v1.19.0 // indirect
 	github.com/veraison/go-cose v1.3.0 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
-	golang.org/x/crypto v0.37.0 // indirect
+	golang.org/x/crypto v0.54.0 // indirect
 )

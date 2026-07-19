@@ -1,7 +1,16 @@
+load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
+
 # gazelle:exclude_from_release
 
 filegroup(
     name = "all_files",
     srcs = glob(["**"]),
     visibility = ["//img/private/release:__subpackages__"],
+)
+
+bzl_library(
+    name = "defs",
+    srcs = ["defs.bzl"],
+    visibility = ["//visibility:public"],
+    deps = ["@bazel_skylib//rules:diff_test"],
 )

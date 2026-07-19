@@ -1,6 +1,8 @@
 # The short form `@rules_img_signer_cosign` resolves to this alias, which points
 # at the plugin binary — a prebuilt download for released versions, or the
 # source-built go_binary for any other commit / local / git_override build.
+load("@bazel_skylib//rules:build_test.bzl", "build_test")
+
 alias(
     name = "rules_img_signer_cosign",
     actual = "@rules_img_signer_cosign_resolved//:binary",
@@ -8,3 +10,11 @@ alias(
 )
 
 exports_files(["prebuilt_lockfile.json"])
+
+# Compile the source-built plugin binary under `bazel test //...` so the module's
+# standalone CI check verifies the whole build graph even though it has few
+# go_test targets.
+build_test(
+    name = "build_test",
+    targets = ["//cmd/cosign"],
+)
