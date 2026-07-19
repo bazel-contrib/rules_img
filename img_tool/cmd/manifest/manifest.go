@@ -22,32 +22,33 @@ import (
 )
 
 var (
-	operatingSystem       string
-	architecture          string
-	variant               string
-	layerFromMetadataArgs fileList
-	configFragment        string
-	configMediaType       string
-	configTemplates       string
-	baseManifest          string
-	baseConfig            string
-	baseDescriptor        string
-	manifestOutput        string
-	configOutput          string
-	descriptorOutput      string
-	digestOutput          string
-	user                  string
-	env                   stringMap
-	envFile               string
-	entrypoint            stringList
-	cmd                   stringList
-	workingDir            string
-	labels                stringMap
-	annotations           stringMap
-	stopSignal            string
-	created               string
-	artifactType          string
-	subjectDescriptor     string
+	operatingSystem           string
+	architecture              string
+	variant                   string
+	layerFromMetadataArgs     fileList
+	configFragment            string
+	configMediaType           string
+	configTemplates           string
+	baseManifest              string
+	baseConfig                string
+	baseDescriptor            string
+	manifestOutput            string
+	configOutput              string
+	descriptorOutput          string
+	digestOutput              string
+	user                      string
+	env                       stringMap
+	envFile                   string
+	entrypoint                stringList
+	cmd                       stringList
+	workingDir                string
+	labels                    stringMap
+	additionalImageLabelsFile string
+	annotations               stringMap
+	stopSignal                string
+	created                   string
+	artifactType              string
+	subjectDescriptor         string
 )
 
 // inheritFromBase is the sentinel value used by the image_manifest rule to
@@ -92,6 +93,7 @@ func ManifestProcess(_ context.Context, args []string) {
 	flagSet.Var(&cmd, "cmd", `Default arguments to the entrypoint (can be specified multiple times).`)
 	flagSet.StringVar(&workingDir, "working-dir", "", `Working directory inside the container.`)
 	flagSet.Var(&labels, "label", `Metadata labels for the container (can be specified multiple times as key=value).`)
+	flagSet.StringVar(&additionalImageLabelsFile, "additional-image-labels-file", "", `A file of extra image-config labels, as JSON ({"KEY":"value"}, {"KEY":["v1","v2"]}, or ["KEY=value"]) or newline-delimited KEY=VALUE text (blank lines and lines starting with '#' are ignored). Merged into every config; values from --label take precedence over the file.`)
 	flagSet.Var(&annotations, "annotation", `Metadata annotations for the manifest (can be specified multiple times as key=value).`)
 	flagSet.StringVar(&stopSignal, "stop-signal", "", `Signal to stop the container.`)
 	flagSet.StringVar(&created, "created", "", `A file containing a datetime string (RFC 3339 format) for when the image was created.`)
@@ -609,6 +611,20 @@ func overlayNewConfigValues(config *specv1.Image, layers []api.Descriptor, templ
 		labelsToApply = templatesData.Labels
 	}
 
+	// Merge in build-wide labels from the --additional-image-labels-file, if
+	// provided. Entries from --label / templates take precedence over the file,
+	// mirroring how --env-file is merged above.
+	if additionalImageLabelsFile != "" {
+		fileLabels, err := readLabelsFile(additionalImageLabelsFile)
+		if err != nil {
+			return fmt.Errorf("failed to read additional image labels file %s: %w", additionalImageLabelsFile, err)
+		}
+		merged := make(map[string]string, len(fileLabels)+len(labelsToApply))
+		maps.Copy(merged, fileLabels)
+		maps.Copy(merged, labelsToApply)
+		labelsToApply = merged
+	}
+
 	if len(labelsToApply) > 0 {
 		if config.Config.Labels == nil {
 			config.Config.Labels = make(map[string]string)
@@ -695,6 +711,17 @@ func readEnvFile(filePath string) (map[string]string, error) {
 	pairs, err := kvfile.ParseFile(filePath)
 	if err != nil {
 		return nil, fmt.Errorf("reading env file: %w", err)
+	}
+	return kvfile.Flatten(pairs), nil
+}
+
+// readLabelsFile reads a file containing image-config labels in JSON or
+// newline-delimited KEY=VALUE form (see the kvfile package). Duplicate keys
+// keep the last value.
+func readLabelsFile(filePath string) (map[string]string, error) {
+	pairs, err := kvfile.ParseFile(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("reading labels file: %w", err)
 	}
 	return kvfile.Flatten(pairs), nil
 }

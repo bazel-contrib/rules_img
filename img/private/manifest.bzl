@@ -509,6 +509,13 @@ def _image_manifest_impl(ctx):
         inputs.append(ctx.file.env_file)
         args.add("--env-file", ctx.file.env_file.path)
 
+    # Build-wide extra labels from the //img/settings:additional_image_labels_file
+    # label_flag. These are merged into every config.json by the tool and are NOT
+    # template-expanded; per-target `labels`/`label_files` take precedence. The flag
+    # defaults to an empty file, so this contributes nothing unless overridden.
+    inputs.append(ctx.file._additional_image_labels_file)
+    args.add("--additional-image-labels-file", ctx.file._additional_image_labels_file.path)
+
     # Image config value overrides (user, working_dir, stop_signal, entrypoint,
     # cmd). The scalar flags are always passed -- even when empty -- so the tool
     # can distinguish the INHERIT_FROM_BASE sentinel (inherit) from an explicit
@@ -930,6 +937,10 @@ See [template expansion](/docs/templating.md) for available stamp variables.
         "_mtree_image_layout": attr.label(
             default = Label("//img/settings:mtree_image_layout"),
             providers = [BuildSettingInfo],
+        ),
+        "_additional_image_labels_file": attr.label(
+            default = Label("//img/settings:additional_image_labels_file"),
+            allow_single_file = True,
         ),
         "push_specs": attr.label_list(
             doc = """Push configurations to produce DeployInfo for this image.

@@ -1,4 +1,5 @@
 load("@bazel_skylib//rules:common_settings.bzl", "int_flag", "string_flag")
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
 load("//img/private:signing_config.bzl", "unset_signing_config")
 
 string_flag(
@@ -318,5 +319,26 @@ string_flag(
         "full_reference",
         "tag_only",
     ],
+    visibility = ["//img/private:__subpackages__"],
+)
+
+# A file of extra image-config labels merged into every image's config.json.
+# The file is parsed by the `kvfile` package (newline-delimited KEY=VALUE, a JSON
+# object, or a JSON array of KEY=VALUE) and is NOT template-expanded. Override it
+# to point at any single-file target, e.g.
+#   common --@rules_img//img/settings:additional_image_labels_file=//path:labels
+# The default is an empty file, so by default no extra labels are added.
+label_flag(
+    name = "additional_image_labels_file",
+    build_setting_default = ":empty_additional_image_labels",
+    visibility = ["//visibility:public"],
+)
+
+# The empty-file default for :additional_image_labels_file. An empty file parses
+# to zero labels, leaving every config.json byte-identical unless the flag is set.
+write_file(
+    name = "empty_additional_image_labels",
+    out = "empty_additional_image_labels.txt",
+    content = [],
     visibility = ["//img/private:__subpackages__"],
 )

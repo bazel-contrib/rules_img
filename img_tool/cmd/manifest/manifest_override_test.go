@@ -1,6 +1,8 @@
 package manifest
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 
@@ -20,6 +22,7 @@ func resetManifestFlags() {
 	cmd = stringList{}
 	workingDir = ""
 	labels = stringMap{}
+	additionalImageLabelsFile = ""
 	stopSignal = ""
 }
 
@@ -194,4 +197,80 @@ func nilIfEmpty(s []string) []string {
 		return nil
 	}
 	return s
+}
+
+// TestOverlayNewConfigValuesAdditionalLabels verifies that labels from the
+// --additional-image-labels-file are merged into the config, that per-target
+// --label values take precedence over file entries for matching keys, and that
+// an empty file contributes nothing.
+func TestOverlayNewConfigValuesAdditionalLabels(t *testing.T) {
+	dir := t.TempDir()
+
+	writeFile := func(name, content string) string {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatalf("writing %s: %v", name, err)
+		}
+		return path
+	}
+
+	t.Run("file only", func(t *testing.T) {
+		resetManifestFlags()
+		additionalImageLabelsFile = writeFile("labels.txt", "team=platform\ntier=backend\n")
+
+		cfg := specv1.Image{}
+		if err := overlayNewConfigValues(&cfg, nil, nil); err != nil {
+			t.Fatalf("overlayNewConfigValues: %v", err)
+		}
+		want := map[string]string{"team": "platform", "tier": "backend"}
+		if !reflect.DeepEqual(cfg.Config.Labels, want) {
+			t.Errorf("Labels = %v, want %v", cfg.Config.Labels, want)
+		}
+	})
+
+	t.Run("per-target label overrides file", func(t *testing.T) {
+		resetManifestFlags()
+		additionalImageLabelsFile = writeFile("labels2.txt", "team=platform\nowner=fromfile\n")
+		labels = stringMap{"owner": "fromflag", "extra": "flagonly"}
+
+		cfg := specv1.Image{}
+		if err := overlayNewConfigValues(&cfg, nil, nil); err != nil {
+			t.Fatalf("overlayNewConfigValues: %v", err)
+		}
+		want := map[string]string{
+			"team":  "platform", // from file
+			"owner": "fromflag", // --label wins over file
+			"extra": "flagonly", // from --label
+		}
+		if !reflect.DeepEqual(cfg.Config.Labels, want) {
+			t.Errorf("Labels = %v, want %v", cfg.Config.Labels, want)
+		}
+	})
+
+	t.Run("JSON file", func(t *testing.T) {
+		resetManifestFlags()
+		additionalImageLabelsFile = writeFile("labels.json", `{"team":"platform","tier":"backend"}`)
+
+		cfg := specv1.Image{}
+		if err := overlayNewConfigValues(&cfg, nil, nil); err != nil {
+			t.Fatalf("overlayNewConfigValues: %v", err)
+		}
+		want := map[string]string{"team": "platform", "tier": "backend"}
+		if !reflect.DeepEqual(cfg.Config.Labels, want) {
+			t.Errorf("Labels = %v, want %v", cfg.Config.Labels, want)
+		}
+	})
+
+	t.Run("empty file is a no-op", func(t *testing.T) {
+		resetManifestFlags()
+		additionalImageLabelsFile = writeFile("empty.txt", "")
+
+		cfg := specv1.Image{}
+		if err := overlayNewConfigValues(&cfg, nil, nil); err != nil {
+			t.Fatalf("overlayNewConfigValues: %v", err)
+		}
+		if len(cfg.Config.Labels) != 0 {
+			t.Errorf("Labels = %v, want empty", cfg.Config.Labels)
+		}
+	})
 }

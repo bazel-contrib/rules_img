@@ -182,6 +182,14 @@ common --@rules_img//img/settings:mtree_image_layout=oci_layer_filesystem_applie
 # note that tools relying on the full reference to look up images will not find
 # them.
 common --@rules_img//img/settings:oci_ref_name=full_reference
+
+# A file of extra image-config labels merged into every image's config.json.
+# The value is a single-file label (not an inline value): point it at a target
+# whose one file lists labels as newline-delimited KEY=VALUE, a JSON object
+# ({"key":"value"}), or a JSON array (["key=value"]). These labels are applied
+# to every image and are NOT template-expanded; per-target `labels`/`label_files`
+# take precedence over the file. Defaults to an empty file (no extra labels).
+common --@rules_img//img/settings:additional_image_labels_file=//path/to:image_labels
 ```
 
 </details>
