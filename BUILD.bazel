@@ -2,6 +2,17 @@ exports_files(["MODULE.bazel"])
 
 # gazelle:prefix github.com/bazel-contrib/rules_img
 
+# The signer plugins under modules/ are standalone Bazel modules with their own
+# MODULE.bazel and go.mod (distinct module prefixes such as
+# github.com/bazel-contrib/rules_img_signer_cosign). Exclude them from the root
+# Gazelle run, which uses the root prefix and would otherwise misresolve their
+# internal imports (failing `git ls-remote` lookups) and rewrite their BUILD
+# files incorrectly. The directive lives here rather than in a modules/BUILD.bazel
+# so that no package boundary is introduced at modules/: the release filegroups
+# below glob modules/*/** from the root package (the module dirs are in
+# --deleted_packages), and a package at modules/ would make those globs empty.
+# gazelle:exclude modules
+
 filegroup(
     name = "all_files",
     srcs = [

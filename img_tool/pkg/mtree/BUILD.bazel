@@ -17,7 +17,10 @@ go_library(
 
 go_test(
     name = "mtree_test",
-    srcs = ["mtree_test.go"],
+    srcs = [
+        "mtree_test.go",
+        "multi_test.go",
+    ],
     embed = [":mtree"],
     deps = ["@com_github_klauspost_compress//zstd"],
 )
