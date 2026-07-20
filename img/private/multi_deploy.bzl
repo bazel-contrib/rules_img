@@ -285,6 +285,11 @@ multi_deploy(
 Alternatively, standalone `image_push` or `image_load` targets that already
 provide `DeployInfo` can be used directly in `operations`.
 
+`multi_deploy` has no push at build time of its own; it deploys at `bazel run`
+time. When `push_at_build_time` is enabled, the `image_push` targets (or images
+with `push_specs`) referenced here already push at build time on their own —
+`multi_deploy` does not push them a second time.
+
 Runtime usage:
 ```bash
 bazel run //path/to:deploy_all

@@ -89,7 +89,9 @@ def compute_push_metadata(
         pull_info,
         destination_file,
         output_prefix,
-        signing = None):
+        signing = None,
+        blob_repository = "",
+        forbid_layer_push = False):
     """Compute push metadata for a deploy operation.
 
     Args:
@@ -107,6 +109,11 @@ def compute_push_metadata(
         output_prefix: String prefix for declared output files.
         signing: struct(config_info, best_effort, targets) to enable signing of
             this push, or None.
+        blob_repository: Staging repository for layer blobs, or "" (recorded in the
+            deploy manifest so both push-at-build-time and `bazel run` honor it).
+        forbid_layer_push: When True, records in the deploy manifest that layer
+            blob uploads are forbidden (deploy may only cross-mount or skip
+            already-present layers). Guards deploys of build-time-pushed blobs.
 
     Returns:
         Tuple of (metadata_file, layer_hints_file).
@@ -123,6 +130,10 @@ def compute_push_metadata(
     args.add("--command", "push")
     args.add("--strategy", strategy)
     args.add("--configuration-file", configuration_json.path)
+    if blob_repository:
+        args.add("--blob-repository", blob_repository)
+    if forbid_layer_push:
+        args.add("--forbid-layer-push")
 
     if destination_file != None:
         inputs.append(destination_file)
@@ -423,6 +434,180 @@ def compute_load_metadata(
     )
     return metadata_out, layer_hints_file
 
+def _gateway_env(gateway, push_gateway, pull_gateway):
+    """Build the IMG_REGISTRY_*_GATEWAY env dict, omitting empty entries.
+
+    IMG_REGISTRY_GATEWAY is the shared fallback for both push and pull; the
+    mode-specific vars take precedence (resolved by the img tool at runtime).
+    """
+    env = {}
+    if gateway:
+        env["IMG_REGISTRY_GATEWAY"] = gateway
+    if push_gateway:
+        env["IMG_REGISTRY_PUSH_GATEWAY"] = push_gateway
+    if pull_gateway:
+        env["IMG_REGISTRY_PULL_GATEWAY"] = pull_gateway
+    return env
+
+def build_time_push_actions(
+        ctx,
+        *,
+        push_idx,
+        configuration_json,
+        manifest_info,
+        index_info,
+        sparse_layout,
+        mode,
+        content,
+        blob_repository,
+        gateway,
+        push_gateway,
+        pull_gateway,
+        pull_info):
+    """Create the PushImage validation actions for one push operation.
+
+    Emits one action per layer (mnemonic PushImage) that pushes a single blob to
+    the blob target repository (the staging repository if blob_repository is set,
+    else the operation's own repository) and records where it landed in a JSON
+    result. When content == "blobs_and_manifests", also emits one action that
+    pushes the config + manifest(s), depending on all per-layer results so it runs
+    after them and mounts the layers from where they were pushed.
+
+    Shared by the push_specs path (`process_deploy_specs`) and the standalone
+    `image_push` rule so both push at build time identically.
+
+    Args:
+      ctx: the rule context.
+      push_idx: integer index disambiguating declared output files when a target
+        has more than one push operation; image_push always passes 0.
+      configuration_json: File containing the img tool configuration (registry
+        credentials, etc.).
+      manifest_info: ManifestInfo for a single-manifest image, or None for an
+        index image (in which case index_info must be set).
+      index_info: ImageIndexInfo for a multi-manifest index image, or None when
+        manifest_info is set.
+      sparse_layout: sparse OCI layout File required when content is
+        "blobs_and_manifests"; None is accepted only for content == "blobs".
+      mode: push mode string passed to the img tool (e.g. "push").
+      content: either "blobs" (push layer blobs only) or "blobs_and_manifests"
+        (push blobs then config+manifest(s)).
+      blob_repository: optional staging repository to push blobs to before
+        mounting them into the final repository; None means push directly.
+      gateway: default registry gateway for both push and pull, or None.
+      push_gateway: push-specific registry gateway override, or None.
+      pull_gateway: pull-specific registry gateway override, or None.
+      pull_info: PullInfo used when computing the manifest push metadata.
+
+    Returns:
+      List of Files to place in the `_validation` output group: the per-layer
+      result JSONs when content == "blobs", or the single manifest marker file
+      when content == "blobs_and_manifests".
+    """
+    img_toolchain_info = ctx.toolchains[TOOLCHAIN].imgtoolchaininfo
+    tool = img_toolchain_info.tool_exe
+    exec_requirements = {"requires-network": "1"}
+
+    # Route registry requests through the configured gateway(s), if any. These
+    # actions both push (upload) and pull (shallow base layers), so all three
+    # env vars are set; the img tool resolves push/pull precedence at runtime.
+    gateway_env = _gateway_env(gateway, push_gateway, pull_gateway)
+    prefix = "{}.push_at_build_time.{}".format(ctx.label.name, push_idx)
+
+    if manifest_info != None:
+        manifests = [(0, manifest_info)]
+    else:
+        manifests = [(i, m) for i, m in enumerate(index_info.manifests)]
+
+    layer_results = []
+    for (mi, manifest) in manifests:
+        for (li, layer) in enumerate(manifest.layers):
+            result = ctx.actions.declare_file("{}.blob.{}_{}.json".format(prefix, mi, li))
+            args = ctx.actions.args()
+            args.add("push")
+            args.add("blob")
+            args.add("--configuration-file", configuration_json.path)
+            args.add("--metadata", layer.metadata.path)
+            if blob_repository:
+                args.add("--blob-repository", blob_repository)
+            args.add("--mode", mode)
+            args.add("--output", result.path)
+            inputs = [configuration_json, layer.metadata]
+            if layer.blob != None:
+                args.add("--blob", layer.blob.path)
+                inputs.append(layer.blob)
+            elif layer.compact_stream != None and layer.layer_input_files_cas != None:
+                args.add("--compact-stream", layer.compact_stream.path)
+                args.add("--cas-dir", layer.layer_input_files_cas.path)
+                inputs.append(layer.compact_stream)
+                inputs.append(layer.layer_input_files_cas)
+            else:
+                # Shallow layer: stream from its upstream source registries.
+                for source in layer.sources:
+                    args.add("--source", "{}/{}".format(source.registry, source.repository))
+            blob_run_kwargs = dict(
+                inputs = inputs,
+                outputs = [result],
+                executable = tool,
+                arguments = [args],
+                mnemonic = "PushImage",
+                execution_requirements = exec_requirements,
+                progress_message = "Pushing layer blob %s (manifest %d, layer %d)" % (ctx.label, mi, li),
+            )
+            if gateway_env:
+                blob_run_kwargs["env"] = gateway_env
+            ctx.actions.run(**blob_run_kwargs)
+            layer_results.append(result)
+
+    if content != "blobs_and_manifests":
+        return layer_results
+
+    if sparse_layout == None:
+        fail(("push_at_build_time with content='blobs_and_manifests' needs the image's " +
+              "sparse OCI layout to push the config and manifest(s), but the image referenced " +
+              "by '{}' does not provide one (e.g. image_optimize output). Set " +
+              "push_at_build_time_content=blobs, or reference a build-produced image.").format(ctx.label))
+
+    # Push config + manifest(s) after all layers, mounting them from where the
+    # per-layer actions put them. Use a dedicated eager, push-only deploy manifest
+    # so the manifest push resolves blobs locally/by-mount and never stubs.
+    deploy_metadata, _layer_hints = compute_push_metadata(
+        ctx,
+        configuration_json = configuration_json,
+        manifest_info = manifest_info,
+        index_info = index_info,
+        strategy = "eager",
+        cross_mount_strategy = "disabled",
+        cross_mount_from = None,
+        referrers = [],
+        manifest_tags_expanded = [],
+        pull_info = pull_info,
+        destination_file = None,
+        output_prefix = prefix,
+        blob_repository = blob_repository,
+    )
+    marker = ctx.actions.declare_file("{}.pushed".format(prefix))
+    args = ctx.actions.args()
+    args.add("push")
+    args.add("manifest")
+    args.add("--request-file", deploy_metadata.path)
+    args.add("--oci-layout", sparse_layout.path)
+    args.add("--mode", mode)
+    args.add("--marker", marker.path)
+    args.add_all(layer_results, before_each = "--layer-result")
+    manifest_run_kwargs = dict(
+        inputs = [deploy_metadata, sparse_layout] + layer_results,
+        outputs = [marker],
+        executable = tool,
+        arguments = [args],
+        mnemonic = "PushImage",
+        execution_requirements = exec_requirements,
+        progress_message = "Pushing config and manifest(s) %s" % ctx.label,
+    )
+    if gateway_env:
+        manifest_run_kwargs["env"] = gateway_env
+    ctx.actions.run(**manifest_run_kwargs)
+    return [marker]
+
 def process_deploy_specs(
         ctx,
         *,
@@ -432,7 +617,13 @@ def process_deploy_specs(
         pull_info,
         push_specs,
         load_specs,
-        allow_manifest_tags):
+        allow_manifest_tags,
+        push_at_build_time_mode = "disabled",
+        push_at_build_time_content = "blobs_and_manifests",
+        push_at_build_time_gateway = "",
+        push_at_build_time_push_gateway = "",
+        push_at_build_time_pull_gateway = "",
+        sparse_layout = None):
     """Process push_specs and load_specs to produce a DeployInfo provider.
 
     Args:
@@ -444,12 +635,22 @@ def process_deploy_specs(
         push_specs: List of targets providing PushConfigInfo.
         load_specs: List of targets providing LoadConfigInfo.
         allow_manifest_tags: If False, fail when a push spec has manifest_tags set.
+        push_at_build_time_mode: One of 'disabled', 'best_effort', 'enabled'. When
+            not 'disabled' and push_specs are present, PushImage validation actions
+            are emitted for each push spec.
+        push_at_build_time_content: One of 'blobs', 'blobs_and_manifests'.
+        push_at_build_time_gateway: Shared registry gateway endpoint (IMG_REGISTRY_GATEWAY) for the build-time push actions, or ''.
+        push_at_build_time_push_gateway: Push registry gateway endpoint (IMG_REGISTRY_PUSH_GATEWAY) for the build-time push actions, or ''.
+        push_at_build_time_pull_gateway: Pull registry gateway endpoint (IMG_REGISTRY_PULL_GATEWAY) for the build-time push actions, or ''.
+        sparse_layout: The image's sparse OCI layout tree artifact (required when
+            push_at_build_time is active; supplies manifest(s) + config to the push).
 
     Returns:
-        DeployInfo provider, or None if no specs are provided.
+        Tuple of (DeployInfo or None, validation_outputs). validation_outputs is a
+        (possibly empty) list of files to place in the `_validation` output group.
     """
     if not push_specs and not load_specs:
-        return None
+        return None, []
 
     image_info = manifest_info if manifest_info != None else index_info
     image_target_vars = {
@@ -459,6 +660,7 @@ def process_deploy_specs(
 
     deploy_infos = []
     sign_config_infos = []
+    validation_outputs = []
 
     for push_idx, deployment in enumerate(push_specs):
         push_config = deployment[PushConfigInfo]
@@ -525,10 +727,30 @@ def process_deploy_specs(
             destination_file = push_config.destination_file,
             output_prefix = "{}.push_deploy.{}".format(ctx.label.name, push_idx),
             signing = push_config.signing,
+            blob_repository = push_config.blob_repository,
+            forbid_layer_push = push_config.forbid_layer_push,
         )
         deploy_infos.append(struct(metadata = deploy_metadata, layer_hints = layer_hints))
         if push_config.signing != None:
             sign_config_infos.append(push_config.signing.config_info)
+
+        # Push at build time via PushImage validation actions.
+        if push_at_build_time_mode in ("best_effort", "enabled"):
+            validation_outputs.extend(build_time_push_actions(
+                ctx,
+                push_idx = push_idx,
+                configuration_json = configuration_json,
+                manifest_info = manifest_info,
+                index_info = index_info,
+                sparse_layout = sparse_layout,
+                mode = push_at_build_time_mode,
+                content = push_at_build_time_content,
+                blob_repository = push_config.blob_repository,
+                gateway = push_at_build_time_gateway,
+                push_gateway = push_at_build_time_push_gateway,
+                pull_gateway = push_at_build_time_pull_gateway,
+                pull_info = pull_info,
+            ))
 
     for load_idx, deployment in enumerate(load_specs):
         load_config = deployment[LoadConfigInfo]
@@ -586,7 +808,7 @@ def process_deploy_specs(
             include_layers = include_layers,
             sign_settings = sign_config_infos,
             referrers = [],
-        )
+        ), validation_outputs
 
     first_push_strategy = push_specs[0][PushConfigInfo].strategy if push_specs else "auto"
     first_load_strategy = load_specs[0][LoadConfigInfo].strategy if load_specs else "auto"
@@ -603,4 +825,4 @@ def process_deploy_specs(
         layer_hints = merged_layer_hints,
         include_layers = include_layers,
         sign_settings = sign_config_infos,
-    )
+    ), validation_outputs

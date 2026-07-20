@@ -33,6 +33,16 @@ def _download_blob(ctx, output):
     if docker_config_path:
         env["REGISTRY_AUTH_FILE"] = docker_config_path
 
+    # Route the download through an OCI distribution gateway when configured. This
+    # is a pull, so only the shared and pull-specific endpoints apply; the img tool
+    # resolves precedence (pull-specific over shared) at runtime.
+    gateway = ctx.attr._registry_gateway[BuildSettingInfo].value
+    pull_gateway = ctx.attr._registry_pull_gateway[BuildSettingInfo].value
+    if gateway:
+        env["IMG_REGISTRY_GATEWAY"] = gateway
+    if pull_gateway:
+        env["IMG_REGISTRY_PULL_GATEWAY"] = pull_gateway
+
     ctx.actions.run(
         outputs = [output],
         executable = img_toolchain_info.tool_exe,
@@ -94,6 +104,14 @@ If omitted, this falls back to `//img/settings:docker_config_path`.""",
         ),
         "_docker_config_path": attr.label(
             default = Label("//img/settings:docker_config_path"),
+            providers = [BuildSettingInfo],
+        ),
+        "_registry_gateway": attr.label(
+            default = Label("//img/settings:registry_gateway"),
+            providers = [BuildSettingInfo],
+        ),
+        "_registry_pull_gateway": attr.label(
+            default = Label("//img/settings:registry_pull_gateway"),
             providers = [BuildSettingInfo],
         ),
     },

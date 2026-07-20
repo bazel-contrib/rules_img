@@ -11,6 +11,8 @@ def _push_settings_impl(ctx):
     credential_helper_oci_registry = ctx.attr._credential_helper_oci_registry[BuildSettingInfo].value
     credential_helper_remote_cache = ctx.attr._credential_helper_remote_cache[BuildSettingInfo].value
     cross_mount = ctx.attr._cross_mount[BuildSettingInfo].value
+    blob_repository = ctx.attr._blob_repository[BuildSettingInfo].value
+    forbid_layer_push = ctx.attr._forbid_layer_push[BuildSettingInfo].value == "enabled"
 
     return [PushSettingsInfo(
         strategy = strategy,
@@ -20,6 +22,8 @@ def _push_settings_impl(ctx):
         credential_helper_oci_registry = credential_helper_oci_registry,
         credential_helper_remote_cache = credential_helper_remote_cache,
         cross_mount = cross_mount,
+        blob_repository = blob_repository,
+        forbid_layer_push = forbid_layer_push,
     )]
 
 push_settings = rule(
@@ -51,6 +55,14 @@ push_settings = rule(
         ),
         "_cross_mount": attr.label(
             default = Label("//img/settings:cross_mount"),
+            providers = [BuildSettingInfo],
+        ),
+        "_blob_repository": attr.label(
+            default = Label("//img/settings:push_at_build_time_repository"),
+            providers = [BuildSettingInfo],
+        ),
+        "_forbid_layer_push": attr.label(
+            default = Label("//img/settings:forbid_layer_push"),
             providers = [BuildSettingInfo],
         ),
     },

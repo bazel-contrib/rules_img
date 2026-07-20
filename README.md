@@ -22,6 +22,7 @@ Supports both **Bzlmod** and **WORKSPACE** setups. For WORKSPACE setup instructi
 - 🪶 **Smaller layers** - Deduplicates files using hardlinks
 - 🎯 **Shallow Base Images** - Avoid downloading layers from huge base images like CUDA
 - 🏢 **Enterprise Ready** - Remote Build Execution and Content Addressable Storage integration
+- ☁️ **Push at Build Time** - Upload layers in parallel straight from the remote execution cluster to the registry; bytes never touch the machine running Bazel
 
 ## Installation
 
@@ -133,6 +134,41 @@ common --@rules_img//img/settings:credential_helper=tweag-credential-helper
 # when downloading image layers during build time (e.g., for lazy base image pulling).
 # Typically set to ~/.docker/config.json or similar.
 common --@rules_img//img/settings:docker_config_path=/home/user/.docker/config.json
+
+# Push image content at build time as a Bazel validation action (mnemonic
+# PushImage) for every image_manifest / image_index that has push_specs, and
+# every image_push target. multi_deploy has no build-time push of its own (it
+# deploys at `bazel run` time); the image_push / push_specs targets it references
+# push at build time themselves, so nothing is pushed twice.
+# "disabled" (default) does nothing; "best_effort" pushes but a failure only
+# logs and the build still succeeds; "enabled" fails the build on a push failure.
+common --@rules_img//img/settings:push_at_build_time=enabled
+
+# What the push-at-build-time actions push. "blobs" uploads only the layer blobs;
+# "blobs_and_manifests" (default) also pushes the config and manifest(s)/tags.
+common --@rules_img//img/settings:push_at_build_time_content=blobs_and_manifests
+
+# Optional staging repository for layer blobs. When set, layer blobs are pushed
+# to this repository (within the destination registry) and cross-mounted into
+# the image's real repository when the manifest is pushed. Applies to both
+# push-at-build-time and `bazel run` pushes.
+common --@rules_img//img/settings:push_at_build_time_repository=staging-blobs
+
+# Forbid `img deploy` (image_push / multi_deploy) from uploading layer blob bytes.
+# Layers may still be cross-mounted server-side or skipped when already present,
+# but an actual upload fails loudly. Use when layer blobs are pushed at build time
+# so a deploy that would re-upload them is caught instead of silently succeeding.
+common --@rules_img//img/settings:forbid_layer_push=enabled
+
+# Optional OCI distribution gateway endpoints. When set, registry requests made by
+# build actions (lazy layer downloads and build-time uploads) are routed through
+# the gateway (http://, https://, or unix:<socket>) instead of talking to the
+# registry directly. registry_gateway is the shared fallback; the push/pull-specific
+# flags take precedence. These set the IMG_REGISTRY_GATEWAY / IMG_REGISTRY_PUSH_GATEWAY
+# / IMG_REGISTRY_PULL_GATEWAY environment variables for those actions.
+common --@rules_img//img/settings:registry_gateway=unix:/run/img-gateway.sock
+common --@rules_img//img/settings:registry_push_gateway=https://push-gateway.example.com
+common --@rules_img//img/settings:registry_pull_gateway=https://pull-gateway.example.com
 
 # [Experimental] Store layers compactly instead of as full tarballs.
 # When enabled, layer rules no longer produce the layer tar as a file output, so
@@ -518,6 +554,8 @@ This results in a more complex implementation, but also allows for interesting o
     - [`oras_layer`](docs/oras.md#oras_layer) - Create oras tree layers from files and directories
 - [Platforms Guide](docs/platforms.md) - Working with Bazel platforms, architecture variants, and multi-platform builds
 - [Image Signing Guide](docs/image-signing.md) - Sign pushed images with pluggable signer plugins (Notation, cosign, or your own)
+- [Push Strategies](docs/push-strategies.md) - Push strategies and [push at build time](docs/push-strategies.md#push-at-build-time)
+- [Authenticating Build Actions](docs/authenticating-build-actions.md) - Registry credentials for build-time pull/push, and the OCI distribution gateway
 - [Compact Stream Representation](docs/compact-stream.md) - On-disk format behind the experimental cache-efficient layers (`experimental_compact_layers`)
 - [Migration Guide from rules_oci](docs/migration-from-rules_oci.md)
 
@@ -573,6 +611,8 @@ rules_img offers four sophisticated push strategies compared to rules_oci's trad
 
 See the [Push Strategies Guide](docs/push-strategies.md) for detailed information about each strategy.
 
+You can also [**push at build time**](docs/push-strategies.md#push-at-build-time): layers upload in parallel directly from the remote execution cluster to the registry, so the bytes never touch the machine running Bazel. Build actions then need registry access — see [Authenticating Build Actions](docs/authenticating-build-actions.md).
+
 ### eStargz Lazy Pulling
 
 rules_img has first-class support for eStargz (enhanced stargz), enabling "lazy pulling" at container runtime. This means:
@@ -626,7 +666,7 @@ We invite external contributions and are eager to work together with the build s
 
 ## Acknowledgments
 
-Special thanks to **Sushain Cherivirala** from Stripe for the inspiring BazelCon talk ["Building 1300 Container Images in 4 Minutes"](https://www.youtube.com/watch?v=c-yvIQooOSA). This talk introduced the groundbreaking idea of using the Build Event Service (BES) to sync container images between the remote cache and registry as a side effect. While their implementation was based on the now-archived rules_docker and was never published, it laid the conceptual foundation for our BES push strategy. Their work demonstrated how to achieve dramatic performance improvements in container image builds at scale, inspiring many of the optimizations in rules_img.
+Special thanks to **Sushain Cherivirala** from Stripe for the inspiring BazelCon talk ["Building 1300 Container Images in 4 Minutes"](https://www.youtube.com/watch?v=c-yvIQooOSA). This talk introduced the groundbreaking idea of using the Build Event Service (BES) to sync container images between the remote cache and registry as a side effect. While their implementation was based on the now-archived rules_docker and was never published, it laid the conceptual foundation for pushing images as a side effect of the build in rules_img — either directly from remote-execution actions ([push at build time](docs/push-strategies.md#push-at-build-time)) or via a custom build-event-stream listener (the [BES push strategy](docs/push-strategies.md#bes-push)). Their work demonstrated how to achieve dramatic performance improvements in container image builds at scale, inspiring many of the optimizations in rules_img.
 
 [stargz-snapshotter]: https://github.com/containerd/stargz-snapshotter
 [oci-image-layout]: https://github.com/opencontainers/image-spec/blob/v1.1.1/image-layout.md

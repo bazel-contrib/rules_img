@@ -16,6 +16,7 @@ load("//img/private/providers:load_config_info.bzl", "LoadConfigInfo")
 load("//img/private/providers:manifest_info.bzl", "ImageManifestInfo")
 load("//img/private/providers:oci_layout_settings_info.bzl", "OCILayoutSettingsInfo")
 load("//img/private/providers:pull_info.bzl", "PullInfo")
+load("//img/private/providers:push_at_build_time_settings_info.bzl", "PushAtBuildTimeSettingsInfo")
 load("//img/private/providers:push_config_info.bzl", "PushConfigInfo")
 load("//img/private/providers:single_layer_info.bzl", "SingleLayerInfo")
 load("//img/private/providers:stamp_setting_info.bzl", "StampSettingInfo")
@@ -586,7 +587,8 @@ def _image_manifest_impl(ctx):
         manifest_info_provider,
     ])
 
-    deploy_info = process_deploy_specs(
+    push_at_build_time = ctx.attr._push_at_build_time_settings[PushAtBuildTimeSettingsInfo]
+    deploy_info, validation_outputs = process_deploy_specs(
         ctx,
         manifest_info = manifest_info_provider,
         index_info = None,
@@ -595,6 +597,12 @@ def _image_manifest_impl(ctx):
         push_specs = ctx.attr.push_specs,
         load_specs = ctx.attr.load_specs,
         allow_manifest_tags = False,
+        push_at_build_time_mode = push_at_build_time.mode,
+        push_at_build_time_content = push_at_build_time.content,
+        push_at_build_time_gateway = push_at_build_time.gateway,
+        push_at_build_time_push_gateway = push_at_build_time.push_gateway,
+        push_at_build_time_pull_gateway = push_at_build_time.pull_gateway,
+        sparse_layout = sparse_layout,
     )
 
     output_groups = dict(
@@ -614,6 +622,8 @@ def _image_manifest_impl(ctx):
     if deploy_info != None:
         providers.append(deploy_info)
         output_groups["deploy_manifest"] = depset([deploy_info.deploy_manifest])
+    if validation_outputs:
+        output_groups["_validation"] = depset(validation_outputs)
     providers.append(OutputGroupInfo(**output_groups))
 
     return providers
@@ -917,6 +927,10 @@ See [template expansion](/docs/templating.md) for available stamp variables.
         "_oci_layout_settings": attr.label(
             default = Label("//img/private/settings:oci_layout"),
             providers = [OCILayoutSettingsInfo],
+        ),
+        "_push_at_build_time_settings": attr.label(
+            default = Label("//img/private/settings:push_at_build_time"),
+            providers = [PushAtBuildTimeSettingsInfo],
         ),
         "_stamp_settings": attr.label(
             default = Label("//img/private/settings:stamp"),

@@ -143,6 +143,24 @@ func MergeDeployManifests(ctx context.Context, inputPaths []string, outputPath s
 
 	var allOperations []json.RawMessage
 
+	// Settings that are not reconstructed from the strategy flags are carried
+	// through from the input manifests. They live on the top-level DeploySettings
+	// and are consumed globally at deploy time: BlobRepository and ForbidLayerPush
+	// drive the push-at-build-time flow (the blob-staging repository and the guard
+	// that refuses to re-upload layers already pushed at build time), and
+	// DefaultSignSetting is the fallback sign config for operations without their
+	// own. Dropping them here would, for example, let a merged deploy (multi_deploy,
+	// or an image with several push_specs) silently re-upload layers that
+	// forbid_layer_push was meant to protect. They are driven by global build
+	// settings, so every input agrees in practice; a genuine divergence cannot be
+	// represented by a single top-level value, so we fail loudly rather than
+	// silently pick one. ForbidLayerPush is OR-combined: a bool cannot distinguish
+	// "explicitly off" from "unset", and honoring any operation's guard is the safe
+	// choice.
+	var blobRepository string
+	var forbidLayerPush bool
+	var defaultSignSetting *api.Descriptor
+
 	// Read and merge all input deploy manifests
 	for _, inputPath := range inputPaths {
 		data, err := os.ReadFile(inputPath)
@@ -153,6 +171,21 @@ func MergeDeployManifests(ctx context.Context, inputPaths []string, outputPath s
 		var deployManifest api.DeployManifest
 		if err := json.Unmarshal(data, &deployManifest); err != nil {
 			return fmt.Errorf("unmarshalling deploy manifest from %s: %w", inputPath, err)
+		}
+
+		settings := deployManifest.Settings
+		if settings.BlobRepository != "" {
+			if blobRepository != "" && blobRepository != settings.BlobRepository {
+				return fmt.Errorf("conflicting blob_repository across merged deploy manifests: %q vs %q (all merged operations must share one push_at_build_time_repository)", blobRepository, settings.BlobRepository)
+			}
+			blobRepository = settings.BlobRepository
+		}
+		forbidLayerPush = forbidLayerPush || settings.ForbidLayerPush
+		if settings.DefaultSignSetting != nil {
+			if defaultSignSetting != nil && defaultSignSetting.Digest != settings.DefaultSignSetting.Digest {
+				return fmt.Errorf("conflicting default sign_setting across merged deploy manifests: %q vs %q", defaultSignSetting.Digest, settings.DefaultSignSetting.Digest)
+			}
+			defaultSignSetting = settings.DefaultSignSetting
 		}
 
 		// Append the operations from this manifest, keeping only the requested
@@ -177,8 +210,11 @@ func MergeDeployManifests(ctx context.Context, inputPaths []string, outputPath s
 	mergedManifest := api.DeployManifest{
 		Operations: allOperations,
 		Settings: api.DeploySettings{
-			PushStrategy: pushStrategy,
-			LoadStrategy: loadStrategy,
+			PushStrategy:       pushStrategy,
+			LoadStrategy:       loadStrategy,
+			BlobRepository:     blobRepository,
+			ForbidLayerPush:    forbidLayerPush,
+			DefaultSignSetting: defaultSignSetting,
 		},
 	}
 

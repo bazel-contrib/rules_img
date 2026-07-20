@@ -2,6 +2,7 @@ load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
 load("@bazel_skylib//rules:common_settings.bzl", "string_setting")
 load(":load.bzl", "load_settings")
 load(":oci_layout.bzl", "oci_layout_settings")
+load(":push_at_build_time.bzl", "push_at_build_time_settings")
 load(":settings.bzl", "push_settings")
 load(":stamp.bzl", "stamp_build_setting")
 
@@ -23,6 +24,11 @@ load_settings(
 
 oci_layout_settings(
     name = "oci_layout",
+    visibility = ["//visibility:public"],
+)
+
+push_at_build_time_settings(
+    name = "push_at_build_time",
     visibility = ["//visibility:public"],
 )
 

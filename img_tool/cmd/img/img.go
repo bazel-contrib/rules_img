@@ -28,6 +28,7 @@ import (
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/ocilayoutmetadata"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/optimize"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/pull"
+	pushcmd "github.com/bazel-contrib/rules_img/img_tool/cmd/push"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/sparseocilayout"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/syncocirefgraph"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/validate"
@@ -63,7 +64,8 @@ Commands:
   image-structure-test     validates an image's structure (config + mtree) against container-structure-test configs
   deploy                   pushes an image to a registry or loads it into a local container runtime
   deploy-metadata          calculates metadata for deploying an image (push/load)
-  deploy-merge             merges multiple deploy manifests into a single deployment`
+  deploy-merge             merges multiple deploy manifests into a single deployment
+  push                     pushes image blobs/manifests at build time (subcommands: blob, manifest)`
 
 func Run(ctx context.Context, args []string) {
 	// Handle the global --verbose flag for all subcommands. We strip it from
@@ -98,6 +100,8 @@ func Run(ctx context.Context, args []string) {
 		validate.ValidationProcess(ctx, args[2:])
 	case "deploy":
 		deploy.DeployProcess(ctx, args[2:])
+	case "push":
+		pushcmd.PushProcess(ctx, args[2:])
 	case "deploy-metadata":
 		deploymetadata.DeployMetadataProcess(ctx, args[2:])
 	case "deploy-merge":
