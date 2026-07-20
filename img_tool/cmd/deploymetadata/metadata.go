@@ -46,6 +46,8 @@ var (
 
 	crossMountStrategy         string
 	crossMountFromManifestPath string
+	blobRepository             string
+	forbidLayerPush            bool
 
 	destinationFilePath string
 
@@ -95,6 +97,8 @@ func DeployMetadataProcess(ctx context.Context, args []string) {
 	flagSet.StringVar(&strategy, "strategy", "eager", `Push strategy to use. One of "eager", "lazy", "cas_registry", or "bes".`)
 	flagSet.StringVar(&crossMountStrategy, "cross-mount-strategy", "", `Cross mount strategy.`)
 	flagSet.StringVar(&crossMountFromManifestPath, "cross-mount-from-manifest-path", "", `(Optional) deploy manifest of another push, from which layers for this push could be cross mounted.`)
+	flagSet.StringVar(&blobRepository, "blob-repository", "", `(Optional) repository to push layer blobs to instead of the operation's own repository. The manifest push cross-mounts blobs from this repository into the real repository.`)
+	flagSet.BoolVar(&forbidLayerPush, "forbid-layer-push", false, `(Optional) forbid uploading layer blob bytes during the push. Layers may still be cross-mounted or skipped when already present; any actual upload fails. Use when layer blobs are pushed at build time and mounted server-side.`)
 	flagSet.Func("original-registry", `(Optional) original registry that the base of this image was pulled from. Can be specified multiple times.`, func(value string) error {
 		originalRegistries = append(originalRegistries, value)
 		return nil
@@ -397,6 +401,8 @@ func WriteMetadata(ctx context.Context, outputPath string) error {
 	var registryTagOps []json.RawMessage
 	if command == "push" {
 		deploySettings.PushStrategy = strategy
+		deploySettings.BlobRepository = blobRepository
+		deploySettings.ForbidLayerPush = forbidLayerPush
 		operation, err := pushOperation(baseCommand, config)
 		if err != nil {
 			return err

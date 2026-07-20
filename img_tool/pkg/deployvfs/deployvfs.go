@@ -106,7 +106,17 @@ func (vfs *VFS) Layer(digest registryv1.Hash) (registryv1.Layer, error) {
 	// consumer (e.g. a network upload) does not stall the underlying blob
 	// source. This wraps the raw blob entry; any MountableLayer shim is applied
 	// on top so remote.Write can still detect it for cross-repo mounts.
-	layer := prefetch.NewLayer(entry)
+	//
+	// When layer uploads are forbidden, serve a layer that reports its metadata
+	// (so the manifest and cross-mount work) but fails if its bytes are read for
+	// upload -- there is nothing to prefetch, and a read means an upload we must
+	// not perform.
+	var layer registryv1.Layer
+	if vfs.dm.Settings.ForbidLayerPush {
+		layer = noUploadLayer{entry}
+	} else {
+		layer = prefetch.NewLayer(entry)
+	}
 
 	if hint, found := vfs.crossMountHints[digest.String()]; found {
 		reg, err := registryname.NewRegistry(hint.Registry, registryname.WithDefaultRegistry(""))
@@ -121,6 +131,29 @@ func (vfs *VFS) Layer(digest registryv1.Hash) (registryv1.Layer, error) {
 	}
 
 	return layer, nil
+}
+
+// RawLayer returns the blob for digest without any cross-mount wrapping, so
+// callers that want to upload the raw bytes (e.g. pre-uploading blobs to a
+// staging repository) get the plain layer rather than a remote.MountableLayer.
+func (vfs *VFS) RawLayer(digest registryv1.Hash) (registryv1.Layer, error) {
+	entry, found := vfs.blobs[digest.String()]
+	if !found {
+		return nil, fmt.Errorf("layer with digest %s not found in VFS", digest.String())
+	}
+	return prefetch.NewLayer(entry), nil
+}
+
+// NewLayer builds a registryv1.Layer from a known descriptor and an opener that
+// returns the compressed blob bytes. The digest, media type and size are taken
+// from the descriptor (the blob is not re-hashed), so this is suitable for
+// pushing a single blob whose metadata is already known (e.g. `img push blob`).
+func NewLayer(desc api.Descriptor, opener func() (io.ReadCloser, error)) registryv1.Layer {
+	return blobEntry{
+		Descriptor: desc,
+		Location:   "file",
+		Opener:     opener,
+	}
 }
 
 func (vfs *VFS) ManifestBlob(digest registryv1.Hash) (registryv1.Layer, error) {
@@ -321,7 +354,14 @@ type Builder struct {
 	explicitLayers             map[string]string   // digest -> file path (raw compressed layer blob)
 	compactStreamLayers        map[string]string   // layer digest -> .cstream file path (reconstructed on demand)
 	layerHints                 map[string][]string // digest -> []paths
-	stats                      *Stats
+	// extraCrossMountHints registers additional per-digest cross-mount sources
+	// beyond those recorded in the deploy manifest's per-operation CrossMountHint.
+	// They are merged into the resulting VFS's cross-mount hints (taking
+	// precedence), so VFS.Layer wraps those blobs as remote.MountableLayer and the
+	// manifest push mounts them from the given repository. Used for the blob-staging
+	// repository feature (blobs pushed to a staging repo, mounted into the real one).
+	extraCrossMountHints map[string]api.CrossMountSource
+	stats                *Stats
 	// layerSpecErr holds the first error encountered while classifying a --layer
 	// spec in WithLayer (detecting a compact stream, reading its embedded digest,
 	// or hashing a raw layer file). It is deferred until Build() so the fluent
@@ -356,6 +396,12 @@ func (b *Builder) Clone() *Builder {
 		clone.compactStreamLayers = make(map[string]string, len(b.compactStreamLayers))
 		for k, v := range b.compactStreamLayers {
 			clone.compactStreamLayers[k] = v
+		}
+	}
+	if b.extraCrossMountHints != nil {
+		clone.extraCrossMountHints = make(map[string]api.CrossMountSource, len(b.extraCrossMountHints))
+		for k, v := range b.extraCrossMountHints {
+			clone.extraCrossMountHints[k] = v
 		}
 	}
 	clone.layerHints = nil
@@ -415,6 +461,18 @@ func (b *Builder) WithExplicitLayer(digest string, filePath string) *Builder {
 		b.explicitLayers = make(map[string]string)
 	}
 	b.explicitLayers[digest] = filePath
+	return b
+}
+
+// WithCrossMountSource registers a cross-mount source for a blob digest. The
+// resulting VFS wraps that blob as a remote.MountableLayer referencing
+// src.Registry/src.Repository, so a manifest push mounts it from there instead of
+// re-uploading. Used for the blob-staging repository feature.
+func (b *Builder) WithCrossMountSource(digest string, src api.CrossMountSource) *Builder {
+	if b.extraCrossMountHints == nil {
+		b.extraCrossMountHints = make(map[string]api.CrossMountSource)
+	}
+	b.extraCrossMountHints[digest] = src
 	return b
 }
 
@@ -596,6 +654,12 @@ func (b *Builder) ingest() (map[string]blobEntry, map[string]blobEntry, map[stri
 		}
 	}
 
+	// Merge explicitly-registered cross-mount sources (e.g. blob-staging
+	// repository). These take precedence over per-operation hints.
+	for digest, src := range b.extraCrossMountHints {
+		crossMountHints[digest] = src
+	}
+
 	return blobs, manifests, crossMountHints, nil
 }
 
@@ -666,6 +730,16 @@ func (b *Builder) layerBlob(operationIndex int, manifestIndex int, layerIndex in
 		return entry, nil
 	} else {
 		sourceErrors = append(sourceErrors, err.(*BlobSourceError))
+	}
+
+	// If a cross-mount source is registered for this blob (the blob-staging
+	// repository, or an explicit result from a per-layer `img push blob`), its
+	// bytes are not needed here: the manifest push mounts it from that repository
+	// (or finds it already present). Return a stub, which only fails if a mount is
+	// actually attempted and fails. This lets an eager-strategy manifest push
+	// proceed without shipping the layer blobs as inputs.
+	if _, ok := b.extraCrossMountHints[desc.Digest]; ok {
+		return stubBlob(desc), nil
 	}
 
 	switch strategy {
@@ -1045,6 +1119,28 @@ func (b blobEntry) Size() (int64, error) {
 
 func (b blobEntry) MediaType() (registrytypes.MediaType, error) {
 	return registrytypes.MediaType(b.Descriptor.MediaType), nil
+}
+
+// noUploadLayer wraps a blob entry so that reading its bytes (Compressed /
+// Uncompressed) always fails, while its descriptor-derived metadata (Digest,
+// Size, MediaType) still works. It is used when Settings.ForbidLayerPush is set:
+// the manifest push can still mount the layer (or skip it when already present),
+// but an actual upload -- which reads Compressed -- fails loudly instead of
+// silently re-uploading a blob that was expected to be pushed at build time.
+type noUploadLayer struct {
+	blobEntry
+}
+
+func (l noUploadLayer) Compressed() (io.ReadCloser, error) {
+	return nil, l.uploadForbiddenError()
+}
+
+func (l noUploadLayer) Uncompressed() (io.ReadCloser, error) {
+	return nil, l.uploadForbiddenError()
+}
+
+func (l noUploadLayer) uploadForbiddenError() error {
+	return fmt.Errorf("refusing to upload layer %s: layer uploads are forbidden (forbid_layer_push); the blob is expected to already be in the registry (e.g. pushed at build time and mounted server-side)", l.Descriptor.Digest)
 }
 
 type casReader interface {

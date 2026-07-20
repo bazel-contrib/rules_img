@@ -33,6 +33,8 @@ def _image_push_spec_impl(ctx):
         stamp_settings = ctx.attr._stamp_settings[StampSettingInfo],
         tracks_content = ctx.attr.tracks_content,
         signing = resolve_signing(ctx),
+        blob_repository = ctx.attr._push_settings[PushSettingsInfo].blob_repository,
+        forbid_layer_push = ctx.attr._push_settings[PushSettingsInfo].forbid_layer_push,
     )]
 
 image_push_spec = rule(

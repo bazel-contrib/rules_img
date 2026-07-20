@@ -109,6 +109,19 @@ type DeploySettings struct {
 	// own Sign.Setting. It is resolved at runtime against the discovered
 	// sign_settings and may be overridden by `img deploy --default_sign_setting`.
 	DefaultSignSetting *Descriptor `json:"default_sign_setting,omitempty"`
+	// BlobRepository, when non-empty, overrides the repository that layer blobs
+	// are pushed to. Blobs are uploaded to this repository (within the push
+	// operation's registry) and the manifest push cross-mounts them from here
+	// into the operation's real repository. Empty means blobs go to the
+	// operation's own repository (the default behavior).
+	BlobRepository string `json:"blob_repository,omitempty"`
+	// ForbidLayerPush, when true, forbids uploading layer blob bytes during a
+	// push. Layers may still be cross-mounted or skipped when already present,
+	// but any attempt to actually upload a layer's bytes fails. This guards
+	// deployments where layer blobs are expected to have been pushed at build
+	// time (and mounted server-side): if the deploy is ever asked to upload a
+	// layer, it fails loudly instead of silently re-uploading.
+	ForbidLayerPush bool `json:"forbid_layer_push,omitempty"`
 }
 
 // Signature artifact / sign_setting media types and target selectors.

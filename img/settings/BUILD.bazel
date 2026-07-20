@@ -250,6 +250,80 @@ int_flag(
     visibility = ["//visibility:public"],
 )
 
+# Push image blobs (and optionally manifests) at build time, wired as a Bazel
+# validation action. See docs.
+string_flag(
+    name = "push_at_build_time",
+    build_setting_default = "disabled",
+    values = [
+        "disabled",
+        "best_effort",
+        "enabled",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+# Controls what the push-at-build-time actions push: just the layer blobs, or the
+# layer blobs plus the config and manifest(s)/tags (a full push at build time).
+string_flag(
+    name = "push_at_build_time_content",
+    build_setting_default = "blobs_and_manifests",
+    values = [
+        "blobs",
+        "blobs_and_manifests",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+# When non-empty, layer blobs are pushed to this repository (a "staging"
+# repository within the destination registry) and cross-mounted from there when
+# the manifest is pushed to its real repository. Applies to both push-at-build-time
+# and `bazel run` pushes.
+string_flag(
+    name = "push_at_build_time_repository",
+    build_setting_default = "",
+    visibility = ["//visibility:public"],
+)
+
+# Optional OCI distribution gateway endpoints. When set, registry requests made by
+# build actions (lazy layer downloads and build-time uploads) are routed through
+# the gateway instead of talking to the registry directly. `registry_gateway` is
+# the shared fallback for both push and pull; the mode-specific flags take
+# precedence. These map to the IMG_REGISTRY_GATEWAY / IMG_REGISTRY_PUSH_GATEWAY /
+# IMG_REGISTRY_PULL_GATEWAY environment variables read by the img tool.
+string_flag(
+    name = "registry_gateway",
+    build_setting_default = "",
+    visibility = ["//visibility:public"],
+)
+
+string_flag(
+    name = "registry_push_gateway",
+    build_setting_default = "",
+    visibility = ["//visibility:public"],
+)
+
+string_flag(
+    name = "registry_pull_gateway",
+    build_setting_default = "",
+    visibility = ["//visibility:public"],
+)
+
+# When "enabled", `img deploy` (image_push / multi_deploy) is forbidden from
+# uploading layer blob bytes: layers may still be cross-mounted server-side or
+# skipped when already present, but an actual upload fails loudly. Use when layer
+# blobs are pushed at build time (e.g. via push_at_build_time) so a
+# deploy that would re-upload them is caught instead of silently succeeding.
+string_flag(
+    name = "forbid_layer_push",
+    build_setting_default = "disabled",
+    values = [
+        "disabled",
+        "enabled",
+    ],
+    visibility = ["//visibility:public"],
+)
+
 # Path prefix for entries in the layer `mtree` output group. "./" makes every
 # entry an unambiguous full-path entry (recommended). "" emits bare tar paths;
 # in that mode directory entries are given a trailing "/" so they still contain

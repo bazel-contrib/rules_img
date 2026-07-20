@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"path"
@@ -258,6 +259,24 @@ func DeployWithExtras(ctx context.Context, rawRequest []byte, opts DeployOptions
 	for _, spec := range opts.Layers {
 		vfsBuilder = vfsBuilder.WithLayer(spec)
 	}
+	// Blob-staging repository: layer blobs are pushed to req.Settings.BlobRepository
+	// and cross-mounted from there when the manifests are pushed to their real
+	// repositories. Register the cross-mount sources before building the VFS so
+	// VFS.Layer wraps those blobs as remote.MountableLayer.
+	if req.Settings.BlobRepository != "" {
+		stagingOps, err := req.PushOperations()
+		if err != nil {
+			return err
+		}
+		for _, op := range stagingOps {
+			src := api.CrossMountSource{Repository: req.Settings.BlobRepository}
+			for _, manifest := range op.Manifests {
+				for _, layer := range manifest.LayerBlobs {
+					vfsBuilder = vfsBuilder.WithCrossMountSource(layer.Digest, src)
+				}
+			}
+		}
+	}
 	vfs, err := vfsBuilder.Build()
 	if err != nil {
 		return fmt.Errorf("building VFS: %w", err)
@@ -318,6 +337,17 @@ func DeployWithExtras(ctx context.Context, rawRequest []byte, opts DeployOptions
 	var pushedTags []string
 	// groupCtx is cancelled once g.Wait returns; keep the outer ctx for work after it (registry_tag ops).
 	g, groupCtx := errgroup.WithContext(ctx)
+
+	// When a blob-staging repository is configured, upload every layer blob to it
+	// first (synchronously) so that the manifest push below can cross-mount them
+	// from the staging repository instead of uploading their bytes to the real
+	// repository. Skipped when layer pushes are forbidden: the blobs are then
+	// expected to already be in the registry (e.g. pushed at build time).
+	if req.Settings.BlobRepository != "" && !req.Settings.ForbidLayerPush && len(pushOperations) > 0 {
+		if err := preUploadStagingBlobs(ctx, vfs, pushOperations, req.Settings.BlobRepository, opts.OverrideRegistry, opts.Jobs, pushTransport); err != nil {
+			return fmt.Errorf("pre-uploading blobs to staging repository %q: %w", req.Settings.BlobRepository, err)
+		}
+	}
 
 	if len(pushOperations) > 0 {
 		uploadBuilder := push.NewBuilder(vfs).
@@ -477,6 +507,69 @@ func applyRegistryTagOperations(ctx context.Context, vfs *deployvfs.VFS, pusher 
 	}
 	sort.Strings(tagNames)
 	return tagNames, nil
+}
+
+// preUploadStagingBlobs uploads every layer blob of the given push operations to
+// the staging repository (within each operation's registry, honoring an override).
+// It is used when req.Settings.BlobRepository is set: after this returns, the
+// manifest push cross-mounts the blobs from the staging repository. pushTransport
+// routes the uploads through the configured push gateway (if any).
+func preUploadStagingBlobs(ctx context.Context, vfs *deployvfs.VFS, ops []api.IndexedPushDeployOperation, blobRepository, overrideRegistry string, jobs int, pushTransport http.RoundTripper) error {
+	if jobs < 1 {
+		jobs = 1
+	}
+	pusher, err := remote.NewPusher(registry.WithAuthFromMultiKeychain(), remote.WithTransport(pushTransport), remote.WithJobs(jobs))
+	if err != nil {
+		return fmt.Errorf("creating pusher: %w", err)
+	}
+
+	type uploadItem struct {
+		repo   name.Repository
+		digest registryv1.Hash
+	}
+	seen := make(map[string]bool)
+	var items []uploadItem
+	for _, op := range ops {
+		reg := op.Registry
+		if overrideRegistry != "" {
+			reg = overrideRegistry
+		}
+		repo, err := name.NewRepository(reg + "/" + blobRepository)
+		if err != nil {
+			return fmt.Errorf("parsing staging repository %s/%s: %w", reg, blobRepository, err)
+		}
+		for _, manifest := range op.Manifests {
+			for _, layer := range manifest.LayerBlobs {
+				key := reg + "/" + blobRepository + "@" + layer.Digest
+				if seen[key] {
+					continue
+				}
+				seen[key] = true
+				h, err := registryv1.NewHash(layer.Digest)
+				if err != nil {
+					return fmt.Errorf("parsing layer digest %s: %w", layer.Digest, err)
+				}
+				items = append(items, uploadItem{repo: repo, digest: h})
+			}
+		}
+	}
+
+	g, ctx := errgroup.WithContext(ctx)
+	g.SetLimit(jobs)
+	for _, it := range items {
+		it := it
+		g.Go(func() error {
+			layer, err := vfs.RawLayer(it.digest)
+			if err != nil {
+				return fmt.Errorf("resolving blob %s: %w", it.digest, err)
+			}
+			if err := pusher.Upload(ctx, it.repo, layer); err != nil {
+				return fmt.Errorf("uploading blob %s to %s: %w", it.digest, it.repo, err)
+			}
+			return nil
+		})
+	}
+	return g.Wait()
 }
 
 // stringSliceFlag implements flag.Value for collecting multiple string values

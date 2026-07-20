@@ -73,6 +73,12 @@ bzl_library(
 )
 
 bzl_library(
+    name = "push_at_build_time_settings_info",
+    srcs = ["push_at_build_time_settings_info.bzl"],
+    visibility = ["//img:__subpackages__"],
+)
+
+bzl_library(
     name = "pull_info",
     srcs = ["pull_info.bzl"],
     visibility = ["//img:__subpackages__"],

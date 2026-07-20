@@ -2,7 +2,7 @@
 
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("@hermetic_launcher//launcher:lib.bzl", "launcher")
-load("//img/private:push_metadata.bzl", "compute_push_metadata")
+load("//img/private:push_metadata.bzl", "build_time_push_actions", "compute_push_metadata")
 load("//img/private:root_symlinks.bzl", "calculate_root_symlinks", "symlink_name_prefix")
 load("//img/private:sign_settings.bzl", "add_sign_setting_symlinks")
 load("//img/private:stamp.bzl", "expand_or_write")
@@ -16,6 +16,7 @@ load("//img/private/providers:deploy_tool_info.bzl", "DeployToolInfo")
 load("//img/private/providers:index_info.bzl", "ImageIndexInfo")
 load("//img/private/providers:manifest_info.bzl", "ImageManifestInfo")
 load("//img/private/providers:pull_info.bzl", "PullInfo")
+load("//img/private/providers:push_at_build_time_settings_info.bzl", "PushAtBuildTimeSettingsInfo")
 load("//img/private/providers:push_settings_info.bzl", "PushSettingsInfo")
 
 def _per_child_manifest_tag_file(*, ctx, child_index, child_info):
@@ -60,6 +61,8 @@ def _compute_push_metadata(*, ctx, configuration_json, destination_file = None, 
         destination_file = destination_file,
         output_prefix = ctx.label.name,
         signing = signing,
+        blob_repository = ctx.attr._push_settings[PushSettingsInfo].blob_repository,
+        forbid_layer_push = ctx.attr._push_settings[PushSettingsInfo].forbid_layer_push,
     )
 
 def _image_push_impl(ctx):
@@ -184,15 +187,38 @@ def _image_push_impl(ctx):
     )
     for pr in plugin_runfiles:
         runfiles = runfiles.merge(pr)
+
+    # Push at build time via PushImage validation actions (mnemonic PushImage),
+    # mirroring the push_specs path on image_manifest / image_index. Gated by the
+    # global push_at_build_time setting; a no-op (no actions) when disabled.
+    output_groups = {"deploy_manifest": depset([deploy_metadata])}
+    push_at_build_time = ctx.attr._push_at_build_time_settings[PushAtBuildTimeSettingsInfo]
+    if push_at_build_time.mode in ("best_effort", "enabled"):
+        validation_outputs = build_time_push_actions(
+            ctx,
+            push_idx = 0,
+            configuration_json = configuration_json,
+            manifest_info = manifest_info,
+            index_info = index_info,
+            sparse_layout = getattr(image_provider, "sparse_oci_layout", None),
+            mode = push_at_build_time.mode,
+            content = push_at_build_time.content,
+            blob_repository = ctx.attr._push_settings[PushSettingsInfo].blob_repository,
+            gateway = push_at_build_time.gateway,
+            push_gateway = push_at_build_time.push_gateway,
+            pull_gateway = push_at_build_time.pull_gateway,
+            pull_info = ctx.attr.image[PullInfo] if PullInfo in ctx.attr.image else None,
+        )
+        if validation_outputs:
+            output_groups["_validation"] = depset(validation_outputs)
+
     return [
         DefaultInfo(
             files = depset([pusher]),
             executable = pusher,
             runfiles = runfiles,
         ),
-        OutputGroupInfo(
-            deploy_manifest = depset([deploy_metadata]),
-        ),
+        OutputGroupInfo(**output_groups),
         RunEnvironmentInfo(
             environment = environment,
             inherited_environment = inherited_environment,
@@ -298,6 +324,13 @@ Push strategies:
 
 See [push strategies documentation](/docs/push-strategies.md) for detailed comparisons.
 
+Push at build time:
+
+When the `push_at_build_time` setting is enabled, an `image_push` target also
+uploads its image content to the registry *during the build* (as `PushImage`
+validation actions), so the image is present without a separate `bazel run`. See
+[push at build time](/docs/push-strategies.md#push-at-build-time).
+
 Runtime usage:
 ```bash
 # Push to registry
@@ -329,6 +362,10 @@ Available options:
         _deploy_tool = attr.label(
             default = default_deploy_tool,
             providers = [DeployToolInfo],
+        ),
+        _push_at_build_time_settings = attr.label(
+            default = Label("//img/private/settings:push_at_build_time"),
+            providers = [PushAtBuildTimeSettingsInfo],
         ),
         _docker_config_path = attr.label(
             default = Label("//img/settings:docker_config_path"),

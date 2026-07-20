@@ -28,6 +28,7 @@ go_library(
         "//cmd/ocilayoutmetadata",
         "//cmd/optimize",
         "//cmd/pull",
+        "//cmd/push",
         "//cmd/sparseocilayout",
         "//cmd/syncocirefgraph",
         "//cmd/validate",

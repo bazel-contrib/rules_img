@@ -226,6 +226,150 @@ common --@rules_img//img/settings:push_strategy=bes
 bazel build //your:image_target
 ```
 
+## Push at Build Time
+
+Push at build time is not a push *strategy* — it is an orthogonal option that can
+be combined with the strategies above. Instead of pushing when you run a push
+target, it pushes image content to the registry *as part of the build itself*.
+
+### Overview
+When `push_at_build_time` is enabled, every `image_manifest` / `image_index` that
+has `push_specs`, as well as every `image_push` target, gains extra build actions
+(mnemonic `PushImage`) that upload content directly to the registry: one action
+per layer, plus (optionally) one for the config and manifest(s). The actions are
+wired as Bazel [validation actions], so they run whenever the target is built
+(with `--run_validations`, on by default) without sitting on the critical path of
+the target's normal outputs.
+
+`multi_deploy` has no push at build time of its own — it deploys at `bazel run`
+time. The `image_push` targets (or images with `push_specs`) it references still
+push at build time on their own when the setting is enabled; `multi_deploy` does
+not push them a second time.
+
+Two content modes are available, selected with `push_at_build_time_content`:
+
+- **`blobs`** — only the layer blobs are pushed at build time (one `PushImage`
+  action per layer). The config and manifest(s)/tags are *not* pushed at build
+  time; you push them afterwards with `image_push` / `multi_deploy`.
+- **`blobs_and_manifests`** (default) — layers, config, and manifest(s)/tags are
+  all pushed at build time. The image exists in the registry as soon as the build
+  finishes; no separate push step is required.
+
+[validation actions]: https://bazel.build/extending/rules#validation_actions
+
+### Diagram
+The two content modes are illustrated below (see [Modes in detail](#modes-in-detail)
+for the reasoning behind each).
+
+**`blobs`** — layer blobs are pushed from the build cluster at build time; the config
+and manifest are pushed afterwards:
+
+![Push at build time (blobs)](visuals/push-at-build-time-blobs-light.svg#gh-light-mode-only)
+![Push at build time (blobs)](visuals/push-at-build-time-blobs-dark.svg#gh-dark-mode-only)
+
+**`blobs_and_manifests`** — the whole image (layers, config, manifest and tags) is
+pushed from the build cluster at build time:
+
+![Push at build time (blobs and manifests)](visuals/push-at-build-time-all-light.svg#gh-light-mode-only)
+![Push at build time (blobs and manifests)](visuals/push-at-build-time-all-dark.svg#gh-dark-mode-only)
+
+### Why push at build time?
+The clearest win: **all layers are uploaded in parallel, directly from the remote
+execution cluster to the registry**. When the `PushImage` actions run on a remote
+executor, each layer is uploaded by its own action from the worker that already
+holds the blob — so the layer bytes never flow through the machine running Bazel.
+This is especially valuable for large images and high-fan-out CI.
+
+### Modes in detail
+
+#### Blobs at build time, manifest afterwards (`blobs`)
+Pair this mode with the [lazy push strategy](#lazy-push). Because the layer blobs
+are already uploaded at build time, the follow-up `image_push` / `multi_deploy`
+only has to write the config and manifest — and with the lazy strategy the layer
+tarballs are never materialized on, or downloaded to, the machine running Bazel.
+The net effect: layers are uploaded once, in parallel, from the build cluster, and
+Bazel never touches layer bytes.
+
+Since the layers are already in the registry, tell the follow-up push to reference
+them instead of re-uploading:
+
+```bash
+common --@rules_img//img/settings:push_at_build_time=enabled
+common --@rules_img//img/settings:push_at_build_time_content=blobs
+common --@rules_img//img/settings:push_strategy=lazy
+# Make `bazel run` deploy refuse to re-upload layers; it only mounts / HEADs them.
+common --@rules_img//img/settings:forbid_layer_push=enabled
+```
+
+Optionally push the blobs to a shared staging repository and have the manifest push
+cross-mount them into each image's real repository with
+`--@rules_img//img/settings:push_at_build_time_repository=<repo>`.
+
+Registries expose a blob to any repository the caller can read, so the manifest push
+does not have to re-upload the layers it finds in the staging repository — it
+cross-mounts them (`POST /v2/<image>/blobs/uploads/?mount=<digest>&from=<staging>`),
+which the registry resolves internally by linking the existing blob:
+
+![Cross-mounting blobs (multi-tenant)](visuals/blob-mount-light.svg#gh-light-mode-only)
+![Cross-mounting blobs (multi-tenant)](visuals/blob-mount-dark.svg#gh-dark-mode-only)
+
+This split is also a good fit for **multi-tenant** setups, because blob uploads and
+manifest/tag writes use *different* credentials. In most cases it is acceptable to
+hand every user of the remote execution cluster a shared machine account that may
+*upload* blobs (`HEAD` / `POST` / `PUT` to `/v2/.../blobs/`) but may not read
+existing blobs or write manifests. Any user can then upload layers at build time
+with that restricted machine account, while the config, manifest, and tags are
+written afterwards with the individual (local) Bazel user's own credentials. A
+leaked or misused build-action credential can then only add blobs — it cannot read
+other tenants' layers or publish images under their tags.
+
+#### Everything at build time (`blobs_and_manifests`)
+The image is fully pushed by the time the build action finishes — the simplest to
+operate, but harder to reason about: there is no push step to watch, you don't see
+what was pushed, and the image already exists once the build action completes.
+
+If you still need the digest and tags afterwards (for example to feed a downstream
+deployment), you can run `image_push` or `multi_deploy` in this mode. They detect
+that everything is already present, do a lightweight `HEAD` request instead of
+uploading, and print the resulting digest and tags.
+
+> **Signing always happens client-side.** Push at build time never signs images —
+> the `PushImage` build actions only upload content. Image signing (see
+> [Image Signing](image-signing.md)) is performed by `img deploy` when you
+> `bazel run` an `image_push` / `multi_deploy` target, using the configured signer
+> plugin and your local credentials. So even when the whole image is already in the
+> registry via `blobs_and_manifests`, producing a *signed* image still requires the
+> `bazel run` deploy step: it detects the content is already present (a lightweight
+> `HEAD` instead of an upload) and then attaches the signature as an OCI referrer.
+
+### Requirements and trade-offs
+Pushing from a build action has the same infrastructure needs as lazy base image
+pulls (`layer_handling`), plus write access:
+
+- ❌ Build actions need **network access** to the registry (like lazy
+  `layer_handling`), which makes them non-hermetic.
+- ❌ Build actions need **registry credentials with write access** (lazy
+  `layer_handling` only needs read). See
+  [Authenticating Build Actions](authenticating-build-actions.md) for how to give
+  pull/push actions their credentials.
+- ❌ Harder to reason about than an explicit push step, especially in
+  `blobs_and_manifests` mode (see above).
+
+### Setup Guide
+```bash
+# Enable push at build time. "best_effort" logs push failures but keeps the build
+# green; "enabled" fails the build if a push fails; "disabled" (default) is off.
+common --@rules_img//img/settings:push_at_build_time=enabled
+
+# Choose what to push: "blobs" (layers only) or "blobs_and_manifests" (default).
+common --@rules_img//img/settings:push_at_build_time_content=blobs_and_manifests
+```
+
+Then just build the image target — the push happens as a validation action:
+```bash
+bazel build //your:image_target
+```
+
 ## Remote Cache Eviction
 
 The lazy and CAS registry push strategies stream blobs directly from Bazel's

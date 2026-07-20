@@ -103,6 +103,13 @@ Push strategies:
 
 See [push strategies documentation](/docs/push-strategies.md) for detailed comparisons.
 
+Push at build time:
+
+When the `push_at_build_time` setting is enabled, an `image_push` target also
+uploads its image content to the registry *during the build* (as `PushImage`
+validation actions), so the image is present without a separate `bazel run`. See
+[push at build time](/docs/push-strategies.md#push-at-build-time).
+
 Runtime usage:
 ```bash
 # Push to registry
