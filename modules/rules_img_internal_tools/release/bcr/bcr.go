@@ -326,17 +326,31 @@ func extractSourceArchive(sourceArchive, destination string, stripPrefix string)
 			if !strings.HasPrefix(hdr.Name, stripPrefix) {
 				continue
 			}
-			hdr.Name = hdr.Name[len(stripPrefix)+1:]
+			hdr.Name = strings.TrimPrefix(hdr.Name[len(stripPrefix):], "/")
+		}
+		// Guard against Zip Slip / directory traversal: an entry name may
+		// contain a ".." element that escapes the destination once the joined
+		// path is cleaned. Reject the raw (prefix-stripped) name directly, so
+		// the traversal element is caught before it is ever used to build a
+		// filesystem path.
+		if strings.Contains(hdr.Name, "..") {
+			return fmt.Errorf("invalid file path in archive (contains \"..\"): %s", hdr.Name)
+		}
+		target := filepath.Join(destination, hdr.Name)
+		// Defense in depth: even without a "..", ensure the resolved path
+		// stays within the destination directory.
+		if target != destination && !strings.HasPrefix(target, destination+string(os.PathSeparator)) {
+			return fmt.Errorf("invalid file path in archive (escapes destination): %s", hdr.Name)
 		}
 		fInfo := hdr.FileInfo()
 		if fInfo.IsDir() {
-			os.Mkdir(filepath.Join(destination, hdr.Name), fInfo.Mode())
+			os.Mkdir(target, fInfo.Mode())
 			continue
 		}
 		if !fInfo.Mode().IsRegular() {
 			return fmt.Errorf("unsupported file type: %s", hdr.Name)
 		}
-		file, err := os.Create(filepath.Join(destination, hdr.Name))
+		file, err := os.Create(target)
 		if err != nil {
 			return fmt.Errorf("failed to create file: %v", err)
 		}
