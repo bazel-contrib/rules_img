@@ -599,6 +599,7 @@ def _image_manifest_impl(ctx):
         allow_manifest_tags = False,
         push_at_build_time_mode = push_at_build_time.mode,
         push_at_build_time_content = push_at_build_time.content,
+        push_at_build_time_manifest_repository = push_at_build_time.manifest_repository,
         push_at_build_time_gateway = push_at_build_time.gateway,
         push_at_build_time_push_gateway = push_at_build_time.push_gateway,
         push_at_build_time_pull_gateway = push_at_build_time.pull_gateway,

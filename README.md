@@ -144,15 +144,24 @@ common --@rules_img//img/settings:docker_config_path=/home/user/.docker/config.j
 # logs and the build still succeeds; "enabled" fails the build on a push failure.
 common --@rules_img//img/settings:push_at_build_time=enabled
 
-# What the push-at-build-time actions push. "blobs" uploads only the layer blobs;
-# "blobs_and_manifests" (default) also pushes the config and manifest(s)/tags.
+# What the push-at-build-time actions push. "blobs" uploads every image blob (all
+# layer blobs and the config blob), one action each; "blobs_and_manifests"
+# (default) additionally pushes the config and manifest(s)/tags so the whole image
+# exists in the registry after the build.
 common --@rules_img//img/settings:push_at_build_time_content=blobs_and_manifests
 
-# Optional staging repository for layer blobs. When set, layer blobs are pushed
-# to this repository (within the destination registry) and cross-mounted into
-# the image's real repository when the manifest is pushed. Applies to both
-# push-at-build-time and `bazel run` pushes.
-common --@rules_img//img/settings:push_at_build_time_repository=staging-blobs
+# Optional staging repository for image blobs. When set, every blob (layers and
+# config) is pushed to this repository (within the destination registry) and
+# cross-mounted into the image's real repository when the manifest is pushed.
+# Applies to both push-at-build-time and `bazel run` pushes.
+common --@rules_img//img/settings:push_at_build_time_blob_repository=staging-blobs
+
+# Optional staging repository for manifests, used only by push-at-build-time in
+# "blobs_and_manifests" mode. When set, the manifest(s)/index (and the config
+# uploaded alongside them) are written to this repository instead of the image's
+# real repository. It does not change where layer blobs are mounted from (that is
+# push_at_build_time_blob_repository) and does not affect the `bazel run` deploy.
+common --@rules_img//img/settings:push_at_build_time_manifest_repository=staging-manifests
 
 # Forbid `img deploy` (image_push / multi_deploy) from uploading layer blob bytes.
 # Layers may still be cross-mounted server-side or skipped when already present,

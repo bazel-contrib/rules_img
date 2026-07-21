@@ -236,8 +236,9 @@ target, it pushes image content to the registry *as part of the build itself*.
 When `push_at_build_time` is enabled, every `image_manifest` / `image_index` that
 has `push_specs`, as well as every `image_push` target, gains extra build actions
 (mnemonic `PushImage`) that upload content directly to the registry: one action
-per layer, plus (optionally) one for the config and manifest(s). The actions are
-wired as Bazel [validation actions], so they run whenever the target is built
+per image blob (each layer and each config), plus — in `blobs_and_manifests` mode
+— one more action per push that writes the config and manifest(s)/tags. The actions
+are wired as Bazel [validation actions], so they run whenever the target is built
 (with `--run_validations`, on by default) without sitting on the critical path of
 the target's normal outputs.
 
@@ -248,9 +249,9 @@ not push them a second time.
 
 Two content modes are available, selected with `push_at_build_time_content`:
 
-- **`blobs`** — only the layer blobs are pushed at build time (one `PushImage`
-  action per layer). The config and manifest(s)/tags are *not* pushed at build
-  time; you push them afterwards with `image_push` / `multi_deploy`.
+- **`blobs`** — every image blob is pushed at build time: one `PushImage` action
+  per layer and one per config blob. The manifest(s)/tags are *not* pushed at build
+  time; you write them afterwards with `image_push` / `multi_deploy`.
 - **`blobs_and_manifests`** (default) — layers, config, and manifest(s)/tags are
   all pushed at build time. The image exists in the registry as soon as the build
   finishes; no separate push step is required.
@@ -261,8 +262,8 @@ Two content modes are available, selected with `push_at_build_time_content`:
 The two content modes are illustrated below (see [Modes in detail](#modes-in-detail)
 for the reasoning behind each).
 
-**`blobs`** — layer blobs are pushed from the build cluster at build time; the config
-and manifest are pushed afterwards:
+**`blobs`** — all image blobs (layers and the config) are pushed from the build
+cluster at build time; the manifest(s)/tags are pushed afterwards:
 
 ![Push at build time (blobs)](visuals/push-at-build-time-blobs-light.svg#gh-light-mode-only)
 ![Push at build time (blobs)](visuals/push-at-build-time-blobs-dark.svg#gh-dark-mode-only)
@@ -283,14 +284,14 @@ This is especially valuable for large images and high-fan-out CI.
 ### Modes in detail
 
 #### Blobs at build time, manifest afterwards (`blobs`)
-Pair this mode with the [lazy push strategy](#lazy-push). Because the layer blobs
-are already uploaded at build time, the follow-up `image_push` / `multi_deploy`
-only has to write the config and manifest — and with the lazy strategy the layer
-tarballs are never materialized on, or downloaded to, the machine running Bazel.
-The net effect: layers are uploaded once, in parallel, from the build cluster, and
-Bazel never touches layer bytes.
+Pair this mode with the [lazy push strategy](#lazy-push). Because every blob (all
+layers and the config) is already uploaded at build time, the follow-up
+`image_push` / `multi_deploy` only has to write the manifest — and with the lazy
+strategy the layer tarballs are never materialized on, or downloaded to, the
+machine running Bazel. The net effect: blobs are uploaded once, in parallel, from
+the build cluster, and Bazel never touches layer bytes.
 
-Since the layers are already in the registry, tell the follow-up push to reference
+Since the blobs are already in the registry, tell the follow-up push to reference
 them instead of re-uploading:
 
 ```bash
@@ -303,7 +304,12 @@ common --@rules_img//img/settings:forbid_layer_push=enabled
 
 Optionally push the blobs to a shared staging repository and have the manifest push
 cross-mount them into each image's real repository with
-`--@rules_img//img/settings:push_at_build_time_repository=<repo>`.
+`--@rules_img//img/settings:push_at_build_time_blob_repository=<repo>`. In
+`blobs_and_manifests` mode you can additionally stage the manifests themselves in a
+separate repository with
+`--@rules_img//img/settings:push_at_build_time_manifest_repository=<repo>`; this
+only redirects where the build-time manifest push writes the manifest(s) and config
+— the layer blobs are still cross-mounted from the blob repository.
 
 Registries expose a blob to any repository the caller can read, so the manifest push
 does not have to re-upload the layers it finds in the staging repository — it
@@ -317,11 +323,11 @@ This split is also a good fit for **multi-tenant** setups, because blob uploads 
 manifest/tag writes use *different* credentials. In most cases it is acceptable to
 hand every user of the remote execution cluster a shared machine account that may
 *upload* blobs (`HEAD` / `POST` / `PUT` to `/v2/.../blobs/`) but may not read
-existing blobs or write manifests. Any user can then upload layers at build time
-with that restricted machine account, while the config, manifest, and tags are
-written afterwards with the individual (local) Bazel user's own credentials. A
-leaked or misused build-action credential can then only add blobs — it cannot read
-other tenants' layers or publish images under their tags.
+existing blobs or write manifests. Any user can then upload every image blob (all
+layers and the config) at build time with that restricted machine account, while
+the manifest and tags are written afterwards with the individual (local) Bazel
+user's own credentials. A leaked or misused build-action credential can then only
+add blobs — it cannot read other tenants' layers or publish images under their tags.
 
 #### Everything at build time (`blobs_and_manifests`)
 The image is fully pushed by the time the build action finishes — the simplest to
@@ -361,7 +367,7 @@ pulls (`layer_handling`), plus write access:
 # green; "enabled" fails the build if a push fails; "disabled" (default) is off.
 common --@rules_img//img/settings:push_at_build_time=enabled
 
-# Choose what to push: "blobs" (layers only) or "blobs_and_manifests" (default).
+# Choose what to push: "blobs" (all layers and the config) or "blobs_and_manifests" (default).
 common --@rules_img//img/settings:push_at_build_time_content=blobs_and_manifests
 ```
 

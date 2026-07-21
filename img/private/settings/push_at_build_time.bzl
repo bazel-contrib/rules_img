@@ -7,6 +7,7 @@ def _push_at_build_time_settings_impl(ctx):
     return [PushAtBuildTimeSettingsInfo(
         mode = ctx.attr._mode[BuildSettingInfo].value,
         content = ctx.attr._content[BuildSettingInfo].value,
+        manifest_repository = ctx.attr._manifest_repository[BuildSettingInfo].value,
         gateway = ctx.attr._gateway[BuildSettingInfo].value,
         push_gateway = ctx.attr._push_gateway[BuildSettingInfo].value,
         pull_gateway = ctx.attr._pull_gateway[BuildSettingInfo].value,
@@ -21,6 +22,10 @@ push_at_build_time_settings = rule(
         ),
         "_content": attr.label(
             default = Label("//img/settings:push_at_build_time_content"),
+            providers = [BuildSettingInfo],
+        ),
+        "_manifest_repository": attr.label(
+            default = Label("//img/settings:push_at_build_time_manifest_repository"),
             providers = [BuildSettingInfo],
         ),
         "_gateway": attr.label(
