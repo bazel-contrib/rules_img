@@ -107,30 +107,104 @@ Endpoint forms: `http://host[:port]`, `https://host[:port]`, or `unix:<path>`.
 Use a single `unix:` prefix followed by an absolute path (e.g.
 `unix:/run/gw.sock`) — **not** `unix://` or `unix:///`.
 
-The gateway is read-only and denies everything by default, so configure what it
-may do:
+The gateway denies every request unless a **policy file** allows it, so you
+configure it with a policy file plus a few operational flags:
 
 | Flag | Default | Purpose |
 |---|---|---|
-| `--allowed-registry <host>` | (required) | Exact upstream host to allow (repeatable) |
-| `--allowed-registry-regex <re>` | (required) | Anchored regex of allowed hosts (repeatable) |
-| `--allow-blob-read` | `true` | `GET`/`HEAD` on `/v2/.../blobs` (pull) |
-| `--allow-blob-write` | `false` | Blob uploads (needed for push) |
-| `--allow-manifest-read` | `true` | `GET`/`HEAD` on `/v2/.../manifests` |
-| `--allow-manifest-write` | `false` | Manifest/tag writes (needed for a full push) |
-| `--default-registry <host>` | — | Upstream to use when the request omits the host header |
+| `--policy-file <path>` | (required) | JSON/YAML policy of per-repository allow/deny rules (see below) |
+| `--dangerously-allow-all` | `false` | Allow every request to every upstream, ignoring the policy. **Dangerous**; only for trusted, isolated environments |
+| `--validate-policy` | `false` | Load and validate `--policy-file`, then exit without serving |
+| `--default-registry <host>` | — | Upstream to use when the request omits the host header (still policy-checked) |
 | `--unix-socket <path>` | — | Listen on a UNIX socket (else `--address`/`--port`) |
 | `--credential-helper <path>` | — | Bazel credential helper for upstream auth |
 
-At least one `--allowed-registry` / `--allowed-registry-regex` is required. For
-push at build time add `--allow-blob-write` (and `--allow-manifest-write` for
-`blobs_and_manifests`). The upstream credentials live **on the gateway**, not in
-the actions.
+A `--policy-file` is required unless `--dangerously-allow-all` is set (in which
+case a policy file, if given, is ignored). The upstream credentials live **on the
+gateway**, not in the actions.
 
 > **Security:** the gateway is unauthenticated to its clients (any process that
-> can reach the socket/port may use it within the configured policy and
-> allow-list). Keep it on `localhost` or a UNIX socket and treat the allow-list +
-> `--allow-*` flags as the guardrails. It speaks plaintext HTTP/1.1.
+> can reach the socket/port may use it within the configured policy). Keep it on
+> `localhost` or a UNIX socket and treat the policy file as the guardrail. It
+> speaks plaintext HTTP/1.1.
+
+#### Policy file
+
+The policy file lets you set different read/write rules per repository path and
+scope access to parts of a registry (allow `docker.acme.corp/team-a/**` while
+forbidding `docker.acme.corp/secret`).
+It is a JSON or YAML file following a simple schema.
+
+```json
+{
+  "version": 1,
+  "defaultAction": "deny",
+  "rules": [
+    {
+      "description": "explicitly forbid the secret repo (before any broader allow)",
+      "action": "deny",
+      "registry": "docker.acme.corp",
+      "repository": "secret",
+      "operations": ["blob:read", "blob:write", "manifest:read", "manifest:write"]
+    },
+    {
+      "description": "docker.acme.corp/team-a/** is fully writable (push)",
+      "action": "allow",
+      "registry": "docker.acme.corp",
+      "repository": "team-a/**",
+      "operations": ["blob:read", "blob:write", "manifest:read", "manifest:write"]
+    },
+    {
+      "description": "everything else under docker.acme.corp is read-only (pull)",
+      "action": "allow",
+      "registry": "docker.acme.corp",
+      "repository": "**",
+      "operations": ["blob:read", "manifest:read"]
+    },
+    {
+      "description": "Docker Hub official images: pull only",
+      "action": "allow",
+      "registry": "index.docker.io",
+      "repository": "library/**",
+      "operations": ["blob:read", "manifest:read"]
+    }
+  ]
+}
+```
+
+**Evaluation.** Rules are evaluated top-to-bottom and the **first match wins**;
+a request that matches no rule falls back to `defaultAction` (default `deny`, so
+the gateway fails closed). Because the first match wins, put narrow `deny` rules
+*before* broader `allow` rules — otherwise the broad allow shadows them. The
+winning rule is recorded in the gateway's decision log.
+
+**Matching** is against the *resolved* upstream, not the raw request:
+
+- `registry` matches the resolved host: an exact host (`docker.acme.corp`,
+  `index.docker.io`), a single leading `*.` wildcard matching one or more leading
+  labels (`*.docker.io` matches `index.docker.io` and `a.b.docker.io` but **not**
+  bare `docker.io`), or `*` for any host. `docker.io` resolves to
+  `index.docker.io`, and a bare host like `myregistry` resolves to Docker Hub, so
+  write the resolved host.
+- `repository` is a glob over the resolved repository path: `*` matches within one
+  path segment, `**` matches across segments (including zero, so `team-a/**` also
+  matches exactly `team-a`), and `?` matches a single non-`/` character. On Docker
+  Hub a single-segment name is normalized with the `library/` prefix
+  (`docker.io/ubuntu` → `library/ubuntu`), so match it as `library/**`.
+- `operations` lists the operations the rule speaks to; each is one of
+  `blob:read`, `blob:write`, `manifest:read`, `manifest:write`, or `*` for all
+  four. Tag listings and referrers count as `manifest:read`. A `HEAD` is allowed
+  when either the read or the write of that kind is permitted. A cross-repo blob
+  mount additionally requires `blob:read` on the source repository.
+
+A malformed or unreadable file — at startup or on reload — is a hard error:
+the gateway refuses to start, or (on reload) keeps the previous policy. Validate
+a file in CI without starting the gateway with `--validate-policy --policy-file
+<path>`.
+
+**Reloading.** Send the gateway process a `SIGHUP` to re-read the policy file
+without restarting or dropping connections. A reload that fails to parse or
+validate is logged and the previous policy is kept.
 
 ## Setting up the gateway on Buildbarn
 
@@ -145,24 +219,26 @@ mechanism we reuse: run the gateway as a **sidecar container in the same Pod**,
 listening on another socket on the shared volume.
 
 1. Add the sidecar to the worker Pod (`kubernetes/worker-*.yaml`), mounting the
-   existing `worker` volume and listening on a socket on it:
+   existing `worker` volume and listening on a socket on it. Mount the policy
+   file too (for example from a `ConfigMap`):
 
    ```yaml
    - name: oci-distribution-gateway
      image: <your oci-distribution-gateway image>
      args:
        - --unix-socket=/worker/oci-gateway.sock
-       - --allowed-registry=ghcr.io
-       - --allow-blob-write         # push
-       - --allow-manifest-write     # only for blobs_and_manifests
+       - --policy-file=/etc/img/gateway-policy.json
      volumeMounts:
        - name: worker
          mountPath: /worker
+       - name: gateway-policy
+         mountPath: /etc/img
    ```
 
    Reuse the existing `worker` volume rather than adding a new one. Consider a
    Kubernetes native sidecar (an `initContainer` with `restartPolicy: Always`) so
-   the gateway is up before actions run.
+   the gateway is up before actions run. Editing the mounted policy and sending
+   the gateway a `SIGHUP` reloads it without a restart.
 
 2. Point Bazel at that socket. This is a **client-side** setting: rules_img bakes
    the value into each action's environment, so you configure it at the Bazel
@@ -177,9 +253,9 @@ listening on another socket on the shared volume.
 
 3. Give the sidecar the upstream credentials it needs (a Docker config, a cloud
    keychain, or its own `--credential-helper`). The gateway restricts which
-   registries and operations are allowed through the `--allowed-registry(-regex)`
-   and `--allow-*` flags, and authenticates upstream using the **same mechanisms
-   the `img` tool uses** (see [How rules_img resolves credentials](#how-rules_img-resolves-credentials)).
+   registries and operations are allowed through its `--policy-file`, and
+   authenticates upstream using the **same mechanisms the `img` tool uses** (see
+   [How rules_img resolves credentials](#how-rules_img-resolves-credentials)).
    The actions themselves stay credential-free.
 
 ### Caveats

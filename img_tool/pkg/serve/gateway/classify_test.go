@@ -58,36 +58,35 @@ func TestClassify(t *testing.T) {
 	}
 }
 
-func TestPolicyAllows(t *testing.T) {
-	readOnly := Policy{AllowBlobRead: true, AllowManifestRead: true}
-	if !readOnly.allows(reqBlobRead) {
-		t.Error("read-only policy should allow blob read")
-	}
-	if readOnly.allows(reqBlobWrite) {
-		t.Error("read-only policy should deny blob write")
-	}
-	if !readOnly.allows(reqBlobReadOrWrite) {
-		t.Error("read-only policy should allow blob HEAD (read-or-write)")
-	}
-	if !readOnly.allows(reqManifestReadOrWrite) {
-		t.Error("read-only policy should allow manifest HEAD (read-or-write)")
-	}
-	if readOnly.allows(reqManifestWrite) {
-		t.Error("read-only policy should deny manifest write")
-	}
-
-	writeOnly := Policy{AllowBlobWrite: true, AllowManifestWrite: true}
-	if !writeOnly.allows(reqBlobReadOrWrite) {
-		t.Error("write-only policy should allow blob HEAD (read-or-write)")
-	}
-	if writeOnly.allows(reqBlobRead) {
-		t.Error("write-only policy should deny plain blob read")
-	}
-
-	var none Policy
-	for _, r := range []requirement{reqBlobRead, reqBlobWrite, reqBlobReadOrWrite, reqManifestRead, reqManifestWrite, reqManifestReadOrWrite, reqUnknown} {
-		if none.allows(r) {
-			t.Errorf("empty policy should deny %v", r)
-		}
+func TestClassifyMount(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		method     string
+		path       string
+		wantFrom   string
+		wantBadReq bool
+	}{
+		{"plain upload post", http.MethodPost, "/v2/dest/blobs/uploads/", "", false},
+		{"mount with from", http.MethodPost, "/v2/dest/blobs/uploads/?mount=sha256:abc&from=src/base", "src/base", false},
+		{"mount without from", http.MethodPost, "/v2/dest/blobs/uploads/?mount=sha256:abc", "", false},
+		{"from without mount", http.MethodPost, "/v2/dest/blobs/uploads/?from=src/base", "", false},
+		{"mount not on post", http.MethodPatch, "/v2/dest/blobs/uploads/uuid?mount=sha256:abc&from=src/base", "", false},
+		// Ambiguous queries must be rejected, not silently forwarded.
+		{"semicolon separator", http.MethodPost, "/v2/dest/blobs/uploads/?mount=sha256:abc&from=src/base;evil", "", true},
+		{"duplicate from", http.MethodPost, "/v2/dest/blobs/uploads/?mount=sha256:abc&from=a&from=b", "", true},
+		{"duplicate mount", http.MethodPost, "/v2/dest/blobs/uploads/?mount=x&mount=y&from=a", "", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := classify(req(tc.method, tc.path))
+			if !ok {
+				t.Fatalf("classify ok = false, want true")
+			}
+			if got.mountFrom != tc.wantFrom {
+				t.Errorf("mountFrom = %q, want %q", got.mountFrom, tc.wantFrom)
+			}
+			if got.malformedQuery != tc.wantBadReq {
+				t.Errorf("malformedQuery = %v, want %v", got.malformedQuery, tc.wantBadReq)
+			}
+		})
 	}
 }

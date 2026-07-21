@@ -2,23 +2,9 @@ package gateway
 
 import (
 	"net/http"
+	"net/url"
 	"regexp"
 )
-
-// Policy controls which registry operations the gateway is willing to forward.
-// Each dimension can be toggled independently.
-type Policy struct {
-	// AllowBlobRead permits GET/HEAD on /v2/<name>/blobs/<digest>.
-	AllowBlobRead bool
-	// AllowBlobWrite permits blob uploads (POST/PATCH/PUT on
-	// /v2/<name>/blobs/uploads/...) and HEAD/DELETE writes on blobs.
-	AllowBlobWrite bool
-	// AllowManifestRead permits GET/HEAD on /v2/<name>/manifests/<ref> as well
-	// as tag listings and referrers queries.
-	AllowManifestRead bool
-	// AllowManifestWrite permits PUT/DELETE on /v2/<name>/manifests/<ref>.
-	AllowManifestWrite bool
-}
 
 // requirement describes what a request needs in order to be allowed.
 type requirement int
@@ -38,27 +24,6 @@ const (
 	reqManifestReadOrWrite
 )
 
-// allows reports whether the policy permits a request with the given
-// requirement.
-func (p Policy) allows(req requirement) bool {
-	switch req {
-	case reqBlobRead:
-		return p.AllowBlobRead
-	case reqBlobWrite:
-		return p.AllowBlobWrite
-	case reqBlobReadOrWrite:
-		return p.AllowBlobRead || p.AllowBlobWrite
-	case reqManifestRead:
-		return p.AllowManifestRead
-	case reqManifestWrite:
-		return p.AllowManifestWrite
-	case reqManifestReadOrWrite:
-		return p.AllowManifestRead || p.AllowManifestWrite
-	default:
-		return false
-	}
-}
-
 var (
 	// The repository name follows the OCI Distribution Spec grammar.
 	nameGrammar = `[a-z0-9]+((\.|_|__|-+)[a-z0-9]+)*(/[a-z0-9]+((\.|_|__|-+)[a-z0-9]+)*)*`
@@ -66,8 +31,8 @@ var (
 	blobUploadRe = regexp.MustCompile(`^/v2/(` + nameGrammar + `)/blobs/uploads/?.*$`)
 	blobRe       = regexp.MustCompile(`^/v2/(` + nameGrammar + `)/blobs/([^/]+)$`)
 	manifestRe   = regexp.MustCompile(`^/v2/(` + nameGrammar + `)/manifests/(.+)$`)
-	tagsRe        = regexp.MustCompile(`^/v2/(` + nameGrammar + `)/tags/list$`)
-	referrersRe   = regexp.MustCompile(`^/v2/(` + nameGrammar + `)/referrers/(.+)$`)
+	tagsRe       = regexp.MustCompile(`^/v2/(` + nameGrammar + `)/tags/list$`)
+	referrersRe  = regexp.MustCompile(`^/v2/(` + nameGrammar + `)/referrers/(.+)$`)
 )
 
 // request describes a classified registry request.
@@ -78,6 +43,18 @@ type request struct {
 	// write reports whether the operation mutates the registry. It selects the
 	// pull vs push token scope used when authenticating upstream.
 	write bool
+	// mountFrom is the source repository of a cross-repo blob mount
+	// (POST /v2/<name>/blobs/uploads/?mount=<digest>&from=<mountFrom>). It is
+	// empty for every other request. When set, the source repository needs read
+	// access in addition to write access on the destination, so a client cannot
+	// pull a blob it may not read into a repository it can write.
+	mountFrom string
+	// malformedQuery reports that the upload query could not be parsed
+	// unambiguously (a ';' the gateway drops but the upstream might honor, or
+	// duplicate mount/from values). Such a request must be rejected rather than
+	// forwarded: the gateway could otherwise authorize a different mount source
+	// than the one the upstream acts on.
+	malformedQuery bool
 }
 
 // classify inspects the request path and method and reports the repository, the
@@ -96,7 +73,24 @@ func classify(r *http.Request) (request, bool) {
 	if m := blobUploadRe.FindStringSubmatch(path); m != nil {
 		// Every step of the upload session (POST to start, PATCH to append,
 		// PUT to finalize, GET to query status, DELETE to cancel) is a write.
-		return request{repo: m[1], req: reqBlobWrite, kind: "blob upload", write: true}, true
+		req := request{repo: m[1], req: reqBlobWrite, kind: "blob upload", write: true}
+		// A cross-repo mount (POST ...?mount=<digest>&from=<repo>) copies an
+		// existing blob from another repository instead of re-uploading it; the
+		// source repository must be readable. Parse the query strictly and
+		// authorize exactly what will be forwarded upstream. Reject anything
+		// ambiguous: url.ParseQuery errors on (and drops) ';'-joined pairs that a
+		// lenient upstream might still act on, and duplicate mount/from values
+		// could let us authorize one source while the upstream mounts another.
+		if method == http.MethodPost {
+			q, err := url.ParseQuery(r.URL.RawQuery)
+			switch {
+			case err != nil || len(q["mount"]) > 1 || len(q["from"]) > 1:
+				req.malformedQuery = true
+			case len(q["mount"]) == 1 && len(q["from"]) == 1:
+				req.mountFrom = q.Get("from")
+			}
+		}
+		return req, true
 	}
 	if m := blobRe.FindStringSubmatch(path); m != nil {
 		switch method {

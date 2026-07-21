@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"regexp"
 	"strings"
 	"testing"
 
@@ -60,14 +59,28 @@ func (f *fakeUpstreamRT) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 }
 
-func newTestHandler(policy Policy, allowHost string, base http.RoundTripper) *Handler {
+// newTestHandler wires a gateway Handler driven by a compiled policy, for
+// hermetic tests (anonymous keychain, discarded logs, fake upstream).
+func newTestHandler(cp *CompiledPolicy, base http.RoundTripper) *Handler {
 	return New(
-		WithPolicy(policy),
-		WithAllowedRegistries([]*regexp.Regexp{regexp.MustCompile("^(?:" + regexp.QuoteMeta(allowHost) + ")$")}),
+		WithAuthorizer(cp),
 		WithKeychain(authn.NewMultiKeychain()), // always anonymous, hermetic
 		WithLogger(log.New(io.Discard, "", 0)),
 		WithBaseTransport(base),
 	)
+}
+
+// allowHostPolicy builds a policy allowing the given operations on any
+// repository of host (a stand-in for the old global read/write toggles).
+func allowHostPolicy(t *testing.T, host string, ops ...string) *CompiledPolicy {
+	t.Helper()
+	cp, err := compilePolicy(policyConfig{Version: 1, Rules: []ruleConfig{
+		{Action: "allow", Registry: host, Repository: "**", Operations: ops},
+	}})
+	if err != nil {
+		t.Fatalf("compilePolicy: %v", err)
+	}
+	return cp
 }
 
 func do(h *Handler, method, host, path string) *http.Response {
@@ -82,7 +95,7 @@ func do(h *Handler, method, host, path string) *http.Response {
 
 func TestForwardManifestRead(t *testing.T) {
 	up := &fakeUpstreamRT{}
-	h := newTestHandler(Policy{AllowManifestRead: true}, testUpstreamHost, up)
+	h := newTestHandler(allowHostPolicy(t, testUpstreamHost, "manifest:read"), up)
 
 	resp := do(h, http.MethodGet, testUpstreamHost, "/v2/app/manifests/latest")
 	if resp.StatusCode != http.StatusOK {
@@ -115,7 +128,8 @@ func TestForwardManifestRead(t *testing.T) {
 }
 
 func TestForwardDeniedByPolicy(t *testing.T) {
-	h := newTestHandler(Policy{AllowManifestRead: false, AllowBlobRead: true}, testUpstreamHost, &fakeUpstreamRT{})
+	// blob read allowed, manifest read not -> manifest GET denied.
+	h := newTestHandler(allowHostPolicy(t, testUpstreamHost, "blob:read"), &fakeUpstreamRT{})
 	resp := do(h, http.MethodGet, testUpstreamHost, "/v2/app/manifests/latest")
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("status = %d, want 403", resp.StatusCode)
@@ -123,7 +137,7 @@ func TestForwardDeniedByPolicy(t *testing.T) {
 }
 
 func TestForwardManifestWriteDeniedWhenOnlyReadAllowed(t *testing.T) {
-	h := newTestHandler(Policy{AllowManifestRead: true}, testUpstreamHost, &fakeUpstreamRT{})
+	h := newTestHandler(allowHostPolicy(t, testUpstreamHost, "manifest:read"), &fakeUpstreamRT{})
 	resp := do(h, http.MethodPut, testUpstreamHost, "/v2/app/manifests/latest")
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("status = %d, want 403", resp.StatusCode)
@@ -131,7 +145,7 @@ func TestForwardManifestWriteDeniedWhenOnlyReadAllowed(t *testing.T) {
 }
 
 func TestHostNotAllowed(t *testing.T) {
-	h := newTestHandler(Policy{AllowManifestRead: true}, testUpstreamHost, &fakeUpstreamRT{})
+	h := newTestHandler(allowHostPolicy(t, testUpstreamHost, "manifest:read"), &fakeUpstreamRT{})
 	resp := do(h, http.MethodGet, "evil.example.com", "/v2/app/manifests/latest")
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("status = %d, want 403", resp.StatusCode)
@@ -139,18 +153,42 @@ func TestHostNotAllowed(t *testing.T) {
 }
 
 func TestMissingHostHeader(t *testing.T) {
-	h := newTestHandler(Policy{AllowManifestRead: true}, testUpstreamHost, &fakeUpstreamRT{})
+	h := newTestHandler(allowHostPolicy(t, testUpstreamHost, "manifest:read"), &fakeUpstreamRT{})
 	resp := do(h, http.MethodGet, "", "/v2/app/manifests/latest")
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400", resp.StatusCode)
 	}
 }
 
-func TestDefaultRegistryFallback(t *testing.T) {
-	// No header, but a default registry is configured and allow-listed.
+func TestNoAuthorizerDeniesEverything(t *testing.T) {
+	// A handler built without WithAuthorizer must fail closed.
 	h := New(
-		WithPolicy(Policy{AllowManifestRead: true}),
-		WithAllowedRegistries([]*regexp.Regexp{regexp.MustCompile("^(?:" + regexp.QuoteMeta(testUpstreamHost) + ")$")}),
+		WithKeychain(authn.NewMultiKeychain()),
+		WithLogger(log.New(io.Discard, "", 0)),
+		WithBaseTransport(&fakeUpstreamRT{}),
+	)
+	if resp := do(h, http.MethodGet, testUpstreamHost, "/v2/app/manifests/latest"); resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("unconfigured gateway status = %d, want 403", resp.StatusCode)
+	}
+	if resp := do(h, http.MethodGet, testUpstreamHost, "/v2/"); resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("unconfigured gateway /v2/ status = %d, want 403", resp.StatusCode)
+	}
+}
+
+func TestAllowAllForwards(t *testing.T) {
+	h := newTestHandler(AllowAll(), &fakeUpstreamRT{})
+	if resp := do(h, http.MethodGet, testUpstreamHost, "/v2/"); resp.StatusCode != http.StatusOK {
+		t.Fatalf("allow-all /v2/ status = %d, want 200", resp.StatusCode)
+	}
+	if resp := do(h, http.MethodPut, "some.other.registry", "/v2/whatever/manifests/latest"); resp.StatusCode != http.StatusOK {
+		t.Fatalf("allow-all manifest write status = %d, want 200 (forwarded)", resp.StatusCode)
+	}
+}
+
+func TestDefaultRegistryFallback(t *testing.T) {
+	// No header, but a default registry is configured and allowed by the policy.
+	h := New(
+		WithAuthorizer(allowHostPolicy(t, testUpstreamHost, "manifest:read")),
 		WithKeychain(authn.NewMultiKeychain()),
 		WithLogger(log.New(io.Discard, "", 0)),
 		WithBaseTransport(&fakeUpstreamRT{}),
@@ -169,11 +207,10 @@ func TestDefaultRegistryFallback(t *testing.T) {
 	}
 }
 
-func TestDefaultRegistryStillAllowListed(t *testing.T) {
-	// A default registry that is not in the allow-list is still rejected.
+func TestDefaultRegistryStillPolicyChecked(t *testing.T) {
+	// A default registry that the policy does not allow is still rejected.
 	h := New(
-		WithPolicy(Policy{AllowManifestRead: true}),
-		WithAllowedRegistries([]*regexp.Regexp{regexp.MustCompile("^(?:ghcr\\.io)$")}),
+		WithAuthorizer(allowHostPolicy(t, "ghcr.io", "manifest:read")),
 		WithKeychain(authn.NewMultiKeychain()),
 		WithLogger(log.New(io.Discard, "", 0)),
 		WithBaseTransport(&fakeUpstreamRT{}),
@@ -181,12 +218,12 @@ func TestDefaultRegistryStillAllowListed(t *testing.T) {
 	)
 	resp := do(h, http.MethodGet, "", "/v2/app/manifests/latest")
 	if resp.StatusCode != http.StatusForbidden {
-		t.Fatalf("status = %d, want 403 (default registry not allow-listed)", resp.StatusCode)
+		t.Fatalf("status = %d, want 403 (default registry not in policy)", resp.StatusCode)
 	}
 }
 
 func TestVersionCheckAnonymous(t *testing.T) {
-	h := newTestHandler(Policy{}, testUpstreamHost, &fakeUpstreamRT{})
+	h := newTestHandler(allowHostPolicy(t, testUpstreamHost, "manifest:read"), &fakeUpstreamRT{})
 	resp := do(h, http.MethodGet, testUpstreamHost, "/v2/")
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
@@ -200,7 +237,7 @@ func TestVersionCheckAnonymous(t *testing.T) {
 }
 
 func TestUnknownEndpoint(t *testing.T) {
-	h := newTestHandler(Policy{AllowManifestRead: true, AllowBlobRead: true}, testUpstreamHost, &fakeUpstreamRT{})
+	h := newTestHandler(allowHostPolicy(t, testUpstreamHost, "manifest:read", "blob:read"), &fakeUpstreamRT{})
 	resp := do(h, http.MethodGet, testUpstreamHost, "/v2/app/whatever")
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", resp.StatusCode)
@@ -208,7 +245,7 @@ func TestUnknownEndpoint(t *testing.T) {
 }
 
 func TestForwardBlobUploadRewritesLocation(t *testing.T) {
-	h := newTestHandler(Policy{AllowBlobWrite: true}, testUpstreamHost, &fakeUpstreamRT{})
+	h := newTestHandler(allowHostPolicy(t, testUpstreamHost, "blob:write"), &fakeUpstreamRT{})
 	resp := do(h, http.MethodPost, testUpstreamHost, "/v2/app/blobs/uploads/")
 	if resp.StatusCode != http.StatusAccepted {
 		body, _ := io.ReadAll(resp.Body)
@@ -325,16 +362,16 @@ func TestCheckRedirect(t *testing.T) {
 }
 
 func TestAllowlistUsesResolvedRegistry(t *testing.T) {
-	// A header of "docker.io" resolves to index.docker.io; the allow-list must
-	// be enforced against the resolved registry.
-	allowIndex := newTestHandler(Policy{AllowManifestRead: true}, "index.docker.io", &fakeUpstreamRT{})
+	// A header of "docker.io" resolves to index.docker.io; the policy must be
+	// enforced against the resolved registry.
+	allowIndex := newTestHandler(allowHostPolicy(t, "index.docker.io", "manifest:read"), &fakeUpstreamRT{})
 	if resp := do(allowIndex, http.MethodGet, "docker.io", "/v2/library/ubuntu/manifests/latest"); resp.StatusCode != http.StatusOK {
 		t.Fatalf("docker.io should resolve to allowed index.docker.io, got %d", resp.StatusCode)
 	}
 
 	// A bare "myregistry" (no dot) resolves to Docker Hub, NOT to a host named
-	// "myregistry"; allowing only "myregistry" must therefore deny it.
-	allowMyReg := newTestHandler(Policy{AllowManifestRead: true}, "myregistry", &fakeUpstreamRT{})
+	// "myregistry"; a policy for only "myregistry" must therefore deny it.
+	allowMyReg := newTestHandler(allowHostPolicy(t, "myregistry", "manifest:read"), &fakeUpstreamRT{})
 	if resp := do(allowMyReg, http.MethodGet, "myregistry", "/v2/app/manifests/latest"); resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("bare 'myregistry' header resolves to Docker Hub and must be denied, got %d", resp.StatusCode)
 	}
