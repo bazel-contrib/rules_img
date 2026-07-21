@@ -3,14 +3,15 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "gateway",
     srcs = [
-        "allowlist.go",
         "classify.go",
         "gateway.go",
+        "policy.go",
     ],
     importpath = "github.com/bazel-contrib/rules_img/img_tool/pkg/serve/gateway",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/gateway",
+        "@com_github_goccy_go_yaml//:go-yaml",
         "@com_github_google_go_containerregistry//pkg/authn",
         "@com_github_google_go_containerregistry//pkg/name",
         "@com_github_google_go_containerregistry//pkg/v1/remote/transport",
@@ -21,9 +22,9 @@ go_test(
     name = "gateway_test",
     size = "small",
     srcs = [
-        "allowlist_test.go",
         "classify_test.go",
         "gateway_test.go",
+        "policy_test.go",
     ],
     embed = [":gateway"],
     deps = [

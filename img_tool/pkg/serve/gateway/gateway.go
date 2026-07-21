@@ -6,9 +6,9 @@
 // (see [github.com/bazel-contrib/rules_img/img_tool/pkg/gateway.OriginalHostHeader])
 // to tell the gateway which upstream registry they want to reach. The gateway
 // authenticates to that upstream itself using the crane keychain + token
-// exchange flow, and can allow or deny individual read/write operations for
-// blobs and manifests. The set of reachable upstream registries is restricted by
-// a list of hostname regular expressions.
+// exchange flow, and authorizes every request against a [CompiledPolicy]: an
+// ordered list of allow/deny rules matched on the resolved registry host,
+// repository path, and operation. The policy is reloadable at runtime.
 package gateway
 
 import (
@@ -21,9 +21,9 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/go-containerregistry/pkg/authn"
@@ -38,14 +38,19 @@ import (
 const authHandshakeTimeout = 2 * time.Minute
 
 // Handler is an [http.Handler] that forwards registry requests to upstream
-// registries, subject to a [Policy] and an allow-list of upstream hostnames.
+// registries, subject to a [CompiledPolicy].
 type Handler struct {
-	policy          Policy
-	allowed         []*regexp.Regexp
+	// policy holds the active policy, swapped atomically by Reload.
+	policy          atomic.Pointer[CompiledPolicy]
 	keychain        authn.Keychain
 	base            http.RoundTripper
 	defaultRegistry string
 	log             *log.Logger
+
+	// explicitPolicy is set by WithAuthorizer while options are applied and
+	// installed by New; when nil, New falls back to a fail-closed deny-all
+	// policy.
+	explicitPolicy *CompiledPolicy
 
 	cache authCache
 }
@@ -53,17 +58,11 @@ type Handler struct {
 // Option configures a [Handler].
 type Option func(*Handler)
 
-// WithPolicy sets the read/write policy enforced by the gateway.
-func WithPolicy(p Policy) Option {
-	return func(h *Handler) { h.policy = p }
-}
-
-// WithAllowedRegistries sets the list of regular expressions matched against the
-// upstream hostname. A request is only forwarded if at least one expression
-// matches. The expressions should be anchored by the caller (see the command
-// wiring, which wraps each pattern in ^(?:...)$).
-func WithAllowedRegistries(res []*regexp.Regexp) Option {
-	return func(h *Handler) { h.allowed = res }
+// WithAuthorizer installs the policy the gateway enforces (for example a
+// [CompiledPolicy] loaded from a file with [LoadPolicyFile], or [AllowAll]). If
+// no authorizer is supplied, the gateway denies every request.
+func WithAuthorizer(p *CompiledPolicy) Option {
+	return func(h *Handler) { h.explicitPolicy = p }
 }
 
 // WithKeychain sets the keychain used to resolve upstream credentials.
@@ -84,8 +83,8 @@ func WithLogger(l *log.Logger) Option {
 
 // WithDefaultRegistry sets a fallback upstream registry used when a request does
 // not carry the X-rules_img-Original-Host header. The default registry is still
-// subject to the allow-list and policy like any other upstream. An empty value
-// keeps the header mandatory.
+// subject to the policy like any other upstream. An empty value keeps the header
+// mandatory.
 func WithDefaultRegistry(registry string) Option {
 	return func(h *Handler) { h.defaultRegistry = registry }
 }
@@ -100,8 +99,27 @@ func New(opts ...Option) *Handler {
 	for _, o := range opts {
 		o(h)
 	}
+	policy := h.explicitPolicy
+	if policy == nil {
+		// Fail closed: an unconfigured gateway denies everything.
+		policy = &CompiledPolicy{}
+	}
+	h.policy.Store(policy)
 	h.cache.inner = make(map[string]*authEntry)
 	return h
+}
+
+// Reload swaps in a policy freshly loaded from path and returns it. If the file
+// cannot be read, parsed, or compiled, the previous policy is kept and the error
+// is returned, so a bad edit never opens the gateway up. It is safe to call
+// concurrently with in-flight requests.
+func (h *Handler) Reload(path string) (*CompiledPolicy, error) {
+	cp, err := LoadPolicyFile(path)
+	if err != nil {
+		return nil, err
+	}
+	h.policy.Store(cp)
+	return cp, nil
 }
 
 func defaultBaseTransport() http.RoundTripper {
@@ -113,6 +131,10 @@ func defaultBaseTransport() http.RoundTripper {
 
 // ServeHTTP implements [http.Handler].
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Snapshot the policy once so a concurrent reload cannot split a single
+	// request's decisions across two policies.
+	authz := h.policy.Load()
+
 	host := r.Header.Get(clientgateway.OriginalHostHeader)
 	if host == "" {
 		// Fall back to the configured default registry when the client did not
@@ -134,7 +156,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				fmt.Sprintf("invalid registry %q: %v", host, err))
 			return
 		}
-		if !h.registryAllowed(reg.RegistryStr()) {
+		if !authz.RegistryAllowed(hostname(reg.RegistryStr())) {
 			h.writeError(w, r, http.StatusForbidden, "DENIED",
 				fmt.Sprintf("upstream registry %q is not allowed by this gateway", reg.RegistryStr()))
 			return
@@ -153,6 +175,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			"unsupported registry endpoint")
 		return
 	}
+	if cls.malformedQuery {
+		// An upload query the gateway cannot parse the same way the upstream
+		// would (e.g. a ';' separator, or duplicate mount/from values) could let
+		// the client have us authorize a different mount source than the one the
+		// upstream acts on. Refuse it rather than forward it.
+		h.writeError(w, r, http.StatusBadRequest, "UNSUPPORTED",
+			"malformed or ambiguous upload query")
+		return
+	}
 
 	repo, err := name.NewRepository(host + "/" + cls.repo)
 	if err != nil {
@@ -160,37 +191,63 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			fmt.Sprintf("invalid repository %q: %v", cls.repo, err))
 		return
 	}
-	// Enforce the allow-list against the *resolved* registry, not the raw
-	// header. name.NewRepository routes a header like "myregistry" (no dot) to
-	// Docker Hub, so checking the header alone would not constrain the real
-	// upstream the gateway connects to.
-	if !h.registryAllowed(repo.RegistryStr()) {
+	// Enforce the allow-list and policy against the *resolved* registry and
+	// repository, not the raw header/path. name.NewRepository routes a header
+	// like "myregistry" (no dot) to Docker Hub and prepends library/ to a
+	// single-segment Docker Hub repo, so matching the header/path alone would
+	// not constrain the real upstream the gateway connects to.
+	regHost := hostname(repo.RegistryStr())
+	if !authz.RegistryAllowed(regHost) {
 		h.writeError(w, r, http.StatusForbidden, "DENIED",
 			fmt.Sprintf("upstream registry %q is not allowed by this gateway", repo.RegistryStr()))
 		return
 	}
-	if !h.policy.allows(cls.req) {
+	if allow, idx, desc := authz.Decide(regHost, repo.RepositoryStr(), cls.req); !allow {
+		h.log.Printf("%s %s (host=%s repo=%s) denied by policy (rule=%d %q)", r.Method, r.URL.Path, regHost, repo.RepositoryStr(), idx, desc)
 		h.writeError(w, r, http.StatusForbidden, "DENIED",
 			fmt.Sprintf("%s is not permitted by this gateway's policy", cls.kind))
 		return
 	}
 
+	// A cross-repo blob mount additionally reads the source repository, so it
+	// must be readable under the policy too. Resolve it against the same host
+	// (OCI mounts are same-registry) and fail closed on any problem.
+	if cls.mountFrom != "" {
+		if !h.mountSourceReadable(authz, host, cls.mountFrom) {
+			h.log.Printf("%s %s (host=%s) denied: mount source %q not readable by policy", r.Method, r.URL.Path, regHost, cls.mountFrom)
+			h.writeError(w, r, http.StatusForbidden, "DENIED",
+				fmt.Sprintf("mounting from %q is not permitted by this gateway's policy", cls.mountFrom))
+			return
+		}
+	}
+
 	h.forward(w, r, repo, cls)
 }
 
-// registryAllowed reports whether the resolved upstream registry is permitted.
-// The port, if any, is stripped so patterns match on the hostname.
-func (h *Handler) registryAllowed(registryStr string) bool {
-	hostname := registryStr
+// mountSourceReadable reports whether the cross-repo mount source repository is
+// readable under the policy. It resolves the source against the request's host
+// (mounts are always same-registry per the OCI spec) and fails closed on a parse
+// error or a disallowed registry.
+func (h *Handler) mountSourceReadable(authz *CompiledPolicy, host, from string) bool {
+	fromRepo, err := name.NewRepository(host + "/" + from)
+	if err != nil {
+		return false
+	}
+	fromHost := hostname(fromRepo.RegistryStr())
+	if !authz.RegistryAllowed(fromHost) {
+		return false
+	}
+	allow, _, _ := authz.Decide(fromHost, fromRepo.RepositoryStr(), reqBlobRead)
+	return allow
+}
+
+// hostname strips the port, if any, from a resolved registry string so patterns
+// match on the bare hostname.
+func hostname(registryStr string) string {
 	if hn, _, err := net.SplitHostPort(registryStr); err == nil {
-		hostname = hn
+		return hn
 	}
-	for _, re := range h.allowed {
-		if re.MatchString(hostname) {
-			return true
-		}
-	}
-	return false
+	return registryStr
 }
 
 // forward proxies the request to the upstream registry using an authenticated

@@ -4,9 +4,10 @@
 // Clients connect anonymously and must set the X-rules_img-Original-Host header
 // to select the upstream registry. The gateway authenticates to that upstream
 // using the ambient registry credentials (docker config, cloud keychains, or an
-// optional Bazel credential helper) and can allow or deny individual blob and
-// manifest read/write operations. The upstreams a client may reach are
-// restricted by a list of hostname regular expressions.
+// optional Bazel credential helper) and authorizes every request against a
+// policy file: an ordered list of allow/deny rules matched on the upstream
+// registry host, repository path, and operation (blob/manifest read/write). The
+// policy file can be reloaded at runtime by sending the process a SIGHUP.
 package main
 
 import (
@@ -18,6 +19,8 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	reg "github.com/bazel-contrib/rules_img/img_tool/pkg/auth/registry"
@@ -30,13 +33,14 @@ func newFlagSet() *flag.FlagSet {
 	flagSet.Usage = func() {
 		fmt.Fprintf(flagSet.Output(), "Run a forwarding OCI distribution gateway.\n\n")
 		fmt.Fprintf(flagSet.Output(), "The gateway forwards requests to the upstream registry named in the\n")
-		fmt.Fprintf(flagSet.Output(), "X-rules_img-Original-Host request header, subject to the policy below.\n\n")
-		fmt.Fprintf(flagSet.Output(), "Usage: oci-distribution-gateway [OPTIONS]\n")
+		fmt.Fprintf(flagSet.Output(), "X-rules_img-Original-Host request header, subject to the policy file.\n\n")
+		fmt.Fprintf(flagSet.Output(), "Usage: oci-distribution-gateway --policy-file <path> [OPTIONS]\n")
 		flagSet.PrintDefaults()
 		examples := []string{
-			"oci-distribution-gateway --port 8080 --allowed-registry ghcr.io --allowed-registry gcr.io",
-			"oci-distribution-gateway --port 8080 --allowed-registry-regex '.*\\.docker\\.io'",
-			"oci-distribution-gateway --unix-socket /tmp/gw.sock --allowed-registry-regex '.*' --allow-blob-write --allow-manifest-write",
+			"oci-distribution-gateway --port 8080 --policy-file /etc/img/gateway-policy.json",
+			"oci-distribution-gateway --unix-socket /run/gw.sock --policy-file /etc/img/gateway-policy.yaml",
+			"oci-distribution-gateway --validate-policy --policy-file /etc/img/gateway-policy.json",
+			"oci-distribution-gateway --unix-socket /run/gw.sock --dangerously-allow-all",
 		}
 		fmt.Fprintf(flagSet.Output(), "\nExamples:\n")
 		for _, example := range examples {
@@ -51,28 +55,22 @@ func Run(ctx context.Context, args []string) {
 		address              string
 		port                 int
 		unixSocket           string
-		allowBlobRead        bool
-		allowBlobWrite       bool
-		allowManifestRead    bool
-		allowManifestWrite   bool
-		allowedRegistries    stringSliceFlag
-		allowedRegistryRegex stringSliceFlag
 		defaultRegistry      string
 		credentialHelperPath string
+		policyFile           string
+		validatePolicy       bool
+		dangerouslyAllowAll  bool
 	)
 
 	flagSet := newFlagSet()
 	flagSet.StringVar(&address, "address", "localhost", "Address to bind the gateway to (ignored when --unix-socket is set)")
 	flagSet.IntVar(&port, "port", 0, "Port to bind the gateway to (0 picks a free port; ignored when --unix-socket is set)")
 	flagSet.StringVar(&unixSocket, "unix-socket", "", "Path to a UNIX domain socket to listen on instead of TCP")
-	flagSet.BoolVar(&allowBlobRead, "allow-blob-read", true, "Allow reading blobs (GET/HEAD on /v2/<name>/blobs)")
-	flagSet.BoolVar(&allowBlobWrite, "allow-blob-write", false, "Allow writing blobs (POST/PATCH/PUT/DELETE on /v2/<name>/blobs)")
-	flagSet.BoolVar(&allowManifestRead, "allow-manifest-read", true, "Allow reading manifests (GET/HEAD on /v2/<name>/manifests), tag listings and referrers")
-	flagSet.BoolVar(&allowManifestWrite, "allow-manifest-write", false, "Allow writing manifests (PUT/DELETE on /v2/<name>/manifests)")
-	flagSet.Var(&allowedRegistries, "allowed-registry", "Exact upstream hostname to allow (e.g. gcr.io). Matched literally, so dots need no escaping. Repeatable.")
-	flagSet.Var(&allowedRegistryRegex, "allowed-registry-regex", "Regular expression matched against the upstream hostname (e.g. '.*\\.docker\\.io'). Anchored (full match). Repeatable.")
-	flagSet.StringVar(&defaultRegistry, "default-registry", "", "Upstream registry to forward to when a request omits the X-rules_img-Original-Host header (must also be allowed via --allowed-registry or --allowed-registry-regex)")
+	flagSet.StringVar(&defaultRegistry, "default-registry", "", "Upstream registry to forward to when a request omits the X-rules_img-Original-Host header (must also be allowed by the policy)")
 	flagSet.StringVar(&credentialHelperPath, "credential-helper", "", "Path to a Bazel credential helper binary used to authenticate to upstream registries (optional)")
+	flagSet.StringVar(&policyFile, "policy-file", "", "Path to a JSON (or YAML) policy file with per-repository allow/deny rules. Required unless --dangerously-allow-all is set. Reloadable at runtime with SIGHUP.")
+	flagSet.BoolVar(&validatePolicy, "validate-policy", false, "Load and validate --policy-file, then exit (0 if valid, non-zero otherwise). Does not start the gateway.")
+	flagSet.BoolVar(&dangerouslyAllowAll, "dangerously-allow-all", false, "Allow every request to every upstream, ignoring the policy file. DANGEROUS: only for trusted, isolated environments.")
 
 	if err := flagSet.Parse(args[1:]); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -84,16 +82,42 @@ func Run(ctx context.Context, args []string) {
 		os.Exit(1)
 	}
 
-	if len(allowedRegistries) == 0 && len(allowedRegistryRegex) == 0 {
-		fmt.Fprintln(os.Stderr, "Error: at least one --allowed-registry or --allowed-registry-regex must be specified")
-		flagSet.Usage()
-		os.Exit(1)
+	if validatePolicy {
+		if policyFile == "" {
+			fmt.Fprintln(os.Stderr, "Error: --validate-policy requires --policy-file")
+			os.Exit(1)
+		}
+		cp, err := gateway.LoadPolicyFile(policyFile)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Fprintf(os.Stderr, "policy %s is valid (%s)\n", policyFile, cp.Summary())
+		os.Exit(0)
 	}
 
-	allowed, err := gateway.CompileAllowlist(allowedRegistries, allowedRegistryRegex)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+	// Resolve the authorization policy. --dangerously-allow-all overrides (and
+	// ignores) any policy file; otherwise a policy file is required.
+	var authz *gateway.CompiledPolicy
+	switch {
+	case dangerouslyAllowAll:
+		if policyFile != "" {
+			log.Printf("warning: --dangerously-allow-all is set; ignoring --policy-file %s", policyFile)
+		}
+		log.Printf("WARNING: --dangerously-allow-all is set; the gateway will forward EVERY request to any upstream without policy checks")
+		authz = gateway.AllowAll()
+	case policyFile == "":
+		fmt.Fprintln(os.Stderr, "Error: --policy-file is required (or pass --dangerously-allow-all to disable policy checks)")
+		flagSet.Usage()
 		os.Exit(1)
+	default:
+		cp, err := gateway.LoadPolicyFile(policyFile)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		log.Printf("loaded policy from %s (%s)", policyFile, cp.Summary())
+		authz = cp
 	}
 
 	if credentialHelperPath != "" {
@@ -105,13 +129,7 @@ func Run(ctx context.Context, args []string) {
 	}
 
 	handler := gateway.New(
-		gateway.WithPolicy(gateway.Policy{
-			AllowBlobRead:      allowBlobRead,
-			AllowBlobWrite:     allowBlobWrite,
-			AllowManifestRead:  allowManifestRead,
-			AllowManifestWrite: allowManifestWrite,
-		}),
-		gateway.WithAllowedRegistries(allowed),
+		gateway.WithAuthorizer(authz),
 		gateway.WithDefaultRegistry(defaultRegistry),
 		gateway.WithKeychain(reg.Keychain()),
 	)
@@ -139,9 +157,44 @@ func Run(ctx context.Context, args []string) {
 		IdleTimeout:  5 * time.Minute,
 	}
 
+	// Reload the policy file on SIGHUP. A failed reload keeps the previous
+	// policy, so a bad edit never widens access or takes the gateway down.
+	// (With --dangerously-allow-all there is no file to reload.)
+	if policyFile != "" && !dangerouslyAllowAll {
+		hup := make(chan os.Signal, 1)
+		signal.Notify(hup, syscall.SIGHUP)
+		go func() {
+			for range hup {
+				if cp, err := handler.Reload(policyFile); err != nil {
+					log.Printf("policy reload FAILED, keeping previous policy: %v", err)
+				} else {
+					log.Printf("reloaded policy from %s (%s)", policyFile, cp.Summary())
+				}
+			}
+		}()
+	}
+
+	// Shut down gracefully on SIGINT/SIGTERM so in-flight uploads/downloads can
+	// finish (or the deadline forces them closed).
+	shutdown := make(chan os.Signal, 1)
+	signal.Notify(shutdown, syscall.SIGINT, syscall.SIGTERM)
+	serveErr := make(chan error, 1)
+	go func() { serveErr <- server.Serve(listener) }()
+
 	fmt.Fprintf(os.Stderr, "oci-distribution-gateway listening on %s\n", listener.Addr())
-	if err := server.Serve(listener); err != nil && err != http.ErrServerClosed {
-		log.Fatalf("Failed to serve: %v", err)
+
+	select {
+	case err := <-serveErr:
+		if err != nil && err != http.ErrServerClosed {
+			log.Fatalf("Failed to serve: %v", err)
+		}
+	case sig := <-shutdown:
+		log.Printf("received %s, shutting down gracefully...", sig)
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			log.Printf("graceful shutdown error: %v", err)
+		}
 	}
 }
 
