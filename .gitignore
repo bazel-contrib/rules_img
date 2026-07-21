@@ -19,3 +19,6 @@ prebuilt_lockfile.json
 !modules/rules_img_signer_notation/prebuilt_lockfile.json
 tools/bazel
 e2e/*/tools/bazel
+
+# local reference clones (not committed)
+.reference/

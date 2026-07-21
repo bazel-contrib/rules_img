@@ -1,0 +1,137 @@
+[
+  {
+    "name": "basic-l-1",
+    "input": "basic-l-1.tar.gz",
+    "span": 4096
+  },
+  {
+    "name": "basic-l0",
+    "input": "basic-l0.tar.gz",
+    "span": 4096
+  },
+  {
+    "name": "basic-l1",
+    "input": "basic-l1.tar.gz",
+    "span": 4096
+  },
+  {
+    "name": "basic-l9",
+    "input": "basic-l9.tar.gz",
+    "span": 4096
+  },
+  {
+    "name": "empty",
+    "input": "empty.tar.gz",
+    "span": 4096
+  },
+  {
+    "name": "hdr-all",
+    "input": "hdr-all.tar.gz",
+    "span": 4096
+  },
+  {
+    "name": "hdr-comment",
+    "input": "hdr-comment.tar.gz",
+    "span": 4096
+  },
+  {
+    "name": "hdr-extra",
+    "input": "hdr-extra.tar.gz",
+    "span": 4096
+  },
+  {
+    "name": "hdr-name",
+    "input": "hdr-name.tar.gz",
+    "span": 4096
+  },
+  {
+    "name": "incompressible-l0-s16384",
+    "input": "incompressible-l0.tar.gz",
+    "span": 16384
+  },
+  {
+    "name": "incompressible-l0-s65536",
+    "input": "incompressible-l0.tar.gz",
+    "span": 65536
+  },
+  {
+    "name": "incompressible-l9",
+    "input": "incompressible-l9.tar.gz",
+    "span": 65536
+  },
+  {
+    "name": "large-compressible-l1",
+    "input": "large-compressible-l1.tar.gz",
+    "span": 4194304
+  },
+  {
+    "name": "large-compressible-l6",
+    "input": "large-compressible-l6.tar.gz",
+    "span": 4194304
+  },
+  {
+    "name": "many-l0",
+    "input": "many-l0.tar.gz",
+    "span": 4096
+  },
+  {
+    "name": "many-l6-s16384",
+    "input": "many-l6.tar.gz",
+    "span": 16384
+  },
+  {
+    "name": "many-l6-s4096",
+    "input": "many-l6.tar.gz",
+    "span": 4096
+  },
+  {
+    "name": "many-l9",
+    "input": "many-l9.tar.gz",
+    "span": 16384
+  },
+  {
+    "name": "meta",
+    "input": "meta.tar.gz",
+    "span": 4096
+  },
+  {
+    "name": "multi-basic",
+    "input": "multi-basic.tar.gz",
+    "span": 4096
+  },
+  {
+    "name": "multi-large",
+    "input": "multi-large.tar.gz",
+    "span": 4194304
+  },
+  {
+    "name": "multi-text",
+    "input": "multi-text.tar.gz",
+    "span": 65536
+  },
+  {
+    "name": "single",
+    "input": "single.tar.gz",
+    "span": 4096
+  },
+  {
+    "name": "text-l0",
+    "input": "text-l0.tar.gz",
+    "span": 65536
+  },
+  {
+    "name": "text-l6-s4096",
+    "input": "text-l6.tar.gz",
+    "span": 4096
+  },
+  {
+    "name": "text-l6-s65536",
+    "input": "text-l6.tar.gz",
+    "span": 65536
+  },
+  {
+    "name": "text-l9",
+    "input": "text-l9.tar.gz",
+    "span": 65536
+  }
+]

@@ -1,0 +1,32 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+# gazelle:exclude testdata/generate
+
+go_library(
+    name = "ztoc",
+    srcs = [
+        "build.go",
+        "flatbuffer.go",
+        "inflate.go",
+        "marshal.go",
+        "toc.go",
+        "zinfo.go",
+        "ztoc.go",
+    ],
+    importpath = "github.com/bazel-contrib/rules_img/img_tool/pkg/ztoc",
+    visibility = ["//visibility:public"],
+    deps = ["@com_github_opencontainers_go_digest//:go-digest"],
+)
+
+go_test(
+    name = "ztoc_test",
+    srcs = [
+        "corpus_test.go",
+        "coverage_test.go",
+        "internal_test.go",
+    ],
+    data = glob(["testdata/**"]),
+    embed = [":ztoc"],
+    embedsrcs = glob(["testdata/vectors/**"]),  # keep
+    deps = ["@com_github_opencontainers_go_digest//:go-digest"],
+)
