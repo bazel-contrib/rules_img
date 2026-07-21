@@ -204,6 +204,7 @@ def _image_push_impl(ctx):
             mode = push_at_build_time.mode,
             content = push_at_build_time.content,
             blob_repository = ctx.attr._push_settings[PushSettingsInfo].blob_repository,
+            manifest_repository = push_at_build_time.manifest_repository,
             gateway = push_at_build_time.gateway,
             push_gateway = push_at_build_time.push_gateway,
             pull_gateway = push_at_build_time.pull_gateway,

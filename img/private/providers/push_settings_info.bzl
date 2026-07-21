@@ -12,7 +12,7 @@ FIELDS = dict(
     credential_helper_oci_registry = "Credential helper used only for OCI registry operations (push, tag). Takes precedence over credential_helper for registry auth. Uses $IMG_CREDENTIAL_HELPER_OCI_REGISTRY env var if not set. See docs/credential-helpers.md.",
     credential_helper_remote_cache = "Credential helper used only to authenticate gRPC calls to the remote cache / remote execution API. Takes precedence over credential_helper for those calls. Uses $IMG_CREDENTIAL_HELPER_REMOTE_CACHE env var if not set. See docs/credential-helpers.md.",
     cross_mount = "Cross-mount configuration. Either 'same_registry', 'cross_registry' or 'disabled'.",
-    blob_repository = "When non-empty, the staging repository that layer blobs are pushed to and cross-mounted from when pushing manifests. Empty means blobs go to the image's own repository.",
+    blob_repository = "When non-empty, the staging repository that image blobs are pushed to and cross-mounted from when pushing manifests. At build time every blob (layers and config) is staged here; layers are cross-mounted into the image's real repository. Empty means blobs go to the image's own repository.",
     forbid_layer_push = "Bool: when True, `img deploy` refuses to upload layer blob bytes (layers must be cross-mounted or already present).",
 )
 

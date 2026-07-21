@@ -143,6 +143,38 @@ func TestPushBlobUploadsToStagingRepository(t *testing.T) {
 	}
 }
 
+// TestResolveDescriptorFromBlob verifies that, when no metadata file is provided,
+// resolveDescriptor derives the descriptor by hashing the blob file. This is how
+// the config blob (which has no standalone descriptor file) is pushed at build
+// time: sha256(config file) is exactly the digest the manifest's config descriptor
+// references.
+func TestResolveDescriptorFromBlob(t *testing.T) {
+	dir := t.TempDir()
+	blobPath, want := writeBlobFile(t, dir)
+
+	got, err := resolveDescriptor("", blobPath, "application/vnd.oci.image.config.v1+json")
+	if err != nil {
+		t.Fatalf("resolveDescriptor: %v", err)
+	}
+	if got.Digest != want.Digest {
+		t.Errorf("Digest = %q, want %q", got.Digest, want.Digest)
+	}
+	if got.Size != want.Size {
+		t.Errorf("Size = %d, want %d", got.Size, want.Size)
+	}
+	if got.MediaType != "application/vnd.oci.image.config.v1+json" {
+		t.Errorf("MediaType = %q, want the value passed in", got.MediaType)
+	}
+}
+
+// TestResolveDescriptorRequiresSource verifies resolveDescriptor errors when it has
+// neither a metadata file nor a blob to hash.
+func TestResolveDescriptorRequiresSource(t *testing.T) {
+	if _, err := resolveDescriptor("", "", ""); err == nil {
+		t.Error("expected an error when neither --metadata nor --blob is provided")
+	}
+}
+
 func anyHasPrefix(items []string, prefix string) bool {
 	for _, item := range items {
 		if strings.HasPrefix(item, prefix) {

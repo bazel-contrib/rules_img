@@ -176,7 +176,7 @@ func MergeDeployManifests(ctx context.Context, inputPaths []string, outputPath s
 		settings := deployManifest.Settings
 		if settings.BlobRepository != "" {
 			if blobRepository != "" && blobRepository != settings.BlobRepository {
-				return fmt.Errorf("conflicting blob_repository across merged deploy manifests: %q vs %q (all merged operations must share one push_at_build_time_repository)", blobRepository, settings.BlobRepository)
+				return fmt.Errorf("conflicting blob_repository across merged deploy manifests: %q vs %q (all merged operations must share one push_at_build_time_blob_repository)", blobRepository, settings.BlobRepository)
 			}
 			blobRepository = settings.BlobRepository
 		}

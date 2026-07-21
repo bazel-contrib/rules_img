@@ -18,18 +18,20 @@ import (
 
 func manifestProcess(ctx context.Context, args []string) {
 	var (
-		requestFile  string
-		ociLayouts   stringSliceFlag
-		layerResults stringSliceFlag
-		mode         string
-		markerPath   string
-		jobs         int
+		requestFile        string
+		ociLayouts         stringSliceFlag
+		layerResults       stringSliceFlag
+		manifestRepository string
+		mode               string
+		markerPath         string
+		jobs               int
 	)
 
 	flagSet := flag.NewFlagSet("push manifest", flag.ContinueOnError)
 	flagSet.StringVar(&requestFile, "request-file", "", "Push-only deploy manifest JSON. Required.")
 	flagSet.Var(&ociLayouts, "oci-layout", "Path to a (sparse) OCI layout with the manifest(s) + config (can be repeated). Required.")
 	flagSet.Var(&layerResults, "layer-result", "Path to a JSON result from `push blob` recording a layer's location for cross-mounting (can be repeated).")
+	flagSet.StringVar(&manifestRepository, "manifest-repository", "", "Repository to upload the manifest(s)/index and config to instead of the operation's own repository. Layer blobs are still cross-mounted from where `push blob` put them (this does not change blob mounting).")
 	flagSet.StringVar(&mode, "mode", "enabled", "Failure mode: 'best_effort' (log, don't fail build) or 'enabled' (fail build).")
 	flagSet.StringVar(&markerPath, "marker", "", "Path to the marker file to write on success. Required.")
 	flagSet.IntVar(&jobs, "jobs", 16, "Maximum number of parallel push operations.")
@@ -42,10 +44,10 @@ func manifestProcess(ctx context.Context, args []string) {
 		os.Exit(1)
 	}
 
-	finish(mode, markerPath, nil, pushManifest(ctx, requestFile, []string(ociLayouts), []string(layerResults), jobs))
+	finish(mode, markerPath, nil, pushManifest(ctx, requestFile, []string(ociLayouts), []string(layerResults), manifestRepository, jobs))
 }
 
-func pushManifest(ctx context.Context, requestFile string, ociLayouts, layerResults []string, jobs int) error {
+func pushManifest(ctx context.Context, requestFile string, ociLayouts, layerResults []string, manifestRepository string, jobs int) error {
 	raw, err := os.ReadFile(requestFile)
 	if err != nil {
 		return fmt.Errorf("reading request file %s: %w", requestFile, err)
@@ -96,10 +98,17 @@ func pushManifest(ctx context.Context, requestFile string, ociLayouts, layerResu
 		return fmt.Errorf("no push operations found in request file")
 	}
 
-	uploader := push.NewBuilder(vfs).
+	uploaderBuilder := push.NewBuilder(vfs).
 		WithJobs(jobs).
-		WithRemoteOptions(registry.WithAuthFromMultiKeychain(), remote.WithTransport(pushTransport)).
-		Build()
+		WithRemoteOptions(registry.WithAuthFromMultiKeychain(), remote.WithTransport(pushTransport))
+	// Redirect the manifest/index (and the config uploaded alongside it) to the
+	// manifest-staging repository when configured. Layer blobs are unaffected: they
+	// are cross-mounted from wherever `push blob` put them (recorded via the
+	// per-layer cross-mount sources above), not re-uploaded into this repository.
+	if manifestRepository != "" {
+		uploaderBuilder = uploaderBuilder.WithOverrideRepository(manifestRepository)
+	}
+	uploader := uploaderBuilder.Build()
 	if _, err := uploader.PushAll(ctx, pushOps, req.Settings.PushStrategy); err != nil {
 		return fmt.Errorf("pushing manifests: %w", err)
 	}

@@ -21,7 +21,7 @@ FIELDS = dict(
     stamp_settings = "StampSettingInfo provider for stamp resolution.",
     tracks_content = "Bool: when True, expose the image digest to templates and re-stamp tags on content change.",
     signing = "struct(config_info, best_effort, targets) describing how to sign this push, or None.",
-    blob_repository = "When non-empty, the staging repository that layer blobs are pushed to and cross-mounted from. Empty means blobs go to the image's own repository.",
+    blob_repository = "When non-empty, the staging repository that image blobs are pushed to and cross-mounted from. At build time every blob (layers and config) is staged here; layers are cross-mounted into the image's real repository. Empty means blobs go to the image's own repository.",
     forbid_layer_push = "Bool: when True, `img deploy` refuses to upload layer blob bytes (layers must be cross-mounted or already present).",
 )
 

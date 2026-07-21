@@ -275,12 +275,23 @@ string_flag(
     visibility = ["//visibility:public"],
 )
 
-# When non-empty, layer blobs are pushed to this repository (a "staging"
-# repository within the destination registry) and cross-mounted from there when
-# the manifest is pushed to its real repository. Applies to both push-at-build-time
-# and `bazel run` pushes.
+# When non-empty, every image blob (all layers and the config) is pushed to this
+# repository (a "staging" repository within the destination registry) and
+# cross-mounted from there when the manifest is pushed to its real repository.
+# Applies to both push-at-build-time and `bazel run` pushes.
 string_flag(
-    name = "push_at_build_time_repository",
+    name = "push_at_build_time_blob_repository",
+    build_setting_default = "",
+    visibility = ["//visibility:public"],
+)
+
+# When non-empty, the push-at-build-time manifest push (content=blobs_and_manifests)
+# uploads the manifest(s)/index (and, directly, the config) to this repository
+# instead of the image's real repository. This only redirects where manifests are
+# written at build time; it does NOT change where layer blobs are mounted from
+# (that is push_at_build_time_blob_repository), since manifests are not cross-mounted.
+string_flag(
+    name = "push_at_build_time_manifest_repository",
     build_setting_default = "",
     visibility = ["//visibility:public"],
 )

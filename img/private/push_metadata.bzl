@@ -460,18 +460,22 @@ def build_time_push_actions(
         mode,
         content,
         blob_repository,
+        manifest_repository,
         gateway,
         push_gateway,
         pull_gateway,
         pull_info):
     """Create the PushImage validation actions for one push operation.
 
-    Emits one action per layer (mnemonic PushImage) that pushes a single blob to
+    Emits one action per blob (mnemonic PushImage) that pushes a single blob to
     the blob target repository (the staging repository if blob_repository is set,
     else the operation's own repository) and records where it landed in a JSON
-    result. When content == "blobs_and_manifests", also emits one action that
-    pushes the config + manifest(s), depending on all per-layer results so it runs
-    after them and mounts the layers from where they were pushed.
+    result: one action per layer, plus one per manifest for the config blob. The
+    config actions run in both content modes, so after a build every blob of the
+    image (layers and config) is present in the blob target repository. When
+    content == "blobs_and_manifests", also emits one action that pushes the
+    config + manifest(s), depending on all per-layer results so it runs after them
+    and mounts the layers from where they were pushed.
 
     Shared by the push_specs path (`process_deploy_specs`) and the standalone
     `image_push` rule so both push at build time identically.
@@ -489,19 +493,24 @@ def build_time_push_actions(
       sparse_layout: sparse OCI layout File required when content is
         "blobs_and_manifests"; None is accepted only for content == "blobs".
       mode: push mode string passed to the img tool (e.g. "push").
-      content: either "blobs" (push layer blobs only) or "blobs_and_manifests"
-        (push blobs then config+manifest(s)).
-      blob_repository: optional staging repository to push blobs to before
-        mounting them into the final repository; None means push directly.
+      content: either "blobs" (push layer + config blobs only) or
+        "blobs_and_manifests" (push blobs then config+manifest(s)).
+      blob_repository: optional staging repository to push blobs (layers and
+        config) to before mounting them into the final repository; None means push
+        directly.
+      manifest_repository: optional repository to upload the manifest(s)/index and
+        config to instead of the operation's own repository, used only when
+        content == "blobs_and_manifests". Layer blobs are still cross-mounted from
+        blob_repository, so this does not change blob mounting.
       gateway: default registry gateway for both push and pull, or None.
       push_gateway: push-specific registry gateway override, or None.
       pull_gateway: pull-specific registry gateway override, or None.
       pull_info: PullInfo used when computing the manifest push metadata.
 
     Returns:
-      List of Files to place in the `_validation` output group: the per-layer
-      result JSONs when content == "blobs", or the single manifest marker file
-      when content == "blobs_and_manifests".
+      List of Files to place in the `_validation` output group: the per-layer and
+      per-config result JSONs, plus (when content == "blobs_and_manifests") the
+      single manifest marker file.
     """
     img_toolchain_info = ctx.toolchains[TOOLCHAIN].imgtoolchaininfo
     tool = img_toolchain_info.tool_exe
@@ -558,8 +567,41 @@ def build_time_push_actions(
             ctx.actions.run(**blob_run_kwargs)
             layer_results.append(result)
 
+    # Push each manifest's config blob to the same blob target as the layers (one
+    # action per config). This runs in both content modes, so a "blobs"-mode build
+    # leaves every blob of the image -- layers and config -- in the blob target
+    # repository, and a later manifest push (here or via `bazel run`) only has to
+    # write manifests. The config blob has no standalone descriptor file, so `push
+    # blob` derives the descriptor by hashing the config file (which is exactly the
+    # content the manifest's config descriptor addresses).
+    config_results = []
+    for (mi, manifest) in manifests:
+        config_result = ctx.actions.declare_file("{}.config.{}.json".format(prefix, mi))
+        config_args = ctx.actions.args()
+        config_args.add("push")
+        config_args.add("blob")
+        config_args.add("--configuration-file", configuration_json.path)
+        config_args.add("--blob", manifest.config.path)
+        if blob_repository:
+            config_args.add("--blob-repository", blob_repository)
+        config_args.add("--mode", mode)
+        config_args.add("--output", config_result.path)
+        config_run_kwargs = dict(
+            inputs = [configuration_json, manifest.config],
+            outputs = [config_result],
+            executable = tool,
+            arguments = [config_args],
+            mnemonic = "PushImage",
+            execution_requirements = exec_requirements,
+            progress_message = "Pushing config blob %s (manifest %d)" % (ctx.label, mi),
+        )
+        if gateway_env:
+            config_run_kwargs["env"] = gateway_env
+        ctx.actions.run(**config_run_kwargs)
+        config_results.append(config_result)
+
     if content != "blobs_and_manifests":
-        return layer_results
+        return layer_results + config_results
 
     if sparse_layout == None:
         fail(("push_at_build_time with content='blobs_and_manifests' needs the image's " +
@@ -591,6 +633,8 @@ def build_time_push_actions(
     args.add("manifest")
     args.add("--request-file", deploy_metadata.path)
     args.add("--oci-layout", sparse_layout.path)
+    if manifest_repository:
+        args.add("--manifest-repository", manifest_repository)
     args.add("--mode", mode)
     args.add("--marker", marker.path)
     args.add_all(layer_results, before_each = "--layer-result")
@@ -606,7 +650,7 @@ def build_time_push_actions(
     if gateway_env:
         manifest_run_kwargs["env"] = gateway_env
     ctx.actions.run(**manifest_run_kwargs)
-    return [marker]
+    return [marker] + config_results
 
 def process_deploy_specs(
         ctx,
@@ -620,6 +664,7 @@ def process_deploy_specs(
         allow_manifest_tags,
         push_at_build_time_mode = "disabled",
         push_at_build_time_content = "blobs_and_manifests",
+        push_at_build_time_manifest_repository = "",
         push_at_build_time_gateway = "",
         push_at_build_time_push_gateway = "",
         push_at_build_time_pull_gateway = "",
@@ -639,6 +684,7 @@ def process_deploy_specs(
             not 'disabled' and push_specs are present, PushImage validation actions
             are emitted for each push spec.
         push_at_build_time_content: One of 'blobs', 'blobs_and_manifests'.
+        push_at_build_time_manifest_repository: Repository the build-time manifest push (content='blobs_and_manifests') uploads manifest(s)/index and config to instead of the operation's own repository, or ''. Does not affect blob cross-mounting.
         push_at_build_time_gateway: Shared registry gateway endpoint (IMG_REGISTRY_GATEWAY) for the build-time push actions, or ''.
         push_at_build_time_push_gateway: Push registry gateway endpoint (IMG_REGISTRY_PUSH_GATEWAY) for the build-time push actions, or ''.
         push_at_build_time_pull_gateway: Pull registry gateway endpoint (IMG_REGISTRY_PULL_GATEWAY) for the build-time push actions, or ''.
@@ -746,6 +792,7 @@ def process_deploy_specs(
                 mode = push_at_build_time_mode,
                 content = push_at_build_time_content,
                 blob_repository = push_config.blob_repository,
+                manifest_repository = push_at_build_time_manifest_repository,
                 gateway = push_at_build_time_gateway,
                 push_gateway = push_at_build_time_push_gateway,
                 pull_gateway = push_at_build_time_pull_gateway,

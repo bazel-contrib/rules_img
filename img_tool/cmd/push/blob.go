@@ -2,6 +2,7 @@ package pushcmd
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"flag"
@@ -52,30 +53,32 @@ func blobProcess(ctx context.Context, args []string) {
 		casDir            string
 		sources           stringSliceFlag
 		blobRepository    string
+		mediaType         string
 		mode              string
 		outputPath        string
 	)
 
 	flagSet := flag.NewFlagSet("push blob", flag.ContinueOnError)
 	flagSet.StringVar(&configurationPath, "configuration-file", "", "Path to the configuration file ({registry, repository}). Required.")
-	flagSet.StringVar(&metadataPath, "metadata", "", "Path to the layer metadata JSON (digest/mediaType/size). Required.")
-	flagSet.StringVar(&blobPath, "blob", "", "Path to the materialized layer blob to push.")
+	flagSet.StringVar(&metadataPath, "metadata", "", "Path to the blob metadata JSON (digest/mediaType/size). Optional: when omitted, the descriptor is derived by hashing --blob (used for the config blob, whose descriptor has no standalone file).")
+	flagSet.StringVar(&blobPath, "blob", "", "Path to the materialized blob (layer or config) to push.")
 	flagSet.StringVar(&compactStreamPath, "compact-stream", "", "Path to the layer's compact stream (.cstream) to reconstruct and push.")
 	flagSet.StringVar(&casDir, "cas-dir", "", "Content-addressed input directory (.inputfilecas) for compact-stream reconstruction.")
 	flagSet.Var(&sources, "source", "Upstream source as registry/repository to stream a shallow layer from (can be repeated).")
 	flagSet.StringVar(&blobRepository, "blob-repository", "", "Repository to push the blob to instead of the configuration repository.")
+	flagSet.StringVar(&mediaType, "media-type", "", "Media type recorded in the result when the descriptor is derived from --blob (no --metadata). Informational; unused for the content-addressed upload.")
 	flagSet.StringVar(&mode, "mode", "enabled", "Failure mode: 'best_effort' (log, don't fail build) or 'enabled' (fail build).")
 	flagSet.StringVar(&outputPath, "output", "", "Path to write the JSON result describing where the blob landed. Required.")
 
 	if err := flagSet.Parse(args); err != nil {
 		os.Exit(1)
 	}
-	if configurationPath == "" || metadataPath == "" || outputPath == "" {
-		fmt.Fprintln(os.Stderr, "Error: --configuration-file, --metadata and --output are required")
+	if configurationPath == "" || outputPath == "" {
+		fmt.Fprintln(os.Stderr, "Error: --configuration-file and --output are required")
 		os.Exit(1)
 	}
 
-	desc, err := readDescriptor(metadataPath)
+	desc, err := resolveDescriptor(metadataPath, blobPath, mediaType)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
@@ -185,6 +188,36 @@ func layerForBlob(ctx context.Context, desc api.Descriptor, blobPath, compactStr
 	default:
 		return nil, fmt.Errorf("no blob source provided for %s (need --blob, --compact-stream, or --source)", desc.Digest)
 	}
+}
+
+// resolveDescriptor returns the blob's descriptor. When metadataPath is set it is
+// read from that file (the layer path, where a standalone descriptor exists).
+// Otherwise the descriptor is derived by hashing blobPath: this is used for the
+// config blob, which has no standalone metadata file. The blob is content-addressed,
+// so sha256(blobPath) is exactly the digest the manifest references; mediaType is
+// recorded verbatim (informational — it is not used for the upload itself).
+func resolveDescriptor(metadataPath, blobPath, mediaType string) (api.Descriptor, error) {
+	if metadataPath != "" {
+		return readDescriptor(metadataPath)
+	}
+	if blobPath == "" {
+		return api.Descriptor{}, fmt.Errorf("either --metadata or --blob is required to determine the blob descriptor")
+	}
+	f, err := os.Open(blobPath)
+	if err != nil {
+		return api.Descriptor{}, fmt.Errorf("opening blob %s: %w", blobPath, err)
+	}
+	defer f.Close()
+	hasher := sha256.New()
+	size, err := io.Copy(hasher, f)
+	if err != nil {
+		return api.Descriptor{}, fmt.Errorf("hashing blob %s: %w", blobPath, err)
+	}
+	return api.Descriptor{
+		MediaType: mediaType,
+		Digest:    fmt.Sprintf("sha256:%x", hasher.Sum(nil)),
+		Size:      size,
+	}, nil
 }
 
 func readDescriptor(path string) (api.Descriptor, error) {

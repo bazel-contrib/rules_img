@@ -58,7 +58,7 @@ push_settings = rule(
             providers = [BuildSettingInfo],
         ),
         "_blob_repository": attr.label(
-            default = Label("//img/settings:push_at_build_time_repository"),
+            default = Label("//img/settings:push_at_build_time_blob_repository"),
             providers = [BuildSettingInfo],
         ),
         "_forbid_layer_push": attr.label(

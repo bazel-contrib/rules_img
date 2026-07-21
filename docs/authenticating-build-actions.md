@@ -6,8 +6,8 @@ from inside a **build action**:
 - **Lazily pulled base-image layers** — layer blobs are fetched by a build action
   (mnemonic `DownloadBlob`) instead of during repository fetching.
 - **Push at build time** — [`push_at_build_time`](push-strategies.md#push-at-build-time)
-  uploads layer blobs (and, optionally, the config and manifest(s)) as build
-  actions.
+  uploads image blobs (all layers and the config) and, optionally, the manifest(s)
+  as build actions.
 
 Both need to reach the registry and authenticate. This page explains how.
 
@@ -30,9 +30,9 @@ The registry permissions differ per operation:
   helper path is never baked into a potentially-remote action.)
 - **Push at build time needs write access**, and the scope depends on
   `push_at_build_time_content`:
-  - `blobs` — writes only to `/v2/<repo>/blobs/` (blob uploads). A credential that
-    may upload blobs but may not read them or write manifests is sufficient (see
-    the multi-tenant note in [Push Strategies](push-strategies.md#blobs-at-build-time-manifest-afterwards-blobs)).
+  - `blobs` — writes only to `/v2/<repo>/blobs/` (blob uploads: every layer and
+    the config). A credential that may upload blobs but may not read them or write
+    manifests is sufficient (see the multi-tenant note in [Push Strategies](push-strategies.md#blobs-at-build-time-manifest-afterwards-blobs)).
   - `blobs_and_manifests` — additionally writes `/v2/<repo>/manifests/<ref>` (the
     config, manifest, and tags), so it also needs manifest write access.
 
