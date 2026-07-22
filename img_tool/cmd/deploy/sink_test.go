@@ -129,6 +129,30 @@ func tarNames(t *testing.T, data []byte) map[string]bool {
 	return names
 }
 
+// tarFile returns the contents of a single named entry in a tar.
+func tarFile(t *testing.T, data []byte, name string) []byte {
+	t.Helper()
+	tr := tar.NewReader(bytes.NewReader(data))
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if hdr.Name == name {
+			b, err := io.ReadAll(tr)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return b
+		}
+	}
+	t.Fatalf("tar entry %q not found", name)
+	return nil
+}
+
 func TestOCITarSink(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "out.tar")
 	s, err := newSink(sinkOCITar, path)
@@ -178,6 +202,114 @@ func TestDockerSaveSink(t *testing.T) {
 	names := tarNames(t, data)
 	if !names["manifest.json"] {
 		t.Errorf("docker-save missing manifest.json")
+	}
+}
+
+// When an image has no tags but its destination registry/repository is known
+// (a digest-only push), the annotated sinks must still record the bare
+// "<registry>/<repository>" reference in the index descriptor annotations
+// rather than emitting a bare, annotation-free descriptor.
+func TestSinksAnnotateRepositoryWithoutTag(t *testing.T) {
+	const (
+		registry = "reg.example"
+		repo     = "team/foo"
+		wantRef  = registry + "/" + repo
+	)
+	assertRefName := func(t *testing.T, idxData []byte) {
+		t.Helper()
+		var idx registryv1.IndexManifest
+		if err := json.Unmarshal(idxData, &idx); err != nil {
+			t.Fatal(err)
+		}
+		if len(idx.Manifests) != 1 {
+			t.Fatalf("index.json manifests: got %d want 1", len(idx.Manifests))
+		}
+		ann := idx.Manifests[0].Annotations
+		for _, key := range []string{
+			"org.opencontainers.image.ref.name",
+			"io.containerd.image.name",
+			"com.apple.containerization.image.name",
+		} {
+			if ann[key] != wantRef {
+				t.Errorf("annotation %q = %q, want %q", key, ann[key], wantRef)
+			}
+		}
+	}
+	newImage := func() sinkImage {
+		return sinkImage{Registry: registry, Repository: repo, Root: testRoot("a"), RepoRefFallback: true}
+	}
+
+	for _, kind := range []sinkKind{sinkOCITar, sinkDockerSave} {
+		t.Run(map[sinkKind]string{sinkOCITar: "oci-tar", sinkDockerSave: "docker-save"}[kind], func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "out.tar")
+			s, err := newSink(kind, path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := s.AddImage(context.Background(), newImage()); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.Close(); err != nil {
+				t.Fatal(err)
+			}
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertRefName(t, tarFile(t, data, "index.json"))
+		})
+	}
+
+	t.Run("oci", func(t *testing.T) {
+		dir := t.TempDir()
+		s, err := newSink(sinkOCIDir, dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := s.AddImage(context.Background(), newImage()); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.Close(); err != nil {
+			t.Fatal(err)
+		}
+		data, err := os.ReadFile(filepath.Join(dir, "index.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertRefName(t, data)
+	})
+}
+
+// A referrer-style image (registry/repository set for placement but Refs empty
+// and RepoRefFallback unset, e.g. a signature manifest) must NOT be annotated
+// with the subject's repository name, or it would shadow the real image when a
+// tool selects by org.opencontainers.image.ref.name.
+func TestSinkReferrerWithoutTagStaysUnannotated(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "out.tar")
+	s, err := newSink(sinkDockerSave, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// No Refs, no RepoRefFallback: exactly how signatureSinkImage is built.
+	if err := s.AddImage(context.Background(), sinkImage{Registry: "reg.example", Repository: "team/foo", Root: testRoot("a")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var idx registryv1.IndexManifest
+	if err := json.Unmarshal(tarFile(t, data, "index.json"), &idx); err != nil {
+		t.Fatal(err)
+	}
+	if len(idx.Manifests) != 1 {
+		t.Fatalf("index.json manifests: got %d want 1", len(idx.Manifests))
+	}
+	if ref := idx.Manifests[0].Annotations["org.opencontainers.image.ref.name"]; ref != "" {
+		t.Errorf("referrer descriptor got ref.name %q, want none", ref)
 	}
 }
 
