@@ -110,6 +110,28 @@ type sinkImage struct {
 	Registry   string
 	Repository string
 	Root       resolvedRoot
+	// RepoRefFallback, when set, allows the annotated sinks to fall back to the
+	// bare "<registry>/<repository>" reference for this image's index.json
+	// annotations when it has no tags. Set for the primary image being
+	// deployed; left unset for referrer manifests (e.g. signatures), which must
+	// not be surfaced under the subject's repository name.
+	RepoRefFallback bool
+}
+
+// indexAnnotationRefs returns the reference names used to annotate an image's
+// index.json descriptors (io.containerd.image.name, org.opencontainers.image.ref.name,
+// ...). It is normally the full tagged references. When an image opts into
+// RepoRefFallback and has no tags but its destination registry/repository is
+// known (a digest-only push), it falls back to the bare "<registry>/<repository>"
+// reference so tooling can still recover the image name instead of only its digest.
+func indexAnnotationRefs(img sinkImage) []string {
+	if len(img.Refs) > 0 {
+		return img.Refs
+	}
+	if img.RepoRefFallback && img.Registry != "" && img.Repository != "" {
+		return []string{img.Registry + "/" + img.Repository}
+	}
+	return img.Refs
 }
 
 // sinkRouteOptions carries the deploy-time overrides and extra tags applied
@@ -130,7 +152,7 @@ func routeToSink(ctx context.Context, s sink, vfs *deployvfs.VFS, pushOps []api.
 		if err != nil {
 			return err
 		}
-		if err := s.AddImage(ctx, sinkImage{Refs: refs, Registry: registry, Repository: repository, Root: root}); err != nil {
+		if err := s.AddImage(ctx, sinkImage{Refs: refs, Registry: registry, Repository: repository, Root: root, RepoRefFallback: true}); err != nil {
 			return err
 		}
 		written = append(written, refs...)
@@ -319,7 +341,7 @@ func (s *tarSink) AddImage(ctx context.Context, img sinkImage) error {
 		MediaType:    root.MediaType,
 		ArtifactType: root.ArtifactType,
 		IsIndex:      root.IsIndex,
-		OCITags:      img.Refs,
+		OCITags:      indexAnnotationRefs(img),
 		Children:     root.Children,
 		Platform:     root.Platform,
 	})
@@ -375,11 +397,12 @@ func newOCIDirSink(dir string) (*ociDirSink, error) {
 
 func (s *ociDirSink) AddImage(ctx context.Context, img sinkImage) error {
 	root := img.Root
+	refs := indexAnnotationRefs(img)
 	if !root.IsIndex {
 		if len(root.Children) == 0 {
 			return fmt.Errorf("manifest root has no image manifest")
 		}
-		return s.e.AddManifest(ctx, root.Children[0], img.Refs...)
+		return s.e.AddManifest(ctx, root.Children[0], refs...)
 	}
 	for i := range root.Children {
 		if err := s.e.AddManifestBlobs(ctx, root.Children[i]); err != nil {
@@ -393,7 +416,7 @@ func (s *ociDirSink) AddImage(ctx context.Context, img sinkImage) error {
 	if err := s.e.AddBlob(ctx, indexHash, ocilayout.BlobFromBytes(root.RootData)); err != nil {
 		return err
 	}
-	for _, d := range ocilayout.DescriptorsForTags(img.Refs, root.MediaType, root.RootData, indexHash, "", false) {
+	for _, d := range ocilayout.DescriptorsForTags(refs, root.MediaType, root.RootData, indexHash, "", false) {
 		if err := s.e.AddIndexEntry(d); err != nil {
 			return err
 		}
