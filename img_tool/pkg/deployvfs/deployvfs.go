@@ -446,6 +446,13 @@ func (b *Builder) WithContainerRegistryOption(o remote.Option) *Builder {
 	return b
 }
 
+// WithContainerRegistryOptions appends several container-registry remote options
+// at once, e.g. the enforced defaults from registryopts.Pull().Remote().
+func (b *Builder) WithContainerRegistryOptions(opts ...remote.Option) *Builder {
+	b.containerRegistryOptions = append(b.containerRegistryOptions, opts...)
+	return b
+}
+
 func (b *Builder) WithRunfilesRootSymlinksPrefix(prefix string) *Builder {
 	b.runfilesRootSymlinksPrefix = prefix
 	return b

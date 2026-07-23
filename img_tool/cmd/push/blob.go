@@ -17,10 +17,10 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/api"
-	"github.com/bazel-contrib/rules_img/img_tool/pkg/auth/registry"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/compactstream"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/deployvfs"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/gateway"
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/registryopts"
 )
 
 type stringSliceFlag []string
@@ -113,14 +113,14 @@ func blobProcess(ctx context.Context, args []string) {
 
 func pushBlob(ctx context.Context, registryStr, targetRepository string, desc api.Descriptor, blobPath, compactStreamPath, casDir string, sources []string) error {
 	// Route the upload (and any shallow-source fetch) through the configured
-	// registry gateway when one is set; otherwise these are the base transport.
-	pushTransport, err := gateway.WrapTransport(remote.DefaultTransport, gateway.ModePush)
+	// registry gateway when one is set, with the enforced auth/retry defaults.
+	pushOpts, err := registryopts.Push()
 	if err != nil {
-		return fmt.Errorf("configuring push gateway: %w", err)
+		return fmt.Errorf("configuring push options: %w", err)
 	}
-	pullTransport, err := gateway.WrapTransport(remote.DefaultTransport, gateway.ModePull)
+	pullTransport, err := registryopts.Transport(gateway.ModePull)
 	if err != nil {
-		return fmt.Errorf("configuring pull gateway: %w", err)
+		return fmt.Errorf("configuring pull transport: %w", err)
 	}
 
 	repoRef, err := name.NewRepository(registryStr + "/" + targetRepository)
@@ -133,7 +133,7 @@ func pushBlob(ctx context.Context, registryStr, targetRepository string, desc ap
 		return err
 	}
 
-	pusher, err := remote.NewPusher(registry.WithAuthFromMultiKeychain(), remote.WithTransport(pushTransport))
+	pusher, err := remote.NewPusher(pushOpts.Remote()...)
 	if err != nil {
 		return fmt.Errorf("creating pusher: %w", err)
 	}
@@ -180,7 +180,7 @@ func layerForBlob(ctx context.Context, desc api.Descriptor, blobPath, compactStr
 		if err != nil {
 			return nil, fmt.Errorf("parsing source reference %s@%s: %w", src, desc.Digest, err)
 		}
-		l, err := remote.Layer(ref, registry.WithAuthFromMultiKeychain(), remote.WithTransport(pullTransport))
+		l, err := remote.Layer(ref, registryopts.Default().WithTransport(pullTransport).Remote()...)
 		if err != nil {
 			return nil, fmt.Errorf("resolving source layer %s: %w", ref, err)
 		}

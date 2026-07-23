@@ -11,9 +11,9 @@ import (
 	"strings"
 	"sync"
 
-	reg "github.com/bazel-contrib/rules_img/img_tool/pkg/auth/registry"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/blobstore"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/gateway"
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/registryopts"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/transport/cachedblob"
 	"github.com/google/go-containerregistry/pkg/name"
 	registryv1 "github.com/google/go-containerregistry/pkg/v1"
@@ -87,7 +87,7 @@ func PullProcess(ctx context.Context, args []string) {
 		fmt.Fprintf(os.Stderr, "Error configuring registry gateway: %v\n", err)
 		os.Exit(1)
 	}
-	transport := cachedblob.NewTransport(outputDir, gatewayBase, cachedblob.WithAirgapped(airgapped))
+	transport := cachedblob.NewTransport(outputDir, registryopts.WrapRetryAfter(gatewayBase), cachedblob.WithAirgapped(airgapped))
 
 	// Default to docker.io if no registries specified
 	if len(registries) == 0 {
@@ -382,7 +382,7 @@ func downloadManifest(registry, repository, tag, digest string, store *blobstore
 	}
 
 	// Use the custom client for remote operations
-	desc, err := remote.Get(ref, reg.WithAuthFromMultiKeychain(), remote.WithTransport(transport))
+	desc, err := remote.Get(ref, registryopts.Default().WithTransport(transport).Remote()...)
 	if err != nil {
 		return nil, fmt.Errorf("getting manifest: %w", err)
 	}

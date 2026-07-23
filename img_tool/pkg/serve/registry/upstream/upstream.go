@@ -7,12 +7,12 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/google/go-containerregistry/pkg/name"
 	registry "github.com/bazel-contrib/rules_img/img_tool/pkg/registry"
+	"github.com/google/go-containerregistry/pkg/name"
 	registryv1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 
-	reg "github.com/bazel-contrib/rules_img/img_tool/pkg/auth/registry"
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/registryopts"
 )
 
 type UpstreamBlobHandler struct {
@@ -33,7 +33,7 @@ func (h *UpstreamBlobHandler) Get(ctx context.Context, repo string, hash registr
 	transport := &redirectHandler{
 		underlying: remote.DefaultTransport,
 	}
-	layer, err := remote.Layer(ref, reg.WithAuthFromMultiKeychain(), remote.WithTransport(transport))
+	layer, err := remote.Layer(ref, registryopts.Default().WithTransport(transport).Remote()...)
 	if err != nil {
 		return nil, fmt.Errorf("getting layer: %w", err)
 	}
@@ -60,7 +60,7 @@ func (h *UpstreamBlobHandler) Stat(ctx context.Context, repo string, hash regist
 		hash:       hash,
 		underlying: remote.DefaultTransport,
 	}
-	layer, err := remote.Layer(ref, reg.WithAuthFromMultiKeychain(), remote.WithTransport(transport))
+	layer, err := remote.Layer(ref, registryopts.Default().WithTransport(transport).Remote()...)
 	if err != nil {
 		return 0, fmt.Errorf("getting layer: %w", err)
 	}

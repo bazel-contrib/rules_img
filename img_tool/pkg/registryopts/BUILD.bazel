@@ -1,0 +1,24 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "registryopts",
+    srcs = ["registryopts.go"],
+    importpath = "github.com/bazel-contrib/rules_img/img_tool/pkg/registryopts",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/auth/registry",
+        "//pkg/gateway",
+        "@com_github_google_go_containerregistry//pkg/v1/remote",
+    ],
+)
+
+go_test(
+    name = "registryopts_test",
+    size = "small",
+    srcs = ["registryopts_test.go"],
+    embed = [":registryopts"],
+    deps = [
+        "//pkg/gateway",
+        "@com_github_google_go_containerregistry//pkg/v1/remote",
+    ],
+)

@@ -14,8 +14,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 
-	reg "github.com/bazel-contrib/rules_img/img_tool/pkg/auth/registry"
-	"github.com/bazel-contrib/rules_img/img_tool/pkg/gateway"
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/registryopts"
 )
 
 type Source struct {
@@ -127,11 +126,11 @@ func downloadFromRegistry(registry, repository, digest, outputPath string) (retE
 		return fmt.Errorf("creating blob reference: %w", err)
 	}
 
-	gwTransport, err := gateway.WrapTransport(remote.DefaultTransport, gateway.ModePull)
+	pullOpts, err := registryopts.Pull()
 	if err != nil {
-		return fmt.Errorf("configuring registry gateway: %w", err)
+		return fmt.Errorf("configuring pull options: %w", err)
 	}
-	layer, err := remote.Layer(ref, reg.WithAuthFromMultiKeychain(), remote.WithTransport(gwTransport))
+	layer, err := remote.Layer(ref, pullOpts.Remote()...)
 	if err != nil {
 		return fmt.Errorf("getting layer: %w", err)
 	}

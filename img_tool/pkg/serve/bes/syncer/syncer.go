@@ -22,9 +22,9 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/api"
-	"github.com/bazel-contrib/rules_img/img_tool/pkg/auth/registry"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/cas"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/compactstream"
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/registryopts"
 )
 
 // uploadJob represents a single blob upload task for the worker pool.
@@ -218,10 +218,10 @@ func (s *Syncer) commitRegistryTag(ctx context.Context, op api.IndexedRegistryTa
 	if err != nil {
 		return fmt.Errorf("invalid repository %s: %w", baseReference, err)
 	}
-	remoteOpts := []remote.Option{
-		remote.WithContext(ctx),
-		registry.WithAuthFromMultiKeychain(),
-	}
+	remoteOpts := registryopts.Default().
+		WithTransport(registryopts.WrapRetryAfter(remote.DefaultTransport)).
+		With(remote.WithContext(ctx)).
+		Remote()
 
 	digestRef, err := name.ParseReference(ref.String() + "@" + op.Root.Digest)
 	if err != nil {
@@ -268,10 +268,10 @@ func (s *Syncer) commitOne(ctx context.Context, pushOp api.IndexedPushDeployOper
 		return fmt.Errorf("invalid repository %s: %w", baseReference, err)
 	}
 
-	remoteOpts := []remote.Option{
-		remote.WithContext(ctx),
-		registry.WithAuthFromMultiKeychain(),
-	}
+	remoteOpts := registryopts.Default().
+		WithTransport(registryopts.WrapRetryAfter(remote.DefaultTransport)).
+		With(remote.WithContext(ctx)).
+		Remote()
 
 	rootBlob := pushOp.Root
 	mediaType := types.MediaType(rootBlob.MediaType)
@@ -1125,7 +1125,7 @@ func (l *remoteStreamingLayer) Compressed() (io.ReadCloser, error) {
 			attempts = append(attempts, fmt.Sprintf("%s/%s: %v", source.Registry, source.Repository, err))
 			continue
 		}
-		layer, err := remote.Layer(ref, registry.WithAuthFromMultiKeychain())
+		layer, err := remote.Layer(ref, registryopts.Default().WithTransport(registryopts.WrapRetryAfter(remote.DefaultTransport)).Remote()...)
 		if err != nil {
 			attempts = append(attempts, fmt.Sprintf("%s: %v", ref, err))
 			continue

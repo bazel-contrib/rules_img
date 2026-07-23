@@ -16,12 +16,12 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/api"
-	"github.com/bazel-contrib/rules_img/img_tool/pkg/auth/registry"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/deployvfs"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/gateway"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/load"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/persistentworker"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/push"
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/registryopts"
 )
 
 type deployWorkerHandler struct {
@@ -41,18 +41,17 @@ func newDeployWorkerHandler(jobs int, sinkSpec string) (*deployWorkerHandler, er
 	// Configure optional registry gateways. When IMG_REGISTRY_*_GATEWAY is set,
 	// push and base-image (pull) requests are routed through the gateway; when
 	// unset, WrapTransport returns the base transport unchanged.
-	pushTransport, err := gateway.WrapTransport(remote.DefaultTransport, gateway.ModePush)
+	pushTransport, err := registryopts.Transport(gateway.ModePush)
 	if err != nil {
-		return nil, fmt.Errorf("configuring push gateway: %w", err)
+		return nil, fmt.Errorf("configuring push transport: %w", err)
 	}
-	pullTransport, err := gateway.WrapTransport(remote.DefaultTransport, gateway.ModePull)
+	pullTransport, err := registryopts.Transport(gateway.ModePull)
 	if err != nil {
-		return nil, fmt.Errorf("configuring pull gateway: %w", err)
+		return nil, fmt.Errorf("configuring pull transport: %w", err)
 	}
 
 	baseBuilder := deployvfs.NewBuilder(api.DeployManifest{}).
-		WithContainerRegistryOption(registry.WithAuthFromMultiKeychain()).
-		WithContainerRegistryOption(remote.WithTransport(pullTransport))
+		WithContainerRegistryOptions(registryopts.Default().WithTransport(pullTransport).Remote()...)
 	// We set needsCAS to true unconditionally.
 	// The reason is that we just cannot know in advance whether a future work request
 	// wants to connect to the remote cache or not.
@@ -78,7 +77,7 @@ func newDeployWorkerHandler(jobs int, sinkSpec string) (*deployWorkerHandler, er
 		return h, nil
 	}
 
-	opts := []remote.Option{registry.WithAuthFromMultiKeychain(), remote.WithTransport(pushTransport), remote.WithJobs(jobs)}
+	opts := registryopts.Default().WithTransport(pushTransport).WithJobs(jobs).Remote()
 	p, err := remote.NewPusher(opts...)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "warning: failed to create persistent pusher: %v\n", err)
@@ -305,7 +304,7 @@ func (h *deployWorkerHandler) pushOps(ctx context.Context, vfs *deployvfs.VFS, o
 	uploadBuilder := push.NewBuilder(vfs).
 		WithPusher(h.pusher).
 		WithJobs(h.jobs).
-		WithRemoteOptions(registry.WithAuthFromMultiKeychain(), remote.WithTransport(h.pushTransport))
+		WithRemoteOptions(registryopts.Default().WithTransport(h.pushTransport).Remote()...)
 	if opts.overrideRegistry != "" {
 		uploadBuilder = uploadBuilder.WithOverrideRegistry(opts.overrideRegistry)
 	}

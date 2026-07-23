@@ -12,7 +12,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 
-	reg "github.com/bazel-contrib/rules_img/img_tool/pkg/auth/registry"
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/registryopts"
 )
 
 // Facts represents the cached OCI reference graph from previous runs
@@ -325,7 +325,7 @@ func downloadManifest(registry, repository, digest string) ([]byte, error) {
 		return nil, fmt.Errorf("creating manifest reference: %w", err)
 	}
 
-	descriptor, err := remote.Get(ref, reg.WithAuthFromMultiKeychain())
+	descriptor, err := remote.Get(ref, registryopts.Default().WithTransport(registryopts.WrapRetryAfter(remote.DefaultTransport)).Remote()...)
 	if err != nil {
 		return nil, fmt.Errorf("getting manifest: %w", err)
 	}
