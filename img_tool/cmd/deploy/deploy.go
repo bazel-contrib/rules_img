@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -32,6 +33,7 @@ import (
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/persistentworker"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/proto/blobcache"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/push"
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/registryopts"
 )
 
 func DeployProcess(ctx context.Context, args []string) {
@@ -91,7 +93,7 @@ func DeployProcess(ctx context.Context, args []string) {
 	flagSet.StringVar(&platforms, "platform", "", "Comma-separated list of platforms to load (e.g., linux/amd64). If not set, loads the platform closest to the host (or the single available platform). Use 'all' to load the full multi-platform index. Doesn't affect push, only load.")
 	flagSet.Var(&ociLayouts, "oci-layout", "Path to an OCI layout directory, sparse or standard (can be used multiple times)")
 	flagSet.Var(&explicitLayers, "layer", "Layer as digest=path or a bare path (can be used multiple times). The file may be a raw compressed layer blob or a compact stream (.cstream), auto-detected. For a bare path: a raw blob is hashed to derive its digest; a .cstream must embed its compressed digest.")
-	flagSet.IntVar(&jobs, "jobs", 16, "Maximum number of parallel push operations")
+	flagSet.IntVar(&jobs, "jobs", defaultDeployJobs(), "Maximum number of parallel push operations (defaults to GOMAXPROCS)")
 	flagSet.StringVar(&sink, "sink", "", "Override the destination of all push/load/registry_tag operations for testing. Format: <type>:<path> where type is one of oci-tar, docker-save, oci, distribution, distribution-flat. No registry or daemon network I/O is performed.")
 	flagSet.Var(&signSettingFiles, "sign_setting_file", "Additional sign_setting config file to ingest for signing (can be used multiple times)")
 	flagSet.StringVar(&defaultSignSetting, "default_sign_setting", "", "Default sign_setting for operations without one: a path to a config file, or sha256:<hex> referencing a discovered setting")
@@ -215,18 +217,17 @@ func DeployWithExtras(ctx context.Context, rawRequest []byte, opts DeployOptions
 	// Configure optional registry gateways. When IMG_REGISTRY_*_GATEWAY is set,
 	// push requests and base-image (pull) reads are routed through the gateway.
 	// When unset, WrapTransport returns the base transport unchanged.
-	pushTransport, err := gateway.WrapTransport(remote.DefaultTransport, gateway.ModePush)
+	pushTransport, err := registryopts.Transport(gateway.ModePush)
 	if err != nil {
-		return fmt.Errorf("configuring push gateway: %w", err)
+		return fmt.Errorf("configuring push transport: %w", err)
 	}
-	pullTransport, err := gateway.WrapTransport(remote.DefaultTransport, gateway.ModePull)
+	pullTransport, err := registryopts.Transport(gateway.ModePull)
 	if err != nil {
-		return fmt.Errorf("configuring pull gateway: %w", err)
+		return fmt.Errorf("configuring pull transport: %w", err)
 	}
 
 	vfsBuilder := deployvfs.NewBuilder(req).
-		WithContainerRegistryOption(registry.WithAuthFromMultiKeychain()).
-		WithContainerRegistryOption(remote.WithTransport(pullTransport)).
+		WithContainerRegistryOptions(registryopts.Default().WithTransport(pullTransport).Remote()...).
 		WithContext(ctx)
 	hasLazyStrategy := false
 	baseOps, err := req.BaseOperations()
@@ -328,7 +329,7 @@ func DeployWithExtras(ctx context.Context, rawRequest []byte, opts DeployOptions
 	// Push operations use an internally-created pusher in PushAll (with progress tracking).
 	var pusher *remote.Pusher
 	if len(registryTagOperations) > 0 && req.Settings.PushStrategy != "bes" {
-		pusher, err = remote.NewPusher(registry.WithAuthFromMultiKeychain(), remote.WithTransport(pushTransport), remote.WithJobs(opts.Jobs))
+		pusher, err = remote.NewPusher(registryopts.Default().WithTransport(pushTransport).WithJobs(opts.Jobs).Remote()...)
 		if err != nil {
 			return fmt.Errorf("creating pusher: %w", err)
 		}
@@ -352,7 +353,7 @@ func DeployWithExtras(ctx context.Context, rawRequest []byte, opts DeployOptions
 	if len(pushOperations) > 0 {
 		uploadBuilder := push.NewBuilder(vfs).
 			WithJobs(opts.Jobs).
-			WithRemoteOptions(registry.WithAuthFromMultiKeychain(), remote.WithTransport(pushTransport))
+			WithRemoteOptions(registryopts.Default().WithTransport(pushTransport).Remote()...)
 		if haveBlobCacheCient {
 			uploadBuilder = uploadBuilder.WithBlobcacheClient(blobcacheClient)
 		}
@@ -518,7 +519,7 @@ func preUploadStagingBlobs(ctx context.Context, vfs *deployvfs.VFS, ops []api.In
 	if jobs < 1 {
 		jobs = 1
 	}
-	pusher, err := remote.NewPusher(registry.WithAuthFromMultiKeychain(), remote.WithTransport(pushTransport), remote.WithJobs(jobs))
+	pusher, err := remote.NewPusher(registryopts.Default().WithTransport(pushTransport).WithJobs(jobs).Remote()...)
 	if err != nil {
 		return fmt.Errorf("creating pusher: %w", err)
 	}
@@ -668,6 +669,14 @@ func reapiMaxConnections(jobs int) int {
 	return n
 }
 
+// defaultDeployJobs is the default push parallelism for `img deploy`. Like
+// `crane copy`, it defaults to GOMAXPROCS (the host CPU count) to maximize
+// throughput. The shared registry defaults still use registryopts.DefaultJobs
+// (4) when driven without an explicit --jobs; `img deploy` overrides that here.
+func defaultDeployJobs() int {
+	return runtime.GOMAXPROCS(0)
+}
+
 func extractJobsFlag(args []string) int {
 	for i := 0; i < len(args); i++ {
 		key, value, hasValue := strings.Cut(args[i], "=")
@@ -681,7 +690,7 @@ func extractJobsFlag(args []string) int {
 			}
 		}
 	}
-	return 16
+	return defaultDeployJobs()
 }
 
 // extractSinkFlag pre-scans args for --sink so DeployProcess can decide whether

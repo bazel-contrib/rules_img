@@ -6,9 +6,9 @@ go_library(
     importpath = "github.com/bazel-contrib/rules_img/img_tool/cmd/pull",
     visibility = ["//visibility:public"],
     deps = [
-        "//pkg/auth/registry",
         "//pkg/blobstore",
         "//pkg/gateway",
+        "//pkg/registryopts",
         "//pkg/transport/cachedblob",
         "@com_github_google_go_containerregistry//pkg/name",
         "@com_github_google_go_containerregistry//pkg/v1:pkg",

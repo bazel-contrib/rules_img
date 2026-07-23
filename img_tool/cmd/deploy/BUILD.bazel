@@ -23,6 +23,7 @@ go_library(
         "//pkg/persistentworker",
         "//pkg/proto/blobcache",
         "//pkg/push",
+        "//pkg/registryopts",
         "//pkg/signer",
         "@com_github_google_go_containerregistry//pkg/name",
         "@com_github_google_go_containerregistry//pkg/v1:pkg",

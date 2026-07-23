@@ -19,9 +19,8 @@ import (
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/proto/blobcache"
 	blobcache_proto "github.com/bazel-contrib/rules_img/img_tool/pkg/proto/blobcache"
 	remoteexecution_proto "github.com/bazel-contrib/rules_img/img_tool/pkg/proto/remote-apis/build/bazel/remote/execution/v2"
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/registryopts"
 )
-
-const defaultJobs = 16
 
 type builder struct {
 	blobcacheClient    blobcache.BlobsClient
@@ -35,7 +34,7 @@ type builder struct {
 }
 
 func NewBuilder(vfs vfs) *builder {
-	return &builder{vfs: vfs, jobs: defaultJobs}
+	return &builder{vfs: vfs, jobs: registryopts.DefaultJobs}
 }
 
 func (b *builder) WithBlobcacheClient(client blobcache.BlobsClient) *builder {

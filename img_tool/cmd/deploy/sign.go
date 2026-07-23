@@ -14,8 +14,8 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/api"
-	"github.com/bazel-contrib/rules_img/img_tool/pkg/auth/registry"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/ocilayout"
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/registryopts"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/signer"
 )
 
@@ -73,7 +73,7 @@ func applySignOperations(ctx context.Context, pushOps []api.IndexedPushDeployOpe
 	// per operation (honoring best-effort) by the precheck below.
 	var pusher *remote.Pusher
 	if settings.PushStrategy != "bes" {
-		pusher, err = remote.NewPusher(registry.WithAuthFromMultiKeychain(), remote.WithTransport(opts.pushTransport), remote.WithJobs(opts.jobs))
+		pusher, err = remote.NewPusher(registryopts.Default().WithTransport(opts.pushTransport).WithJobs(opts.jobs).Remote()...)
 		if err != nil {
 			return fmt.Errorf("creating pusher for signing: %w", err)
 		}

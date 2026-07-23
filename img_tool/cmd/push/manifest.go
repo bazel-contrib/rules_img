@@ -7,13 +7,10 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/google/go-containerregistry/pkg/v1/remote"
-
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/api"
-	"github.com/bazel-contrib/rules_img/img_tool/pkg/auth/registry"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/deployvfs"
-	"github.com/bazel-contrib/rules_img/img_tool/pkg/gateway"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/push"
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/registryopts"
 )
 
 func manifestProcess(ctx context.Context, args []string) {
@@ -34,7 +31,7 @@ func manifestProcess(ctx context.Context, args []string) {
 	flagSet.StringVar(&manifestRepository, "manifest-repository", "", "Repository to upload the manifest(s)/index and config to instead of the operation's own repository. Layer blobs are still cross-mounted from where `push blob` put them (this does not change blob mounting).")
 	flagSet.StringVar(&mode, "mode", "enabled", "Failure mode: 'best_effort' (log, don't fail build) or 'enabled' (fail build).")
 	flagSet.StringVar(&markerPath, "marker", "", "Path to the marker file to write on success. Required.")
-	flagSet.IntVar(&jobs, "jobs", 16, "Maximum number of parallel push operations.")
+	flagSet.IntVar(&jobs, "jobs", registryopts.DefaultJobs, "Maximum number of parallel push operations.")
 
 	if err := flagSet.Parse(args); err != nil {
 		os.Exit(1)
@@ -58,19 +55,18 @@ func pushManifest(ctx context.Context, requestFile string, ociLayouts, layerResu
 	}
 
 	// Route base-image (pull) reads and the manifest push through the configured
-	// registry gateway when one is set; otherwise these are the base transport.
-	pushTransport, err := gateway.WrapTransport(remote.DefaultTransport, gateway.ModePush)
+	// registry gateway when one is set, with the enforced auth/retry defaults.
+	pullOpts, err := registryopts.Pull()
 	if err != nil {
-		return fmt.Errorf("configuring push gateway: %w", err)
+		return fmt.Errorf("configuring pull options: %w", err)
 	}
-	pullTransport, err := gateway.WrapTransport(remote.DefaultTransport, gateway.ModePull)
+	pushOpts, err := registryopts.Push()
 	if err != nil {
-		return fmt.Errorf("configuring pull gateway: %w", err)
+		return fmt.Errorf("configuring push options: %w", err)
 	}
 
 	builder := deployvfs.NewBuilder(req).
-		WithContainerRegistryOption(registry.WithAuthFromMultiKeychain()).
-		WithContainerRegistryOption(remote.WithTransport(pullTransport)).
+		WithContainerRegistryOptions(pullOpts.Remote()...).
 		WithContext(ctx)
 	for _, layout := range ociLayouts {
 		builder = builder.WithOCILayout(layout)
@@ -100,7 +96,7 @@ func pushManifest(ctx context.Context, requestFile string, ociLayouts, layerResu
 
 	uploaderBuilder := push.NewBuilder(vfs).
 		WithJobs(jobs).
-		WithRemoteOptions(registry.WithAuthFromMultiKeychain(), remote.WithTransport(pushTransport))
+		WithRemoteOptions(pushOpts.Remote()...)
 	// Redirect the manifest/index (and the config uploaded alongside it) to the
 	// manifest-staging repository when configured. Layer blobs are unaffected: they
 	// are cross-mounted from wherever `push blob` put them (recorded via the
