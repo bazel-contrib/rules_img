@@ -159,6 +159,39 @@ const (
 	UncompressedSizeAnnotation = "io.containers.estargz.uncompressed-size"
 )
 
+// SOCI Index Manifest v2 media/artifact types and annotation keys. These match
+// github.com/awslabs/soci-snapshotter (soci/soci_index.go). SOCI v2 links a SOCI
+// index to its image via annotations (not the referrers API / subject).
+const (
+	// SociIndexArtifactTypeV2 is the artifactType of a v2 SOCI index. It is also
+	// the media type of the SOCI index's (empty "{}") config descriptor, which is
+	// how the index's artifact type is conveyed on the manifest itself.
+	SociIndexArtifactTypeV2 = "application/vnd.amazon.soci.index.v2+json"
+	// SociLayerMediaType is the media type of a ztoc blob (a SOCI index "layer").
+	SociLayerMediaType = "application/octet-stream"
+
+	// SociImageLayerMediaTypeAnnotation records, on a ztoc descriptor, the media
+	// type of the image layer the ztoc indexes.
+	SociImageLayerMediaTypeAnnotation = "com.amazon.soci.image-layer-mediaType"
+	// SociImageLayerDigestAnnotation records, on a ztoc descriptor, the digest of
+	// the image layer the ztoc indexes.
+	SociImageLayerDigestAnnotation = "com.amazon.soci.image-layer-digest"
+	// SociSpanSizeAnnotation records, on a ztoc descriptor, the span size the ztoc
+	// was generated with.
+	SociSpanSizeAnnotation = "com.amazon.soci.span-size"
+	// SociBuildToolIdentifierAnnotation records, on the SOCI index, the tool that
+	// created it.
+	SociBuildToolIdentifierAnnotation = "com.amazon.soci.build-tool-identifier"
+
+	// SociIndexDigestAnnotation is set on an IMAGE manifest to point at its SOCI
+	// index (v2 discovery). Setting it rewrites the image manifest, changing its
+	// digest.
+	SociIndexDigestAnnotation = "com.amazon.soci.index-digest"
+	// SociImageManifestDigestAnnotation is set on a SOCI-index descriptor within an
+	// OCI image index to point back at the image manifest it belongs to.
+	SociImageManifestDigestAnnotation = "com.amazon.soci.image-manifest-digest"
+)
+
 type CAS interface {
 	Import(CASStateSupplier) error
 	Export(CASStateExporter) error

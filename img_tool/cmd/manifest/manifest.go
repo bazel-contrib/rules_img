@@ -49,6 +49,7 @@ var (
 	created                   string
 	artifactType              string
 	subjectDescriptor         string
+	sociIndexDescriptor       string
 )
 
 // inheritFromBase is the sentinel value used by the image_manifest rule to
@@ -99,6 +100,7 @@ func ManifestProcess(_ context.Context, args []string) {
 	flagSet.StringVar(&created, "created", "", `A file containing a datetime string (RFC 3339 format) for when the image was created.`)
 	flagSet.StringVar(&artifactType, "artifact-type", "", `Optional IANA media type of the artifact when the manifest is used for an artifact (e.g. application/vnd.cncf.helm.chart.v1, application/spdx+json).`)
 	flagSet.StringVar(&subjectDescriptor, "subject-descriptor", "", `A JSON file containing the descriptor of the subject manifest or index.`)
+	flagSet.StringVar(&sociIndexDescriptor, "soci-index-descriptor", "", `A JSON file containing the descriptor of this image's SOCI index. Its digest is recorded in the com.amazon.soci.index-digest manifest annotation (SOCI v2), which rewrites the manifest and changes its digest.`)
 
 	if err := flagSet.Parse(args); err != nil {
 		flagSet.Usage()
@@ -247,6 +249,14 @@ func ManifestProcess(_ context.Context, args []string) {
 	annotationsToApply, err := annotationsFromBaseImageDescriptorFile(baseDescriptor, annotationsToApply)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to compute annotations: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Set the SOCI index digest annotation (SOCI v2) if we have a SOCI index
+	// descriptor. This links the image manifest to its SOCI index.
+	annotationsToApply, err = annotationsFromSociIndexDescriptorFile(sociIndexDescriptor, annotationsToApply)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to compute SOCI annotations: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -772,6 +782,38 @@ func annotationsFromBaseImageDescriptorFile(filePath string, annotations map[str
 	}
 	if _, exists := annotations["org.opencontainers.image.base.digest"]; !exists {
 		annotations["org.opencontainers.image.base.digest"] = digest
+	}
+
+	return annotations, nil
+}
+
+// annotationsFromSociIndexDescriptorFile reads the descriptor of this image's
+// SOCI index and records its digest in the com.amazon.soci.index-digest
+// annotation (SOCI v2 linking). A pre-existing annotation is left untouched.
+func annotationsFromSociIndexDescriptorFile(filePath string, annotations map[string]string) (map[string]string, error) {
+	if len(filePath) == 0 {
+		// SOCI is not enabled for this manifest.
+		return annotations, nil
+	}
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("reading SOCI index descriptor file: %w", err)
+	}
+	var desc specv1.Descriptor
+	if err := json.Unmarshal(data, &desc); err != nil {
+		return nil, fmt.Errorf("decoding SOCI index descriptor file: %w", err)
+	}
+
+	digest := desc.Digest.String()
+	if len(digest) == 0 {
+		return nil, errors.New("decoding SOCI index descriptor file: expected digest to be set")
+	}
+
+	if annotations == nil {
+		annotations = make(map[string]string)
+	}
+	if _, exists := annotations[api.SociIndexDigestAnnotation]; !exists {
+		annotations[api.SociIndexDigestAnnotation] = digest
 	}
 
 	return annotations, nil

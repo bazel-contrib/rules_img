@@ -24,6 +24,7 @@ bzl_library(
     visibility = ["//img:__subpackages__"],
     deps = [
         ":push_metadata",
+        ":soci_deploy",
         ":stamp",
         "//img:providers",
         "//img/private/common:build",
@@ -312,6 +313,7 @@ bzl_library(
     visibility = ["//img:__subpackages__"],
     deps = [
         ":layer_path_hints",
+        ":soci_deploy",
         ":stamp",
         "//img/private/common:build",
         "//img/private/common:deploy_helpers",
@@ -319,6 +321,12 @@ bzl_library(
         "//img/private/providers:load_config_info",
         "//img/private/providers:push_config_info",
     ],
+)
+
+bzl_library(
+    name = "soci_deploy",
+    srcs = ["soci_deploy.bzl"],
+    visibility = ["//img:__subpackages__"],
 )
 
 bzl_library(
@@ -409,4 +417,5 @@ bzl_library(
     name = "root_symlinks",
     srcs = ["root_symlinks.bzl"],
     visibility = ["//img:__subpackages__"],
+    deps = [":soci_deploy"],
 )

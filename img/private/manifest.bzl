@@ -6,7 +6,7 @@ load("//img/private:push_metadata.bzl", "process_deploy_specs")
 load("//img/private:stamp.bzl", "expand_or_write")
 load("//img/private/common:build.bzl", "TOOLCHAIN", "TOOLCHAINS")
 load("//img/private/common:inherit.bzl", "INHERIT_FROM_BASE")
-load("//img/private/common:layer_helper.bzl", "allow_tar_files", "build_image_mtree", "calculate_layer_info", "extension_to_compression", "image_layer_mtrees")
+load("//img/private/common:layer_helper.bzl", "allow_tar_files", "build_image_mtree", "calculate_layer_info", "extension_to_compression", "image_layer_mtrees", "image_layer_ztocs")
 load("//img/private/common:transitions.bzl", "normalize_layer_transition", "single_platform_transition")
 load("//img/private/config:defs.bzl", "TargetPlatformInfo")
 load("//img/private/providers:index_info.bzl", "ImageIndexInfo")
@@ -308,6 +308,80 @@ def _build_sparse_oci_layout(ctx, format, manifest_out, config_out, layers):
 
     return output
 
+def _build_soci_index(ctx, layers, os, arch, variant):
+    """Build a SOCI Index Manifest v2 for this image, or None.
+
+    Resolves the per-manifest `soci` setting (auto -> the global
+    //img/settings:soci flag). When enabled, gathers each layer's ztoc (reusing
+    SingleLayerInfo.ztoc, or generating one on the fly for a materialized gzip
+    layer), then runs `img soci-index` to assemble the SOCI index manifest, its
+    "{}" config blob, and its descriptor. `img soci-index` drops layers smaller
+    than the resolved min-layer-size. Returns None when SOCI is disabled or no
+    layer yields a ztoc (e.g. an all-zstd or all-shallow image).
+
+    Returns:
+        struct(manifest, config, descriptor, digest, ztoc_pairs) or None.
+    """
+    soci_setting = ctx.attr.soci
+    if soci_setting == "auto":
+        soci_setting = ctx.attr._default_soci[BuildSettingInfo].value
+    if soci_setting != "enabled":
+        return None
+
+    span_size = ctx.attr.soci_span_size
+    if span_size < 0:
+        span_size = ctx.attr._default_soci_span_size[BuildSettingInfo].value
+
+    ztoc_pairs = image_layer_ztocs(ctx, layers, span_size = span_size, name_prefix = ctx.label.name + "_soci")
+    if len(ztoc_pairs) == 0:
+        return None
+
+    soci_manifest_out = ctx.actions.declare_file(ctx.label.name + "_soci_index.json")
+    soci_config_out = ctx.actions.declare_file(ctx.label.name + "_soci_config.json")
+    soci_descriptor_out = ctx.actions.declare_file(ctx.label.name + "_soci_descriptor.json")
+    soci_digest_out = ctx.actions.declare_file(ctx.label.name + "_soci_digest")
+
+    args = ctx.actions.args()
+    args.add("soci-index")
+    args.add("--span-size", str(span_size))
+
+    # The SOCI index must reference exactly the ztocs shipped as its (positional)
+    # push layers, so the Bazel path indexes every provided ztoc (min-layer-size
+    # 0). A layer's size is only known at action time, so an analysis-time
+    # min-layer-size filter cannot be reflected in the positional layer runfiles.
+    # The soci_min_layer_size attribute/flag still applies to the standalone
+    # `img soci-index` CLI.
+    args.add("--min-layer-size", "0")
+    args.add("--os", os)
+    args.add("--architecture", arch)
+    if variant != "":
+        args.add("--variant", variant)
+    inputs = []
+    for pair in ztoc_pairs:
+        args.add("--layer", "{}={}".format(pair.metadata.path, pair.ztoc.path))
+        inputs.append(pair.metadata)
+        inputs.append(pair.ztoc)
+    args.add("--manifest", soci_manifest_out.path)
+    args.add("--config", soci_config_out.path)
+    args.add("--descriptor", soci_descriptor_out.path)
+    args.add("--digest", soci_digest_out.path)
+
+    img_toolchain_info = ctx.toolchains[TOOLCHAIN].imgtoolchaininfo
+    ctx.actions.run(
+        inputs = inputs,
+        outputs = [soci_manifest_out, soci_config_out, soci_descriptor_out, soci_digest_out],
+        executable = img_toolchain_info.tool_exe,
+        arguments = [args],
+        mnemonic = "SociIndex",
+    )
+    return struct(
+        manifest = soci_manifest_out,
+        config = soci_config_out,
+        descriptor = soci_descriptor_out,
+        digest = soci_digest_out,
+        ztoc_pairs = ztoc_pairs,
+    )
+
 def _image_manifest_impl(ctx):
     inputs = []
     providers = []
@@ -420,6 +494,17 @@ def _image_manifest_impl(ctx):
     for layer in layers:
         inputs.append(layer.metadata)
     args.add_all(layers, format_each = "--layer-from-metadata=%s", map_each = _to_layer_arg, expand_directories = False)
+
+    # Build the SOCI Index Manifest v2 for this image (when SOCI is enabled) and
+    # bake its digest into the image manifest via the com.amazon.soci.index-digest
+    # annotation. The SOCI index depends only on the ztocs + layer descriptors, so
+    # it is computed before the manifest; Bazel sequences it via the input edge on
+    # the soci descriptor.
+    soci_index = _build_soci_index(ctx, layers, os, arch, variant)
+    if soci_index != None:
+        inputs.append(soci_index.descriptor)
+        args.add("--soci-index-descriptor", soci_index.descriptor.path)
+
     if ctx.attr.config_fragment != None:
         inputs.append(ctx.file.config_fragment)
         args.add("--config-fragment", ctx.file.config_fragment.path)
@@ -579,6 +664,10 @@ def _image_manifest_impl(ctx):
         layers = layers,
         mtree = image_mtree,
         sparse_oci_layout = sparse_layout,
+        soci_manifest = soci_index.manifest if soci_index != None else None,
+        soci_config = soci_index.config if soci_index != None else None,
+        soci_descriptor = soci_index.descriptor if soci_index != None else None,
+        soci_ztocs = soci_index.ztoc_pairs if soci_index != None else [],
     )
     providers.extend([
         DefaultInfo(
@@ -920,6 +1009,40 @@ See [template expansion](/docs/templating.md) for available stamp variables.
 """,
             default = "auto",
             values = ["auto", "force", "disabled"],
+        ),
+        "soci": attr.string(
+            doc = """Whether to build a SOCI Index Manifest v2 for this image.
+
+- **`auto`** (default): defers to the global `--@rules_img//img/settings:soci` setting.
+- **`enabled`**: build a SOCI index. Each gzip layer's ztoc is reused from the layer
+  (when the layer emitted one) or generated on the fly; the image manifest gains a
+  `com.amazon.soci.index-digest` annotation (which changes its digest). For lazy
+  pulling with soci-snapshotter to work end-to-end, wrap the image in an `image_index`
+  (which emits the OCI-index cross-reference entry). See [SOCI](/docs/soci.md).
+- **`disabled`**: never build a SOCI index.
+""",
+            default = "auto",
+            values = ["auto", "enabled", "disabled"],
+        ),
+        "soci_span_size": attr.int(
+            doc = "Span size (uncompressed bytes between ztoc checkpoints). -1 (default) uses the global //img/settings:soci_span_size.",
+            default = -1,
+        ),
+        "soci_min_layer_size": attr.int(
+            doc = "Layers smaller than this many bytes are omitted from the SOCI index. -1 (default) uses the global //img/settings:soci_min_layer_size.",
+            default = -1,
+        ),
+        "_default_soci": attr.label(
+            default = Label("//img/settings:soci"),
+            providers = [BuildSettingInfo],
+        ),
+        "_default_soci_span_size": attr.label(
+            default = Label("//img/settings:soci_span_size"),
+            providers = [BuildSettingInfo],
+        ),
+        "_default_soci_min_layer_size": attr.label(
+            default = Label("//img/settings:soci_min_layer_size"),
+            providers = [BuildSettingInfo],
         ),
         "_os_cpu": attr.label(
             default = Label("//img/private/config:target_os_cpu"),

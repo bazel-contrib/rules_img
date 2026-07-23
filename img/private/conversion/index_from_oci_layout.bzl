@@ -112,6 +112,7 @@ def _image_index_from_oci_layout(ctx):
                 layer_input_files_cas = None,
                 sources = [],
                 mtree = None,
+                ztoc = None,
             )
             for i in range(len(layer_media_types))
         ]
@@ -175,6 +176,10 @@ def _image_index_from_oci_layout(ctx):
             layers = all_layer_infos[idx_str],
             mtree = image_mtree_or_none(ctx, "{}_{}".format(ctx.attr.name, idx_str), all_layer_infos[idx_str]),
             sparse_oci_layout = sparse_layout,
+            soci_manifest = None,
+            soci_config = None,
+            soci_descriptor = None,
+            soci_ztocs = [],
         ))
 
     index_sparse_layout = build_sparse_oci_layout_for_index(ctx, output_index, manifest_infos)

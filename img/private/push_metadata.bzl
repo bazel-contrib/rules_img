@@ -5,6 +5,7 @@ can also compute deploy metadata when they have push_specs/load_specs attached.
 """
 
 load("//img/private:layer_path_hints.bzl", "layer_hints_for_deploy_metadata")
+load("//img/private:soci_deploy.bzl", "soci_deploy_children")
 load("//img/private:stamp.bzl", "expand_or_write")
 load("//img/private/common:build.bzl", "TOOLCHAIN")
 load("//img/private/common:deploy_helpers.bzl", "content_tracking_json_vars")
@@ -171,6 +172,16 @@ def compute_push_metadata(
             inputs.append(tag_file)
         inputs.append(index_info.index)
         inputs.extend([manifest.manifest for manifest in index_info.manifests])
+
+        # SOCI index pseudo-children are pushed as extra index children after the
+        # real manifests. deploy-metadata parses each SOCI index manifest to derive
+        # its config ("{}") and ztoc layer descriptors; the ztoc blobs are resolved
+        # positionally from the matching manifest index in root symlinks.
+        soci_children = soci_deploy_children(index_info.manifests)
+        for offset, child in enumerate(soci_children):
+            manifest_index = len(index_info.manifests) + offset
+            args.add("--manifest-path", "{}={}".format(manifest_index, child.manifest.path))
+            inputs.append(child.manifest)
 
     layer_sources_file = _write_layer_sources_file(
         ctx,
@@ -527,6 +538,17 @@ def build_time_push_actions(
     else:
         manifests = [(i, m) for i, m in enumerate(index_info.manifests)]
 
+    # SOCI index pseudo-children are pushed as extra index children after the real
+    # manifests (index case only; a bare manifest's SOCI index is annotation-only
+    # and not pushed). Their manifest indices continue after the real manifests so
+    # they line up with compute_push_metadata's deploy manifest.
+    soci_children = []
+    if index_info != None:
+        soci_children = [
+            (len(manifests) + offset, child)
+            for offset, child in enumerate(soci_deploy_children(index_info.manifests))
+        ]
+
     layer_results = []
     for (mi, manifest) in manifests:
         for (li, layer) in enumerate(manifest.layers):
@@ -567,6 +589,37 @@ def build_time_push_actions(
             ctx.actions.run(**blob_run_kwargs)
             layer_results.append(result)
 
+    # Push each SOCI index's ztoc blobs. The SOCI index manifest carries the
+    # authoritative ztoc descriptors, so `push blob` derives each descriptor by
+    # hashing the ztoc (no per-ztoc metadata file needed); the manifest push then
+    # cross-mounts them by digest from these recorded results.
+    for (mi, child) in soci_children:
+        for (li, ztoc_layer) in enumerate(child.layers):
+            result = ctx.actions.declare_file("{}.blob.{}_{}.json".format(prefix, mi, li))
+            ztoc_args = ctx.actions.args()
+            ztoc_args.add("push")
+            ztoc_args.add("blob")
+            ztoc_args.add("--configuration-file", configuration_json.path)
+            ztoc_args.add("--blob", ztoc_layer.blob.path)
+            ztoc_args.add("--media-type", "application/octet-stream")
+            if blob_repository:
+                ztoc_args.add("--blob-repository", blob_repository)
+            ztoc_args.add("--mode", mode)
+            ztoc_args.add("--output", result.path)
+            ztoc_run_kwargs = dict(
+                inputs = [configuration_json, ztoc_layer.blob],
+                outputs = [result],
+                executable = tool,
+                arguments = [ztoc_args],
+                mnemonic = "PushImage",
+                execution_requirements = exec_requirements,
+                progress_message = "Pushing ztoc blob %s (soci manifest %d, layer %d)" % (ctx.label, mi, li),
+            )
+            if gateway_env:
+                ztoc_run_kwargs["env"] = gateway_env
+            ctx.actions.run(**ztoc_run_kwargs)
+            layer_results.append(result)
+
     # Push each manifest's config blob to the same blob target as the layers (one
     # action per config). This runs in both content modes, so a "blobs"-mode build
     # leaves every blob of the image -- layers and config -- in the blob target
@@ -575,7 +628,7 @@ def build_time_push_actions(
     # blob` derives the descriptor by hashing the config file (which is exactly the
     # content the manifest's config descriptor addresses).
     config_results = []
-    for (mi, manifest) in manifests:
+    for (mi, manifest) in manifests + soci_children:
         config_result = ctx.actions.declare_file("{}.config.{}.json".format(prefix, mi))
         config_args = ctx.actions.args()
         config_args.add("push")

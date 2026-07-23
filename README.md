@@ -17,7 +17,7 @@ Supports both **Bzlmod** and **WORKSPACE** setups. For WORKSPACE setup instructi
 - 📦 **OCI Compliant** - Builds standard OCI images compatible with any container runtime
 - 🔧 **Bazel Native** - No Docker daemon required, fully hermetic builds
 - 🌍 **Multi-Platform** - Native cross-platform support through Bazel transitions
-- ⚡ **eStargz Support** - Lazy pulling optimization for faster container starts
+- ⚡ **eStargz / SOCI Support** - Lazy pulling optimization for faster container starts (eStargz or [SOCI](docs/soci.md))
 - 🗜️ **Cache-efficient layers** - Skip storing layer tarballs in the Bazel remote cache. Layer rules emit a compact [stream representation](docs/compact-stream.md) instead, and the full layer tar is reconstructed on demand only at push/load time
 - 🪶 **Smaller layers** - Deduplicates files using hardlinks
 - 🎯 **Shallow Base Images** - Avoid downloading layers from huge base images like CUDA
@@ -55,6 +55,10 @@ common --@rules_img//img/settings:compression_level=auto
 # Support for seekable eStargz layers
 # with the containerd stargz-snapshotter
 common --@rules_img//img/settings:estargz=enabled
+
+# Or a SOCI Index Manifest v2 for lazy pulling with the
+# soci-snapshotter (see docs/soci.md)
+common --@rules_img//img/settings:soci=enabled
 
 # Create parent directory entries in tar files for all files
 # When enabled, parent directories are automatically created in the tar for all file entries.
@@ -534,7 +538,7 @@ This results in a more complex implementation, but also allows for interesting o
 - ✅ [Layers are produced in a single action](#single-action-layers)
 - ✅ [Deduplication of layer contents](#layer-optimization)
 - ✅ [Advanced push strategies](#advanced-push-strategies)
-- ✅ [eStargz support for lazy pulling](#estargz-lazy-pulling)
+- ✅ [eStargz / SOCI support for lazy pulling](#estargz-lazy-pulling)
 - ✅ [Incremental loading into daemons](#incremental-loading)
 
 ## Documentation
@@ -646,6 +650,11 @@ image_layer(
 The same setting can be globally enabled using `--@rules_img//img/settings:estargz=enabled`.
 Read the [stargz-snapshotter documentation][stargz-snapshotter] for more information.
 
+As an alternative, rules_img can emit a [SOCI Index Manifest v2](docs/soci.md) for lazy
+pulling with the [soci-snapshotter][soci-snapshotter] — enable
+`--@rules_img//img/settings:soci=enabled` (or the per-layer / per-manifest `soci`
+attribute) and wrap the image in an `image_index`. See the [SOCI guide](docs/soci.md).
+
 ### Incremental Loading
 
 rules_img loads images incrementally and efficiently by directly interfacing with the containerd API. This provides significant performance advantages over traditional approaches:
@@ -681,4 +690,5 @@ We invite external contributions and are eager to work together with the build s
 Special thanks to **Sushain Cherivirala** from Stripe for the inspiring BazelCon talk ["Building 1300 Container Images in 4 Minutes"](https://www.youtube.com/watch?v=c-yvIQooOSA). This talk introduced the groundbreaking idea of using the Build Event Service (BES) to sync container images between the remote cache and registry as a side effect. While their implementation was based on the now-archived rules_docker and was never published, it laid the conceptual foundation for pushing images as a side effect of the build in rules_img — either directly from remote-execution actions ([push at build time](docs/push-strategies.md#push-at-build-time)) or via a custom build-event-stream listener (the [BES push strategy](docs/push-strategies.md#bes-push)). Their work demonstrated how to achieve dramatic performance improvements in container image builds at scale, inspiring many of the optimizations in rules_img.
 
 [stargz-snapshotter]: https://github.com/containerd/stargz-snapshotter
+[soci-snapshotter]: https://github.com/awslabs/soci-snapshotter
 [oci-image-layout]: https://github.com/opencontainers/image-spec/blob/v1.1.1/image-layout.md

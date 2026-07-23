@@ -186,6 +186,49 @@ def build_layer_mtree(ctx, name, *, tar_blob = None, compact_stream = None):
     )
     return mtree_out
 
+def build_layer_ztoc(ctx, name, *, tar_blob, span_size):
+    """Produce a ztoc (SOCI table of contents) for a gzip-compressed tar layer.
+
+    Runs `img ztoc` over a materialized gzip layer blob, writing a single ztoc
+    file. Used to generate a ztoc on the fly for layers whose SingleLayerInfo did
+    not already carry one (e.g. recompressed/optimized/imported layers).
+
+    Args:
+        ctx: Rule context.
+        name: Base name for the output file (the result is name + ".ztoc").
+        tar_blob: A gzip-compressed layer tar File.
+        span_size: Span size (uncompressed bytes between checkpoints) for the ztoc.
+
+    Returns:
+        The generated ztoc File.
+    """
+    ztoc_out = ctx.actions.declare_file(name + ".ztoc")
+    args = ctx.actions.args()
+    args.add("ztoc")
+    args.add("--blob", tar_blob)
+    args.add("--output", ztoc_out)
+    args.add("--span-size", str(span_size))
+
+    img_toolchain_info = ctx.toolchains[TOOLCHAIN].imgtoolchaininfo
+    ctx.actions.run(
+        outputs = [ztoc_out],
+        inputs = [tar_blob],
+        executable = img_toolchain_info.tool_exe,
+        arguments = [args],
+        mnemonic = "LayerZtoc",
+    )
+    return ztoc_out
+
+def media_type_is_gzip(media_type):
+    """Whether a layer blob with this media type is gzip-compressed (ztoc-able).
+
+    ztoc/SOCI only supports gzip layers. Every gzip OCI/Docker layer media type
+    carries a "gzip" token (`...tar+gzip`, `...rootfs.diff.tar.gzip`); estargz
+    layers keep the same tar+gzip media type and are equally seekable. zstd,
+    uncompressed, empty, and non-tar artifact layers are not gzip.
+    """
+    return media_type != None and "gzip" in media_type
+
 def build_image_mtree(ctx, name, mtree_files):
     """Merge per-layer mtree specs into a single image-level mtree.
 
@@ -286,6 +329,42 @@ def image_layer_mtrees(ctx, layers, name_prefix = None):
             mtrees.append(build_layer_mtree(ctx, "{}_layer_{}".format(prefix, i), tar_blob = layer.blob))
     return mtrees
 
+def image_layer_ztocs(ctx, layers, *, span_size, name_prefix = None):
+    """Ordered (layer-metadata, ztoc) pairs for an image's gzip layers.
+
+    For each layer (in image/layer order):
+    - if it already carries a `ztoc` (produced by a rules_img layer rule with SOCI
+      enabled), pair its metadata with that ztoc;
+    - else if it has a materialized gzip tar blob, generate a ztoc on the fly with
+      build_layer_ztoc;
+    - else skip it (a shallow/lazy layer with no blob, or a non-gzip layer).
+
+    Layers below the SOCI minimum size are NOT filtered here (a layer's size is
+    only known at action time); `img soci-index --min-layer-size` drops those from
+    the assembled SOCI index. Skips are best-effort.
+
+    Args:
+        ctx: Rule context of an image rule.
+        layers: Ordered list of SingleLayerInfo providers.
+        span_size: Span size for on-the-fly ztoc generation.
+        name_prefix: Optional base name for on-the-fly per-layer ztoc files
+            (defaults to ctx.label.name). A rule that builds several manifests
+            (e.g. an image index) must pass a per-manifest-unique prefix so the
+            declared `<prefix>_layer_<i>.ztoc` files do not collide.
+
+    Returns:
+        Ordered list of struct(metadata = File, ztoc = File).
+    """
+    prefix = name_prefix if name_prefix != None else ctx.label.name
+    pairs = []
+    for i, layer in enumerate(layers):
+        if layer.ztoc != None:
+            pairs.append(struct(metadata = layer.metadata, ztoc = layer.ztoc))
+        elif layer.blob != None and media_type_is_gzip(layer.media_type):
+            ztoc = build_layer_ztoc(ctx, "{}_layer_{}".format(prefix, i), tar_blob = layer.blob, span_size = span_size)
+            pairs.append(struct(metadata = layer.metadata, ztoc = ztoc))
+    return pairs
+
 def image_mtree_or_none(ctx, name, layers):
     """Merge an image's per-layer mtrees into a single image mtree, or None.
 
@@ -371,6 +450,7 @@ def calculate_layer_info(*, ctx, media_type, tar_file, metadata_file, estargz, a
         layer_input_files_cas = None,
         sources = [],
         mtree = mtree,
+        ztoc = None,
     )
 
 def recompress_layer(*, ctx, media_type, tar_file, metadata_file, output, target_compression, estargz, annotations):
@@ -419,6 +499,7 @@ def recompress_layer(*, ctx, media_type, tar_file, metadata_file, output, target
         layer_input_files_cas = None,
         sources = [],
         mtree = build_layer_mtree(ctx, ctx.label.name, tar_blob = output),
+        ztoc = None,
     )
 
 def optimize_layer(*, ctx, media_type, tar_file, metadata_file, output, target_compression, estargz, annotations):
@@ -468,4 +549,5 @@ def optimize_layer(*, ctx, media_type, tar_file, metadata_file, output, target_c
         layer_input_files_cas = None,
         sources = [],
         mtree = build_layer_mtree(ctx, ctx.label.name, tar_blob = output),
+        ztoc = None,
     )

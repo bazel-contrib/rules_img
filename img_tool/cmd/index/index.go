@@ -16,6 +16,7 @@ import (
 var (
 	manifestDescriptorArgs manifestDescriptors
 	annotationArgs         annotations
+	sociEntryArgs          sociEntries
 	configTemplates        string
 	digestOutput           string
 	descriptorOutput       string
@@ -39,6 +40,7 @@ func IndexProcess(ctx context.Context, args []string) {
 	}
 	flagSet.Var(&manifestDescriptorArgs, "manifest-descriptor", `File containing a descriptor for a manifest.`)
 	flagSet.Var(&annotationArgs, "annotation", `Key-value pair to add as an annotation`)
+	flagSet.Var(&sociEntryArgs, "soci-entry", `A SOCI index descriptor paired with the image manifest descriptor it belongs to, as <soci-descriptor>=<image-manifest-descriptor>. Appends the SOCI index as an OCI index entry annotated with com.amazon.soci.image-manifest-digest (SOCI v2 discovery). Repeatable.`)
 	flagSet.StringVar(&configTemplates, "config-templates", "", `A JSON file containing template-expanded annotations values.`)
 	flagSet.StringVar(&digestOutput, "digest", "", `The (optional) output file for the digest of the manifest. This is useful for postprocessing.`)
 	flagSet.StringVar(&descriptorOutput, "descriptor", "", `The output file for the descriptor of the index.`)
@@ -73,12 +75,16 @@ func IndexProcess(ctx context.Context, args []string) {
 		annotations = templatesData.Annotations
 	}
 
+	// The OCI index lists the image manifests first, then any SOCI index entries
+	// (SOCI v2 appends the SOCI indexes to the list of manifests).
+	manifestList := append([]specsv1.Descriptor(manifestDescriptorArgs), []specsv1.Descriptor(sociEntryArgs)...)
+
 	index := specsv1.Index{
 		Versioned: specs.Versioned{
 			SchemaVersion: 2,
 		},
 		MediaType:   specsv1.MediaTypeImageIndex,
-		Manifests:   []specsv1.Descriptor(manifestDescriptorArgs),
+		Manifests:   manifestList,
 		Annotations: annotations,
 	}
 

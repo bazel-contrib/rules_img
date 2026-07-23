@@ -2,6 +2,7 @@
 
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("//img/private:push_metadata.bzl", "process_deploy_specs")
+load("//img/private:soci_deploy.bzl", "soci_deploy_children")
 load("//img/private:stamp.bzl", "expand_or_write")
 load("//img/private/common:build.bzl", "TOOLCHAIN", "TOOLCHAINS")
 load("//img/private/common:transitions.bzl", "multi_platform_image_transition", "reset_platform_transition")
@@ -110,6 +111,16 @@ def _build_sparse_oci_layout(ctx, format, index_out, manifests):
             if layer.compact_stream != None:
                 args.add("--layer-compact-stream", "{}={}".format(layer.metadata.path, layer.compact_stream.path))
                 inputs.append(layer.compact_stream)
+
+    # Include each SOCI index (an extra child of the OCI index) so its manifest
+    # and "{}" config blobs are resolvable by digest at push time. Its ztoc layer
+    # blobs are not embedded in the sparse layout (they are shipped as positional
+    # layer runfiles); the SOCI manifest already carries their descriptors.
+    for child in soci_deploy_children(manifests):
+        args.add("--manifest-path", child.manifest.path)
+        args.add("--config-path", child.config.path)
+        inputs.append(child.manifest)
+        inputs.append(child.config)
 
     img_toolchain_info = ctx.toolchains[TOOLCHAIN].imgtoolchaininfo
     ctx.actions.run(

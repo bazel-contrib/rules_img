@@ -32,6 +32,7 @@ deploy time a missing blob can be fetched from its original source registry. It 
 an empty list for layers that are built locally and have no upstream origin.
 """,
     mtree = "File containing an mtree(8) description of the layer's tar metadata, or None (for non-tar layers or shallow layers whose blob is unavailable).",
+    ztoc = "File containing the SOCI ztoc (table of contents) for this layer, or None (for non-gzip layers, or when SOCI is disabled). Used to assemble a SOCI Index Manifest v2.",
 )
 
 SingleLayerInfo = provider(

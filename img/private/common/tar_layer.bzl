@@ -192,6 +192,12 @@ def resolve_layer_settings(ctx):
         estargz = ctx.attr._default_estargz[BuildSettingInfo].value
     estargz_enabled = estargz == "enabled"
 
+    soci = ctx.attr.soci
+    if soci == "auto":
+        soci = ctx.attr._default_soci[BuildSettingInfo].value
+    soci_enabled = soci == "enabled"
+    soci_span_size = ctx.attr._default_soci_span_size[BuildSettingInfo].value
+
     create_parent_directories = ctx.attr.create_parent_directories
     if create_parent_directories == "auto":
         create_parent_directories = ctx.attr._default_create_parent_directories[BuildSettingInfo].value
@@ -225,6 +231,8 @@ def resolve_layer_settings(ctx):
         out_ext = out_ext,
         compact_layers = compact_layers,
         compact_layers_inline_threshold = compact_layers_inline_threshold,
+        soci = soci_enabled,
+        soci_span_size = soci_span_size,
     )
 
 def create_tar_single_layer(ctx, settings, name, extra_args = [], extra_inputs = []):
@@ -243,7 +251,7 @@ def create_tar_single_layer(ctx, settings, name, extra_args = [], extra_inputs =
         extra_inputs: list of depset objects to merge with base inputs.
 
     Returns:
-        tuple of (SingleLayerInfo, out_file_or_None, metadata_file, compact_stream_file_or_None, mtree_file).
+        tuple of (SingleLayerInfo, out_file_or_None, metadata_file, compact_stream_file_or_None, mtree_file, ztoc_file_or_None).
     """
     metadata_out = ctx.actions.declare_file(name + "_metadata.json")
     out = None
@@ -253,6 +261,13 @@ def create_tar_single_layer(ctx, settings, name, extra_args = [], extra_inputs =
         compact_stream_out = ctx.actions.declare_file(name + settings.out_ext + ".cstream")
     else:
         out = ctx.actions.declare_file(name + settings.out_ext)
+
+    # Emit a ztoc for lazy pulling when SOCI is enabled for a materialized gzip
+    # layer. Compact-stream layers have no materialized blob to index, so they
+    # never emit a ztoc here (a manifest that needs one reconstructs it later).
+    ztoc_out = None
+    if settings.soci and settings.compression == "gzip" and out != None:
+        ztoc_out = ctx.actions.declare_file(name + settings.out_ext + ".ztoc")
 
     args = ["layer", "--history", layer_history(layer_name(ctx.label)), "--metadata", metadata_out.path, "--format", settings.compression]
     if ctx.attr.media_type:
@@ -272,6 +287,8 @@ def create_tar_single_layer(ctx, settings, name, extra_args = [], extra_inputs =
         args.append("--compact-stream-only")
         if settings.compact_layers_inline_threshold > 0:
             args.extend(["--compact-stream-inline-threshold", str(settings.compact_layers_inline_threshold)])
+    if ztoc_out:
+        args.extend(["--ztoc", ztoc_out.path, "--ztoc-span-size", str(settings.soci_span_size)])
 
     args.extend(extra_args)
     if out:
@@ -287,6 +304,8 @@ def create_tar_single_layer(ctx, settings, name, extra_args = [], extra_inputs =
         outputs.append(out)
     if compact_stream_out:
         outputs.append(compact_stream_out)
+    if ztoc_out:
+        outputs.append(ztoc_out)
 
     img_toolchain_info = ctx.toolchains[TOOLCHAIN].imgtoolchaininfo
     ctx.actions.run(
@@ -324,11 +343,13 @@ def create_tar_single_layer(ctx, settings, name, extra_args = [], extra_inputs =
             layer_input_files_cas = layer_input_files_cas,
             sources = [],
             mtree = mtree_out,
+            ztoc = ztoc_out,
         ),
         out,
         metadata_out,
         compact_stream_out,
         mtree_out,
+        ztoc_out,
     )
 
 def _input_file_cas_arg(f):
@@ -390,7 +411,7 @@ def create_tar_layer(ctx, settings, extra_args = [], extra_inputs = []):
     Returns:
         list of [DefaultInfo, OutputGroupInfo, LayersInfo].
     """
-    layer_info, out, metadata_out, compact_stream_out, mtree_out = create_tar_single_layer(ctx, settings, ctx.attr.name, extra_args, extra_inputs)
+    layer_info, out, metadata_out, compact_stream_out, mtree_out, ztoc_out = create_tar_single_layer(ctx, settings, ctx.attr.name, extra_args, extra_inputs)
     output_groups = dict(
         metadata = depset([metadata_out]),
         mtree = depset([mtree_out]),
@@ -399,6 +420,8 @@ def create_tar_layer(ctx, settings, extra_args = [], extra_inputs = []):
         output_groups["layer"] = depset([out])
     if compact_stream_out:
         output_groups["experimental_compact_stream"] = depset([compact_stream_out])
+    if ztoc_out:
+        output_groups["ztoc"] = depset([ztoc_out])
     default_file = out if out else compact_stream_out
     return [
         DefaultInfo(files = depset([default_file])),

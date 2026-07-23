@@ -1,5 +1,7 @@
 """Helper functions to create a root symlink tree for pushing and loading."""
 
+load("//img/private:soci_deploy.bzl", "soci_deploy_children")
+
 def _layer_root_symlinks_for_manifest(manifest_info, operation_index, manifest_index, symlink_name_prefix):
     base_path = "{}{}/manifests/{}/layer".format(symlink_name_prefix, operation_index, manifest_index)
     result = {}
@@ -38,6 +40,15 @@ def calculate_root_symlinks(index_info, manifest_info, *, include_layers, symlin
         if include_layers:
             for i, manifest in enumerate(index_info.manifests):
                 root_symlinks.update(_layer_root_symlinks_for_manifest(manifest, operation_index, i, symlink_name_prefix))
+
+            # SOCI index pseudo-children are pushed as extra index children after
+            # the real manifests; ship their ztoc blobs at the matching positional
+            # manifest indices so the deploy tool resolves them (the deploy metadata
+            # lists them at the same indices; see compute_push_metadata).
+            soci_children = soci_deploy_children(index_info.manifests)
+            for offset, child in enumerate(soci_children):
+                manifest_index = len(index_info.manifests) + offset
+                root_symlinks.update(_layer_root_symlinks_for_manifest(child, operation_index, manifest_index, symlink_name_prefix))
     if manifest_info != None:
         root_symlinks["{}{}/sparse_oci_layout".format(symlink_name_prefix, operation_index)] = manifest_info.sparse_oci_layout
         if include_layers:

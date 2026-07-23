@@ -108,6 +108,7 @@ def _write_layer_info(ctx, manifest, config, history, layer_index, index_positio
         layer_input_files_cas = None,
         sources = sources,
         mtree = mtree,
+        ztoc = None,
     )
 
 def _write_manifest_descriptor(ctx, digest, manifest, platform, descriptor = None, index_position = None):
@@ -200,6 +201,10 @@ def _build_manifest_info(ctx, digest, descriptor = None, index_position = None, 
         layers = layers,
         mtree = image_mtree_or_none(ctx, mtree_name, layers),
         sparse_oci_layout = sparse_layout,
+        soci_manifest = None,
+        soci_config = None,
+        soci_descriptor = None,
+        soci_ztocs = [],
     )
 
 def _image_import_impl(ctx):

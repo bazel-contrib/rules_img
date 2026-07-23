@@ -26,6 +26,16 @@ def write_index_json(ctx, *, output, descriptor, digest, manifests, config_json 
 
     inputs = list(manifest_descriptors)
 
+    # For each child manifest that carries a SOCI index, add the SOCI index as an
+    # extra OCI index entry cross-referencing its image manifest (SOCI v2
+    # discovery). The tool stamps com.amazon.soci.image-manifest-digest from the
+    # paired image-manifest descriptor.
+    for manifest in manifests:
+        soci_descriptor = getattr(manifest, "soci_descriptor", None)
+        if soci_descriptor != None:
+            args.add("--soci-entry", "{}={}".format(soci_descriptor.path, manifest.descriptor.path))
+            inputs.append(soci_descriptor)
+
     if config_json:
         args.add("--config-templates", config_json.path)
         inputs.append(config_json)

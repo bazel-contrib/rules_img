@@ -100,6 +100,7 @@ def _optimize_layer(ctx, layer, settings, manifest_position, layer_position):
         # no longer serve this blob.
         sources = [],
         mtree = None,
+        ztoc = None,
     )
 
 def _optimize_layers(ctx, manifest, settings, manifest_position):
@@ -151,6 +152,10 @@ def _optimize_manifest(ctx, manifest, settings, manifest_position = None):
             variant = manifest.variant,
             layers = layers,
             mtree = image_mtree_or_none(ctx, ctx.attr.name + suffix, layers),
+            soci_manifest = None,
+            soci_config = None,
+            soci_descriptor = None,
+            soci_ztocs = [],
         ),
         descriptor = descriptor_out,
         digest = digest_out,

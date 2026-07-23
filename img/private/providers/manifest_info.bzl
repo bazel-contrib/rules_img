@@ -15,6 +15,10 @@ FIELDS = dict(
     layers = "Layers of the image as list of SingleLayerInfo.",
     mtree = "File with the image's mtree (the per-layer mtrees merged in layer order as an OCI applied changeset), or None when no layer contributes one.",
     sparse_oci_layout = "Tree artifact containing the sparse OCI layout for this manifest.",
+    soci_manifest = "File containing the SOCI Index Manifest v2 (an OCI image manifest whose layers are ztocs), or None when SOCI is disabled.",
+    soci_config = "File containing the SOCI index's empty ('{}') config blob, or None.",
+    soci_descriptor = "File containing the descriptor of the SOCI index (mediaType image manifest, artifactType application/vnd.amazon.soci.index.v2+json, platform), or None.",
+    soci_ztocs = "List of struct(metadata = File, ztoc = File) for the ztoc blobs referenced by the SOCI index, in layer order. Empty when SOCI is disabled.",
 )
 
 ImageManifestInfo = provider(

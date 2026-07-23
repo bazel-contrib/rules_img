@@ -29,6 +29,7 @@ import (
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/optimize"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/pull"
 	pushcmd "github.com/bazel-contrib/rules_img/img_tool/cmd/push"
+	socicmd "github.com/bazel-contrib/rules_img/img_tool/cmd/soci"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/sparseocilayout"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/syncocirefgraph"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/validate"
@@ -57,6 +58,8 @@ Commands:
   optimize                 rewrites image metadata after layer optimization
   pull                     pulls an image from a registry
   sparse-oci-layout        assembles a sparse OCI layout (without layer blobs) from manifest and layers
+  soci-index               creates a SOCI Index Manifest v2 from per-layer ztoc blobs
+  ztoc                     generates a ztoc (SOCI table of contents) for a gzip-compressed layer
   compact-stream           inspects or reconstructs a compact stream (subcommands: reconstruct, list)
   cas-dir                  builds a content-addressed directory (sha256/<hex>) from input files
   sync-oci-ref-graph       syncs OCI reference graph by downloading manifests in parallel
@@ -96,6 +99,10 @@ func Run(ctx context.Context, args []string) {
 		index.IndexProcess(ctx, args[2:])
 	case "index-from-oci-layout":
 		indexfromocilayout.IndexFromOCILayoutProcess(ctx, args[2:])
+	case "soci-index":
+		socicmd.SociIndexProcess(ctx, args[2:])
+	case "ztoc":
+		socicmd.ZtocProcess(ctx, args[2:])
 	case "validate":
 		validate.ValidationProcess(ctx, args[2:])
 	case "deploy":
