@@ -41,17 +41,21 @@ The registry permissions differ per operation:
 rules_img (the `img` tool, its build actions, and the gateway) resolves registry
 credentials with one keychain, tried in order:
 
-1. A **Bazel credential helper**, when `IMG_CREDENTIAL_HELPER` is set (see
-   [Credential Helpers](credential-helpers.md)).
-2. An **inline Docker config**, when `IMG_DOCKER_CONFIG_INLINE` holds the JSON
+1. A **Bazel credential helper**, when
+   `IMG_CREDENTIAL_HELPER_OCI_REGISTRY` or its `IMG_CREDENTIAL_HELPER` fallback
+   is set (see [Credential Helpers](credential-helpers.md)).
+2. **Host-scoped environment credentials**, when `IMG_REGISTRY_AUTH_HOST` and
+   either `IMG_REGISTRY_AUTH_USERNAME` plus `IMG_REGISTRY_AUTH_PASSWORD`, or
+   `IMG_REGISTRY_AUTH_BEARER_TOKEN`, are set.
+3. An **inline Docker config**, when `IMG_DOCKER_CONFIG_INLINE` holds the JSON
    contents of a `config.json`. Resolved just like the Docker config below, but
    from memory. Intended for secret-injection mechanisms only — see
    [Option 4](#4-inline-docker-config-from-an-injected-environment-variable) and
    the warning there.
-3. The **Docker config** (honors `DOCKER_CONFIG`; `REGISTRY_AUTH_FILE` is used
+4. The **Docker config** (honors `DOCKER_CONFIG`; `REGISTRY_AUTH_FILE` is used
    inside build actions).
-4. **Google** — `google.Keychain` (Application Default Credentials / workload identity).
-5. **Amazon ECR** — the ambient AWS configuration.
+5. **Google** — `google.Keychain` (Application Default Credentials / workload identity).
+6. **Amazon ECR** — the ambient AWS configuration.
 
 Whatever option you pick below, the credentials it provides are consumed through
 this keychain.
@@ -217,8 +221,9 @@ Set `IMG_DOCKER_CONFIG_INLINE` to the **JSON contents** of a Docker
 `config.json` (the same format as `~/.docker/config.json` — *not* a path to a
 file). rules_img resolves it exactly like the Docker config file, but entirely
 in memory, so it works on an executor that has no config file on disk. It is
-tried just before the on-disk Docker config, so an explicitly injected
-credential wins over whatever config file happens to exist.
+tried after the host-scoped environment variables and before the on-disk Docker
+config, so a per-invocation host-scoped credential can override a broader stored
+config.
 
 > **Not recommended for general use.** The value *is* the credential, so
 > anything that records your Bazel command line or an action's declared
@@ -229,12 +234,15 @@ credential wins over whatever config file happens to exist.
 > injects the variable straight into the (remote) action's process, where the
 > value never appears in the Bazel invocation itself.
 
-The intended mechanism is a per-action secret store such as **BuildBuddy
-secrets** — encrypted, organization-scoped environment variables (encrypted
-client-side with a libsodium sealed box and decrypted only on demand). Save the
-`config.json` contents once as a secret named `IMG_DOCKER_CONFIG_INLINE`, then
-opt the target whose build actions push or pull in to it with the `env-secrets`
-execution property:
+Use this format when an executor-side secret store provides a complete Docker
+config or when its additional authentication fields are required. On BuildBuddy
+Cloud-managed executors, prefer the shorter host-scoped variables described
+below when username/password or a bearer token is sufficient.
+
+For example, BuildBuddy organization secrets are encrypted, organization-scoped
+environment variables. Save the `config.json` contents once as a secret named
+`IMG_DOCKER_CONFIG_INLINE`, then opt the target whose build actions push or pull
+in to it with the `env-secrets` execution property:
 
 ```python
 exec_properties = {"env-secrets": "IMG_DOCKER_CONFIG_INLINE"},
@@ -251,6 +259,162 @@ the executor work the same way.
 Because the credentials flow through the shared keychain, no rules_img setting
 is involved: both lazy base-image pulls (`DownloadBlob`) and push-at-build-time
 actions pick the variable up automatically wherever the executor sets it.
+
+## BuildBuddy: inject short-lived credentials
+
+For short-lived registry credentials on BuildBuddy Cloud-managed executors,
+this is the preferred authentication method. Use BuildBuddy's [short-lived
+secrets] to inject registry credentials at execution time instead of operating
+a gateway. The secret values are redacted from BuildBuddy's action-cache entries
+and workflow logs, and because they are supplied in a remote execution header
+rather than the Bazel-declared action environment, they do not affect the action
+key.
+
+Set the registry host and exactly one authentication mode:
+
+| Authentication | Environment variables |
+|---|---|
+| Username and password | `IMG_REGISTRY_AUTH_HOST`, `IMG_REGISTRY_AUTH_USERNAME`, `IMG_REGISTRY_AUTH_PASSWORD` |
+| Ready-to-send bearer token | `IMG_REGISTRY_AUTH_HOST`, `IMG_REGISTRY_AUTH_BEARER_TOKEN` |
+
+`IMG_REGISTRY_AUTH_BEARER_TOKEN` is only for a registry-issued bearer token that
+can be sent directly in an `Authorization: Bearer` header. Registry access
+tokens or personal access tokens that require a username are passwords in the
+username/password mode. For the configured host, incomplete or mixed
+authentication variables are an error rather than falling through to another
+keychain.
+
+For example, inject a short-lived username and access token:
+
+```bash
+bazel build //path/to:image \
+  --remote_exec_header="x-buildbuddy-platform.secret-env-overrides=\
+IMG_REGISTRY_AUTH_HOST=${REGISTRY_HOST},\
+IMG_REGISTRY_AUTH_USERNAME=${REGISTRY_USER},\
+IMG_REGISTRY_AUTH_PASSWORD=${REGISTRY_TOKEN}"
+```
+
+`IMG_REGISTRY_AUTH_HOST` is a registry host such as `ghcr.io` or
+`registry.example.com:5000`, without a URL scheme or repository path. rules_img
+normalizes the Docker Hub alias `docker.io` to `index.docker.io` and only offers
+the credentials to the matching host.
+
+The plain `secret-env-overrides` format separates entries with commas. If a
+value contains a comma or other characters that make this format unsuitable,
+base64-encode each complete `KEY=VALUE` entry and use BuildBuddy's
+`secret-env-overrides-base64` header instead, as described in [short-lived
+secrets].
+
+> **Scope and caching:** `--remote_exec_header` applies to every remotely
+> executed action in the Bazel invocation, even though rules_img only sends the
+> registry credentials to the configured host. Use a narrowly scoped invocation
+> when possible and do not print secrets or write them to action outputs. A cache
+> hit skips execution, so rotating the credential alone does not rerun
+> `DownloadBlob` or `PushImage`.
+
+The values are redacted by BuildBuddy, but shell expansion can still expose them
+locally through process arguments, shell tracing, or CI command logs. Disable
+shell tracing and use the secret-masking facilities of the environment launching
+Bazel. Base64 encoding makes complex values transport-safe; it does not encrypt
+them.
+
+This mechanism requires BuildBuddy remote execution. BuildBuddy remote caching
+alone and local execution cannot inject these environment variables; other
+remote execution services need an equivalent execution-time environment
+injection mechanism.
+
+## Setting up the gateway on BuildBuddy self-hosted executors
+
+Run one gateway as a **sidecar container in each BuildBuddy executor Pod**. The
+gateway is not a separate Pod or DaemonSet in this setup: the
+`extraContainers` value adds it to the executor Pod template, so each executor
+replica gets its own gateway.
+
+```text
+BuildBuddy executor Pod
+├── oci-distribution-gateway sidecar
+└── buildbuddy-executor
+    └── child OCI action container
+```
+
+The sidecar listens on a UNIX socket in a private `emptyDir`. The
+[BuildBuddy executor Helm chart] shares that socket with the executor and, with
+the chart's default OCI isolation, the executor bind-mounts it into child action
+containers. This requires configuration at three layers:
+
+1. An `emptyDir` shared by the gateway sidecar and executor Pod containers.
+2. An `extraVolumeMount` that makes the directory visible to the executor.
+3. An `executor.oci.mounts` entry that bind-mounts the directory into every
+   action container.
+
+First create a `ConfigMap` containing the gateway policy in the executor's
+Kubernetes namespace:
+
+```bash
+kubectl --namespace=buildbuddy create configmap rules-img-gateway-policy \
+  --from-file=policy.yaml=/path/to/gateway-policy.yaml
+```
+
+Then add these values to the `buildbuddy-executor` chart:
+
+```yaml
+extraVolumes:
+  - name: rules-img-gateway-socket
+    emptyDir: {}
+  - name: rules-img-gateway-policy
+    configMap:
+      name: rules-img-gateway-policy
+extraVolumeMounts:
+  - name: rules-img-gateway-socket
+    mountPath: /run/rules-img-gateway
+extraContainers:
+  - name: oci-distribution-gateway
+    image: <your oci-distribution-gateway image>
+    args:
+      - --unix-socket=/run/rules-img-gateway/gateway.sock
+      - --policy-file=/etc/rules-img-gateway/policy.yaml
+    volumeMounts:
+      - name: rules-img-gateway-socket
+        mountPath: /run/rules-img-gateway
+      - name: rules-img-gateway-policy
+        mountPath: /etc/rules-img-gateway
+        readOnly: true
+config:
+  executor:
+    oci:
+      mounts:
+        - type: bind
+          source: /run/rules-img-gateway
+          destination: /run/rules-img-gateway
+          options:
+            - bind
+            - ro
+```
+
+rules_img does not currently publish a gateway container image. Build and
+publish an image containing `oci-distribution-gateway`, then replace the image
+placeholder above, preferably with an immutable digest.
+
+Point Bazel at the same socket path:
+
+```bash
+common --@rules_img//img/settings:registry_gateway=unix:/run/rules-img-gateway/gateway.sock
+```
+
+Give only the gateway sidecar the upstream credentials it needs, using its
+environment or additional secret volume mounts. The actions connect to the
+gateway anonymously and do not need registry credentials.
+
+This example assumes the chart's default OCI isolation. Other isolation types
+need their own mechanism for exposing the socket inside action containers.
+`executor.oci.mounts` applies to every OCI action on the executor, so use a
+restrictive gateway policy and consider a dedicated executor pool. Also ensure
+the socket permissions allow the action user to connect. `extraContainers`
+start concurrently with the executor; if startup ordering is important, use a
+Kubernetes restartable init sidecar with a startup probe through the chart's
+`extraInitContainers` value. A separate Deployment or DaemonSet would require
+different network or volume plumbing and would expose the unauthenticated
+gateway beyond this private per-Pod socket.
 
 ## Setting up the gateway on Buildbarn
 
@@ -320,3 +484,5 @@ listening on another socket on the shared volume.
 
 [buildbarn/bb-deployments]: https://github.com/buildbarn/bb-deployments
 [bb-deployments]: https://github.com/buildbarn/bb-deployments
+[BuildBuddy executor Helm chart]: https://github.com/buildbuddy-io/buildbuddy-helm/tree/master/charts/buildbuddy-executor
+[short-lived secrets]: https://www.buildbuddy.io/docs/secrets#short-lived-secrets
