@@ -2,13 +2,20 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "registry",
-    srcs = ["registry.go"],
+    srcs = [
+        "inline_config.go",
+        "registry.go",
+    ],
     importpath = "github.com/bazel-contrib/rules_img/img_tool/pkg/auth/registry",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/auth/credential",
         "@com_github_awslabs_amazon_ecr_credential_helper_ecr_login//:ecr-login",
+        "@com_github_docker_cli//cli/config",
+        "@com_github_docker_cli//cli/config/configfile",
+        "@com_github_docker_cli//cli/config/types",
         "@com_github_google_go_containerregistry//pkg/authn",
+        "@com_github_google_go_containerregistry//pkg/name",
         "@com_github_google_go_containerregistry//pkg/v1/google",
         "@com_github_google_go_containerregistry//pkg/v1/remote",
     ],
@@ -17,7 +24,10 @@ go_library(
 go_test(
     name = "registry_test",
     size = "small",
-    srcs = ["registry_test.go"],
+    srcs = [
+        "inline_config_test.go",
+        "registry_test.go",
+    ],
     embed = [":registry"],
     deps = [
         "@com_github_google_go_containerregistry//pkg/name",

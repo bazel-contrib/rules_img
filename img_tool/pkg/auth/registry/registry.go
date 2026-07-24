@@ -62,6 +62,7 @@ func firstNonEmptyEnv(names ...string) string {
 // WithAuthFromMultiKeychain returns a remote.Option that uses a MultiKeychain.
 // If a credential helper is configured (IMG_CREDENTIAL_HELPER_OCI_REGISTRY, or
 // the generic IMG_CREDENTIAL_HELPER), the Bazel credential helper is checked
+// first. An inline Docker config (IMG_DOCKER_CONFIG_INLINE) is checked next,
 // before the default Docker, Google, and Amazon ECR keychains.
 // If `IMG_AUTH_DEBUG` is set, each keychain resolution is logged to stderr.
 func WithAuthFromMultiKeychain() remote.Option {
@@ -70,9 +71,9 @@ func WithAuthFromMultiKeychain() remote.Option {
 
 // Keychain returns the [authn.Keychain] used to resolve registry credentials.
 // It honors the same environment (IMG_CREDENTIAL_HELPER_OCI_REGISTRY,
-// IMG_CREDENTIAL_HELPER, IMG_AUTH_DEBUG) as WithAuthFromMultiKeychain and is
-// intended for callers that need the raw keychain (for example to run the token
-// exchange flow themselves).
+// IMG_CREDENTIAL_HELPER, IMG_DOCKER_CONFIG_INLINE, IMG_AUTH_DEBUG) as
+// WithAuthFromMultiKeychain and is intended for callers that need the raw
+// keychain (for example to run the token exchange flow themselves).
 func Keychain() authn.Keychain {
 	return keychainFromEnvironment()
 }
@@ -86,6 +87,13 @@ func keychainFromEnvironment() authn.Keychain {
 		bazel := credential.New(value, &credential.Options{CaptureStderr: true})
 		keychain := credential.ContainerRegistryKeychain(bazel)
 		keychains = append(keychains, namedKeychain("bazel credential helper", keychain, debug))
+	}
+
+	// An inline Docker config injected into the (potentially remote) action's
+	// environment. Tried before the on-disk Docker config so an explicitly
+	// injected credential wins over whatever config file happens to exist.
+	if value := os.Getenv(EnvDockerConfigInline); value != "" {
+		keychains = append(keychains, namedKeychain("inline docker config", newInlineDockerConfigKeychain(value), debug))
 	}
 
 	keychains = append(
