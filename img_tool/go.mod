@@ -12,6 +12,7 @@ require (
 	github.com/containerd/containerd/api v1.11.1
 	github.com/containerd/platforms v1.0.0-rc.4
 	github.com/containerd/stargz-snapshotter/estargz v0.18.2
+	github.com/docker/cli v29.6.2+incompatible
 	github.com/goccy/go-yaml v1.19.2
 	github.com/google/go-containerregistry v0.21.7
 	github.com/google/uuid v1.6.0
@@ -53,7 +54,6 @@ require (
 	github.com/containerd/log v0.1.0 // indirect
 	github.com/containerd/ttrpc v1.2.9 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
-	github.com/docker/cli v29.6.2+incompatible // indirect
 	github.com/docker/docker-credential-helpers v0.9.8 // indirect
 	github.com/mattn/go-runewidth v0.0.24 // indirect
 	github.com/mitchellh/go-homedir v1.1.0 // indirect

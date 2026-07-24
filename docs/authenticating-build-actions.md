@@ -43,10 +43,15 @@ credentials with one keychain, tried in order:
 
 1. A **Bazel credential helper**, when `IMG_CREDENTIAL_HELPER` is set (see
    [Credential Helpers](credential-helpers.md)).
-2. The **Docker config** (honors `DOCKER_CONFIG`; `REGISTRY_AUTH_FILE` is used
+2. An **inline Docker config**, when `IMG_DOCKER_CONFIG_INLINE` holds the JSON
+   contents of a `config.json`. Resolved just like the Docker config below, but
+   from memory. Intended for secret-injection mechanisms only — see
+   [Option 4](#4-inline-docker-config-from-an-injected-environment-variable) and
+   the warning there.
+3. The **Docker config** (honors `DOCKER_CONFIG`; `REGISTRY_AUTH_FILE` is used
    inside build actions).
-3. **Google** — `google.Keychain` (Application Default Credentials / workload identity).
-4. **Amazon ECR** — the ambient AWS configuration.
+4. **Google** — `google.Keychain` (Application Default Credentials / workload identity).
+5. **Amazon ECR** — the ambient AWS configuration.
 
 Whatever option you pick below, the credentials it provides are consumed through
 this keychain.
@@ -205,6 +210,47 @@ a file in CI without starting the gateway with `--validate-policy --policy-file
 **Reloading.** Send the gateway process a `SIGHUP` to re-read the policy file
 without restarting or dropping connections. A reload that fails to parse or
 validate is logged and the previous policy is kept.
+
+### 4. Inline Docker config from an injected environment variable
+
+Set `IMG_DOCKER_CONFIG_INLINE` to the **JSON contents** of a Docker
+`config.json` (the same format as `~/.docker/config.json` — *not* a path to a
+file). rules_img resolves it exactly like the Docker config file, but entirely
+in memory, so it works on an executor that has no config file on disk. It is
+tried just before the on-disk Docker config, so an explicitly injected
+credential wins over whatever config file happens to exist.
+
+> **Not recommended for general use.** The value *is* the credential, so
+> anything that records your Bazel command line or an action's declared
+> environment will capture it. Never set it inline on the command line
+> (`IMG_DOCKER_CONFIG_INLINE=… bazel build …`), through `--action_env`, or via a
+> Bazel setting — it would leak into the build event stream (BES), action
+> metadata, logs, and the remote cache. Use it **only** with a mechanism that
+> injects the variable straight into the (remote) action's process, where the
+> value never appears in the Bazel invocation itself.
+
+The intended mechanism is a per-action secret store such as **BuildBuddy
+secrets** — encrypted, organization-scoped environment variables (encrypted
+client-side with a libsodium sealed box and decrypted only on demand). Save the
+`config.json` contents once as a secret named `IMG_DOCKER_CONFIG_INLINE`, then
+opt the target whose build actions push or pull in to it with the `env-secrets`
+execution property:
+
+```python
+exec_properties = {"env-secrets": "IMG_DOCKER_CONFIG_INLINE"},
+```
+
+The executor decrypts the secret and sets it in the action's environment at run
+time; the value is never baked into the action by Bazel and — unlike a plain
+environment variable — is not stored unencrypted in the action cache. See
+BuildBuddy's [Secrets documentation](https://www.buildbuddy.io/docs/secrets) for
+defining secrets and for the `env-secrets` / `include-secrets` execution
+properties. Other secret-injection systems that set an action's environment on
+the executor work the same way.
+
+Because the credentials flow through the shared keychain, no rules_img setting
+is involved: both lazy base-image pulls (`DownloadBlob`) and push-at-build-time
+actions pick the variable up automatically wherever the executor sets it.
 
 ## Setting up the gateway on Buildbarn
 
