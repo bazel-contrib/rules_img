@@ -415,10 +415,11 @@ For more details on working with platforms, architecture variants, and building 
 | Priority | Keychain | Registries | Credential Source |
 |----------|----------|------------|-------------------|
 | 1 | **Bazel credential helper** | Any | `--@rules_img//img/settings:credential_helper_oci_registry` or `credential_helper`; `IMG_CREDENTIAL_HELPER_OCI_REGISTRY` or `IMG_CREDENTIAL_HELPER` env var |
-| 2 | **Inline Docker config** | Any | `IMG_DOCKER_CONFIG_INLINE` env var (the JSON contents of a `config.json`). For injected secrets only — see [Authenticating Build Actions](docs/authenticating-build-actions.md#4-inline-docker-config-from-an-injected-environment-variable). |
-| 3 | **Docker / Podman config** | Any | `~/.docker/config.json`, `$DOCKER_CONFIG/config.json`, `${XDG_RUNTIME_DIR}/containers/auth.json` |
-| 4 | **Google** | `gcr.io`, `*.pkg.dev` | [Application Default Credentials](https://cloud.google.com/docs/authentication/application-default-credentials) (workload identity, `gcloud auth login`, service account keys) |
-| 5 | **Amazon ECR** | `*.dkr.ecr.*.amazonaws.com` | Ambient AWS credentials (env vars, `~/.aws/`, EC2/ECS instance roles). See [ECR credential helper docs](https://github.com/awslabs/amazon-ecr-credential-helper#usage). |
+| 2 | **Host-scoped environment credentials** | One normalized registry host | `IMG_REGISTRY_AUTH_HOST` with username/password or a bearer token. For injected secrets only — see [Authenticating Build Actions](docs/authenticating-build-actions.md#buildbuddy-inject-short-lived-credentials). |
+| 3 | **Inline Docker config** | Any | `IMG_DOCKER_CONFIG_INLINE` env var (the JSON contents of a `config.json`). For injected secrets only — see [Authenticating Build Actions](docs/authenticating-build-actions.md#4-inline-docker-config-from-an-injected-environment-variable). |
+| 4 | **Docker / Podman config** | Any | `~/.docker/config.json`, `$DOCKER_CONFIG/config.json`, `${XDG_RUNTIME_DIR}/containers/auth.json` |
+| 5 | **Google** | `gcr.io`, `*.pkg.dev` | [Application Default Credentials](https://cloud.google.com/docs/authentication/application-default-credentials) (workload identity, `gcloud auth login`, service account keys) |
+| 6 | **Amazon ECR** | `*.dkr.ecr.*.amazonaws.com` | Ambient AWS credentials (env vars, `~/.aws/`, EC2/ECS instance roles). See [ECR credential helper docs](https://github.com/awslabs/amazon-ecr-credential-helper#usage). |
 
 The first keychain that returns credentials wins — subsequent keychains are not consulted.
 
@@ -495,6 +496,7 @@ bazel run //:push_image
 Set `IMG_AUTH_DEBUG=1` to see which keychains are tried and which one provides credentials:
 
 ```
+IMG_AUTH_DEBUG: keychain "registry environment" for ghcr.io: no credentials, trying next
 IMG_AUTH_DEBUG: keychain "docker config" for ghcr.io: no credentials, trying next
 IMG_AUTH_DEBUG: keychain "google" for ghcr.io: no credentials, trying next
 IMG_AUTH_DEBUG: keychain "amazon ecr" for ghcr.io: no credentials, trying next
