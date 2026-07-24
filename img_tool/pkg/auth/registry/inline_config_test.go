@@ -8,12 +8,12 @@ import (
 	"github.com/google/go-containerregistry/pkg/name"
 )
 
-// clearCredentialHelperEnv unsets the credential-helper variables so the tests
-// exercise the inline-config keychain without an ambient helper shadowing it.
-func clearCredentialHelperEnv(t *testing.T) {
+// clearHigherPriorityCredentialEnv unsets higher-priority credential sources so the
+// tests exercise the inline-config keychain without an ambient value shadowing
+// it.
+func clearHigherPriorityCredentialEnv(t *testing.T) {
 	t.Helper()
-	t.Setenv("IMG_CREDENTIAL_HELPER", "")
-	t.Setenv("IMG_CREDENTIAL_HELPER_OCI_REGISTRY", "")
+	clearRegistryAuthEnvironment(t)
 }
 
 func resolveAuth(t *testing.T, ref string) (username, password string) {
@@ -34,7 +34,7 @@ func resolveAuth(t *testing.T, ref string) (username, password string) {
 }
 
 func TestKeychainFromEnvironmentUsesInlineDockerConfig(t *testing.T) {
-	clearCredentialHelperEnv(t)
+	clearHigherPriorityCredentialEnv(t)
 	// Ensure no on-disk Docker config can satisfy the lookup instead.
 	t.Setenv("DOCKER_CONFIG", t.TempDir())
 	t.Setenv(EnvDockerConfigInline, `{"auths":{"registry.example.com":{"auth":"dXNlcjpwYXNz"}}}`)
@@ -45,7 +45,7 @@ func TestKeychainFromEnvironmentUsesInlineDockerConfig(t *testing.T) {
 }
 
 func TestInlineDockerConfigTakesPrecedenceOverDockerConfigFile(t *testing.T) {
-	clearCredentialHelperEnv(t)
+	clearHigherPriorityCredentialEnv(t)
 
 	dockerConfigDir := t.TempDir()
 	fileConfig := []byte(`{"auths":{"registry.example.com":{"auth":"ZmlsZS11c2VyOmZpbGUtcGFzcw=="}}}`)
@@ -61,7 +61,7 @@ func TestInlineDockerConfigTakesPrecedenceOverDockerConfigFile(t *testing.T) {
 }
 
 func TestInlineDockerConfigResolvesUsernamePassword(t *testing.T) {
-	clearCredentialHelperEnv(t)
+	clearHigherPriorityCredentialEnv(t)
 	t.Setenv("DOCKER_CONFIG", t.TempDir())
 	// GHA and `docker login` may store username/password directly rather than a
 	// combined base64 `auth`; both must resolve.
@@ -73,7 +73,7 @@ func TestInlineDockerConfigResolvesUsernamePassword(t *testing.T) {
 }
 
 func TestInlineDockerConfigUsesDockerHubKey(t *testing.T) {
-	clearCredentialHelperEnv(t)
+	clearHigherPriorityCredentialEnv(t)
 	t.Setenv("DOCKER_CONFIG", t.TempDir())
 	// Docker Hub is stored under the historical key; a bare Docker Hub reference
 	// must still resolve against it.
@@ -85,7 +85,7 @@ func TestInlineDockerConfigUsesDockerHubKey(t *testing.T) {
 }
 
 func TestInlineDockerConfigFallsThroughForOtherRegistry(t *testing.T) {
-	clearCredentialHelperEnv(t)
+	clearHigherPriorityCredentialEnv(t)
 
 	dockerConfigDir := t.TempDir()
 	fileConfig := []byte(`{"auths":{"registry.example.com":{"auth":"ZmlsZS11c2VyOmZpbGUtcGFzcw=="}}}`)
@@ -103,7 +103,7 @@ func TestInlineDockerConfigFallsThroughForOtherRegistry(t *testing.T) {
 }
 
 func TestInlineDockerConfigEmptyIsIgnored(t *testing.T) {
-	clearCredentialHelperEnv(t)
+	clearHigherPriorityCredentialEnv(t)
 
 	dockerConfigDir := t.TempDir()
 	fileConfig := []byte(`{"auths":{"registry.example.com":{"auth":"ZmlsZS11c2VyOmZpbGUtcGFzcw=="}}}`)
@@ -119,7 +119,7 @@ func TestInlineDockerConfigEmptyIsIgnored(t *testing.T) {
 }
 
 func TestInlineDockerConfigInvalidJSONErrors(t *testing.T) {
-	clearCredentialHelperEnv(t)
+	clearHigherPriorityCredentialEnv(t)
 	t.Setenv("DOCKER_CONFIG", t.TempDir())
 	t.Setenv(EnvDockerConfigInline, "this is not json")
 
