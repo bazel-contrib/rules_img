@@ -50,9 +50,9 @@ def rules_img_dependencies():
 
     http_archive(
         name = "rules_runfiles_group",
-        sha256 = "bc9373ff5dcae2198f25474b8703f17f39926d374bc9c6422024bbcf50560f7b",
-        strip_prefix = "rules_runfiles_group-0.0.1-rc.3",
-        url = "https://github.com/hermeticbuild/rules_runfiles_group/releases/download/v0.0.1-rc.3/rules_runfiles_group-v0.0.1-rc.3.tar.gz",
+        sha256 = "a2e1d6121419ce57f3a22a12a71cbfc985fbdd983242f680801510ba2a482650",
+        strip_prefix = "rules_runfiles_group-0.1.0",
+        url = "https://github.com/bazel-contrib/rules_runfiles_group/releases/download/v0.1.0/rules_runfiles_group-v0.1.0.tar.gz",
     )
 
     http_archive(

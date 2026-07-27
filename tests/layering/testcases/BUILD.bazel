@@ -66,3 +66,12 @@ binary_with_runfiles_groups(
     name = "runfiles_groups_tool",
     binary = ":script_sh",
 )
+
+# Same, but naming the app group as the executable_group: layer_from_binary then
+# folds the executable and its supporting files into that group's layer instead of
+# emitting a separate binary layer.
+binary_with_runfiles_groups(
+    name = "runfiles_groups_exec_tool",
+    binary = ":script_sh",
+    executable_group = True,
+)

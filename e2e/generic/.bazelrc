@@ -1,3 +1,8 @@
 import %workspace%/.bazelrc.common
 
+# RunfilesGroupInfo emission is off by default in rules_runfiles_group. Turn it on
+# so //runfiles_group exercises the real grouping: without it the example binaries
+# provide no groups and every image collapses to a single layer.
+common --@rules_runfiles_group//runfiles_group:enabled=true
+
 try-import %workspace%/.bazelrc.user

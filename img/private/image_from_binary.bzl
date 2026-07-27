@@ -82,8 +82,12 @@ image configuration:
 If the binary provides RunfilesGroupInfo (from rules_runfiles_group), the runfiles are split
 into separate layers based on the groups. This allows for better caching: stable layers
 (interpreter, stdlib) change infrequently and can be shared, while the application code layer
-changes with each build. The resolution protocol respects RunfilesGroupTransformInfo and
-RunfilesGroupMetadataInfo from the binary's aspect_hints.
+changes with each build. Layers are emitted in the groups' `rank` order (lowest first), and any
+RunfilesGroupTransformInfo in the binary's `aspect_hints` is applied first.
+
+Note that RunfilesGroupInfo emission is off by default in rules_runfiles_group. Build with
+`--@rules_runfiles_group//runfiles_group:enabled=true` to opt in; without it, group-aware
+binaries produce a single layer.
 
 All image_manifest attributes (base, env, labels, annotations, etc.) are inherited and
 forwarded to the underlying image_manifest. The binary layer is always appended as the
@@ -173,7 +177,10 @@ need runfiles.
 Maximum number of runfiles group layers.
 If set to a value > 0 and the binary provides RunfilesGroupInfo, groups are merged down to this
 limit using the merge algorithm from rules_runfiles_group. The algorithm respects group rank
-(only merges within the same rank), do_not_merge flags, and weight hints (lighter groups merge first).
+(only merges within the same rank), do_not_merge flags, merge affinity (groups sharing an
+affinity are preferred merge partners), and weight hints (lighter groups merge first).
+This is a target, not a hard cap: do_not_merge groups and groups alone in their rank cannot be
+merged away, so a binary whose groups cannot be reduced far enough still produces more layers.
 0 means no limit (all groups become separate layers).
 """,
         ),

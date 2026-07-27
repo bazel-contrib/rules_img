@@ -18,9 +18,16 @@ the compact stream with multi-block content and many CAS references.
 
 load("@hermetic_launcher//launcher:lib.bzl", "launcher")
 load("@rules_img//img:providers.bzl", "LayersInfo")
-load("@rules_runfiles_group//runfiles_group:providers.bzl", "RunfilesGroupInfo", "RunfilesGroupMetadataInfo")
+load("@rules_runfiles_group//runfiles_group:lib.bzl", "runfiles_groups")
+load("@rules_runfiles_group//runfiles_group:providers.bzl", "RunfilesGroupInfo")
 
 _COMPACT_LAYERS_SETTING = "@rules_img//img/settings:experimental_compact_layers"
+
+# Group names of the binary_with_runfiles_groups fixture. Named groups (as opposed
+# to per-target Label groups) share one namespace across every provider merged into
+# a binary, hence the ruleset-unique prefix.
+_STDLIB_GROUP = "rules_img_layering#stdlib"
+_APP_GROUP = "rules_img_layering#app"
 
 # Signals the verifier (via the test environment) to additionally reconstruct
 # each layer from its compact stream and assert byte-for-byte equality with the
@@ -361,18 +368,38 @@ def _binary_with_runfiles_groups_impl(ctx):
         is_executable = True,
     )
 
-    # Two runfiles groups: a stable "stdlib" group (rank 0, placed first) and a
-    # frequently-changing "app" group (rank 10, placed later). layer_from_binary
-    # turns each group into its own layer.
+    # Two runfiles groups: a stable "stdlib" group (foundation rank, placed first)
+    # and a frequently-changing "app" group (executable rank, placed later).
+    # layer_from_binary turns each group into its own layer, in rank order.
     stdlib_a = ctx.actions.declare_file(ctx.label.name + ".stdlib/libfoo.so")
     stdlib_b = ctx.actions.declare_file(ctx.label.name + ".stdlib/libbar.so")
     ctx.actions.write(stdlib_a, "foo-lib\n")
     ctx.actions.write(stdlib_b, "bar-lib\n")
-    stdlib = ctx.runfiles(files = [stdlib_a, stdlib_b])
+    stdlib_files = depset([stdlib_a, stdlib_b])
+    stdlib = ctx.runfiles(transitive_files = stdlib_files)
 
     app = ctx.actions.declare_file(ctx.label.name + ".app/data.txt")
     ctx.actions.write(app, "app-data\n")
     app_rf = ctx.runfiles(files = [app])
+
+    # The two content forms an entry may carry are both exercised on purpose: the
+    # stdlib group hands over its depset of File directly (the files-only form) and
+    # the app group hands over a runfiles object (the general form). A packager must
+    # place both identically.
+    entries = [
+        runfiles_groups.entry(
+            name = _STDLIB_GROUP,
+            content = stdlib_files,
+            kind = "foundation",
+            rank = runfiles_groups.RANK_FOUNDATION,
+        ),
+        runfiles_groups.entry(
+            name = _APP_GROUP,
+            content = app_rf,
+            kind = "first_party",
+            rank = runfiles_groups.RANK_EXECUTABLE,
+        ),
+    ]
 
     return [
         DefaultInfo(
@@ -380,11 +407,10 @@ def _binary_with_runfiles_groups_impl(ctx):
             runfiles = stdlib.merge(app_rf),
             executable = exe,
         ),
-        RunfilesGroupInfo(stdlib = stdlib, app = app_rf),
-        RunfilesGroupMetadataInfo(groups = {
-            "app": {"rank": 10},
-            "stdlib": {"rank": 0},
-        }),
+        RunfilesGroupInfo(
+            entries = runfiles_groups.entries(entries),
+            executable_group = _APP_GROUP if ctx.attr.executable_group else None,
+        ),
     ]
 
 binary_with_runfiles_groups = rule(
@@ -392,6 +418,17 @@ binary_with_runfiles_groups = rule(
     doc = "Executable fixture providing RunfilesGroupInfo with two ranked runfiles groups (stdlib, app).",
     attrs = {
         "binary": attr.label(allow_single_file = True, cfg = "target"),
+        "executable_group": attr.bool(
+            default = False,
+            doc = """Whether to name the app group as the RunfilesGroupInfo executable_group.
+
+When True, layer_from_binary merges the executable and its supporting files into
+the app group's layer instead of emitting a separate binary layer.""",
+        ),
     },
+    # Deliberately does not merge runfiles_groups.RULE_ATTRS or gate on
+    # runfiles_groups.is_enabled(ctx): a real producing rule honors the global
+    # @rules_runfiles_group//runfiles_group:enabled switch, but this fixture must emit
+    # unconditionally so the golden manifests do not depend on a build flag.
     executable = True,
 )

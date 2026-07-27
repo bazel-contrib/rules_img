@@ -10,7 +10,11 @@ bzl_library(
     name = "defs",
     srcs = ["defs.bzl"],
     visibility = ["//visibility:public"],
-    deps = ["@rules_img//img:providers"],
+    deps = [
+        "@rules_img//img:providers",
+        "@rules_runfiles_group//runfiles_group:lib",
+        "@rules_runfiles_group//runfiles_group:providers",
+    ],
 )
 
 bzl_library(
