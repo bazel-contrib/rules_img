@@ -23,6 +23,7 @@ go_library(
         "//pkg/tree",
         "//pkg/tree/runfiles",
         "//pkg/tree/treeartifact",
+        "//pkg/ztoc",
     ],
 )
 

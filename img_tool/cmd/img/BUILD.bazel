@@ -29,6 +29,7 @@ go_library(
         "//cmd/optimize",
         "//cmd/pull",
         "//cmd/push",
+        "//cmd/soci",
         "//cmd/sparseocilayout",
         "//cmd/syncocirefgraph",
         "//cmd/validate",

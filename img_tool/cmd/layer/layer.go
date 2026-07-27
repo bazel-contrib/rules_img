@@ -22,6 +22,7 @@ import (
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/tarcas"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/tree"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/tree/runfiles"
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/ztoc"
 )
 
 func LayerProcess(ctx context.Context, args []string) {
@@ -53,6 +54,9 @@ func LayerProcess(ctx context.Context, args []string) {
 	var compactStreamOutputFlag string
 	var compactStreamOnlyFlag bool
 	var compactStreamInlineThresholdFlag uint64
+	var ztocOutputFlag string
+	var ztocSpanSizeFlag int64
+	var ztocBuildToolIdentifierFlag string
 	fileMetadataFlags := make(fileMetadataFlag)
 
 	flagSet := flag.NewFlagSet("layer", flag.ExitOnError)
@@ -102,6 +106,9 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 	flagSet.StringVar(&compactStreamOutputFlag, "compact-stream", "", `Write a compact stream representation of the layer alongside the tar output. The compact stream records raw tar headers with content digests in an optionally zstd-compressed format, enabling bit-for-bit tar reconstruction from a content-addressed store.`)
 	flagSet.BoolVar(&compactStreamOnlyFlag, "compact-stream-only", false, `Only produce the compact stream and metadata; do not write the tar output file. Requires --compact-stream.`)
 	flagSet.Uint64Var(&compactStreamInlineThresholdFlag, "compact-stream-inline-threshold", 0, `Maximum file size (in bytes) to store inline in the compact stream. Files smaller than this threshold have their content stored directly in the byte stream instead of as a CAS reference. 0 disables inlining.`)
+	flagSet.StringVar(&ztocOutputFlag, "ztoc", "", `Write a ztoc (SOCI table of contents) for the compressed layer to the specified file. Only supported for gzip-compressed layers, and incompatible with --compact-stream-only.`)
+	flagSet.Int64Var(&ztocSpanSizeFlag, "ztoc-span-size", ztoc.DefaultSpanSize, `Minimum number of uncompressed bytes between ztoc checkpoints (only used with --ztoc).`)
+	flagSet.StringVar(&ztocBuildToolIdentifierFlag, "ztoc-build-tool-identifier", ztoc.DefaultBuildToolIdentifier, `Recorded in the ztoc's build_tool_identifier field (only used with --ztoc).`)
 
 	if err := flagSet.Parse(args); err != nil {
 		flagSet.Usage()
@@ -110,6 +117,11 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 
 	if compactStreamOnlyFlag && compactStreamOutputFlag == "" {
 		fmt.Fprintf(os.Stderr, "Error: --compact-stream-only requires --compact-stream\n")
+		os.Exit(1)
+	}
+
+	if ztocOutputFlag != "" && compactStreamOnlyFlag {
+		fmt.Fprintf(os.Stderr, "Error: --ztoc cannot be combined with --compact-stream-only (there is no materialized layer blob to index)\n")
 		os.Exit(1)
 	}
 
@@ -165,6 +177,11 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 		compressionAlgorithm = api.Uncompressed
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown format %s. Supported formats are gzip, zstd and uncompressed.\n", formatFlag)
+		os.Exit(1)
+	}
+
+	if ztocOutputFlag != "" && compressionAlgorithm != api.Gzip {
+		fmt.Fprintf(os.Stderr, "Error: --ztoc is only supported for gzip-compressed layers, got %s\n", compressionAlgorithm)
 		os.Exit(1)
 	}
 
@@ -298,6 +315,16 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Writing layer: %v\n", err)
 		os.Exit(1)
+	}
+
+	// Generate the ztoc from the finalized gzip blob. handleLayerState has
+	// returned, so its deferred compressor.Finalize() has flushed every byte to
+	// outputFilePath (validation above guarantees gzip and a materialized blob).
+	if ztocOutputFlag != "" {
+		if err := generateLayerZtoc(outputFilePath, ztocOutputFlag, ztocSpanSizeFlag, ztocBuildToolIdentifierFlag); err != nil {
+			fmt.Fprintf(os.Stderr, "Writing ztoc: %v\n", err)
+			os.Exit(1)
+		}
 	}
 
 	if len(metadataOutputFlag) > 0 {
@@ -616,6 +643,25 @@ func writeMetadata(history string, compressionAlgorithm api.CompressionAlgorithm
 		layerHistory,
 		outputFile,
 	)
+}
+
+// generateLayerZtoc builds a ztoc (SOCI table of contents) for the finalized
+// gzip layer blob at blobPath and writes it to ztocPath. It must be called after
+// the layer's compressor has been finalized so blobPath holds the complete
+// compressed stream.
+func generateLayerZtoc(blobPath, ztocPath string, spanSize int64, buildToolIdentifier string) error {
+	z, err := ztoc.BuildFromFile(blobPath, ztoc.WithSpanSize(spanSize), ztoc.WithBuildToolIdentifier(buildToolIdentifier))
+	if err != nil {
+		return fmt.Errorf("building ztoc: %w", err)
+	}
+	data, err := ztoc.Marshal(z)
+	if err != nil {
+		return fmt.Errorf("marshaling ztoc: %w", err)
+	}
+	if err := os.WriteFile(ztocPath, data, 0o644); err != nil {
+		return fmt.Errorf("writing ztoc: %w", err)
+	}
+	return nil
 }
 
 // startPrecaching begins background digest calculation for files that will be processed

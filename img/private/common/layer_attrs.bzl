@@ -18,6 +18,17 @@ Whether to use estargz format. If set to 'auto', uses the global default estargz
 When enabled, the layer will be optimized for lazy pulling and will be compatible with the estargz format.
 """,
     ),
+    soci = attr.string(
+        default = "auto",
+        values = ["auto", "enabled", "disabled"],
+        doc = """\
+Whether to emit a SOCI ztoc (table of contents) for this layer. If set to 'auto',
+uses the global default //img/settings:soci setting. When enabled and the layer is
+gzip-compressed, a ztoc is produced in the layer action and recorded on the
+SingleLayerInfo provider, so images that build a SOCI Index Manifest v2 can reuse
+it instead of regenerating it. Non-gzip layers never emit a ztoc.
+""",
+    ),
     create_parent_directories = attr.string(
         default = "auto",
         values = ["auto", "enabled", "disabled"],
@@ -93,6 +104,14 @@ Override the layer media type. By default, the media type is auto-detected from 
     ),
     _default_estargz = attr.label(
         default = Label("//img/settings:estargz"),
+        providers = [BuildSettingInfo],
+    ),
+    _default_soci = attr.label(
+        default = Label("//img/settings:soci"),
+        providers = [BuildSettingInfo],
+    ),
+    _default_soci_span_size = attr.label(
+        default = Label("//img/settings:soci_span_size"),
         providers = [BuildSettingInfo],
     ),
     _default_create_parent_directories = attr.label(

@@ -22,6 +22,37 @@ string_flag(
     visibility = ["//visibility:public"],
 )
 
+# Global SOCI (Index Manifest v2) toggle. Per-layer and per-manifest `soci`
+# attributes default to "auto", which defers to this flag. When enabled, layers
+# emit a ztoc and images build a SOCI index for lazy pulling with
+# soci-snapshotter.
+string_flag(
+    name = "soci",
+    build_setting_default = "disabled",
+    values = [
+        "enabled",
+        "disabled",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+# Span size (in uncompressed bytes) between ztoc checkpoints. Matches
+# soci-snapshotter's 4 MiB default.
+int_flag(
+    name = "soci_span_size",
+    build_setting_default = 4194304,
+    visibility = ["//visibility:public"],
+)
+
+# Layers smaller than this many bytes get no ztoc and are omitted from the SOCI
+# index. Matches soci-snapshotter's 10 MiB default. Per-manifest
+# `soci_min_layer_size` overrides this.
+int_flag(
+    name = "soci_min_layer_size",
+    build_setting_default = 10485760,
+    visibility = ["//visibility:public"],
+)
+
 string_flag(
     name = "stamp",
     build_setting_default = "auto",
