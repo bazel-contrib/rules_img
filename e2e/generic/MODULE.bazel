@@ -22,7 +22,7 @@ bazel_dep(name = "platforms", version = "1.1.0")
 bazel_dep(name = "rules_distroless", version = "0.8.0")
 bazel_dep(name = "rules_pkg", version = "1.2.0")
 bazel_dep(name = "rules_python", version = "2.1.0")
-bazel_dep(name = "rules_runfiles_group", version = "0.0.1-rc.5")
+bazel_dep(name = "rules_runfiles_group", version = "0.1.0")
 bazel_dep(name = "rules_shell", version = "0.8.0")
 bazel_dep(name = "tar.bzl", version = "0.10.5")
 bazel_dep(name = "rules_runfiles_group_example")
@@ -33,13 +33,17 @@ single_version_override(
     patches = ["//custom_distroless_base_image:rules_distroless.patch"],
 )
 
+# The example ruleset is not published to the BCR, so it is fetched straight out
+# of the "example" subdirectory of the rules_runfiles_group release archive. The
+# patch drops its local_path_override on the parent module and pins the released
+# version instead.
 archive_override(
     module_name = "rules_runfiles_group_example",
-    integrity = "sha256-BvxyzlZEsR0BzH4b1dHTOgvt4lX2sifJrsGCpbdvnMc=",
+    integrity = "sha256-ouHWEhQZzlfzoioSpxy/yYX73ZgyQvaAgBUQuipIJlA=",
     patch_strip = 2,
     patches = ["rules_runfiles_group_example.patch"],
-    strip_prefix = "rules_runfiles_group-0.0.1-rc.5/example",
-    urls = ["https://github.com/hermeticbuild/rules_runfiles_group/releases/download/v0.0.1-rc.5/rules_runfiles_group-v0.0.1-rc.5.tar.gz"],
+    strip_prefix = "rules_runfiles_group-0.1.0/example",
+    urls = ["https://github.com/bazel-contrib/rules_runfiles_group/releases/download/v0.1.0/rules_runfiles_group-v0.1.0.tar.gz"],
 )
 
 # Configure apt for Debian packages

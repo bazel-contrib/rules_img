@@ -1,13 +1,7 @@
 """Binary layer rule for packaging a *_binary target into a container image layer."""
 
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
-load("@rules_runfiles_group//runfiles_group:lib.bzl", "lib")
-load(
-    "@rules_runfiles_group//runfiles_group:providers.bzl",
-    "RunfilesGroupInfo",
-    "RunfilesGroupMetadataInfo",
-    "RunfilesGroupTransformInfo",
-)
+load("@rules_runfiles_group//runfiles_group:lib.bzl", "runfiles_groups")
 load("//img/private/common:build.bzl", "TOOLCHAINS")
 load("//img/private/common:layer_attrs.bzl", "layer_attrs")
 load(
@@ -30,22 +24,12 @@ load("//img/private/providers:layers_info.bzl", "LayersInfo")
 _BinaryRunInfo = provider(
     doc = """\
 This provider is only used by a private aspect and shouldn't be visible outside the layer_from_binary rule.
-Collects args and env of a *_binary target.
+Collects args and env of a *_binary target, plus its aspect_hints.
 """,
     fields = dict(
         args = "Arguments of the *_binary target",
         env = "Environment variables of the *_binary target",
-    ),
-)
-
-_BinaryRunfilesGroupsInfo = provider(
-    doc = """\
-This provider is only used by a private aspect and shouldn't be visible outside the layer_from_binary rule.
-Holds the resolved runfiles groups and metadata from the RunfilesGroupInfo resolution protocol.
-""",
-    fields = dict(
-        runfiles_group_info = "RunfilesGroupInfo or None if RunfilesGroupInfo is absent",
-        runfiles_group_metadata_info = "RunfilesGroupMetadataInfo or None",
+        aspect_hints = "list of Target: the binary's aspect_hints, forwarded so the rule can resolve runfiles groups",
     ),
 )
 
@@ -79,42 +63,23 @@ def _binary_run_info_extraction_aspect_impl(target, ctx):
             v = ctx.expand_make_variables("env", v, {})
             extracted_env[k] = v
 
-    # Resolve RunfilesGroupInfo using the resolution protocol.
-    rgi = None
-    metadata = None
-    if RunfilesGroupInfo in target:
-        rgi = target[RunfilesGroupInfo]
-
-        # Accumulate metadata from binary + aspect_hints (per-key last-wins).
-        if RunfilesGroupMetadataInfo in target:
-            metadata = target[RunfilesGroupMetadataInfo]
-        if hasattr(ctx.rule.attr, "aspect_hints"):
-            for hint in ctx.rule.attr.aspect_hints:
-                if RunfilesGroupMetadataInfo in hint:
-                    metadata = lib.merge_metadata(metadata, hint[RunfilesGroupMetadataInfo])
-
-            # Apply transforms in aspect_hints order.
-            for hint in ctx.rule.attr.aspect_hints:
-                if RunfilesGroupTransformInfo in hint:
-                    result = lib.transform_groups(rgi, metadata, hint[RunfilesGroupTransformInfo])
-                    rgi = result.runfiles_group_info
-                    metadata = result.runfiles_group_metadata_info
-
     return [
         _BinaryRunInfo(
             args = extracted_args,
             env = extracted_env,
-        ),
-        _BinaryRunfilesGroupsInfo(
-            runfiles_group_info = rgi,
-            runfiles_group_metadata_info = metadata,
+            # Only the hint targets are forwarded -- O(number of hints) references,
+            # which Skyframe retains anyway -- and the rule does the O(groups) work
+            # of runfiles_groups.resolve() transiently. Resolving here instead would
+            # retain a list plus one entry per group on every layer target for the
+            # life of the build.
+            aspect_hints = getattr(ctx.rule.attr, "aspect_hints", []),
         ),
     ]
 
 _binary_run_info_extraction_aspect = aspect(
     implementation = _binary_run_info_extraction_aspect_impl,
     attr_aspects = [],  # The aspect only inspect the target itself (not the deps)
-    provides = [_BinaryRunInfo, _BinaryRunfilesGroupsInfo],
+    provides = [_BinaryRunInfo],
 )
 
 def _normalize_path(path):
@@ -166,10 +131,12 @@ def _resolve_runfiles_config(ctx, path_in_image, has_runfiles_groups):
             runfiles_symlink_path = None,
         )
 
-def _find_executable_group_index(ordered_groups):
-    """Find the index of the group marked as executable_group, if any."""
-    for i, group in enumerate(ordered_groups):
-        if group.metadata != None and group.metadata.executable_group:
+def _find_executable_group_index(ordered_groups, executable_group):
+    """Find the index of the group named by executable_group, if any."""
+    if executable_group == None:
+        return -1
+    for i, entry in enumerate(ordered_groups):
+        if entry.name == executable_group:
             return i
     return -1
 
@@ -199,7 +166,7 @@ def _append_binary_args(ctx, exe, path_in_image, ordered_groups, runfiles, runfi
         extra_args.append(symlink_add_args)
 
     if runfiles_config.shared:
-        all_runfiles = depset(transitive = [group.runfiles.files for group in ordered_groups])
+        all_runfiles = depset(transitive = [runfiles_groups.files(entry) for entry in ordered_groups])
         symlink_prefix = _normalize_path(runfiles_config.runfiles_symlink_path)
         rel_content = "/".join([".."] * (symlink_prefix.count("/") + 1)) + "/" + content_prefix
         symlink_args = ctx.actions.args()
@@ -245,34 +212,41 @@ def _create_grouped_layers(ctx, settings, exe, path_in_image, ordered_groups, ru
     default_info = ctx.attr.binary[DefaultInfo]
     content_prefix = _normalize_path(runfiles_config.runfiles_content_path)
 
-    for i, group in enumerate(ordered_groups):
+    for i, entry in enumerate(ordered_groups):
         layer_name = "{}_{}".format(ctx.attr.name, i)
         extra_args = []
-        extra_inputs = [group.runfiles.files]
+
+        # The group's contents as a runfiles object. A group whose content is a bare
+        # depset of File (the files-only form) is lifted here, yielding empty
+        # symlink/root_symlink/empty_filename depsets, so both content forms are
+        # placed by the same code below. entry.content itself is opaque and must not
+        # be read directly.
+        group_runfiles = runfiles_groups.runfiles(ctx, entry)
+        extra_inputs = [group_runfiles.files]
 
         add_args = ctx.actions.args()
         add_args.set_param_file_format("multiline")
         add_args.use_param_file("--add-from-file=%s", use_always = True)
-        add_args.add_all(group.runfiles.files, map_each = to_short_path_pair, format_each = "{}/%s".format(content_prefix), expand_directories = False, uniquify = True)
+        add_args.add_all(group_runfiles.files, map_each = to_short_path_pair, format_each = "{}/%s".format(content_prefix), expand_directories = False, uniquify = True)
         extra_args.append(add_args)
 
         symlink_add_args = ctx.actions.args()
         symlink_add_args.set_param_file_format("multiline")
         symlink_add_args.use_param_file("--add-from-file=%s", use_always = True)
-        symlink_add_args.add_all(group.runfiles.symlinks, map_each = symlinks_arg, format_each = "{}/%s".format(content_prefix))
-        symlink_add_args.add_all(group.runfiles.root_symlinks, map_each = root_symlinks_arg, format_each = "{}/%s".format(content_prefix))
+        symlink_add_args.add_all(group_runfiles.symlinks, map_each = symlinks_arg, format_each = "{}/%s".format(content_prefix))
+        symlink_add_args.add_all(group_runfiles.root_symlinks, map_each = root_symlinks_arg, format_each = "{}/%s".format(content_prefix))
         extra_args.append(symlink_add_args)
 
         symlink_inputs = []
-        symlink_inputs.extend([se.target_file for se in group.runfiles.symlinks.to_list()])
-        symlink_inputs.extend([se.target_file for se in group.runfiles.root_symlinks.to_list()])
+        symlink_inputs.extend([se.target_file for se in group_runfiles.symlinks.to_list()])
+        symlink_inputs.extend([se.target_file for se in group_runfiles.root_symlinks.to_list()])
         if len(symlink_inputs) > 0:
             extra_inputs.append(depset(symlink_inputs))
 
         empty_args = ctx.actions.args()
         empty_args.set_param_file_format("multiline")
         empty_args.use_param_file("--empty-files-from-file=%s", use_always = True)
-        empty_args.add_all(group.runfiles.empty_filenames, map_each = empty_runfile_short_path, format_each = "{}/%s".format(content_prefix))
+        empty_args.add_all(group_runfiles.empty_filenames, map_each = empty_runfile_short_path, format_each = "{}/%s".format(content_prefix))
         extra_args.append(empty_args)
 
         if i == executable_group_index:
@@ -319,7 +293,6 @@ def _create_grouped_layers(ctx, settings, exe, path_in_image, ordered_groups, ru
 
 def _layer_from_binary_impl(ctx):
     run_info = ctx.attr.binary[_BinaryRunInfo]
-    groups_info = ctx.attr.binary[_BinaryRunfilesGroupsInfo]
     exe = ctx.executable.binary
     path_in_image = ctx.attr.path
     if len(path_in_image) == 0:
@@ -334,29 +307,31 @@ def _layer_from_binary_impl(ctx):
         )
     absolute_entrypoint = path_in_image if path_in_image.startswith("/") else "/" + path_in_image
 
-    rgi = groups_info.runfiles_group_info
-    metadata = groups_info.runfiles_group_metadata_info
+    # The whole resolution protocol in one call: flatten the binary's entry depset
+    # exactly once, fold duplicate group names, run the RunfilesGroupTransformInfo
+    # hint transforms, and order by (rank, name). Returns None for a binary that does
+    # not group its runfiles; the ungrouped path below then packages
+    # DefaultInfo.default_runfiles as a single layer.
+    resolved = runfiles_groups.resolve(ctx, ctx.attr.binary, aspect_hints = run_info.aspect_hints)
     ordered_groups = None
-    if rgi != None:
-        has_executable_group = False
-        if metadata != None:
-            for entry in metadata.groups.values():
-                if entry.executable_group:
-                    has_executable_group = True
-                    break
-
-        if has_executable_group:
+    if resolved != None:
+        # With an executable group the binary and its supporting files are merged
+        # into that group's layer, so the whole budget is available for groups.
+        # Without one, a layer is reserved for the binary; a budget of exactly 1
+        # leaves nothing for groups, so the ungrouped single-layer path is used.
+        #
+        # limit() reports group_count, which do_not_merge and rank constraints can
+        # leave above max_groups. That is accepted here: layer_budget is a target, not
+        # a hard cap (see the attribute docs). It also carries executable_group
+        # through a merge, so that is read off `resolved` rather than kept in a local.
+        if resolved.executable_group != None:
             if ctx.attr.layer_budget > 0:
-                merge_result = lib.merge_to_limit(rgi, metadata, max_groups = ctx.attr.layer_budget)
-                rgi = merge_result.runfiles_group_info
-                metadata = merge_result.runfiles_group_metadata_info
-            ordered_groups = lib.ordered_groups(rgi, metadata)
+                resolved = runfiles_groups.limit(ctx, resolved, max_groups = ctx.attr.layer_budget)
+            ordered_groups = resolved.groups
         elif ctx.attr.layer_budget != 1:
             if ctx.attr.layer_budget > 1:
-                merge_result = lib.merge_to_limit(rgi, metadata, max_groups = ctx.attr.layer_budget - 1)
-                rgi = merge_result.runfiles_group_info
-                metadata = merge_result.runfiles_group_metadata_info
-            ordered_groups = lib.ordered_groups(rgi, metadata)
+                resolved = runfiles_groups.limit(ctx, resolved, max_groups = ctx.attr.layer_budget - 1)
+            ordered_groups = resolved.groups
 
     has_runfiles_groups = (
         ordered_groups != None and
@@ -385,7 +360,7 @@ def _layer_from_binary_impl(ctx):
     )
 
     if use_groups:
-        executable_group_index = _find_executable_group_index(ordered_groups)
+        executable_group_index = _find_executable_group_index(ordered_groups, resolved.executable_group)
         result = _create_grouped_layers(ctx, settings, exe, path_in_image, ordered_groups, runfiles_config, executable_group_index)
     else:
         extra_args = []
@@ -523,12 +498,19 @@ location relative to the executable that it has in the source tree.
 If the binary provides RunfilesGroupInfo (from rules_runfiles_group), the runfiles are split
 into separate layers based on the groups. This allows for better caching: stable layers
 (interpreter, stdlib) change infrequently and can be shared, while the application code layer
-changes with each build. The resolution protocol respects RunfilesGroupTransformInfo and
-RunfilesGroupMetadataInfo from the binary's aspect_hints.
+changes with each build. Layers are emitted in the groups' `rank` order (lowest first), so
+foundational content ends up in the earliest, most cacheable layers. Any
+RunfilesGroupTransformInfo in the binary's `aspect_hints` is applied first, which lets users
+drop or re-shape groups per target.
+
+Note that RunfilesGroupInfo emission is off by default in rules_runfiles_group. Build with
+`--@rules_runfiles_group//runfiles_group:enabled=true` to opt in; without it, group-aware
+binaries produce a single layer.
 
 When the number of groups exceeds what is practical for a container image, use `layer_budget`
 to merge groups down to a maximum count. The merge algorithm respects group rank (only merges
-within the same rank), do_not_merge flags, and weight hints (lighter groups merge first).
+within the same rank), do_not_merge flags, merge affinity (groups sharing an affinity are
+preferred merge partners), and weight hints (lighter groups merge first).
 
 Example:
 
@@ -629,14 +611,19 @@ Possible settings:
 Maximum total number of layers produced by this rule.
 If set to a value > 0 and the binary provides RunfilesGroupInfo, groups are merged
 using the merge algorithm from rules_runfiles_group. The algorithm respects
-group rank (only merges within the same rank), do_not_merge flags, and weight hints
+group rank (only merges within the same rank), do_not_merge flags, merge affinity
+(groups sharing an affinity are preferred merge partners), and weight hints
 (lighter groups merge first).
 
-When a group is marked as executable_group in RunfilesGroupMetadataInfo, the binary
-executable and supporting files are merged into that group's layer, and the full budget
-is available for runfiles groups. When no executable_group exists, one layer is reserved
-for a separate binary layer, and the remaining budget (layer_budget - 1) is used for groups;
+When the binary names an executable_group, the binary executable and supporting files
+are merged into that group's layer, and the full budget is available for runfiles
+groups. When no executable_group exists, one layer is reserved for a separate binary
+layer, and the remaining budget (layer_budget - 1) is used for groups;
 layer_budget=1 without an executable_group skips the grouped path entirely.
+
+This is a target, not a hard cap: groups marked do_not_merge are never merged, and
+groups at different ranks never merge with each other, so a binary whose groups cannot
+be reduced far enough still produces more layers than the budget.
 
 0 means no limit (all groups become separate layers, plus a binary layer unless
 an executable_group absorbs it).

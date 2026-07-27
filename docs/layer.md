@@ -121,12 +121,19 @@ location relative to the executable that it has in the source tree.
 If the binary provides RunfilesGroupInfo (from rules_runfiles_group), the runfiles are split
 into separate layers based on the groups. This allows for better caching: stable layers
 (interpreter, stdlib) change infrequently and can be shared, while the application code layer
-changes with each build. The resolution protocol respects RunfilesGroupTransformInfo and
-RunfilesGroupMetadataInfo from the binary's aspect_hints.
+changes with each build. Layers are emitted in the groups' `rank` order (lowest first), so
+foundational content ends up in the earliest, most cacheable layers. Any
+RunfilesGroupTransformInfo in the binary's `aspect_hints` is applied first, which lets users
+drop or re-shape groups per target.
+
+Note that RunfilesGroupInfo emission is off by default in rules_runfiles_group. Build with
+`--@rules_runfiles_group//runfiles_group:enabled=true` to opt in; without it, group-aware
+binaries produce a single layer.
 
 When the number of groups exceeds what is practical for a container image, use `layer_budget`
 to merge groups down to a maximum count. The merge algorithm respects group rank (only merges
-within the same rank), do_not_merge flags, and weight hints (lighter groups merge first).
+within the same rank), do_not_merge flags, merge affinity (groups sharing an affinity are
+preferred merge partners), and weight hints (lighter groups merge first).
 
 Example:
 
@@ -180,7 +187,7 @@ layer_from_binary(
 | <a id="layer_from_binary-create_parent_directories"></a>create_parent_directories |  Whether to automatically create parent directory entries in the tar file for all files. If set to 'auto', uses the global default create_parent_directories setting. When enabled, parent directories will be created automatically for all files in the layer.   | String | optional |  `"auto"`  |
 | <a id="layer_from_binary-estargz"></a>estargz |  Whether to use estargz format. If set to 'auto', uses the global default estargz setting. When enabled, the layer will be optimized for lazy pulling and will be compatible with the estargz format.   | String | optional |  `"auto"`  |
 | <a id="layer_from_binary-include_runfiles"></a>include_runfiles |  Whether to include runfiles for executable targets. When True (default), executables in srcs will include their runfiles tree. When False, only the executable file itself is included, without runfiles.<br><br>Either way, any additional default outputs of the target (the rest of `DefaultInfo.files` beyond the executable) are copied into the layer, placed relative to the executable.   | Boolean | optional |  `True`  |
-| <a id="layer_from_binary-layer_budget"></a>layer_budget |  Maximum total number of layers produced by this rule. If set to a value > 0 and the binary provides RunfilesGroupInfo, groups are merged using the merge algorithm from rules_runfiles_group. The algorithm respects group rank (only merges within the same rank), do_not_merge flags, and weight hints (lighter groups merge first).<br><br>When a group is marked as executable_group in RunfilesGroupMetadataInfo, the binary executable and supporting files are merged into that group's layer, and the full budget is available for runfiles groups. When no executable_group exists, one layer is reserved for a separate binary layer, and the remaining budget (layer_budget - 1) is used for groups; layer_budget=1 without an executable_group skips the grouped path entirely.<br><br>0 means no limit (all groups become separate layers, plus a binary layer unless an executable_group absorbs it).   | Integer | optional |  `0`  |
+| <a id="layer_from_binary-layer_budget"></a>layer_budget |  Maximum total number of layers produced by this rule. If set to a value > 0 and the binary provides RunfilesGroupInfo, groups are merged using the merge algorithm from rules_runfiles_group. The algorithm respects group rank (only merges within the same rank), do_not_merge flags, merge affinity (groups sharing an affinity are preferred merge partners), and weight hints (lighter groups merge first).<br><br>When the binary names an executable_group, the binary executable and supporting files are merged into that group's layer, and the full budget is available for runfiles groups. When no executable_group exists, one layer is reserved for a separate binary layer, and the remaining budget (layer_budget - 1) is used for groups; layer_budget=1 without an executable_group skips the grouped path entirely.<br><br>This is a target, not a hard cap: groups marked do_not_merge are never merged, and groups at different ranks never merge with each other, so a binary whose groups cannot be reduced far enough still produces more layers than the budget.<br><br>0 means no limit (all groups become separate layers, plus a binary layer unless an executable_group absorbs it).   | Integer | optional |  `0`  |
 | <a id="layer_from_binary-media_type"></a>media_type |  Override the layer media type. By default, the media type is auto-detected from the compression algorithm.   | String | optional |  `""`  |
 | <a id="layer_from_binary-path"></a>path |  Optional path of the binary inside the image. If the path ends with a slash ("/"), the basename of the binary will be automatically appended. If unset, this defaults to the rlocationpath of the binary (e.g., "_main/cmd/server/server_/server").   | String | optional |  `""`  |
 | <a id="layer_from_binary-runfiles_path"></a>runfiles_path |  Optional path of the runfiles directory of the binary inside the image. If unset, this defaults to the path of the binary with a .runfiles suffix (e.g., "_main/cmd/server/server_/server.runfiles"). Note: depending on the runfiles_sharing_mode, this may be a symlink to a shared runfiles directory.   | String | optional |  `""`  |
