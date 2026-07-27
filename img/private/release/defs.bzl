@@ -150,7 +150,7 @@ def _release_files(ctx):
     version = ctx.attr.version[ModuleVersionInfo].version
 
     # The git tag the prebuilt binaries are published under. For the img tool
-    # this is "v<version>" (e.g. v0.3.17); the independently-versioned signer
+    # this is "v<version>" (e.g. v0.3.18); the independently-versioned signer
     # plugins override it to their per-module tag (e.g.
     # rules_img_signer_cosign-v<version>). It is recorded verbatim in the
     # lockfile so the prebuilt download URL resolves to the right release.
