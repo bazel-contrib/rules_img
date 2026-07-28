@@ -49,28 +49,83 @@ jobs:
           tarball="$(bazel cquery --output=files "${target}")"
           mkdir -p dist
           tar -xf "${tarball}" -C dist
-      - name: Upload dist
-        uses: actions/upload-artifact@v4
+      # The artifact name is a contract with the publish job: publish-to-bcr's
+      # reusable workflow downloads the run artifact named `release_files` to
+      # compute integrity hashes from local files instead of re-downloading the
+      # release assets. Same name as bazel-contrib/.github's release_ruleset.
+      - name: Upload release files
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
-          name: dist
+          name: release_files
           path: dist/
-  release:
+  # The BCR entry references a provenance attestation for the source archive
+  # (`<archive>.intoto.jsonl`), so produce one just like the main release does
+  # via bazel-contrib/.github's release_ruleset workflow. Without it, publish's
+  # "Create final entry" step fails downloading the missing attestation.
+  attest:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
-          name: dist
+          name: release_files
+          path: release_files
+      - name: Attest release files
+        id: attest
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3.0.0
+        with:
+          subject-path: release_files/**/*
+      - name: Write release archive attestation
+        id: archive_attestations
+        env:
+          BUNDLE_PATH: ${{ steps.attest.outputs.bundle-path }}
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          # attest-build-provenance emits a single bundle covering all subjects,
+          # while the registry wants one attestation file per release archive.
+          # Copy the bundle under the name the BCR entry refers to, which is
+          # derived from the `url` in .bcr/modules/*/source.template.json
+          # (`{TAG}.tar.gz`) plus an `.intoto.jsonl` suffix.
+          archive="${TAG_NAME}.tar.gz"
+          if [ ! -f "release_files/${archive}" ]; then
+            echo "expected release archive release_files/${archive} not found;" >&2
+            echo "does version() in //img/private/release match the released tag?" >&2
+            exit 1
+          fi
+          attestations_dir="$(mktemp -d)"
+          jq --compact-output . "${BUNDLE_PATH}" \
+            >"${attestations_dir}/${archive}.intoto.jsonl"
+          echo "dir=${attestations_dir}" >> "$GITHUB_OUTPUT"
+      # Also a contract with the publish job, which downloads the run artifact
+      # named `attestations`.
+      - name: Upload attestations
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: attestations
+          path: ${{ steps.archive_attestations.outputs.dir }}/*
+  release:
+    needs: [build, attest]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: release_files
           path: dist
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: attestations
+          path: attestations
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
+          fail_on_unmatched_files: true
           files: |
             dist/rules_img_signer_${{ needs.build.outputs.basename }}-*.tar.gz
             dist/${{ needs.build.outputs.basename }}_*
+            attestations/*
   publish:
-    needs: [build, release]
+    needs: [build, attest, release]
     uses: ./.github/workflows/publish.yaml
     with:
       tag_name: ${{ github.ref_name }}
