@@ -419,6 +419,11 @@ func looksLikeJSON(path string, data []byte) bool {
 	return strings.HasPrefix(strings.TrimSpace(string(data)), "{")
 }
 
+// RuleCount reports how many rules the policy holds. It backs the
+// oci.gateway.policy.rules metric, which makes it visible when the instances of
+// a gateway fleet are not all running the same policy.
+func (p *CompiledPolicy) RuleCount() int { return len(p.rules) }
+
 // Summary returns a short human-readable description of the policy for logging.
 func (p *CompiledPolicy) Summary() string {
 	action := "deny"

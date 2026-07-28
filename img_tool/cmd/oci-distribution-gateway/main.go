@@ -8,6 +8,10 @@
 // policy file: an ordered list of allow/deny rules matched on the upstream
 // registry host, repository path, and operation (blob/manifest read/write). The
 // policy file can be reloaded at runtime by sending the process a SIGHUP.
+//
+// Traffic, blob transfers, and errors are reported as OpenTelemetry metrics,
+// either pushed to a collector over OTLP or scraped from a Prometheus endpoint;
+// see --metrics-exporter and //pkg/serve/telemetry.
 package main
 
 import (
@@ -20,12 +24,29 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
 	reg "github.com/bazel-contrib/rules_img/img_tool/pkg/auth/registry"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/serve/gateway"
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/serve/telemetry"
 )
+
+// serviceName is the default OpenTelemetry service.name of the gateway. It is
+// overridden by OTEL_SERVICE_NAME.
+const serviceName = "oci-distribution-gateway"
+
+// repeatedFlag collects every occurrence of a flag that may be given more than
+// once, which the flag package only supports through a [flag.Value].
+type repeatedFlag []string
+
+func (f *repeatedFlag) String() string { return strings.Join(*f, ",") }
+
+func (f *repeatedFlag) Set(value string) error {
+	*f = append(*f, value)
+	return nil
+}
 
 // newFlagSet builds the flag set with a usage banner and examples.
 func newFlagSet() *flag.FlagSet {
@@ -41,6 +62,7 @@ func newFlagSet() *flag.FlagSet {
 			"oci-distribution-gateway --unix-socket /run/gw.sock --policy-file /etc/img/gateway-policy.yaml",
 			"oci-distribution-gateway --validate-policy --policy-file /etc/img/gateway-policy.json",
 			"oci-distribution-gateway --unix-socket /run/gw.sock --dangerously-allow-all",
+			"oci-distribution-gateway --port 8080 --policy-file /etc/img/policy.json --metrics-exporter prometheus",
 		}
 		fmt.Fprintf(flagSet.Output(), "\nExamples:\n")
 		for _, example := range examples {
@@ -60,6 +82,10 @@ func Run(ctx context.Context, args []string) {
 		policyFile           string
 		validatePolicy       bool
 		dangerouslyAllowAll  bool
+		metricsExporter      string
+		metricsOTLPProtocol  string
+		metricsOTLPEndpoints repeatedFlag
+		metricsAddress       string
 	)
 
 	flagSet := newFlagSet()
@@ -71,6 +97,10 @@ func Run(ctx context.Context, args []string) {
 	flagSet.StringVar(&policyFile, "policy-file", "", "Path to a JSON (or YAML) policy file with per-repository allow/deny rules. Required unless --dangerously-allow-all is set. Reloadable at runtime with SIGHUP.")
 	flagSet.BoolVar(&validatePolicy, "validate-policy", false, "Load and validate --policy-file, then exit (0 if valid, non-zero otherwise). Does not start the gateway.")
 	flagSet.BoolVar(&dangerouslyAllowAll, "dangerously-allow-all", false, "Allow every request to every upstream, ignoring the policy file. DANGEROUS: only for trusted, isolated environments.")
+	flagSet.StringVar(&metricsExporter, "metrics-exporter", "", "OpenTelemetry metric exporters to enable, comma-separated: otlp, prometheus, console, or none. Defaults to $OTEL_METRICS_EXPORTER, or to otlp when an OTLP endpoint is configured.")
+	flagSet.StringVar(&metricsOTLPProtocol, "metrics-otlp-protocol", "", "Protocol for the otlp exporter: grpc (collector port 4317) or http/protobuf (port 4318). Defaults to $OTEL_EXPORTER_OTLP_METRICS_PROTOCOL, $OTEL_EXPORTER_OTLP_PROTOCOL, then http/protobuf.")
+	flagSet.Var(&metricsOTLPEndpoints, "metrics-otlp-endpoint", "OTLP metrics endpoint URL to push to, e.g. http://collector:4318 (https:// to use TLS). Repeat the flag to push the same metrics to several collectors, which is only correct when at most one of them forwards them (a leader-elected set) or the backend deduplicates: if they all forward, every counter is multiplied. Each endpoint also costs another export per interval. Defaults to $IMG_METRICS_OTLP_ENDPOINTS (comma-separated), then to the single $OTEL_EXPORTER_OTLP_[METRICS_]ENDPOINT.")
+	flagSet.StringVar(&metricsAddress, "metrics-address", ":9464", "Address the prometheus exporter serves /metrics on. Reachable from outside the pod by default; keep it on a trusted network.")
 
 	if err := flagSet.Parse(args[1:]); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -128,10 +158,35 @@ func Run(ctx context.Context, args []string) {
 		}
 	}
 
+	// Metrics are opt-in: with no exporter configured, Setup returns a provider
+	// that discards every measurement.
+	metrics, err := telemetry.Setup(ctx, telemetry.Config{
+		MetricExporters: metricsExporter,
+		OTLPProtocol:    metricsOTLPProtocol,
+		OTLPEndpoints:   metricsOTLPEndpoints,
+		ServiceName:     serviceName,
+	})
+	if err != nil {
+		log.Fatalf("Failed to set up metrics: %v", err)
+	}
+	defer func() {
+		// Flush the last measurements. The context is fresh: the one that stopped
+		// the server may already be cancelled.
+		flushCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := metrics.Shutdown(flushCtx); err != nil {
+			log.Printf("metrics shutdown error: %v", err)
+		}
+	}()
+	if metrics.Enabled() {
+		log.Printf("metrics enabled (exporters: %s)", strings.Join(metrics.Exporters, ", "))
+	}
+
 	handler := gateway.New(
 		gateway.WithAuthorizer(authz),
 		gateway.WithDefaultRegistry(defaultRegistry),
 		gateway.WithKeychain(reg.Keychain()),
+		gateway.WithMeterProvider(metrics.MeterProvider),
 	)
 
 	listener, cleanup, err := listen(unixSocket, address, port)
@@ -155,6 +210,35 @@ func Run(ctx context.Context, args []string) {
 		ReadTimeout:  30 * time.Minute,
 		WriteTimeout: 30 * time.Minute,
 		IdleTimeout:  5 * time.Minute,
+	}
+
+	// The Prometheus exporter is a pull exporter, so it needs an endpoint of its
+	// own. It never shares the registry listener: that one is the gateway's
+	// protocol surface (and may be a UNIX socket a scraper cannot reach).
+	var metricsServer *http.Server
+	if metrics.PrometheusHandler != nil {
+		if metricsAddress == "" {
+			log.Fatalf("Failed to serve metrics: the prometheus exporter requires --metrics-address")
+		}
+		mux := http.NewServeMux()
+		mux.Handle("/metrics", metrics.PrometheusHandler)
+		metricsServer = &http.Server{
+			Addr:              metricsAddress,
+			Handler:           mux,
+			ReadHeaderTimeout: 10 * time.Second,
+			WriteTimeout:      30 * time.Second,
+			IdleTimeout:       time.Minute,
+		}
+		metricsListener, err := net.Listen("tcp", metricsAddress)
+		if err != nil {
+			log.Fatalf("Failed to listen on --metrics-address %s: %v", metricsAddress, err)
+		}
+		go func() {
+			if err := metricsServer.Serve(metricsListener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				log.Printf("metrics endpoint error: %v", err)
+			}
+		}()
+		fmt.Fprintf(os.Stderr, "oci-distribution-gateway serving metrics on %s/metrics\n", metricsListener.Addr())
 	}
 
 	// Reload the policy file on SIGHUP. A failed reload keeps the previous
@@ -194,6 +278,13 @@ func Run(ctx context.Context, args []string) {
 		defer cancel()
 		if err := server.Shutdown(shutdownCtx); err != nil {
 			log.Printf("graceful shutdown error: %v", err)
+		}
+		if metricsServer != nil {
+			// After the gateway itself: the last requests should still be counted,
+			// and a scrape of the final numbers is still useful.
+			if err := metricsServer.Shutdown(shutdownCtx); err != nil {
+				log.Printf("metrics endpoint shutdown error: %v", err)
+			}
 		}
 	}
 }

@@ -1,0 +1,35 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "telemetry",
+    srcs = ["telemetry.go"],
+    importpath = "github.com/bazel-contrib/rules_img/img_tool/pkg/serve/telemetry",
+    visibility = ["//visibility:public"],
+    deps = [
+        "@com_github_google_uuid//:uuid",
+        "@com_github_prometheus_client_golang//prometheus",
+        "@com_github_prometheus_client_golang//prometheus/promhttp",
+        "@io_opentelemetry_go_otel//:otel",
+        "@io_opentelemetry_go_otel//semconv/v1.41.0:v1_41_0",
+        "@io_opentelemetry_go_otel_exporters_otlp_otlpmetric_otlpmetricgrpc//:otlpmetricgrpc",
+        "@io_opentelemetry_go_otel_exporters_otlp_otlpmetric_otlpmetrichttp//:otlpmetrichttp",
+        "@io_opentelemetry_go_otel_exporters_prometheus//:prometheus",
+        "@io_opentelemetry_go_otel_exporters_stdout_stdoutmetric//:stdoutmetric",
+        "@io_opentelemetry_go_otel_metric//:metric",
+        "@io_opentelemetry_go_otel_metric//noop",
+        "@io_opentelemetry_go_otel_sdk//resource",
+        "@io_opentelemetry_go_otel_sdk_metric//:metric",
+    ],
+)
+
+go_test(
+    name = "telemetry_test",
+    size = "small",
+    srcs = ["telemetry_test.go"],
+    embed = [":telemetry"],
+    deps = [
+        "@io_opentelemetry_go_otel//attribute",
+        "@io_opentelemetry_go_otel//semconv/v1.41.0:v1_41_0",
+        "@io_opentelemetry_go_otel_metric//:metric",
+    ],
+)

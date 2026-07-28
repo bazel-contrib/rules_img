@@ -28,11 +28,45 @@ var (
 	// The repository name follows the OCI Distribution Spec grammar.
 	nameGrammar = `[a-z0-9]+((\.|_|__|-+)[a-z0-9]+)*(/[a-z0-9]+((\.|_|__|-+)[a-z0-9]+)*)*`
 
-	blobUploadRe = regexp.MustCompile(`^/v2/(` + nameGrammar + `)/blobs/uploads/?.*$`)
+	blobUploadRe = regexp.MustCompile(`^/v2/(` + nameGrammar + `)/blobs/uploads/?(?P<reference>.*)$`)
 	blobRe       = regexp.MustCompile(`^/v2/(` + nameGrammar + `)/blobs/([^/]+)$`)
 	manifestRe   = regexp.MustCompile(`^/v2/(` + nameGrammar + `)/manifests/(.+)$`)
 	tagsRe       = regexp.MustCompile(`^/v2/(` + nameGrammar + `)/tags/list$`)
 	referrersRe  = regexp.MustCompile(`^/v2/(` + nameGrammar + `)/referrers/(.+)$`)
+
+	// uploadRefGroup is the submatch index of the upload session reference. The
+	// repository grammar contains groups of its own, so it is looked up by name
+	// rather than assumed to be a fixed index.
+	uploadRefGroup = blobUploadRe.SubexpIndex("reference")
+)
+
+// Values of the oci.operation metric attribute: a stable, low-cardinality token
+// per classified operation. They are more granular than [requirement] (a HEAD is
+// its own operation) and are also reported for requests the gateway rejects.
+const (
+	opNameUnknown       = "unknown"
+	opNameVersionCheck  = "version.check"
+	opNameBlobRead      = "blob.read"
+	opNameBlobHead      = "blob.head"
+	opNameBlobWrite     = "blob.write"
+	opNameBlobUpload    = "blob.upload"
+	opNameManifestRead  = "manifest.read"
+	opNameManifestHead  = "manifest.head"
+	opNameManifestWrite = "manifest.write"
+	opNameTagsList      = "tags.list"
+	opNameReferrers     = "referrers.read"
+)
+
+// Values of the http.route metric attribute: the OCI distribution endpoints with
+// their variable path segments replaced by placeholders.
+const (
+	routeVersion       = "/v2/"
+	routeBlob          = "/v2/{name}/blobs/{digest}"
+	routeUploadStart   = "/v2/{name}/blobs/uploads/"
+	routeUploadSession = "/v2/{name}/blobs/uploads/{reference}"
+	routeManifest      = "/v2/{name}/manifests/{reference}"
+	routeTags          = "/v2/{name}/tags/list"
+	routeReferrers     = "/v2/{name}/referrers/{digest}"
 )
 
 // request describes a classified registry request.
@@ -40,6 +74,10 @@ type request struct {
 	repo string      // repository name (path component of /v2/<name>/...)
 	req  requirement // what policy dimension gates this request
 	kind string      // human-readable operation kind for logging/errors
+	// op is the oci.operation metric attribute value, and route the http.route
+	// one. Both are fixed tokens, never derived from the request path.
+	op    string
+	route string
 	// write reports whether the operation mutates the registry. It selects the
 	// pull vs push token scope used when authenticating upstream.
 	write bool
@@ -57,6 +95,12 @@ type request struct {
 	malformedQuery bool
 }
 
+// existenceCheck reports whether this is a HEAD probe for a blob or manifest,
+// the request whose hit/miss ratio decides how much a push client re-uploads.
+func (r request) existenceCheck() bool {
+	return r.op == opNameBlobHead || r.op == opNameManifestHead
+}
+
 // classify inspects the request path and method and reports the repository, the
 // policy requirement, and whether it is a write. ok is false for paths the
 // gateway does not understand.
@@ -65,15 +109,19 @@ func classify(r *http.Request) (request, bool) {
 	method := r.Method
 
 	if m := tagsRe.FindStringSubmatch(path); m != nil {
-		return request{repo: m[1], req: reqManifestRead, kind: "tag listing"}, true
+		return request{repo: m[1], req: reqManifestRead, kind: "tag listing", op: opNameTagsList, route: routeTags}, true
 	}
 	if m := referrersRe.FindStringSubmatch(path); m != nil {
-		return request{repo: m[1], req: reqManifestRead, kind: "referrers query"}, true
+		return request{repo: m[1], req: reqManifestRead, kind: "referrers query", op: opNameReferrers, route: routeReferrers}, true
 	}
 	if m := blobUploadRe.FindStringSubmatch(path); m != nil {
 		// Every step of the upload session (POST to start, PATCH to append,
 		// PUT to finalize, GET to query status, DELETE to cancel) is a write.
-		req := request{repo: m[1], req: reqBlobWrite, kind: "blob upload", write: true}
+		route := routeUploadStart
+		if m[uploadRefGroup] != "" {
+			route = routeUploadSession
+		}
+		req := request{repo: m[1], req: reqBlobWrite, kind: "blob upload", op: opNameBlobUpload, route: route, write: true}
 		// A cross-repo mount (POST ...?mount=<digest>&from=<repo>) copies an
 		// existing blob from another repository instead of re-uploading it; the
 		// source repository must be readable. Parse the query strictly and
@@ -95,22 +143,22 @@ func classify(r *http.Request) (request, bool) {
 	if m := blobRe.FindStringSubmatch(path); m != nil {
 		switch method {
 		case http.MethodGet:
-			return request{repo: m[1], req: reqBlobRead, kind: "blob read"}, true
+			return request{repo: m[1], req: reqBlobRead, kind: "blob read", op: opNameBlobRead, route: routeBlob}, true
 		case http.MethodHead:
-			return request{repo: m[1], req: reqBlobReadOrWrite, kind: "blob existence check"}, true
+			return request{repo: m[1], req: reqBlobReadOrWrite, kind: "blob existence check", op: opNameBlobHead, route: routeBlob}, true
 		default: // DELETE and anything else that mutates.
-			return request{repo: m[1], req: reqBlobWrite, kind: "blob write", write: true}, true
+			return request{repo: m[1], req: reqBlobWrite, kind: "blob write", op: opNameBlobWrite, route: routeBlob, write: true}, true
 		}
 	}
 	if m := manifestRe.FindStringSubmatch(path); m != nil {
 		switch method {
 		case http.MethodGet:
-			return request{repo: m[1], req: reqManifestRead, kind: "manifest read"}, true
+			return request{repo: m[1], req: reqManifestRead, kind: "manifest read", op: opNameManifestRead, route: routeManifest}, true
 		case http.MethodHead:
-			return request{repo: m[1], req: reqManifestReadOrWrite, kind: "manifest existence check"}, true
+			return request{repo: m[1], req: reqManifestReadOrWrite, kind: "manifest existence check", op: opNameManifestHead, route: routeManifest}, true
 		default: // PUT, DELETE, ...
-			return request{repo: m[1], req: reqManifestWrite, kind: "manifest write", write: true}, true
+			return request{repo: m[1], req: reqManifestWrite, kind: "manifest write", op: opNameManifestWrite, route: routeManifest, write: true}, true
 		}
 	}
-	return request{}, false
+	return request{op: opNameUnknown}, false
 }
