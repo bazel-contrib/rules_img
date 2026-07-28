@@ -6,6 +6,14 @@
 # `rules_img_signer_<basename>-v` prefix from the tag to derive the module version
 # and passes module_roots so publish-to-bcr publishes only this plugin, leaving
 # the other modules (and their already-published versions) untouched.
+#
+# Building and releasing goes through the same reusable release workflow as the
+# main release (which dispatches on the tag in release_prep.sh). That is not just
+# for consistency: the BCR presubmit verifies the release archive's provenance
+# against a *hard-coded* builder id, namely the reusable workflow that produced
+# the attestation (see `_GH_RELEASE_BUILDER_ID` in tools/slsa.py of
+# bazelbuild/bazel-central-registry). Attesting the archive from a workflow of
+# our own makes slsa-verifier reject it as an "untrusted reusable workflow".
 name: Release signer plugin
 on:
   push:
@@ -17,12 +25,11 @@ permissions:
   attestations: write
   contents: write
 jobs:
-  build:
+  meta:
     runs-on: ubuntu-latest
     outputs:
       basename: ${{ steps.meta.outputs.basename }}
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
       - name: Resolve module from tag
         id: meta
         env:
@@ -34,105 +41,28 @@ jobs:
             *) echo "unrecognized tag ${TAG_NAME}"; exit 1 ;;
           esac
           echo "basename=${basename}" >> "$GITHUB_OUTPUT"
-      - name: Build binaries + source archive
-        env:
-          BASENAME: ${{ steps.meta.outputs.basename }}
-        run: |
-          # Everything is produced hermetically by Bazel: the prebuilt
-          # per-platform binaries and the versioned BCR source archive (with the
-          # populated prebuilt_lockfile.json). We only extract the resulting
-          # tarball into dist/ with plain `tar -xf` (portable across platforms;
-          # no awk/sed/tar --transform). Building from the repo root is what lets
-          # the cosign plugin compile without rewriting its MODULE.bazel.
-          target="//img/private/release:signer_${BASENAME}_dist_tar"
-          bazel build "${target}"
-          tarball="$(bazel cquery --output=files "${target}")"
-          mkdir -p dist
-          tar -xf "${tarball}" -C dist
-      # The artifact name is a contract with the publish job: publish-to-bcr's
-      # reusable workflow downloads the run artifact named `release_files` to
-      # compute integrity hashes from local files instead of re-downloading the
-      # release assets. Same name as bazel-contrib/.github's release_ruleset.
-      - name: Upload release files
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
-        with:
-          name: release_files
-          path: dist/
-  # The BCR entry references a provenance attestation for the source archive
-  # (`<archive>.intoto.jsonl`), so produce one just like the main release does
-  # via bazel-contrib/.github's release_ruleset workflow. Without it, publish's
-  # "Create final entry" step fails downloading the missing attestation.
-  attest:
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
-        with:
-          name: release_files
-          path: release_files
-      - name: Attest release files
-        id: attest
-        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3.0.0
-        with:
-          subject-path: release_files/**/*
-      - name: Write release archive attestation
-        id: archive_attestations
-        env:
-          BUNDLE_PATH: ${{ steps.attest.outputs.bundle-path }}
-          TAG_NAME: ${{ github.ref_name }}
-        run: |
-          # attest-build-provenance emits a single bundle covering all subjects,
-          # while the registry wants one attestation file per release archive.
-          # Copy the bundle under the name the BCR entry refers to, which is
-          # derived from the `url` in .bcr/modules/*/source.template.json
-          # (`{TAG}.tar.gz`) plus an `.intoto.jsonl` suffix.
-          archive="${TAG_NAME}.tar.gz"
-          if [ ! -f "release_files/${archive}" ]; then
-            echo "expected release archive release_files/${archive} not found;" >&2
-            echo "does version() in //img/private/release match the released tag?" >&2
-            exit 1
-          fi
-          attestations_dir="$(mktemp -d)"
-          jq --compact-output . "${BUNDLE_PATH}" \
-            >"${attestations_dir}/${archive}.intoto.jsonl"
-          echo "dir=${attestations_dir}" >> "$GITHUB_OUTPUT"
-      # Also a contract with the publish job, which downloads the run artifact
-      # named `attestations`.
-      - name: Upload attestations
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
-        with:
-          name: attestations
-          path: ${{ steps.archive_attestations.outputs.dir }}/*
   release:
-    needs: [build, attest]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
-        with:
-          name: release_files
-          path: dist
-      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
-        with:
-          name: attestations
-          path: attestations
-      - name: Create GitHub release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.ref_name }}
-          fail_on_unmatched_files: true
-          files: |
-            dist/rules_img_signer_${{ needs.build.outputs.basename }}-*.tar.gz
-            dist/${{ needs.build.outputs.basename }}_*
-            attestations/*
+    needs: meta
+    uses: bazel-contrib/.github/.github/workflows/release_ruleset.yaml@v7.4.0
+    with:
+      # release_prep.sh builds the plugin's dist bundle: the versioned BCR source
+      # archive plus the prebuilt per-platform plugin binaries.
+      release_files: |
+        dist/rules_img_signer_${{ needs.meta.outputs.basename }}-*.tar.gz
+        dist/${{ needs.meta.outputs.basename }}_*
+      prerelease: false
+      tag_name: ${{ github.ref_name }}
+    secrets:
+      inherit
   publish:
-    needs: [build, attest, release]
+    needs: [meta, release]
     uses: ./.github/workflows/publish.yaml
     with:
       tag_name: ${{ github.ref_name }}
       # The tag is rules_img_signer_<basename>-v<version>; strip that prefix so
       # publish-to-bcr derives the module version (e.g. 0.0.1), and publish only
       # this plugin's module root (not the co-versioned rules_img/img_tool set).
-      tag_prefix: rules_img_signer_${{ needs.build.outputs.basename }}-v
-      module_roots: modules/rules_img_signer_${{ needs.build.outputs.basename }}
+      tag_prefix: rules_img_signer_${{ needs.meta.outputs.basename }}-v
+      module_roots: modules/rules_img_signer_${{ needs.meta.outputs.basename }}
     secrets:
       publish_token: ${{ secrets.BCR_PUBLISH_TOKEN }}
