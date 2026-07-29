@@ -9,6 +9,10 @@
 // exchange flow, and authorizes every request against a [CompiledPolicy]: an
 // ordered list of allow/deny rules matched on the resolved registry host,
 // repository path, and operation. The policy is reloadable at runtime.
+//
+// Requests, transferred bytes, blob transfers, existence-check hit rates, and
+// errors are reported as OpenTelemetry metrics through the [metric.MeterProvider]
+// installed with [WithMeterProvider] (see metrics.go for the instruments).
 package gateway
 
 import (
@@ -29,6 +33,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/v1/remote/transport"
+	"go.opentelemetry.io/otel/metric"
 
 	clientgateway "github.com/bazel-contrib/rules_img/img_tool/pkg/gateway"
 )
@@ -51,6 +56,10 @@ type Handler struct {
 	// installed by New; when nil, New falls back to a fail-closed deny-all
 	// policy.
 	explicitPolicy *CompiledPolicy
+
+	// meterProvider is set by WithMeterProvider; nil means the global one.
+	meterProvider metric.MeterProvider
+	metrics       *metrics
 
 	cache authCache
 }
@@ -89,6 +98,14 @@ func WithDefaultRegistry(registry string) Option {
 	return func(h *Handler) { h.defaultRegistry = registry }
 }
 
+// WithMeterProvider sets the OpenTelemetry meter provider the gateway records
+// its metrics with. It defaults to the global provider, which discards
+// everything until a binary installs an SDK, so instrumentation is inert unless
+// an exporter is configured.
+func WithMeterProvider(mp metric.MeterProvider) Option {
+	return func(h *Handler) { h.meterProvider = mp }
+}
+
 // New constructs a gateway [Handler].
 func New(opts ...Option) *Handler {
 	h := &Handler{
@@ -106,6 +123,18 @@ func New(opts ...Option) *Handler {
 	}
 	h.policy.Store(policy)
 	h.cache.inner = make(map[string]*authEntry)
+	m, err := newMetrics(h.meterProvider, func() int64 {
+		if p := h.policy.Load(); p != nil {
+			return int64(p.RuleCount())
+		}
+		return 0
+	})
+	if err != nil {
+		// Instruments are still usable (no-ops at worst); serving matters more
+		// than measuring it.
+		h.log.Printf("warning: creating metric instruments: %v", err)
+	}
+	h.metrics = m
 	return h
 }
 
@@ -115,6 +144,7 @@ func New(opts ...Option) *Handler {
 // concurrently with in-flight requests.
 func (h *Handler) Reload(path string) (*CompiledPolicy, error) {
 	cp, err := LoadPolicyFile(path)
+	h.metrics.recordReload(context.Background(), err)
 	if err != nil {
 		return nil, err
 	}
@@ -131,6 +161,16 @@ func defaultBaseTransport() http.RoundTripper {
 
 // ServeHTTP implements [http.Handler].
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// begin returns wrappers that count the bytes crossing the client
+	// connection and capture the response status.
+	obs, w, r := h.metrics.begin(w, r)
+	defer obs.finish(r.Context())
+	h.serve(obs, w, r)
+}
+
+// serve is the request logic of [Handler.ServeHTTP], with obs collecting the
+// metrics for this request.
+func (h *Handler) serve(obs *observation, w http.ResponseWriter, r *http.Request) {
 	// Snapshot the policy once so a concurrent reload cannot split a single
 	// request's decisions across two policies.
 	authz := h.policy.Load()
@@ -143,21 +183,24 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		host = h.defaultRegistry
 	}
 	if host == "" {
-		h.writeError(w, r, http.StatusBadRequest, "UNSUPPORTED",
+		h.writeError(obs, w, r, http.StatusBadRequest, "UNSUPPORTED", errMissingHost,
 			fmt.Sprintf("missing required %s header and no default registry configured", clientgateway.OriginalHostHeader))
 		return
 	}
 	// The API version check has no repository; resolve just the registry so the
 	// allow-list is enforced against the *resolved* upstream.
 	if r.URL.Path == "/v2" || r.URL.Path == "/v2/" {
+		versionCheck := request{op: opNameVersionCheck, route: routeVersion}
 		reg, err := name.NewRegistry(host)
 		if err != nil {
-			h.writeError(w, r, http.StatusBadRequest, "NAME_INVALID",
+			obs.setUpstream("", versionCheck)
+			h.writeError(obs, w, r, http.StatusBadRequest, "NAME_INVALID", errInvalidRegistry,
 				fmt.Sprintf("invalid registry %q: %v", host, err))
 			return
 		}
+		obs.setUpstream(hostname(reg.RegistryStr()), versionCheck)
 		if !authz.RegistryAllowed(hostname(reg.RegistryStr())) {
-			h.writeError(w, r, http.StatusForbidden, "DENIED",
+			h.writeError(obs, w, r, http.StatusForbidden, "DENIED", errRegistryDenied,
 				fmt.Sprintf("upstream registry %q is not allowed by this gateway", reg.RegistryStr()))
 			return
 		}
@@ -171,7 +214,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	cls, ok := classify(r)
 	if !ok {
-		h.writeError(w, r, http.StatusNotFound, "UNSUPPORTED",
+		h.writeError(obs, w, r, http.StatusNotFound, "UNSUPPORTED", errUnsupportedEndpoint,
 			"unsupported registry endpoint")
 		return
 	}
@@ -180,14 +223,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// would (e.g. a ';' separator, or duplicate mount/from values) could let
 		// the client have us authorize a different mount source than the one the
 		// upstream acts on. Refuse it rather than forward it.
-		h.writeError(w, r, http.StatusBadRequest, "UNSUPPORTED",
+		obs.setUpstream("", cls)
+		h.writeError(obs, w, r, http.StatusBadRequest, "UNSUPPORTED", errMalformedQuery,
 			"malformed or ambiguous upload query")
 		return
 	}
 
 	repo, err := name.NewRepository(host + "/" + cls.repo)
 	if err != nil {
-		h.writeError(w, r, http.StatusBadRequest, "NAME_INVALID",
+		obs.setUpstream("", cls)
+		h.writeError(obs, w, r, http.StatusBadRequest, "NAME_INVALID", errInvalidRepository,
 			fmt.Sprintf("invalid repository %q: %v", cls.repo, err))
 		return
 	}
@@ -197,14 +242,17 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// single-segment Docker Hub repo, so matching the header/path alone would
 	// not constrain the real upstream the gateway connects to.
 	regHost := hostname(repo.RegistryStr())
+	obs.setUpstream(regHost, cls)
 	if !authz.RegistryAllowed(regHost) {
-		h.writeError(w, r, http.StatusForbidden, "DENIED",
+		h.writeError(obs, w, r, http.StatusForbidden, "DENIED", errRegistryDenied,
 			fmt.Sprintf("upstream registry %q is not allowed by this gateway", repo.RegistryStr()))
 		return
 	}
-	if allow, idx, desc := authz.Decide(regHost, repo.RepositoryStr(), cls.req); !allow {
+	allow, idx, desc := authz.Decide(regHost, repo.RepositoryStr(), cls.req)
+	obs.policyDecision(r.Context(), allow)
+	if !allow {
 		h.log.Printf("%s %s (host=%s repo=%s) denied by policy (rule=%d %q)", r.Method, r.URL.Path, regHost, repo.RepositoryStr(), idx, desc)
-		h.writeError(w, r, http.StatusForbidden, "DENIED",
+		h.writeError(obs, w, r, http.StatusForbidden, "DENIED", errPolicyDenied,
 			fmt.Sprintf("%s is not permitted by this gateway's policy", cls.kind))
 		return
 	}
@@ -215,13 +263,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if cls.mountFrom != "" {
 		if !h.mountSourceReadable(authz, host, cls.mountFrom) {
 			h.log.Printf("%s %s (host=%s) denied: mount source %q not readable by policy", r.Method, r.URL.Path, regHost, cls.mountFrom)
-			h.writeError(w, r, http.StatusForbidden, "DENIED",
+			h.writeError(obs, w, r, http.StatusForbidden, "DENIED", errMountDenied,
 				fmt.Sprintf("mounting from %q is not permitted by this gateway's policy", cls.mountFrom))
 			return
 		}
 	}
 
-	h.forward(w, r, repo, cls)
+	h.forward(obs, w, r, repo, cls)
 }
 
 // mountSourceReadable reports whether the cross-repo mount source repository is
@@ -252,15 +300,15 @@ func hostname(registryStr string) string {
 
 // forward proxies the request to the upstream registry using an authenticated
 // transport and streams the response back to the client.
-func (h *Handler) forward(w http.ResponseWriter, r *http.Request, repo name.Repository, cls request) {
+func (h *Handler) forward(obs *observation, w http.ResponseWriter, r *http.Request, repo name.Repository, cls request) {
 	action := transport.PullScope
 	if cls.write {
 		action = transport.PushScope
 	}
 
-	rt, err := h.authTransport(repo, action)
+	rt, err := h.authTransport(r.Context(), obs, repo, action)
 	if err != nil {
-		h.writeError(w, r, http.StatusBadGateway, "UNAUTHORIZED",
+		h.writeError(obs, w, r, http.StatusBadGateway, "UNAUTHORIZED", authErrorType(err),
 			fmt.Sprintf("authenticating to upstream %s: %v", repo.RegistryStr(), err))
 		return
 	}
@@ -269,7 +317,7 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, repo name.Repo
 	upstreamURL := repo.Scheme() + "://" + repo.RegistryStr() + r.URL.RequestURI()
 	outReq, err := http.NewRequestWithContext(r.Context(), r.Method, upstreamURL, r.Body)
 	if err != nil {
-		h.writeError(w, r, http.StatusBadGateway, "UNKNOWN",
+		h.writeError(obs, w, r, http.StatusBadGateway, "UNKNOWN", errBadUpstreamRequest,
 			fmt.Sprintf("building upstream request: %v", err))
 		return
 	}
@@ -280,29 +328,34 @@ func (h *Handler) forward(w http.ResponseWriter, r *http.Request, repo name.Repo
 	// storage) are followed transparently. checkRedirect only follows for safe
 	// read methods and refuses redirects to private/link-local addresses.
 	client := &http.Client{Transport: rt, CheckRedirect: checkRedirect(r.Method)}
+	started := time.Now()
 	resp, err := client.Do(outReq)
 	if err != nil {
-		h.writeError(w, r, http.StatusBadGateway, "UNKNOWN",
+		h.writeError(obs, w, r, http.StatusBadGateway, "UNKNOWN", transportErrorType(err),
 			fmt.Sprintf("forwarding to upstream %s: %v", repo.RegistryStr(), err))
 		return
 	}
 	defer resp.Body.Close()
+	obs.upstreamResponse(r.Context(), cls, resp.StatusCode, time.Since(started))
 
 	copyResponseHeader(w.Header(), resp.Header, repo)
 	w.WriteHeader(resp.StatusCode)
+	var copyErr error
 	if r.Method != http.MethodHead {
-		if _, err := io.Copy(w, resp.Body); err != nil {
+		if _, copyErr = io.Copy(w, resp.Body); copyErr != nil {
 			// The status/header are already written; we can only log.
-			h.log.Printf("%s %s (host=%s): error copying response body: %v", r.Method, r.URL.Path, repo.RegistryStr(), err)
+			obs.fail(r.Context(), transferErrorType(copyErr))
+			h.log.Printf("%s %s (host=%s): error copying response body: %v", r.Method, r.URL.Path, repo.RegistryStr(), copyErr)
 		}
 	}
+	obs.recordTransfer(r.Context(), r, cls, resp.StatusCode, copyErr)
 	h.log.Printf("%s %s (host=%s) -> %d", r.Method, r.URL.Path, repo.RegistryStr(), resp.StatusCode)
 }
 
 // authTransport returns a cached authenticated RoundTripper for the given
 // repository and scope action ("pull" or "push,pull"). It resolves credentials
 // from the keychain and performs the crane ping + token-exchange handshake.
-func (h *Handler) authTransport(repo name.Repository, action string) (http.RoundTripper, error) {
+func (h *Handler) authTransport(reqCtx context.Context, obs *observation, repo name.Repository, action string) (http.RoundTripper, error) {
 	key := repo.String() + "|" + action
 	return h.cache.get(key, func() (http.RoundTripper, error) {
 		// The resulting transport is cached and shared across requests, so the
@@ -314,9 +367,11 @@ func (h *Handler) authTransport(repo name.Repository, action string) (http.Round
 		defer cancel()
 		auth, err := authn.Resolve(ctx, h.keychain, repo)
 		if err != nil {
+			obs.authHandshake(reqCtx, err)
 			return nil, fmt.Errorf("resolving credentials: %w", err)
 		}
 		rt, err := transport.NewWithContext(ctx, repo.Registry, auth, h.base, []string{repo.Scope(action)})
+		obs.authHandshake(reqCtx, err)
 		if err != nil {
 			return nil, err
 		}
@@ -335,7 +390,7 @@ func (h *Handler) authTransport(repo name.Repository, action string) (http.Round
 func checkRedirect(originalMethod string) func(*http.Request, []*http.Request) error {
 	return func(req *http.Request, via []*http.Request) error {
 		if len(via) >= 10 {
-			return fmt.Errorf("stopped after 10 redirects")
+			return errRedirectsStopped
 		}
 		if originalMethod != http.MethodGet && originalMethod != http.MethodHead {
 			return http.ErrUseLastResponse
@@ -350,19 +405,24 @@ func checkRedirect(originalMethod string) func(*http.Request, []*http.Request) e
 // apply network-level controls if needed.
 func validateRedirectTarget(u *url.URL) error {
 	if u.Scheme != "http" && u.Scheme != "https" {
-		return fmt.Errorf("refusing redirect to non-http(s) URL %q", u.Redacted())
+		return fmt.Errorf("%w to non-http(s) URL %q", errRefusedRedirect, u.Redacted())
 	}
 	if ip := net.ParseIP(u.Hostname()); ip != nil {
 		if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsPrivate() || ip.IsUnspecified() {
-			return fmt.Errorf("refusing redirect to private or link-local address %q", u.Hostname())
+			return fmt.Errorf("%w to private or link-local address %q", errRefusedRedirect, u.Hostname())
 		}
 	}
 	return nil
 }
 
-// writeError writes an OCI-style error response.
-func (h *Handler) writeError(w http.ResponseWriter, r *http.Request, status int, code, message string) {
-	h.log.Printf("%s %s -> %d %s: %s", r.Method, r.URL.Path, status, code, message)
+// writeError records the failure under errType and writes an OCI-style error
+// response. errType is one of the fixed error.type values from errclass.go; an
+// empty errType records no error (used when the caller already classified one).
+func (h *Handler) writeError(obs *observation, w http.ResponseWriter, r *http.Request, status int, code, errType, message string) {
+	if errType != "" {
+		obs.fail(r.Context(), errType)
+	}
+	h.log.Printf("%s %s (host=%s) -> %d %s: %s", r.Method, r.URL.Path, obs.host, status, code, message)
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
 	body := struct {

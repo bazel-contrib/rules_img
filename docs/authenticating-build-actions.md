@@ -127,6 +127,10 @@ configure it with a policy file plus a few operational flags:
 | `--default-registry <host>` | — | Upstream to use when the request omits the host header (still policy-checked) |
 | `--unix-socket <path>` | — | Listen on a UNIX socket (else `--address`/`--port`) |
 | `--credential-helper <path>` | — | Bazel credential helper for upstream auth |
+| `--metrics-exporter <list>` | — | Enable metrics: `otlp`, `prometheus`, `console`, `none` (see [Metrics](#metrics)) |
+| `--metrics-otlp-protocol <p>` | `http/protobuf` | `grpc` (collector port 4317) or `http/protobuf` (port 4318) |
+| `--metrics-otlp-endpoint <url>` | — | OTLP endpoint to push metrics to; repeatable, for a collector whose replicas are leader-elected |
+| `--metrics-address <addr>` | `:9464` | Where the `prometheus` exporter serves `/metrics` |
 
 A `--policy-file` is required unless `--dangerously-allow-all` is set (in which
 case a policy file, if given, is ignored). The upstream credentials live **on the
@@ -214,6 +218,18 @@ a file in CI without starting the gateway with `--validate-policy --policy-file
 **Reloading.** Send the gateway process a `SIGHUP` to re-read the policy file
 without restarting or dropping connections. A reload that fails to parse or
 validate is logged and the previous policy is kept.
+
+#### Metrics
+
+The gateway reports traffic (requests, bandwidth, blob transfers), `HEAD` hit
+rates, and errors by type and registry as OpenTelemetry metrics, pushed to a
+collector over OTLP or scraped from a Prometheus endpoint. Metrics are off until
+an exporter is configured with `--metrics-exporter` or the standard
+`OTEL_*` environment variables.
+
+See the [gateway service README](../img_tool/cmd/oci-distribution-gateway/README.md#metrics)
+for the instruments, their attributes, example queries, and notes on running
+several instances.
 
 ### 4. Inline Docker config from an injected environment variable
 

@@ -4,7 +4,9 @@ go_library(
     name = "gateway",
     srcs = [
         "classify.go",
+        "errclass.go",
         "gateway.go",
+        "metrics.go",
         "policy.go",
     ],
     importpath = "github.com/bazel-contrib/rules_img/img_tool/pkg/serve/gateway",
@@ -15,6 +17,10 @@ go_library(
         "@com_github_google_go_containerregistry//pkg/authn",
         "@com_github_google_go_containerregistry//pkg/name",
         "@com_github_google_go_containerregistry//pkg/v1/remote/transport",
+        "@io_opentelemetry_go_otel//:otel",
+        "@io_opentelemetry_go_otel//attribute",
+        "@io_opentelemetry_go_otel//semconv/v1.41.0:v1_41_0",
+        "@io_opentelemetry_go_otel_metric//:metric",
     ],
 )
 
@@ -23,7 +29,9 @@ go_test(
     size = "small",
     srcs = [
         "classify_test.go",
+        "errclass_test.go",
         "gateway_test.go",
+        "metrics_test.go",
         "policy_test.go",
     ],
     embed = [":gateway"],
@@ -31,5 +39,10 @@ go_test(
         "//pkg/gateway",
         "@com_github_google_go_containerregistry//pkg/authn",
         "@com_github_google_go_containerregistry//pkg/name",
+        "@com_github_google_go_containerregistry//pkg/v1/remote/transport",
+        "@io_opentelemetry_go_otel//attribute",
+        "@io_opentelemetry_go_otel//semconv/v1.41.0:v1_41_0",
+        "@io_opentelemetry_go_otel_sdk_metric//:metric",
+        "@io_opentelemetry_go_otel_sdk_metric//metricdata",
     ],
 )
