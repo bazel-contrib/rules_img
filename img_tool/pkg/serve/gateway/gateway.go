@@ -28,6 +28,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/google/go-containerregistry/pkg/authn"
@@ -42,6 +43,32 @@ import (
 // handshake, which is performed once per repository+scope and cached.
 const authHandshakeTimeout = 2 * time.Minute
 
+// Headers the gateway sets on the hop between two gateways. They live in the
+// reserved X-rules_img- namespace, which [copyHeader] strips wholesale, so none
+// of them can reach an upstream registry and a client cannot forge one.
+const (
+	// forwardedByHeader names the forwarding gateway a request came through.
+	forwardedByHeader = "X-rules_img-Forwarded-By"
+	// gatewayErrorHeader distinguishes a gateway's own authentication failure
+	// from the identical status code an upstream registry would return, so the
+	// forwarding side can report the real cause instead of sending its client
+	// hunting for registry credentials.
+	gatewayErrorHeader = "X-rules_img-Gateway-Error"
+	// requestIDHeader correlates the two hops in the decision log. Without it
+	// there is no way to tie a build action's request to the shared gateway's
+	// authorization decision.
+	requestIDHeader = "X-rules_img-Request-Id"
+	// reservedHeaderPrefix is the canonical form of the namespace above.
+	reservedHeaderPrefix = "X-Rules_img-"
+)
+
+// healthPath is answered before authentication with a bare 200, so a Kubernetes
+// readiness probe works against a listener that requires a credential. It is
+// deliberately unauthenticated and reveals nothing beyond "a gateway is here":
+// the /v2/ endpoint cannot serve this purpose, since it needs both the upstream
+// host header and a credential.
+const healthPath = "/healthz"
+
 // Handler is an [http.Handler] that forwards registry requests to upstream
 // registries, subject to a [CompiledPolicy].
 type Handler struct {
@@ -51,6 +78,10 @@ type Handler struct {
 	base            http.RoundTripper
 	defaultRegistry string
 	log             *log.Logger
+
+	// peerAuth authenticates the gateway's clients. Nil means clients connect
+	// anonymously, which is only safe on a UNIX socket or loopback.
+	peerAuth *PeerAuth
 
 	// explicitPolicy is set by WithAuthorizer while options are applied and
 	// installed by New; when nil, New falls back to a fail-closed deny-all
@@ -106,6 +137,15 @@ func WithMeterProvider(mp metric.MeterProvider) Option {
 	return func(h *Handler) { h.meterProvider = mp }
 }
 
+// WithPeerAuth installs client authentication. Every request on the listener,
+// including the /v2/ version check, must then present an accepted credential.
+// Without it clients connect anonymously, which is only safe on a UNIX socket or
+// a loopback address — a gateway reachable over the network holds credentials
+// that any pod able to route to it would otherwise be able to spend.
+func WithPeerAuth(auth *PeerAuth) Option {
+	return func(h *Handler) { h.peerAuth = auth }
+}
+
 // New constructs a gateway [Handler].
 func New(opts ...Option) *Handler {
 	h := &Handler{
@@ -152,6 +192,14 @@ func (h *Handler) Reload(path string) (*CompiledPolicy, error) {
 	return cp, nil
 }
 
+// RecordMaterialReload counts a reload of on-disk material (a TLS keypair, a CA
+// bundle, or a token file) by outcome. A failed reload keeps the previous
+// material in force, which is the right behaviour but also makes a persistently
+// broken file invisible — so it is counted, not only logged.
+func (h *Handler) RecordMaterialReload(material string, err error) {
+	h.metrics.recordMaterialReload(context.Background(), material, err)
+}
+
 func defaultBaseTransport() http.RoundTripper {
 	if t, ok := http.DefaultTransport.(*http.Transport); ok {
 		return t.Clone()
@@ -171,6 +219,30 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // serve is the request logic of [Handler.ServeHTTP], with obs collecting the
 // metrics for this request.
 func (h *Handler) serve(obs *observation, w http.ResponseWriter, r *http.Request) {
+	// Every path comparison below uses the escaped form, so the endpoint a request
+	// reaches is decided by the bytes it actually sent (see classify).
+	path := r.URL.EscapedPath()
+
+	// The health endpoint is answered before authentication so a Kubernetes probe
+	// can reach a listener that requires a credential.
+	if path == healthPath {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, "ok\n")
+		return
+	}
+
+	// Authenticate before anything else: an unauthenticated client must not even
+	// be able to probe which upstream registries this gateway allows.
+	if h.peerAuth != nil {
+		principal, err := h.peerAuth.Authenticate(r)
+		if err != nil {
+			h.writePeerAuthError(obs, w, r, err)
+			return
+		}
+		obs.principal = principal
+	}
+
 	// Snapshot the policy once so a concurrent reload cannot split a single
 	// request's decisions across two policies.
 	authz := h.policy.Load()
@@ -189,7 +261,7 @@ func (h *Handler) serve(obs *observation, w http.ResponseWriter, r *http.Request
 	}
 	// The API version check has no repository; resolve just the registry so the
 	// allow-list is enforced against the *resolved* upstream.
-	if r.URL.Path == "/v2" || r.URL.Path == "/v2/" {
+	if path == "/v2" || path == "/v2/" {
 		versionCheck := request{op: opNameVersionCheck, route: routeVersion}
 		reg, err := name.NewRegistry(host)
 		if err != nil {
@@ -208,7 +280,7 @@ func (h *Handler) serve(obs *observation, w http.ResponseWriter, r *http.Request
 		// registry and send us no credentials.
 		w.Header().Set("Docker-Distribution-API-Version", "registry/2.0")
 		w.WriteHeader(http.StatusOK)
-		h.log.Printf("%s %s (host=%s) -> 200 (version check)", r.Method, r.URL.Path, reg.RegistryStr())
+		h.log.Printf("%s %q (host=%s%s) -> 200 (version check)", r.Method, r.URL.EscapedPath(), reg.RegistryStr(), obs.logContext())
 		return
 	}
 
@@ -251,7 +323,7 @@ func (h *Handler) serve(obs *observation, w http.ResponseWriter, r *http.Request
 	allow, idx, desc := authz.Decide(regHost, repo.RepositoryStr(), cls.req)
 	obs.policyDecision(r.Context(), allow)
 	if !allow {
-		h.log.Printf("%s %s (host=%s repo=%s) denied by policy (rule=%d %q)", r.Method, r.URL.Path, regHost, repo.RepositoryStr(), idx, desc)
+		h.log.Printf("%s %q (host=%s repo=%q%s) denied by policy (rule=%d %q)", r.Method, r.URL.EscapedPath(), regHost, repo.RepositoryStr(), obs.logContext(), idx, desc)
 		h.writeError(obs, w, r, http.StatusForbidden, "DENIED", errPolicyDenied,
 			fmt.Sprintf("%s is not permitted by this gateway's policy", cls.kind))
 		return
@@ -262,7 +334,7 @@ func (h *Handler) serve(obs *observation, w http.ResponseWriter, r *http.Request
 	// (OCI mounts are same-registry) and fail closed on any problem.
 	if cls.mountFrom != "" {
 		if !h.mountSourceReadable(authz, host, cls.mountFrom) {
-			h.log.Printf("%s %s (host=%s) denied: mount source %q not readable by policy", r.Method, r.URL.Path, regHost, cls.mountFrom)
+			h.log.Printf("%s %q (host=%s%s) denied: mount source %q not readable by policy", r.Method, r.URL.EscapedPath(), regHost, obs.logContext(), cls.mountFrom)
 			h.writeError(obs, w, r, http.StatusForbidden, "DENIED", errMountDenied,
 				fmt.Sprintf("mounting from %q is not permitted by this gateway's policy", cls.mountFrom))
 			return
@@ -343,13 +415,22 @@ func (h *Handler) forward(obs *observation, w http.ResponseWriter, r *http.Reque
 	var copyErr error
 	if r.Method != http.MethodHead {
 		if _, copyErr = io.Copy(w, resp.Body); copyErr != nil {
-			// The status/header are already written; we can only log.
+			// The status and headers are already on the wire, so the only way to
+			// tell the client the body is incomplete is to abort the response.
+			// Returning normally would deliver a clean, short 200: net/http catches
+			// that when the upstream declared a Content-Length, but when it did not
+			// (a chunked or streaming registry response) the client would silently
+			// accept a truncated blob or manifest. http.ErrAbortHandler is the
+			// sentinel net/http understands for "kill this response without another
+			// log line"; go-containerregistry retries the unexpected EOF it sees.
 			obs.fail(r.Context(), transferErrorType(copyErr))
-			h.log.Printf("%s %s (host=%s): error copying response body: %v", r.Method, r.URL.Path, repo.RegistryStr(), copyErr)
+			obs.recordTransfer(r.Context(), r, cls, resp.StatusCode, copyErr)
+			h.log.Printf("%s %q (host=%s%s): aborting response after %v", r.Method, r.URL.EscapedPath(), repo.RegistryStr(), obs.logContext(), copyErr)
+			panic(http.ErrAbortHandler)
 		}
 	}
 	obs.recordTransfer(r.Context(), r, cls, resp.StatusCode, copyErr)
-	h.log.Printf("%s %s (host=%s) -> %d", r.Method, r.URL.Path, repo.RegistryStr(), resp.StatusCode)
+	h.log.Printf("%s %q (host=%s%s) -> %d", r.Method, r.URL.EscapedPath(), repo.RegistryStr(), obs.logContext(), resp.StatusCode)
 }
 
 // authTransport returns a cached authenticated RoundTripper for the given
@@ -402,15 +483,64 @@ func checkRedirect(originalMethod string) func(*http.Request, []*http.Request) e
 // validateRedirectTarget rejects redirect URLs that use a non-http(s) scheme or
 // resolve to a private / loopback / link-local IP literal. DNS-based SSRF is out
 // of scope (mirroring go-containerregistry's realm validation); operators should
-// apply network-level controls if needed.
+// apply network-level controls if needed, or run with private upstreams denied
+// (see [DenyPrivateAddresses], which does check the resolved address).
 func validateRedirectTarget(u *url.URL) error {
 	if u.Scheme != "http" && u.Scheme != "https" {
 		return fmt.Errorf("%w to non-http(s) URL %q", errRefusedRedirect, u.Redacted())
 	}
 	if ip := net.ParseIP(u.Hostname()); ip != nil {
-		if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsPrivate() || ip.IsUnspecified() {
+		if isPrivateAddress(ip) {
 			return fmt.Errorf("%w to private or link-local address %q", errRefusedRedirect, u.Hostname())
 		}
+	}
+	return nil
+}
+
+// isPrivateAddress reports whether ip is one the gateway must never be steered
+// at: an allow-listed but compromised upstream (or a client naming an internal
+// host in the original-host header) could otherwise reach internal services such
+// as a cloud metadata endpoint.
+func isPrivateAddress(ip net.IP) bool {
+	return ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
+		ip.IsPrivate() || ip.IsUnspecified()
+}
+
+// DenyPrivateAddresses returns a copy of rt that refuses to connect to loopback,
+// link-local, private, or unspecified addresses.
+//
+// The upstream registry is named by a client-supplied header, and
+// go-containerregistry resolves a private or loopback host to a *plaintext*
+// endpoint, so a policy whose registry pattern is "*" (or --dangerously-allow-all)
+// otherwise lets any client turn the gateway into an internal HTTP proxy. That
+// matters most for a shared gateway, whose network reach is not its clients'.
+//
+// The check runs in the dialer's Control hook, i.e. against the address actually
+// resolved, so DNS names, redirects, and go-containerregistry's realm fetch are
+// all covered by this one guard rather than by three separate string checks.
+func DenyPrivateAddresses(rt http.RoundTripper) (http.RoundTripper, error) {
+	transport, ok := rt.(*http.Transport)
+	if !ok {
+		return nil, fmt.Errorf("denying private upstreams needs an *http.Transport, got %T", rt)
+	}
+	guarded := transport.Clone()
+	dialer := &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}
+	dialer.Control = func(_, address string, _ syscall.RawConn) error {
+		return checkDialAddress(address)
+	}
+	guarded.DialContext = dialer.DialContext
+	return guarded, nil
+}
+
+// checkDialAddress is the guard [DenyPrivateAddresses] installs. It is a named
+// function so it can be tested without opening a connection.
+func checkDialAddress(address string) error {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		return fmt.Errorf("%w: unparsable address %q", errPrivateUpstreamDial, address)
+	}
+	if ip := net.ParseIP(host); ip != nil && isPrivateAddress(ip) {
+		return fmt.Errorf("%w: %s", errPrivateUpstreamDial, host)
 	}
 	return nil
 }
@@ -418,11 +548,35 @@ func validateRedirectTarget(u *url.URL) error {
 // writeError records the failure under errType and writes an OCI-style error
 // response. errType is one of the fixed error.type values from errclass.go; an
 // empty errType records no error (used when the caller already classified one).
+//
+// The request path is logged quoted, because [url.URL.Path] is percent-decoded:
+// a request for /v2/x%0A... would otherwise put a real newline in the log and let
+// a client forge audit lines.
 func (h *Handler) writeError(obs *observation, w http.ResponseWriter, r *http.Request, status int, code, errType, message string) {
 	if errType != "" {
 		obs.fail(r.Context(), errType)
 	}
-	h.log.Printf("%s %s (host=%s) -> %d %s: %s", r.Method, r.URL.Path, obs.host, status, code, message)
+	h.log.Printf("%s %q (host=%s%s) -> %d %s: %s", r.Method, r.URL.EscapedPath(), obs.host, obs.logContext(), status, code, message)
+	writeOCIError(w, status, code, message)
+}
+
+// writePeerAuthError answers a client whose credential the gateway rejected.
+//
+// It deliberately sends no WWW-Authenticate header: there is no
+// challenge-response flow here, and advertising a realm would make a
+// go-containerregistry client attempt a token exchange against the gateway. The
+// [gatewayErrorHeader] lets a forwarding gateway tell this apart from the
+// identical status an upstream registry would return.
+func (h *Handler) writePeerAuthError(obs *observation, w http.ResponseWriter, r *http.Request, err error) {
+	status, code, errType, message := peerAuthResponse(err)
+	obs.fail(r.Context(), errType)
+	h.log.Printf("%s %q -> %d %s: %s", r.Method, r.URL.EscapedPath(), status, code, message)
+	w.Header().Set(gatewayErrorHeader, errType)
+	writeOCIError(w, status, code, message)
+}
+
+// writeOCIError writes the error body shape the distribution spec defines.
+func writeOCIError(w http.ResponseWriter, status int, code, message string) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
 	body := struct {
@@ -453,8 +607,15 @@ var hopByHopHeaders = map[string]struct{}{
 }
 
 // copyHeader copies request headers to the upstream request, dropping
-// hop-by-hop headers, the gateway control header, the Host header, and any
-// client-supplied Authorization (the auth transport sets its own).
+// hop-by-hop headers, the whole reserved X-rules_img- namespace, the Host header,
+// any client-supplied Authorization (the auth transport sets its own), and the
+// forwarding headers of the hop the request arrived on.
+//
+// Dropping the reserved namespace wholesale rather than naming individual
+// headers means a control header added later cannot accidentally be forwarded to
+// a registry, and a client cannot smuggle one there today. Authorization is the
+// load-bearing one: it is what carries the credential on a gateway-to-gateway
+// hop, and this is the barrier that proves it cannot reach a registry.
 func copyHeader(dst, src http.Header) {
 	skip := connectionHeaderSet(src)
 	for k, vs := range src {
@@ -462,8 +623,12 @@ func copyHeader(dst, src http.Header) {
 		if !forwardable(ck, skip) {
 			continue
 		}
+		if strings.HasPrefix(ck, reservedHeaderPrefix) {
+			continue
+		}
 		switch ck {
-		case http.CanonicalHeaderKey(clientgateway.OriginalHostHeader), "Host", "Authorization":
+		case "Host", "Authorization",
+			"X-Forwarded-For", "X-Forwarded-Host", "X-Forwarded-Proto", "Forwarded":
 			continue
 		}
 		for _, v := range vs {
@@ -525,6 +690,10 @@ func connectionHeaderSet(src http.Header) map[string]struct{} {
 // upstream registry. Absolute Locations are left untouched: the client's gateway
 // transport re-routes them (using the host encoded in the URL) back through the
 // gateway.
+//
+// RawPath is carried across, not just Path: an upload-session reference is opaque
+// and may contain percent-escapes, and rebuilding the URL from the decoded path
+// alone would hand the client back a reference the registry does not recognize.
 func rewriteLocation(loc string, repo name.Repository) string {
 	if loc == "" {
 		return loc
@@ -540,6 +709,7 @@ func rewriteLocation(loc string, repo name.Repository) string {
 		Scheme:   repo.Scheme(),
 		Host:     repo.RegistryStr(),
 		Path:     u.Path,
+		RawPath:  u.RawPath,
 		RawQuery: u.RawQuery,
 	}
 	return abs.String()

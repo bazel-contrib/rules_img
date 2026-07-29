@@ -424,6 +424,25 @@ func looksLikeJSON(path string, data []byte) bool {
 // a gateway fleet are not all running the same policy.
 func (p *CompiledPolicy) RuleCount() int { return len(p.rules) }
 
+// ReachesAnyHost reports whether the policy permits requests to hosts it does not
+// name: either because the default action is allow, or because some rule matches
+// any host with "*". Such a policy is worth warning about at startup, because the
+// upstream host comes from a client-supplied header and go-containerregistry
+// resolves a private or loopback host to a plaintext endpoint — so an unbounded
+// host pattern lets a client use the gateway to reach internal services. See
+// [DenyPrivateAddresses].
+func (p *CompiledPolicy) ReachesAnyHost() bool {
+	if p.defaultAllow {
+		return true
+	}
+	for _, r := range p.rules {
+		if r.allow && r.host.any {
+			return true
+		}
+	}
+	return false
+}
+
 // Summary returns a short human-readable description of the policy for logging.
 func (p *CompiledPolicy) Summary() string {
 	action := "deny"

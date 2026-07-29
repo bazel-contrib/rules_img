@@ -18,7 +18,7 @@ action non-hermetic. Some sandboxing setups deliberately block network access
 from actions (or run them where the registry isn't reachable); build-time
 pull/push will not work in those environments. Under remote execution the
 connection is opened by the **executor**, not by the machine running Bazel — see
-[Buildbarn](#setting-up-the-gateway-on-buildbarn) below.
+[option 3](#3-oci-distribution-gateway) below.
 
 ## What access is required
 
@@ -99,7 +99,8 @@ Under remote execution the gateway runs alongside the worker (for example as a
 sidecar sharing a UNIX socket). The build action's registry requests reach it
 **unauthenticated over that socket**; the gateway decides which requests are
 allowed and adds the upstream credentials, so only **authenticated** requests
-ever reach the real registry.
+ever reach the real registry. The credentials live on the gateway, not in the
+actions.
 
 Point the build actions at a gateway with the registry-gateway settings:
 
@@ -116,120 +117,35 @@ Endpoint forms: `http://host[:port]`, `https://host[:port]`, or `unix:<path>`.
 Use a single `unix:` prefix followed by an absolute path (e.g.
 `unix:/run/gw.sock`) — **not** `unix://` or `unix:///`.
 
-The gateway denies every request unless a **policy file** allows it, so you
-configure it with a policy file plus a few operational flags:
+That is the whole client side. Everything about running the gateway is in the
+**[gateway service README]**:
 
-| Flag | Default | Purpose |
-|---|---|---|
-| `--policy-file <path>` | (required) | JSON/YAML policy of per-repository allow/deny rules (see below) |
-| `--dangerously-allow-all` | `false` | Allow every request to every upstream, ignoring the policy. **Dangerous**; only for trusted, isolated environments |
-| `--validate-policy` | `false` | Load and validate `--policy-file`, then exit without serving |
-| `--default-registry <host>` | — | Upstream to use when the request omits the host header (still policy-checked) |
-| `--unix-socket <path>` | — | Listen on a UNIX socket (else `--address`/`--port`) |
-| `--credential-helper <path>` | — | Bazel credential helper for upstream auth |
-| `--metrics-exporter <list>` | — | Enable metrics: `otlp`, `prometheus`, `console`, `none` (see [Metrics](#metrics)) |
-| `--metrics-otlp-protocol <p>` | `http/protobuf` | `grpc` (collector port 4317) or `http/protobuf` (port 4318) |
-| `--metrics-otlp-endpoint <url>` | — | OTLP endpoint to push metrics to; repeatable, for a collector whose replicas are leader-elected |
-| `--metrics-address <addr>` | `:9464` | Where the `prometheus` exporter serves `/metrics` |
+| | |
+|---|---|
+| [Modes] | `serve` talks to registries; `forward` relays to another gateway |
+| [Flags] | the full flag list for both modes |
+| [Policy file] | the JSON/YAML schema, how rules are matched, and reloading |
+| [Client authentication] | mTLS, bearer tokens, or Kubernetes ServiceAccount tokens |
+| [Two-hop deployment] | keep registry credentials in one shared deployment instead of in every worker pod |
+| [Deploying as a sidecar] | Kubernetes recipes for Buildbarn and BuildBuddy self-hosted executors |
+| [Metrics] | instruments, attributes, and example queries |
 
-A `--policy-file` is required unless `--dangerously-allow-all` is set (in which
-case a policy file, if given, is ignored). The upstream credentials live **on the
-gateway**, not in the actions.
+Two things worth knowing before you start:
 
-> **Security:** the gateway is unauthenticated to its clients (any process that
-> can reach the socket/port may use it within the configured policy). Keep it on
-> `localhost` or a UNIX socket and treat the policy file as the guardrail. It
-> speaks plaintext HTTP/1.1.
+- The gateway **denies everything until a `--policy-file` allows it** (or you pass
+  `--dangerously-allow-all`). Validate a policy in CI with `--validate-policy`.
+- It is **unauthenticated to its clients** unless you configure client
+  authentication, so keep it on a UNIX socket or `localhost`. It refuses to start
+  on a network-reachable address without client authentication configured.
 
-#### Policy file
-
-The policy file lets you set different read/write rules per repository path and
-scope access to parts of a registry (allow `docker.acme.corp/team-a/**` while
-forbidding `docker.acme.corp/secret`).
-It is a JSON or YAML file following a simple schema.
-
-```json
-{
-  "version": 1,
-  "defaultAction": "deny",
-  "rules": [
-    {
-      "description": "explicitly forbid the secret repo (before any broader allow)",
-      "action": "deny",
-      "registry": "docker.acme.corp",
-      "repository": "secret",
-      "operations": ["blob:read", "blob:write", "manifest:read", "manifest:write"]
-    },
-    {
-      "description": "docker.acme.corp/team-a/** is fully writable (push)",
-      "action": "allow",
-      "registry": "docker.acme.corp",
-      "repository": "team-a/**",
-      "operations": ["blob:read", "blob:write", "manifest:read", "manifest:write"]
-    },
-    {
-      "description": "everything else under docker.acme.corp is read-only (pull)",
-      "action": "allow",
-      "registry": "docker.acme.corp",
-      "repository": "**",
-      "operations": ["blob:read", "manifest:read"]
-    },
-    {
-      "description": "Docker Hub official images: pull only",
-      "action": "allow",
-      "registry": "index.docker.io",
-      "repository": "library/**",
-      "operations": ["blob:read", "manifest:read"]
-    }
-  ]
-}
-```
-
-**Evaluation.** Rules are evaluated top-to-bottom and the **first match wins**;
-a request that matches no rule falls back to `defaultAction` (default `deny`, so
-the gateway fails closed). Because the first match wins, put narrow `deny` rules
-*before* broader `allow` rules — otherwise the broad allow shadows them. The
-winning rule is recorded in the gateway's decision log.
-
-**Matching** is against the *resolved* upstream, not the raw request:
-
-- `registry` matches the resolved host: an exact host (`docker.acme.corp`,
-  `index.docker.io`), a single leading `*.` wildcard matching one or more leading
-  labels (`*.docker.io` matches `index.docker.io` and `a.b.docker.io` but **not**
-  bare `docker.io`), or `*` for any host. `docker.io` resolves to
-  `index.docker.io`, and a bare host like `myregistry` resolves to Docker Hub, so
-  write the resolved host.
-- `repository` is a glob over the resolved repository path: `*` matches within one
-  path segment, `**` matches across segments (including zero, so `team-a/**` also
-  matches exactly `team-a`), and `?` matches a single non-`/` character. On Docker
-  Hub a single-segment name is normalized with the `library/` prefix
-  (`docker.io/ubuntu` → `library/ubuntu`), so match it as `library/**`.
-- `operations` lists the operations the rule speaks to; each is one of
-  `blob:read`, `blob:write`, `manifest:read`, `manifest:write`, or `*` for all
-  four. Tag listings and referrers count as `manifest:read`. A `HEAD` is allowed
-  when either the read or the write of that kind is permitted. A cross-repo blob
-  mount additionally requires `blob:read` on the source repository.
-
-A malformed or unreadable file — at startup or on reload — is a hard error:
-the gateway refuses to start, or (on reload) keeps the previous policy. Validate
-a file in CI without starting the gateway with `--validate-policy --policy-file
-<path>`.
-
-**Reloading.** Send the gateway process a `SIGHUP` to re-read the policy file
-without restarting or dropping connections. A reload that fails to parse or
-validate is logged and the previous policy is kept.
-
-#### Metrics
-
-The gateway reports traffic (requests, bandwidth, blob transfers), `HEAD` hit
-rates, and errors by type and registry as OpenTelemetry metrics, pushed to a
-collector over OTLP or scraped from a Prometheus endpoint. Metrics are off until
-an exporter is configured with `--metrics-exporter` or the standard
-`OTEL_*` environment variables.
-
-See the [gateway service README](../img_tool/cmd/oci-distribution-gateway/README.md#metrics)
-for the instruments, their attributes, example queries, and notes on running
-several instances.
+[gateway service README]: ../img_tool/cmd/oci-distribution-gateway/README.md
+[Modes]: ../img_tool/cmd/oci-distribution-gateway/README.md#modes
+[Flags]: ../img_tool/cmd/oci-distribution-gateway/README.md#flags
+[Policy file]: ../img_tool/cmd/oci-distribution-gateway/README.md#policy-file
+[Client authentication]: ../img_tool/cmd/oci-distribution-gateway/README.md#client-authentication
+[Two-hop deployment]: ../img_tool/cmd/oci-distribution-gateway/README.md#two-hop-deployment
+[Deploying as a sidecar]: ../img_tool/cmd/oci-distribution-gateway/README.md#deploying-as-a-sidecar
+[Metrics]: ../img_tool/cmd/oci-distribution-gateway/README.md#metrics
 
 ### 4. Inline Docker config from an injected environment variable
 
@@ -339,166 +255,4 @@ alone and local execution cannot inject these environment variables; other
 remote execution services need an equivalent execution-time environment
 injection mechanism.
 
-## Setting up the gateway on BuildBuddy self-hosted executors
-
-Run one gateway as a **sidecar container in each BuildBuddy executor Pod**. The
-gateway is not a separate Pod or DaemonSet in this setup: the
-`extraContainers` value adds it to the executor Pod template, so each executor
-replica gets its own gateway.
-
-```text
-BuildBuddy executor Pod
-├── oci-distribution-gateway sidecar
-└── buildbuddy-executor
-    └── child OCI action container
-```
-
-The sidecar listens on a UNIX socket in a private `emptyDir`. The
-[BuildBuddy executor Helm chart] shares that socket with the executor and, with
-the chart's default OCI isolation, the executor bind-mounts it into child action
-containers. This requires configuration at three layers:
-
-1. An `emptyDir` shared by the gateway sidecar and executor Pod containers.
-2. An `extraVolumeMount` that makes the directory visible to the executor.
-3. An `executor.oci.mounts` entry that bind-mounts the directory into every
-   action container.
-
-First create a `ConfigMap` containing the gateway policy in the executor's
-Kubernetes namespace:
-
-```bash
-kubectl --namespace=buildbuddy create configmap rules-img-gateway-policy \
-  --from-file=policy.yaml=/path/to/gateway-policy.yaml
-```
-
-Then add these values to the `buildbuddy-executor` chart:
-
-```yaml
-extraVolumes:
-  - name: rules-img-gateway-socket
-    emptyDir: {}
-  - name: rules-img-gateway-policy
-    configMap:
-      name: rules-img-gateway-policy
-extraVolumeMounts:
-  - name: rules-img-gateway-socket
-    mountPath: /run/rules-img-gateway
-extraContainers:
-  - name: oci-distribution-gateway
-    image: <your oci-distribution-gateway image>
-    args:
-      - --unix-socket=/run/rules-img-gateway/gateway.sock
-      - --policy-file=/etc/rules-img-gateway/policy.yaml
-    volumeMounts:
-      - name: rules-img-gateway-socket
-        mountPath: /run/rules-img-gateway
-      - name: rules-img-gateway-policy
-        mountPath: /etc/rules-img-gateway
-        readOnly: true
-config:
-  executor:
-    oci:
-      mounts:
-        - type: bind
-          source: /run/rules-img-gateway
-          destination: /run/rules-img-gateway
-          options:
-            - bind
-            - ro
-```
-
-rules_img does not currently publish a gateway container image. Build and
-publish an image containing `oci-distribution-gateway`, then replace the image
-placeholder above, preferably with an immutable digest.
-
-Point Bazel at the same socket path:
-
-```bash
-common --@rules_img//img/settings:registry_gateway=unix:/run/rules-img-gateway/gateway.sock
-```
-
-Give only the gateway sidecar the upstream credentials it needs, using its
-environment or additional secret volume mounts. The actions connect to the
-gateway anonymously and do not need registry credentials.
-
-This example assumes the chart's default OCI isolation. Other isolation types
-need their own mechanism for exposing the socket inside action containers.
-`executor.oci.mounts` applies to every OCI action on the executor, so use a
-restrictive gateway policy and consider a dedicated executor pool. Also ensure
-the socket permissions allow the action user to connect. `extraContainers`
-start concurrently with the executor; if startup ordering is important, use a
-Kubernetes restartable init sidecar with a startup probe through the chart's
-`extraInitContainers` value. A separate Deployment or DaemonSet would require
-different network or volume plumbing and would expose the unauthenticated
-gateway beyond this private per-Pod socket.
-
-## Setting up the gateway on Buildbarn
-
-> This is one concrete deployment; adapt it to your setup and read the raw
-> manifests before editing — see [buildbarn/bb-deployments].
-
-In [bb-deployments] each worker runs `bb_worker` and `bb_runner` as two containers
-in one Pod that share the build directory over an `emptyDir` volume (named
-`worker`, mounted at `/worker` in both). `bb_worker` already talks to `bb_runner`
-over a UNIX socket on that volume (`unix:///worker/runner`), which is exactly the
-mechanism we reuse: run the gateway as a **sidecar container in the same Pod**,
-listening on another socket on the shared volume.
-
-1. Add the sidecar to the worker Pod (`kubernetes/worker-*.yaml`), mounting the
-   existing `worker` volume and listening on a socket on it. Mount the policy
-   file too (for example from a `ConfigMap`):
-
-   ```yaml
-   - name: oci-distribution-gateway
-     image: <your oci-distribution-gateway image>
-     args:
-       - --unix-socket=/worker/oci-gateway.sock
-       - --policy-file=/etc/img/gateway-policy.json
-     volumeMounts:
-       - name: worker
-         mountPath: /worker
-       - name: gateway-policy
-         mountPath: /etc/img
-   ```
-
-   Reuse the existing `worker` volume rather than adding a new one. Consider a
-   Kubernetes native sidecar (an `initContainer` with `restartPolicy: Always`) so
-   the gateway is up before actions run. Editing the mounted policy and sending
-   the gateway a `SIGHUP` reloads it without a restart.
-
-2. Point Bazel at that socket. This is a **client-side** setting: rules_img bakes
-   the value into each action's environment, so you configure it at the Bazel
-   invocation, **not** in the `bb_worker`/`bb_runner` config:
-
-   ```bash
-   common --@rules_img//img/settings:registry_pull_gateway=unix:/worker/oci-gateway.sock
-   common --@rules_img//img/settings:registry_push_gateway=unix:/worker/oci-gateway.sock
-   ```
-
-   The path here must be identical to the sidecar's `--unix-socket`.
-
-3. Give the sidecar the upstream credentials it needs (a Docker config, a cloud
-   keychain, or its own `--credential-helper`). The gateway restricts which
-   registries and operations are allowed through its `--policy-file`, and
-   authenticates upstream using the **same mechanisms the `img` tool uses** (see
-   [How rules_img resolves credentials](#how-rules_img-resolves-credentials)).
-   The actions themselves stay credential-free.
-
-### Caveats
-
-- This only helps for actions that execute **on the worker** (remote execution).
-  If an action runs locally, a `/worker/...` socket path won't exist.
-- Sharing the `worker` volume does not by itself guarantee the socket is visible
-  **inside the action's sandbox**: `bb_runner` may confine the action to its input
-  root. Make sure the socket path resolves to something the action can
-  `connect()` to, and that the socket (and every parent directory) is reachable by
-  the action's user — the bb-deployments runner runs as uid `65534`, so the socket
-  typically must be group/other-connectable and its parent dirs traversable.
-  Verify against your `runner-*.jsonnet`.
-- The gateway is not part of bb-deployments — build and ship its image yourself.
-  Image tags/digests in bb-deployments drift over time.
-
-[buildbarn/bb-deployments]: https://github.com/buildbarn/bb-deployments
-[bb-deployments]: https://github.com/buildbarn/bb-deployments
-[BuildBuddy executor Helm chart]: https://github.com/buildbuddy-io/buildbuddy-helm/tree/master/charts/buildbuddy-executor
 [short-lived secrets]: https://www.buildbuddy.io/docs/secrets#short-lived-secrets

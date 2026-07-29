@@ -38,6 +38,36 @@ const (
 	// errMountDenied: the source repository of a cross-repo blob mount is not
 	// readable under the policy.
 	errMountDenied = "mount_denied"
+	// errPrivateUpstream: the upstream resolved to a loopback, link-local, or
+	// private address and --deny-private-upstreams is set.
+	errPrivateUpstream = "private_upstream"
+)
+
+// Error types for authenticating the gateway's own clients, reported by a
+// serving gateway when it rejects one.
+const (
+	// errPeerUnauthenticated: no client credential was presented.
+	errPeerUnauthenticated = "peer_unauthenticated"
+	// errPeerBadCredential: a credential was presented and rejected.
+	errPeerBadCredential = "peer_bad_credential"
+	// errPeerIdentityDenied: the credential is valid but its identity is not in
+	// the allow-list.
+	errPeerIdentityDenied = "peer_identity_denied"
+	// errPeerAuthFailed: the credential could not be validated at all (for
+	// example the Kubernetes API server was unreachable). Fails closed.
+	errPeerAuthFailed = "peer_auth_failed"
+)
+
+// Error types a *forwarding* gateway reports about its peer. They are distinct
+// from the upstream_* family on purpose: a 401 from the peer means our peer
+// credential is wrong, which is a completely different problem from a registry
+// rejecting the gateway's registry credential, and conflating them sends an
+// operator hunting in the wrong place.
+const (
+	// errPeerUnauthorized: the peer rejected our credential.
+	errPeerUnauthorized = "peer_unauthorized"
+	// errPeerForbidden: the peer rejected our identity.
+	errPeerForbidden = "peer_forbidden"
 )
 
 // Error types involving the upstream registry.
@@ -84,6 +114,9 @@ const (
 var (
 	errRefusedRedirect  = errors.New("refusing redirect")
 	errRedirectsStopped = errors.New("stopped after 10 redirects")
+	// errPrivateUpstreamDial is returned by the dial guard installed by
+	// [DenyPrivateAddresses].
+	errPrivateUpstreamDial = errors.New("refusing to connect to a private address")
 )
 
 // transportErrorType classifies an error from talking to an upstream registry
@@ -101,6 +134,8 @@ func transportErrorType(err error) string {
 		return errRedirectRefused
 	case errors.Is(err, errRedirectsStopped):
 		return errTooManyRedirects
+	case errors.Is(err, errPrivateUpstreamDial):
+		return errPrivateUpstream
 	}
 
 	// An upstream HTTP status reported as an error (token exchange, ping).
@@ -206,4 +241,41 @@ func transferErrorType(err error) string {
 		return t
 	}
 	return errTransferAborted
+}
+
+// peerAuthResponse maps a client-authentication failure to the response a
+// serving gateway sends: an HTTP status, the OCI error code, the error.type to
+// record, and a message that names what to fix without ever echoing what the
+// client sent.
+func peerAuthResponse(err error) (status int, code, errType, message string) {
+	switch {
+	case errors.Is(err, errNoPeerCredential):
+		return http.StatusUnauthorized, "UNAUTHORIZED", errPeerUnauthenticated,
+			"this gateway requires client authentication and no credential was presented"
+	case errors.Is(err, errPeerIdentityNotAllowed):
+		return http.StatusForbidden, "DENIED", errPeerIdentityDenied,
+			"this gateway does not allow the presented client identity"
+	case errors.Is(err, errPeerAuthUnavailable):
+		return http.StatusServiceUnavailable, "UNAVAILABLE", errPeerAuthFailed,
+			"this gateway could not validate the presented credential"
+	default:
+		return http.StatusUnauthorized, "UNAUTHORIZED", errPeerBadCredential,
+			"this gateway rejected the presented client credential"
+	}
+}
+
+// peerStatusErrorType classifies the response a *forwarding* gateway got from its
+// peer. gatewayError is the peer's [gatewayErrorHeader], which is set only when
+// the peer itself rejected us; anything else is the upstream registry's own
+// answer travelling back through, and is classified as such.
+func peerStatusErrorType(gatewayError string, status int) string {
+	switch gatewayError {
+	case errPeerUnauthenticated, errPeerBadCredential:
+		return errPeerUnauthorized
+	case errPeerIdentityDenied:
+		return errPeerForbidden
+	case errPeerAuthFailed:
+		return errPeerUnauthorized
+	}
+	return statusErrorType(status)
 }
