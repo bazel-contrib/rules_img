@@ -986,6 +986,13 @@ func loadOperation(baseCommand api.BaseCommandOperation, config map[string]any) 
 		return api.LoadDeployOperation{}, err
 	}
 
+	// Validate the image names this operation will load at build time (the
+	// values here are already template-expanded), so a name no daemon could
+	// resolve fails the build instead of the `bazel run`.
+	if _, err := api.NormalizeLoadReferences(api.QualifyLoadTags(registry, repository, tags)); err != nil {
+		return api.LoadDeployOperation{}, fmt.Errorf("load configuration: %w", err)
+	}
+
 	return api.LoadDeployOperation{
 		BaseCommandOperation: baseCommand,
 		Registry:             registry,

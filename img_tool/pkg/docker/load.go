@@ -41,14 +41,3 @@ func loadWithBinaryArgs(tarReader io.Reader, loaderBinary string, args []string)
 
 	return nil
 }
-
-// NormalizeTag normalizes a tag for Docker
-func NormalizeTag(tag string) string {
-	if tag == "" {
-		return ""
-	}
-
-	// Docker load expects the full image reference
-	// The normalization happens in the Load function in pkg/load
-	return tag
-}

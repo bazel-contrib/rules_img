@@ -103,13 +103,22 @@ func (l *loader) imageNames(op api.IndexedLoadDeployOperation) []string {
 // The operation's own tags are reconstructed from registry/repository/tags (see
 // imageNames): they are bare tags when a registry/repository is set, and
 // already-full references otherwise. Extra tags supplied at runtime via --tag
-// are always treated as full references and passed through unchanged.
-func (l *loader) tags(op api.IndexedLoadDeployOperation) []string {
+// are always treated as full references, never reconstructed.
+//
+// Every reference, the operation's own and the extra ones alike, goes through
+// api.NormalizeLoadReference: the names are used as configured, so an
+// unparseable one is reported instead of being handed to a daemon that cannot
+// resolve it.
+func (l *loader) tags(op api.IndexedLoadDeployOperation) ([]string, error) {
 	names := l.imageNames(op)
 	allTags := make([]string, 0, len(names)+len(l.extraTags))
 	allTags = append(allTags, names...)
 	allTags = append(allTags, l.extraTags...)
-	return deduplicateAndSort(allTags)
+	allTags, err := api.NormalizeLoadReferences(deduplicateAndSort(allTags))
+	if err != nil {
+		return nil, err
+	}
+	return deduplicateAndSort(allTags), nil
 }
 
 func (l *loader) LoadAll(ctx context.Context, ops []api.IndexedLoadDeployOperation) ([]string, error) {
@@ -258,11 +267,13 @@ func (l *loader) loadContainerd(ctx context.Context, op api.IndexedLoadDeployOpe
 	fmt.Printf("%s\n", target.Digest)
 
 	var loadedTags []string
-	allTags := l.tags(op)
+	allTags, err := l.tags(op)
+	if err != nil {
+		return nil, err
+	}
 	for _, tag := range allTags {
-		normalizedTag := NormalizeDockerReference(tag)
 		img := containerd.Image{
-			Name:   normalizedTag,
+			Name:   tag,
 			Target: target,
 		}
 		_, err = imageService.Create(ctx, img)
@@ -274,8 +285,8 @@ func (l *loader) loadContainerd(ctx context.Context, op api.IndexedLoadDeployOpe
 		}
 
 		// Print tag without digest
-		fmt.Printf("%s\n", normalizedTag)
-		loadedTags = append(loadedTags, normalizedTag)
+		fmt.Printf("%s\n", tag)
+		loadedTags = append(loadedTags, tag)
 	}
 
 	return loadedTags, nil
@@ -311,10 +322,9 @@ func (l *loader) loadViaDockerOrPodman(ctx context.Context, op api.IndexedLoadDe
 }
 
 func (l *loader) streamDockerTar(ctx context.Context, op api.IndexedLoadDeployOperation, w io.Writer) ([]string, error) {
-	allTags := l.tags(op)
-	var normalizedTags []string
-	for _, tag := range allTags {
-		normalizedTags = append(normalizedTags, NormalizeDockerReference(tag))
+	tags, err := l.tags(op)
+	if err != nil {
+		return nil, err
 	}
 
 	blobSource := &vfsBlobSource{vfs: l.vfs}
@@ -345,8 +355,8 @@ func (l *loader) streamDockerTar(ctx context.Context, op api.IndexedLoadDeployOp
 		}
 
 		b := ocilayout.New(ocilayout.DockerSave().WithIndexStyle(ocilayout.IndexWrapping)).
-			WithTags(normalizedTags).
-			WithOCITags(normalizedTags).
+			WithTags(tags).
+			WithOCITags(tags).
 			WithProgress(progressFn).
 			WithManifestFilter(l.makeManifestFilter()).
 			SetRootIndex(ocilayout.BlobFromBytes(rawIndex))
@@ -370,7 +380,7 @@ func (l *loader) streamDockerTar(ctx context.Context, op api.IndexedLoadDeployOp
 		if err := b.WriteToWriter(ctx, w); err != nil {
 			return nil, err
 		}
-		return normalizedTags, nil
+		return tags, nil
 	} else if op.RootKind == "manifest" && len(op.Manifests) == 1 {
 		digest, err := registryv1.NewHash(op.Manifests[0].Descriptor.Digest)
 		if err != nil {
@@ -392,14 +402,14 @@ func (l *loader) streamDockerTar(ctx context.Context, op api.IndexedLoadDeployOp
 			return nil, err
 		}
 		b := ocilayout.New(ocilayout.DockerSave()).
-			WithTags(normalizedTags).
-			WithOCITags(normalizedTags).
+			WithTags(tags).
+			WithOCITags(tags).
 			WithProgress(progressFn).
 			AddManifest(ocilayout.ManifestInputFromVFS(blobSource, manifest, rawManifest, nil))
 		if err := b.WriteToWriter(ctx, w); err != nil {
 			return nil, err
 		}
-		return normalizedTags, nil
+		return tags, nil
 	}
 
 	return nil, fmt.Errorf("no manifest or index provided")

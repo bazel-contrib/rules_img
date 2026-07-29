@@ -526,7 +526,15 @@ filegroup(
 )
 ```
 
-**Note**: The Docker tarball is only available for single-platform images in rules_img.
+**Note**: rules_img also builds the tarball for multi-platform images (the first
+manifest becomes the default in `manifest.json`, all of them are listed in
+`index.json`), but `docker load` still only imports a single platform.
+
+**Note**: Like `oci_load`, `image_load` uses the image name exactly as written -
+nothing is prepended to it and no `library/` namespace is inserted - so
+`repo_tags` entries translate directly to `tag` / `tag_list`, both in the
+tarball and when loading into a daemon. See
+[Image names](/docs/load.md#image-names).
 
 ---
 
