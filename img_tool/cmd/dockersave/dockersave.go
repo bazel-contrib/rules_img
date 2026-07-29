@@ -55,6 +55,40 @@ func readTagsFromConfigFile(configPath string) ([]string, error) {
 	return api.QualifyLoadTags(registry, repository, tags), nil
 }
 
+// resolveRepoTags determines the image references written to the tarball: the
+// --repo-tag flags when given, otherwise the names reconstructed from the load
+// configuration file.
+//
+// The returned ociTags are those references (possibly none) and are used for the
+// index.json annotations; repoTags is the same list, except that a nameless
+// image still gets a default entry, because this command always writes a
+// RepoTags entry to Docker's manifest.json. References end up in the tarball as
+// they are, so they are validated here (see api.NormalizeLoadReference) instead
+// of writing a name nothing can resolve.
+func resolveRepoTags(flagTags []string, configPath string) (repoTags, ociTags []string, err error) {
+	tags := flagTags
+	if len(tags) == 0 && configPath != "" {
+		configTags, err := readTagsFromConfigFile(configPath)
+		if err != nil {
+			return nil, nil, fmt.Errorf("reading configuration file: %w", err)
+		}
+		if len(configTags) > 0 {
+			tags = configTags
+		}
+	}
+
+	tags, err = api.NormalizeLoadReferences(tags)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	repoTags = tags
+	if len(repoTags) == 0 {
+		repoTags = []string{"image:latest"}
+	}
+	return repoTags, tags, nil
+}
+
 func DockerSaveProcess(ctx context.Context, args []string) {
 	var manifestPath string
 	var configPath string
@@ -118,27 +152,13 @@ func DockerSaveProcess(ctx context.Context, args []string) {
 	}
 
 	// Read tags from configuration file if provided and no --repo-tag was specified.
-	if len(repoTags) == 0 && configurationFilePath != "" {
-		configTags, err := readTagsFromConfigFile(configurationFilePath)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error reading configuration file: %v\n", err)
-			os.Exit(1)
-		}
-		if len(configTags) > 0 {
-			repoTags = configTags
-		}
+	repoTagsResolved, ociTags, err := resolveRepoTags(repoTags, configurationFilePath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
 	}
+	repoTags = repoTagsResolved
 
-	// ociTags are the user-provided tags used for OCI index.json annotations;
-	// they may be empty.
-	ociTags := []string(repoTags)
-
-	// Default repo tag for Docker's manifest.json RepoTags if none provided.
-	if len(repoTags) == 0 {
-		repoTags = []string{"image:latest"}
-	}
-
-	var err error
 	if indexPath != "" {
 		if manifestPath != "" || configPath != "" {
 			fmt.Fprintf(os.Stderr, "Error: cannot use --manifest or --config with --index\n")

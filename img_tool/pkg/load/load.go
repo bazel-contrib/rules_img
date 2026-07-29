@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"runtime"
-	"strings"
 	"sync"
 
 	"github.com/containerd/platforms"
@@ -207,46 +206,6 @@ func storeBlob(ctx context.Context, store containerd.Store, desc ocispec.Descrip
 	}
 
 	return nil
-}
-
-func NormalizeDockerReference(ref string) string {
-	if ref == "" {
-		return ""
-	}
-
-	parts := strings.SplitN(ref, ":", 2)
-	name := parts[0]
-	tag := ""
-	if len(parts) > 1 {
-		tag = parts[1]
-	}
-
-	hasHostname := false
-
-	if strings.HasPrefix(name, "localhost/") {
-		hasHostname = true
-	} else {
-		firstSlash := strings.Index(name, "/")
-		if firstSlash > 0 {
-			possibleHost := name[:firstSlash]
-			if strings.Contains(possibleHost, ".") || strings.Contains(possibleHost, ":") {
-				hasHostname = true
-			}
-		}
-	}
-
-	if !hasHostname {
-		if !strings.Contains(name, "/") {
-			name = "docker.io/library/" + name
-		} else {
-			name = "docker.io/" + name
-		}
-	}
-
-	if tag != "" {
-		return name + ":" + tag
-	}
-	return name
 }
 
 // platformMatches checks if a manifest platform matches any of the requested platforms.

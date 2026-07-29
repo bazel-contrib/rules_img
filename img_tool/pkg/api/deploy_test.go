@@ -95,6 +95,132 @@ func TestQualifyLoadTagsReturnsFreshSlice(t *testing.T) {
 	}
 }
 
+func TestNormalizeLoadReference(t *testing.T) {
+	digest := "sha256:" + strings.Repeat("a", 64)
+
+	for _, tc := range []struct {
+		name string
+		ref  string
+		want string
+	}{
+		{
+			name: "fully-qualified reference is unchanged",
+			ref:  "gcr.io/my-project/my-app:latest",
+			want: "gcr.io/my-project/my-app:latest",
+		},
+		{
+			name: "registry with a port is not mistaken for a tag",
+			ref:  "docker.mycompany.tld:1234/foo:latest",
+			want: "docker.mycompany.tld:1234/foo:latest",
+		},
+		{
+			name: "registry with a port and no tag only gains the default tag",
+			ref:  "docker.mycompany.tld:1234/foo",
+			want: "docker.mycompany.tld:1234/foo:latest",
+		},
+		{
+			name: "short name keeps its shape: no registry, no library namespace",
+			ref:  "my-app:latest",
+			want: "my-app:latest",
+		},
+		{
+			name: "multi-component short name is not prefixed with a registry",
+			ref:  "my-team/my-app:latest",
+			want: "my-team/my-app:latest",
+		},
+		{
+			name: "explicit docker.io is preserved, not rewritten to index.docker.io",
+			ref:  "docker.io/library/foo:v1",
+			want: "docker.io/library/foo:v1",
+		},
+		{
+			name: "untagged reference gains the default tag",
+			ref:  "my-app",
+			want: "my-app:latest",
+		},
+		{
+			name: "localhost with a port",
+			ref:  "localhost:5000/my-app:dev",
+			want: "localhost:5000/my-app:dev",
+		},
+		{
+			name: "IPv6 host with a port",
+			ref:  "[::1]:5000/my-app:dev",
+			want: "[::1]:5000/my-app:dev",
+		},
+		{
+			name: "digest reference is untouched",
+			ref:  "gcr.io/my-project/my-app@" + digest,
+			want: "gcr.io/my-project/my-app@" + digest,
+		},
+		{
+			name: "uppercase tag is allowed",
+			ref:  "my-app:LATEST",
+			want: "my-app:LATEST",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := NormalizeLoadReference(tc.ref)
+			if err != nil {
+				t.Fatalf("NormalizeLoadReference(%q) error = %v", tc.ref, err)
+			}
+			if got != tc.want {
+				t.Fatalf("NormalizeLoadReference(%q) = %q, want %q", tc.ref, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestNormalizeLoadReferenceErrors(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		ref  string
+	}{
+		{name: "empty reference", ref: ""},
+		{name: "empty tag", ref: "gcr.io/proj/app:"},
+		{name: "uppercase repository", ref: "MyApp:latest"},
+		{name: "space in the tag", ref: "my-app:no spaces"},
+		{name: "registry is not a valid host", ref: "not a host/my-app:latest"},
+		{
+			// The shape the old hand-rolled normalization used to produce for a
+			// registry with a port.
+			name: "doubly-qualified name",
+			ref:  "docker.io/library/docker.mycompany.tld:1234/foo:latest",
+		},
+		{
+			// go-containerregistry requires at least two characters, the same
+			// rule image_push already applies to its repository.
+			name: "single-character repository",
+			ref:  "a:1",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := NormalizeLoadReference(tc.ref)
+			if err == nil {
+				t.Fatalf("NormalizeLoadReference(%q) = %q, want error", tc.ref, got)
+			}
+		})
+	}
+}
+
+func TestNormalizeLoadReferences(t *testing.T) {
+	got, err := NormalizeLoadReferences([]string{"my-app", "gcr.io/proj/app:v1"})
+	if err != nil {
+		t.Fatalf("NormalizeLoadReferences() error = %v", err)
+	}
+	if want := []string{"my-app:latest", "gcr.io/proj/app:v1"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("NormalizeLoadReferences() = %v, want %v", got, want)
+	}
+
+	if got, err := NormalizeLoadReferences(nil); err != nil || got != nil {
+		t.Fatalf("NormalizeLoadReferences(nil) = %v, %v; want nil, nil", got, err)
+	}
+
+	if _, err := NormalizeLoadReferences([]string{"my-app:latest", "MyApp:latest"}); err == nil {
+		t.Fatal("NormalizeLoadReferences() with an invalid reference: want error")
+	}
+}
+
 // TestLoadDeployOperationOmitsEmptyDestination verifies that a load operation
 // carrying only tags serializes without registry/repository keys (the
 // rules_oci-compatible mode), while a fully-qualified one emits them.

@@ -82,10 +82,10 @@ image_load(
 )
 
 # Legacy (rules_oci-compatible) mode: a single full reference with no
-# registry/repository. Demonstrates that a bare name is normalized (loaded as
-# docker.io/library/funny_name:sideloaded).
+# registry/repository. The name is used verbatim, so this loads an image
+# literally called funny_name:sideloaded (no docker.io/library/ prefix).
 image_load(
-    name = "load_normalized",
+    name = "load_bare_name",
     image = ":index",
     tag = "funny_name:sideloaded",
     visibility = ["//visibility:public"],
@@ -198,6 +198,19 @@ image_load(
     visibility = ["//visibility:public"],
 )
 
+# A registry with a port must survive intact: the tag is only the part after a
+# colon that carries no slash, so this loads
+# docker.mycompany.tld:1234/malt3/rules_img:port-sideloaded (network-free
+# regression, the registry is never contacted by a load).
+image_load(
+    name = "load_registry_port",
+    image = ":scratch_image",
+    registry = "docker.mycompany.tld:1234",
+    repository = "malt3/rules_img",
+    tag = "port-sideloaded",
+    visibility = ["//visibility:public"],
+)
+
 build_test(
     name = "test",
     targets = [
@@ -206,10 +219,11 @@ build_test(
         ":load_index",
         ":load_image",
         ":load_image_templated",
-        ":load_normalized",
+        ":load_bare_name",
         ":load_multi_tags",
         ":load_tag_file",
         ":load_scratch_split",
         ":load_scratch_compat",
+        ":load_registry_port",
     ],
 )

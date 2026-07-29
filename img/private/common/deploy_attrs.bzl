@@ -281,6 +281,7 @@ The best performance is achieved with:
 Optional. When set, `repository` must also be set, and each entry in
 `tag` / `tag_list` / `tag_file` is treated as a bare tag: the loaded image name
 is reconstructed as `{registry}/{repository}:{tag}` (mirroring `image_push`).
+May include a port (e.g. `docker.mycompany.tld:1234`).
 
 When omitted but `repository` is set, the global
 `--@rules_img//img/settings:destination_registry` flag is used as a fallback
@@ -289,6 +290,11 @@ When omitted but `repository` is set, the global
 When omitted together with `repository`, the tags are used verbatim as full
 image references, preserving the `rules_oci`-compatible behavior. In this mode
 the `destination_registry` fallback does not apply.
+
+Whichever way the name is put together, it is then used as written: it never
+goes through Docker's reference normalization (which would add `index.docker.io`
+and the `library/` namespace), and a name that is not a valid image reference
+fails the build.
 
 Subject to [template expansion](/docs/templating.md).
 """,
@@ -304,10 +310,11 @@ Subject to [template expansion](/docs/templating.md).
     tag = attr.string(
         doc = """Tag to apply when loading the image.
 
-Optional - if omitted, the image is loaded without a tag.
+Optional - if omitted, the image is loaded without a name.
 
 When `registry`/`repository` are set, this is a bare tag (e.g. `latest`);
-otherwise it is a full image reference (e.g. `my-app:latest`).
+otherwise it is a full image reference (e.g. `my-app:latest`) - a reference
+written without a tag (e.g. `my-app`) is loaded as `my-app:latest`.
 
 Subject to [template expansion](/docs/templating.md).
 """,

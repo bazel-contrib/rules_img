@@ -344,7 +344,9 @@ bazel run //:load
 `image_load` takes the same `registry` / `repository` / `tag` split as
 `image_push`, so the same image is easy to push to a registry later. A single
 fully-qualified `tag` (with no `registry`/`repository`) also works for
-`rules_oci` compatibility.
+`rules_oci` compatibility. Either way the name is used exactly as written:
+nothing is prepended to it and no `library/` namespace is inserted (see
+[Image names](/docs/load.md#image-names)).
 
 ### Composing Images from Layers
 

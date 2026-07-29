@@ -187,6 +187,13 @@ func routeToSink(ctx context.Context, s sink, vfs *deployvfs.VFS, pushOps []api.
 		refs := api.QualifyLoadTags(registry, repository, op.Tags)
 		refs = append(refs, opts.additionalTags...)
 		refs = deduplicateAndSortTags(refs)
+		// Same names the daemon would see: used verbatim, only validated and
+		// given a default tag when untagged (see api.NormalizeLoadReference).
+		refs, err := api.NormalizeLoadReferences(refs)
+		if err != nil {
+			return nil, fmt.Errorf("load %s: %w", op.Root.Digest, err)
+		}
+		refs = deduplicateAndSortTags(refs)
 		// distribution derives its repo from the parsed refs (rules_oci fallback)
 		// or from registry/repository (split mode); pass whatever the op set.
 		if err := add(registry, repository, refs, op.RootKind, op.Root.Digest); err != nil {

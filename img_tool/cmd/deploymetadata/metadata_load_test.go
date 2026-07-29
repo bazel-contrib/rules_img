@@ -128,3 +128,63 @@ func TestLoadOperationLoneRegistryErrors(t *testing.T) {
 		t.Fatal("expected error for registry without repository, got nil")
 	}
 }
+
+// TestLoadOperationRegistryWithPort covers a registry that carries a port: it is
+// part of the registry, not the start of the tag.
+func TestLoadOperationRegistryWithPort(t *testing.T) {
+	op := writeLoadMetadata(t, `{"registry":"docker.mycompany.tld:1234","repository":"foo","tags":["latest"],"daemon":"docker"}`)
+	want := []string{"docker.mycompany.tld:1234/foo:latest"}
+	if got := op.ImageNames(); !reflect.DeepEqual(got, want) {
+		t.Errorf("ImageNames() = %v, want %v", got, want)
+	}
+}
+
+// TestLoadOperationInvalidReferenceErrors verifies that image names which cannot
+// be a valid reference fail the build instead of the `bazel run`.
+func TestLoadOperationInvalidReferenceErrors(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		config string
+	}{
+		{
+			name:   "tag expanded to the empty string",
+			config: `{"registry":"gcr.io","repository":"proj/app","tags":[""],"daemon":"docker"}`,
+		},
+		{
+			name:   "unexpanded template placeholder",
+			config: `{"registry":"gcr.io","repository":"proj/app","tags":["{{.MISSING}}"],"daemon":"docker"}`,
+		},
+		{
+			name:   "uppercase repository",
+			config: `{"tags":["MyApp:latest"],"daemon":"docker"}`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tmp := t.TempDir()
+			manifestPath := filepath.Join(tmp, "manifest.json")
+			if err := os.WriteFile(manifestPath, []byte(loadTestManifest), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			configPath := filepath.Join(tmp, "config.json")
+			if err := os.WriteFile(configPath, []byte(tc.config), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			command = "load"
+			resetMetadataFlags(manifestPath, configPath)
+
+			if err := WriteMetadata(context.Background(), filepath.Join(tmp, "deploy.json")); err == nil {
+				t.Fatal("expected error for an invalid image reference, got nil")
+			}
+		})
+	}
+}
+
+// TestLoadOperationUntaggedNameIsAccepted documents that an untagged reference
+// passes the build-time check: the loader fills in the default tag.
+func TestLoadOperationUntaggedNameIsAccepted(t *testing.T) {
+	op := writeLoadMetadata(t, `{"tags":["my-app"],"daemon":"docker"}`)
+	if got := op.ImageNames(); !reflect.DeepEqual(got, []string{"my-app"}) {
+		t.Errorf("ImageNames() = %v, want [my-app]", got)
+	}
+}

@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+
+	"github.com/google/go-containerregistry/pkg/name"
 )
 
 type DeployManifest struct {
@@ -253,6 +255,48 @@ func QualifyLoadTags(registry, repository string, tags []string) []string {
 		names[i] = base + ":" + tag
 	}
 	return names
+}
+
+// NormalizeLoadReference validates a load image reference and returns the name
+// that is handed to the daemon (or written to a docker-save tarball).
+//
+// Unlike Docker's own reference normalization it never invents a registry and
+// never inserts the "library/" namespace: a load target's image name is exactly
+// what the user configured, so "my-app:latest" stays "my-app:latest" and a
+// registry with a port keeps it ("docker.example.com:1234/foo:latest" is
+// returned verbatim instead of being mistaken for the tag "1234/foo:latest").
+// The only rewrite is appending the default ":latest" tag to an untagged
+// reference, which the daemons require (`docker load` rejects an untagged
+// RepoTags entry). Digest references are returned unchanged.
+//
+// An unparseable reference is an error rather than something we silently pass
+// on: a name the daemon cannot resolve is never what the user meant.
+func NormalizeLoadReference(ref string) (string, error) {
+	parsed, err := name.ParseReference(ref, name.WithDefaultRegistry(""), name.WithDefaultTag(""))
+	if err != nil {
+		return "", fmt.Errorf("invalid image reference %q: %w", ref, err)
+	}
+	if tag, ok := parsed.(name.Tag); ok && tag.TagStr() == "" {
+		return ref + ":" + name.DefaultTag, nil
+	}
+	return ref, nil
+}
+
+// NormalizeLoadReferences applies NormalizeLoadReference to every reference,
+// returning a fresh slice. It fails on the first invalid reference.
+func NormalizeLoadReferences(refs []string) ([]string, error) {
+	if refs == nil {
+		return nil, nil
+	}
+	out := make([]string, len(refs))
+	for i, ref := range refs {
+		normalized, err := NormalizeLoadReference(ref)
+		if err != nil {
+			return nil, err
+		}
+		out[i] = normalized
+	}
+	return out, nil
 }
 
 type IndexedLoadDeployOperation struct {

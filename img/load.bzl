@@ -49,6 +49,15 @@ image_load(
     image = ":my_image",
     tag_list = ["my-app:latest", "my-app:v1.0.0"],
 )
+
+# A registry that includes a port works like any other registry.
+image_load(
+    name = "load_with_port",
+    image = ":my_image",
+    registry = "docker.mycompany.tld:1234",
+    repository = "my-app",
+    tag = "latest",
+)
 ```
 
 Splitting the name into `registry` / `repository` / `tag` is optional and does
@@ -61,6 +70,23 @@ Then run:
 # Load the image into your local daemon
 bazel run //:load
 ```
+
+## Image names
+
+The loaded image name is exactly the name you configure. `rules_img` does not
+apply Docker's reference normalization: nothing is prepended to the name, and
+the `library/` namespace of Docker Hub official images is never added, so
+`tag = "my-app:latest"` loads an image literally called `my-app:latest`. The one
+thing filled in is the tag: a reference written without one is loaded as
+`:latest`, because an untagged name is not something `docker load` accepts. A
+name that cannot be a valid image reference fails the build rather than being
+silently rewritten.
+
+Note that a short name like `my-app:latest` is not a fully-qualified reference.
+Tools that insist on one — most notably `docker` with the containerd image
+store, which hides images whose name is not canonical — need a name that
+includes a registry, e.g. `docker.io/library/my-app:latest` or the
+`registry`/`repository` split above.
 
 ## Platform Selection
 

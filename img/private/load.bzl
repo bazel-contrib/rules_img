@@ -254,14 +254,20 @@ Image names: when loading into a local daemon the image name is ultimately just
 a string, so a single fully-qualified `tag` (the rules_oci-compatible form) is
 all a daemon needs. The rule also accepts the same `registry` / `repository` /
 `tag` split as `image_push`; the loaded name is simply reconstructed as
-`{registry}/{repository}:{tag}`. Splitting it out is purely a convenience: it
-keeps the load target aligned with a matching `image_push` so the same image is
-easy to push to a registry later.
+`{registry}/{repository}:{tag}` (a `registry` may include a port). Splitting it
+out is purely a convenience: it keeps the load target aligned with a matching
+`image_push` so the same image is easy to push to a registry later.
+
+The resulting name is used verbatim: nothing is prepended to it and no
+`library/` namespace is inserted, so `tag = "my-app:latest"` really loads
+`my-app:latest`. Only a missing tag is filled in with `:latest`; a name that is
+not a valid image reference fails the build.
 
 Output groups:
 - `tarball`: "docker save" compatible tarball with OCI layout (available for both single and multi-platform images).
   For multi-platform images, the first manifest is used as the default in `manifest.json`,
   and all manifests are included in `index.json`.
+  With no `tag` at all, its `manifest.json` falls back to a `RepoTags` entry of `image:latest`.
   Alternatively, setting `daemon = "tar"` (or `--@rules_img//img/settings:load_daemon=tar`)
   produces the same format on-the-fly by streaming it to stdout at runtime.
 
