@@ -82,7 +82,7 @@ func PullProcess(ctx context.Context, args []string) {
 	// Create a custom HTTP client with cached blob transport. When a registry
 	// gateway is configured (IMG_REGISTRY_PULL_GATEWAY / IMG_REGISTRY_GATEWAY),
 	// cache misses are routed through it.
-	gatewayBase, err := gateway.WrapTransport(http.DefaultTransport, gateway.ModePull)
+	gatewayBase, err := gateway.WrapTransport(registryopts.BaseTransport(), gateway.ModePull)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error configuring registry gateway: %v\n", err)
 		os.Exit(1)
@@ -369,13 +369,13 @@ func downloadManifest(registry, repository, tag, digest string, store *blobstore
 	var ref name.Reference
 	if len(digest) > 0 {
 		var err error
-		ref, err = name.NewDigest(fmt.Sprintf("%s/%s@%s", registry, repository, digest))
+		ref, err = name.NewDigest(fmt.Sprintf("%s/%s@%s", registry, repository, digest), registryopts.NameOptions()...)
 		if err != nil {
 			return nil, fmt.Errorf("creating manifest reference with digest: %w", err)
 		}
 	} else {
 		var err error
-		ref, err = name.NewTag(fmt.Sprintf("%s/%s:%s", registry, repository, tag))
+		ref, err = name.NewTag(fmt.Sprintf("%s/%s:%s", registry, repository, tag), registryopts.NameOptions()...)
 		if err != nil {
 			return nil, fmt.Errorf("creating manifest reference: %w", err)
 		}

@@ -33,12 +33,16 @@ import (
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/sparseocilayout"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/syncocirefgraph"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/validate"
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/registryopts"
 )
 
 const usage = `Usage: img [COMMAND] [ARGS...]
 
 Global flags (accepted by any command):
   --verbose                enables debug logging
+  --insecure               allows registries to be addressed over plain HTTP and
+                           accepts untrusted TLS certificates (like crane's
+                           --insecure). Also settable via IMG_INSECURE=1.
 
 Commands:
   compress                 (re-)compresses a layer
@@ -71,10 +75,10 @@ Commands:
   push                     pushes image blobs/manifests at build time (subcommands: blob, manifest)`
 
 func Run(ctx context.Context, args []string) {
-	// Handle the global --verbose flag for all subcommands. We strip it from
+	// Handle the global flags for all subcommands. We strip them from
 	// the arguments before dispatching so each subcommand's own flag parser
-	// doesn't have to know about it.
-	args = handleVerbose(args)
+	// doesn't have to know about them.
+	args = handleGlobalFlags(args)
 
 	if len(args) < 2 {
 		fmt.Fprintln(os.Stderr, usage)
@@ -150,22 +154,34 @@ func main() {
 	Run(ctx, os.Args)
 }
 
-// handleVerbose looks for a global --verbose (or -verbose) flag anywhere in
-// args. If present, it enables debug logging to stderr and returns args with
-// the flag removed so the individual subcommand flag parsers don't see it.
-func handleVerbose(args []string) []string {
+// handleGlobalFlags looks for the global flags (--verbose, --insecure) anywhere
+// in args, applies them, and returns args with those flags removed so the
+// individual subcommand flag parsers don't see them.
+//
+//   - --verbose enables debug logging to stderr.
+//   - --insecure lets every registry operation talk plain HTTP and accept
+//     untrusted TLS certificates, like crane's --insecure. It is only ever
+//     enabling: without the flag, IMG_INSECURE still decides.
+func handleGlobalFlags(args []string) []string {
 	filtered := make([]string, 0, len(args))
 	verbose := false
+	insecure := false
 	for _, arg := range args {
 		switch arg {
 		case "--verbose", "-verbose":
 			verbose = true
+			continue
+		case "--insecure", "-insecure":
+			insecure = true
 			continue
 		}
 		filtered = append(filtered, arg)
 	}
 	if verbose {
 		logs.Debug.SetOutput(os.Stderr)
+	}
+	if insecure {
+		registryopts.SetInsecure(true)
 	}
 	return filtered
 }

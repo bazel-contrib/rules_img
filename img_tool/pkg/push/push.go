@@ -201,7 +201,7 @@ func (u *uploader) tags(op api.IndexedPushDeployOperation) ([]name.Reference, er
 		return nil, err
 	}
 
-	digestRef, err := name.NewDigest(baseRef + "@" + h.String())
+	digestRef, err := name.NewDigest(baseRef+"@"+h.String(), registryopts.NameOptions()...)
 	if err != nil {
 		return nil, err
 	}
@@ -210,7 +210,7 @@ func (u *uploader) tags(op api.IndexedPushDeployOperation) ([]name.Reference, er
 	allTags := append(op.Tags, u.extraTags...)
 	allTags = deduplicateAndSort(allTags)
 	for _, tag := range allTags {
-		tagRef, err := name.NewTag(baseRef + ":" + tag)
+		tagRef, err := name.NewTag(baseRef+":"+tag, registryopts.NameOptions()...)
 		if err != nil {
 			return nil, err
 		}

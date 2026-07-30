@@ -123,7 +123,7 @@ func pushBlob(ctx context.Context, registryStr, targetRepository string, desc ap
 		return fmt.Errorf("configuring pull transport: %w", err)
 	}
 
-	repoRef, err := name.NewRepository(registryStr + "/" + targetRepository)
+	repoRef, err := name.NewRepository(registryStr+"/"+targetRepository, registryopts.NameOptions()...)
 	if err != nil {
 		return fmt.Errorf("parsing target repository %s/%s: %w", registryStr, targetRepository, err)
 	}
@@ -176,7 +176,7 @@ func layerForBlob(ctx context.Context, desc api.Descriptor, blobPath, compactStr
 		// MountableLayer so that, if the target is in the same registry, the
 		// upload becomes a cross-repo mount instead of a byte transfer.
 		src := sources[0]
-		ref, err := name.NewDigest(src + "@" + desc.Digest)
+		ref, err := name.NewDigest(src+"@"+desc.Digest, registryopts.NameOptions()...)
 		if err != nil {
 			return nil, fmt.Errorf("parsing source reference %s@%s: %w", src, desc.Digest, err)
 		}

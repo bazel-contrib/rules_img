@@ -43,6 +43,7 @@ def _image_push_spec_impl(ctx):
         push_at_build_time_gateway = pbt.gateway,
         push_at_build_time_push_gateway = pbt.push_gateway,
         push_at_build_time_pull_gateway = pbt.pull_gateway,
+        insecure = ctx.attr._push_settings[PushSettingsInfo].insecure,
     )]
 
 image_push_spec = rule(

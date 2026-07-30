@@ -12,6 +12,7 @@ FIELDS = dict(
     credential_helper = "Credential helper to use for registry requests and load-strategy gRPC connections. See docs/credential-helpers.md for details. Uses $IMG_CREDENTIAL_HELPER env var or tools/credential-helper if not set.",
     credential_helper_oci_registry = "Credential helper used only for OCI registry operations. Takes precedence over credential_helper for registry auth. Uses $IMG_CREDENTIAL_HELPER_OCI_REGISTRY env var if not set. See docs/credential-helpers.md.",
     credential_helper_remote_cache = "Credential helper used only to authenticate gRPC calls to the remote cache / remote execution API. Takes precedence over credential_helper for those calls. Uses $IMG_CREDENTIAL_HELPER_REMOTE_CACHE env var if not set. See docs/credential-helpers.md.",
+    insecure = "Bool: when True, registries are addressed over plain HTTP and untrusted TLS certificates are accepted (like crane's --insecure). Maps to the IMG_INSECURE env var of the img tool.",
 )
 
 LoadSettingsInfo = provider(

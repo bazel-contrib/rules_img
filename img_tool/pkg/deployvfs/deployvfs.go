@@ -22,6 +22,7 @@ import (
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/api"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/cas"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/prefetch"
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/registryopts"
 )
 
 // Stats tracks statistics about blob access in the VFS.
@@ -119,7 +120,7 @@ func (vfs *VFS) Layer(digest registryv1.Hash) (registryv1.Layer, error) {
 	}
 
 	if hint, found := vfs.crossMountHints[digest.String()]; found {
-		reg, err := registryname.NewRegistry(hint.Registry, registryname.WithDefaultRegistry(""))
+		reg, err := registryname.NewRegistry(hint.Registry, registryopts.NameOptions(registryname.WithDefaultRegistry(""))...)
 		if err != nil {
 			return nil, fmt.Errorf("parsing cross-mount registry %q: %w", hint.Registry, err)
 		}
@@ -851,7 +852,7 @@ func (b *Builder) layerFromRegistry(sources []api.LayerSource, desc api.Descript
 		Opener: func() (io.ReadCloser, error) {
 			var attempts []string
 			for _, source := range sources {
-				ref, err := registryname.NewDigest(fmt.Sprintf("%s/%s@%s", source.Registry, source.Repository, desc.Digest))
+				ref, err := registryname.NewDigest(fmt.Sprintf("%s/%s@%s", source.Registry, source.Repository, desc.Digest), registryopts.NameOptions()...)
 				if err != nil {
 					attempts = append(attempts, fmt.Sprintf("%s/%s: %v", source.Registry, source.Repository, err))
 					continue

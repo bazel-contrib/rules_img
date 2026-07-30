@@ -2,12 +2,19 @@ package registryopts
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
+	"net/http/httptest"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/google/go-containerregistry/pkg/name"
+	"github.com/google/go-containerregistry/pkg/registry"
+	"github.com/google/go-containerregistry/pkg/v1/random"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/gateway"
@@ -93,6 +100,118 @@ func TestTransportBuilds(t *testing.T) {
 	}
 	if _, ok := rt.(*retryAfterTransport); !ok {
 		t.Fatalf("Transport = %T, want *retryAfterTransport", rt)
+	}
+}
+
+// setInsecureForTest turns insecure mode on (or off) for the duration of the
+// test, restoring the previous process-wide value afterwards.
+func setInsecureForTest(t *testing.T, enabled bool) {
+	t.Helper()
+	previous := Insecure()
+	SetInsecure(enabled)
+	t.Cleanup(func() { SetInsecure(previous) })
+}
+
+func TestInsecureFromEnv(t *testing.T) {
+	tests := []struct {
+		value string
+		want  bool
+	}{
+		{value: "", want: false},
+		{value: "0", want: false},
+		{value: "false", want: false},
+		{value: "FALSE", want: false},
+		{value: " ", want: false},
+		{value: "1", want: true},
+		{value: "true", want: true},
+		{value: "True", want: true},
+		{value: "yes", want: true},
+	}
+	for _, tc := range tests {
+		t.Run("value="+tc.value, func(t *testing.T) {
+			t.Setenv(EnvInsecure, tc.value)
+			if got := insecureFromEnv(); got != tc.want {
+				t.Fatalf("insecureFromEnv() with %s=%q = %v, want %v", EnvInsecure, tc.value, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestNameOptionsInsecure covers the half of insecure mode that made pushes to a
+// plain-HTTP registry fail with "server gave HTTP response to HTTPS client": the
+// reference's registry must resolve to http.
+func TestNameOptionsInsecure(t *testing.T) {
+	setInsecureForTest(t, false)
+	if got := len(NameOptions()); got != 0 {
+		t.Fatalf("NameOptions() with insecure off returned %d options, want 0", got)
+	}
+	secureRef, err := name.NewTag("registry.example.com/app:latest", NameOptions()...)
+	if err != nil {
+		t.Fatalf("NewTag: %v", err)
+	}
+	if got := secureRef.Context().Registry.Scheme(); got != "https" {
+		t.Fatalf("scheme with insecure off = %q, want https", got)
+	}
+
+	SetInsecure(true)
+	insecureRef, err := name.NewTag("registry.example.com/app:latest", NameOptions()...)
+	if err != nil {
+		t.Fatalf("NewTag: %v", err)
+	}
+	if got := insecureRef.Context().Registry.Scheme(); got != "http" {
+		t.Fatalf("scheme with insecure on = %q, want http", got)
+	}
+
+	// Caller-supplied options are kept, and name.Insecure is appended to them.
+	ref, err := name.NewRegistry("", NameOptions(name.WithDefaultRegistry("registry.example.com"))...)
+	if err != nil {
+		t.Fatalf("NewRegistry: %v", err)
+	}
+	if ref.RegistryStr() != "registry.example.com" {
+		t.Fatalf("RegistryStr = %q, want the default registry passed in", ref.RegistryStr())
+	}
+	if got := ref.Scheme(); got != "http" {
+		t.Fatalf("scheme = %q, want http", got)
+	}
+}
+
+// TestBaseTransportInsecure covers the other half: untrusted TLS certificates are
+// accepted, without mutating go-cr's shared default transport.
+func TestBaseTransportInsecure(t *testing.T) {
+	setInsecureForTest(t, false)
+	if got := BaseTransport(); got != remote.DefaultTransport {
+		t.Fatalf("BaseTransport() with insecure off = %v, want remote.DefaultTransport", got)
+	}
+
+	SetInsecure(true)
+	rt := BaseTransport()
+	transport, ok := rt.(*http.Transport)
+	if !ok {
+		t.Fatalf("BaseTransport() = %T, want *http.Transport", rt)
+	}
+	if transport == remote.DefaultTransport {
+		t.Fatalf("BaseTransport() returned the shared remote.DefaultTransport; it must be a clone")
+	}
+	if transport.TLSClientConfig == nil || !transport.TLSClientConfig.InsecureSkipVerify {
+		t.Fatalf("BaseTransport() TLSClientConfig = %+v, want InsecureSkipVerify", transport.TLSClientConfig)
+	}
+	if defaultTransport, ok := remote.DefaultTransport.(*http.Transport); ok {
+		if defaultTransport.TLSClientConfig != nil && defaultTransport.TLSClientConfig.InsecureSkipVerify {
+			t.Fatalf("remote.DefaultTransport was mutated to skip TLS verification")
+		}
+	}
+}
+
+// TestDefaultInsecureInstallsTransport verifies that callers which only take the
+// enforced defaults (no explicit transport) still get the insecure transport.
+func TestDefaultInsecureInstallsTransport(t *testing.T) {
+	setInsecureForTest(t, true)
+	if got := len(Default().Remote()); got != 4 {
+		t.Fatalf("Default() with insecure on has %d options, want 4 (auth, retry, jobs, transport)", got)
+	}
+	SetInsecure(false)
+	if got := len(Default().Remote()); got != 3 {
+		t.Fatalf("Default() with insecure off has %d options, want 3", got)
 	}
 }
 
@@ -286,4 +405,88 @@ func TestWrapRetryAfterRespectsContextCancellation(t *testing.T) {
 
 func isContextError(err error) bool {
 	return err == context.Canceled || err == context.DeadlineExceeded
+}
+
+// plainHTTPRegistry returns a RoundTripper that behaves like a registry which only
+// speaks plain HTTP: an https request fails the way a TLS handshake against a
+// plaintext server does, an http request is served by an in-memory OCI registry.
+// It also records the scheme of every request, so a test can tell which one
+// go-containerregistry ended up using. No socket is bound.
+func plainHTTPRegistry() (http.RoundTripper, *[]string) {
+	handler := registry.New()
+	var mu sync.Mutex
+	schemes := &[]string{}
+	return roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		mu.Lock()
+		*schemes = append(*schemes, req.URL.Scheme)
+		mu.Unlock()
+		if req.URL.Scheme != "http" {
+			return nil, errors.New("http: server gave HTTP response to HTTPS client")
+		}
+		// The handler expects a server-side request, which always has a body.
+		serverReq := req.Clone(req.Context())
+		if serverReq.Body == nil {
+			serverReq.Body = http.NoBody
+		}
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, serverReq)
+		resp := recorder.Result()
+		resp.Request = req
+		return resp, nil
+	}), schemes
+}
+
+// TestInsecurePushToPlainHTTPRegistry is the end-to-end shape of the problem
+// insecure mode solves: pushing to a registry that only speaks plain HTTP under a
+// host name go-containerregistry does not recognize as local (so not localhost,
+// *.localhost, a loopback address or an RFC1918 address) -- the shape of a k3d
+// registry or an /etc/hosts-mapped development registry.
+func TestInsecurePushToPlainHTTPRegistry(t *testing.T) {
+	const host = "registry.example.com:5000"
+
+	// A failing request must not burn the patient production backoff.
+	t.Setenv(EnvRetryMaxAttempts, "1")
+
+	image, err := random.Image(64, 1)
+	if err != nil {
+		t.Fatalf("building test image: %v", err)
+	}
+
+	// With insecure mode on, the push and the read-back fall back to http and
+	// succeed.
+	setInsecureForTest(t, true)
+	transport, schemes := plainHTTPRegistry()
+	opts := Default().WithTransport(transport).Remote()
+	ref, err := name.NewTag(host+"/app:latest", NameOptions()...)
+	if err != nil {
+		t.Fatalf("NewTag: %v", err)
+	}
+	if err := remote.Write(ref, image, opts...); err != nil {
+		t.Fatalf("pushing to a plain-HTTP registry with insecure mode on: %v", err)
+	}
+	if _, err := remote.Get(ref, opts...); err != nil {
+		t.Fatalf("reading back from a plain-HTTP registry with insecure mode on: %v", err)
+	}
+	if !slices.Contains(*schemes, "http") {
+		t.Fatalf("no request was made over http (schemes: %v)", *schemes)
+	}
+
+	// Without it, go-cr only ever tries https and the push fails -- the error
+	// reported in the issue this flag fixes.
+	SetInsecure(false)
+	secureTransport, secureSchemes := plainHTTPRegistry()
+	secureRef, err := name.NewTag(host+"/app:latest", NameOptions()...)
+	if err != nil {
+		t.Fatalf("NewTag: %v", err)
+	}
+	err = remote.Write(secureRef, image, Default().WithTransport(secureTransport).Remote()...)
+	if err == nil {
+		t.Fatal("pushing over https to a plain-HTTP registry succeeded, want a failure")
+	}
+	if !strings.Contains(err.Error(), "gave HTTP response to HTTPS client") {
+		t.Fatalf("error = %v, want the plain-HTTP-vs-HTTPS failure", err)
+	}
+	if slices.Contains(*secureSchemes, "http") {
+		t.Fatalf("an http request was made with insecure mode off (schemes: %v)", *secureSchemes)
+	}
 }

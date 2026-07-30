@@ -445,11 +445,13 @@ def compute_load_metadata(
     )
     return metadata_out, layer_hints_file
 
-def _gateway_env(gateway, push_gateway, pull_gateway):
-    """Build the IMG_REGISTRY_*_GATEWAY env dict, omitting empty entries.
+def _registry_env(gateway, push_gateway, pull_gateway, insecure):
+    """Build the registry-related action env dict, omitting empty entries.
 
     IMG_REGISTRY_GATEWAY is the shared fallback for both push and pull; the
     mode-specific vars take precedence (resolved by the img tool at runtime).
+    IMG_INSECURE lets the actions talk to a plain-HTTP registry (or one with an
+    untrusted certificate), like the img tool's global --insecure flag.
     """
     env = {}
     if gateway:
@@ -458,6 +460,8 @@ def _gateway_env(gateway, push_gateway, pull_gateway):
         env["IMG_REGISTRY_PUSH_GATEWAY"] = push_gateway
     if pull_gateway:
         env["IMG_REGISTRY_PULL_GATEWAY"] = pull_gateway
+    if insecure:
+        env["IMG_INSECURE"] = "1"
     return env
 
 def build_time_push_actions(
@@ -475,6 +479,7 @@ def build_time_push_actions(
         gateway,
         push_gateway,
         pull_gateway,
+        insecure,
         pull_info,
         exec_requirements):
     """Create the PushImage validation actions for one push operation.
@@ -517,6 +522,8 @@ def build_time_push_actions(
       gateway: default registry gateway for both push and pull, or None.
       push_gateway: push-specific registry gateway override, or None.
       pull_gateway: pull-specific registry gateway override, or None.
+      insecure: when True, the actions address registries over plain HTTP and
+        accept untrusted TLS certificates (IMG_INSECURE).
       pull_info: PullInfo used when computing the manifest push metadata.
       exec_requirements: dict forwarded as the execution_requirements of every
         emitted PushImage action (e.g. {"requires-network": "1"}).
@@ -529,10 +536,11 @@ def build_time_push_actions(
     img_toolchain_info = ctx.toolchains[TOOLCHAIN].imgtoolchaininfo
     tool = img_toolchain_info.tool_exe
 
-    # Route registry requests through the configured gateway(s), if any. These
-    # actions both push (upload) and pull (shallow base layers), so all three
-    # env vars are set; the img tool resolves push/pull precedence at runtime.
-    gateway_env = _gateway_env(gateway, push_gateway, pull_gateway)
+    # Route registry requests through the configured gateway(s), if any, and pass
+    # on insecure-registry access. These actions both push (upload) and pull
+    # (shallow base layers), so all three gateway env vars are set; the img tool
+    # resolves push/pull precedence at runtime.
+    registry_env = _registry_env(gateway, push_gateway, pull_gateway, insecure)
     prefix = "{}.push_at_build_time.{}".format(ctx.label.name, push_idx)
 
     if manifest_info != None:
@@ -586,8 +594,8 @@ def build_time_push_actions(
                 execution_requirements = exec_requirements,
                 progress_message = "Pushing layer blob %s (manifest %d, layer %d)" % (ctx.label, mi, li),
             )
-            if gateway_env:
-                blob_run_kwargs["env"] = gateway_env
+            if registry_env:
+                blob_run_kwargs["env"] = registry_env
             ctx.actions.run(**blob_run_kwargs)
             layer_results.append(result)
 
@@ -617,8 +625,8 @@ def build_time_push_actions(
                 execution_requirements = exec_requirements,
                 progress_message = "Pushing ztoc blob %s (soci manifest %d, layer %d)" % (ctx.label, mi, li),
             )
-            if gateway_env:
-                ztoc_run_kwargs["env"] = gateway_env
+            if registry_env:
+                ztoc_run_kwargs["env"] = registry_env
             ctx.actions.run(**ztoc_run_kwargs)
             layer_results.append(result)
 
@@ -650,8 +658,8 @@ def build_time_push_actions(
             execution_requirements = exec_requirements,
             progress_message = "Pushing config blob %s (manifest %d)" % (ctx.label, mi),
         )
-        if gateway_env:
-            config_run_kwargs["env"] = gateway_env
+        if registry_env:
+            config_run_kwargs["env"] = registry_env
         ctx.actions.run(**config_run_kwargs)
         config_results.append(config_result)
 
@@ -702,8 +710,8 @@ def build_time_push_actions(
         execution_requirements = exec_requirements,
         progress_message = "Pushing config and manifest(s) %s" % ctx.label,
     )
-    if gateway_env:
-        manifest_run_kwargs["env"] = gateway_env
+    if registry_env:
+        manifest_run_kwargs["env"] = registry_env
     ctx.actions.run(**manifest_run_kwargs)
     return [marker] + config_results
 
@@ -846,6 +854,7 @@ def process_deploy_specs(
                 gateway = push_config.push_at_build_time_gateway,
                 push_gateway = push_config.push_at_build_time_push_gateway,
                 pull_gateway = push_config.push_at_build_time_pull_gateway,
+                insecure = push_config.insecure,
                 pull_info = pull_info,
                 exec_requirements = push_config.push_at_build_time_exec_properties,
             ))

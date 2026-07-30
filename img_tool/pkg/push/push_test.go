@@ -22,6 +22,7 @@ import (
 
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/api"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/progress"
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/registryopts"
 )
 
 // TestPushAllReportsCraneStyleProgress pushes real images into an in-memory
@@ -153,6 +154,45 @@ func TestPushAllStaysSilentWithoutProgress(t *testing.T) {
 	}
 	if got := out.String(); got != "" {
 		t.Errorf("reported progress with progress reporting off:\n%s", got)
+	}
+}
+
+// TestTagsSchemeFollowsInsecureMode pins the behavior behind the global
+// --insecure flag for the `img deploy` push path: every reference we push to must
+// address its registry over http, otherwise go-containerregistry talks HTTPS to a
+// plain-HTTP registry ("server gave HTTP response to HTTPS client").
+func TestTagsSchemeFollowsInsecureMode(t *testing.T) {
+	digest := registryv1.Hash{Algorithm: "sha256", Hex: strings.Repeat("0", 64)}
+
+	tests := []struct {
+		name       string
+		insecure   bool
+		wantScheme string
+	}{
+		{name: "secure", insecure: false, wantScheme: "https"},
+		{name: "insecure", insecure: true, wantScheme: "http"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			previous := registryopts.Insecure()
+			registryopts.SetInsecure(tc.insecure)
+			t.Cleanup(func() { registryopts.SetInsecure(previous) })
+
+			ops := pushOps("registry.example.com", "my/app", digest, "latest")
+			refs, err := NewBuilder(nil).Build().tags(ops[0])
+			if err != nil {
+				t.Fatalf("tags: %v", err)
+			}
+			// One digest reference plus the operation's single tag.
+			if len(refs) != 2 {
+				t.Fatalf("got %d references, want 2 (digest + tag)", len(refs))
+			}
+			for _, ref := range refs {
+				if got := ref.Context().Registry.Scheme(); got != tc.wantScheme {
+					t.Errorf("scheme of %s = %q, want %q", ref, got, tc.wantScheme)
+				}
+			}
+		})
 	}
 }
 

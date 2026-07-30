@@ -136,7 +136,7 @@ type Source struct {
 }
 
 func downloadManifestByDigest(registry, repository, digest, outputPath string, printDigest bool, resolvedDigest *string) error {
-	ref, err := name.NewDigest(fmt.Sprintf("%s/%s@%s", registry, repository, digest))
+	ref, err := name.NewDigest(fmt.Sprintf("%s/%s@%s", registry, repository, digest), registryopts.NameOptions()...)
 	if err != nil {
 		return fmt.Errorf("creating manifest reference: %w", err)
 	}
@@ -145,7 +145,7 @@ func downloadManifestByDigest(registry, repository, digest, outputPath string, p
 }
 
 func downloadManifestByTag(registry, repository, tag, outputPath string, printDigest bool, resolvedDigest *string) error {
-	ref, err := name.NewTag(fmt.Sprintf("%s/%s:%s", registry, repository, tag))
+	ref, err := name.NewTag(fmt.Sprintf("%s/%s:%s", registry, repository, tag), registryopts.NameOptions()...)
 	if err != nil {
 		return fmt.Errorf("creating tag reference: %w", err)
 	}

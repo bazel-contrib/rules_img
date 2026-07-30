@@ -351,6 +351,27 @@ string_flag(
     visibility = ["//visibility:public"],
 )
 
+# Talk to registries insecurely: address them over plain HTTP instead of HTTPS and
+# accept untrusted (self-signed, expired, ...) TLS certificates. This is the
+# equivalent of crane's --insecure flag and is meant for local development
+# registries (k3d, `docker run registry:2`, kind, ...) that don't serve HTTPS.
+# It applies to `bazel run` pushes and loads as well as to the registry-touching
+# build actions (push at build time, lazy layer downloads). It maps to the
+# IMG_INSECURE environment variable / the img tool's global --insecure flag.
+#
+# Registries that go-containerregistry already treats as local (localhost:PORT,
+# *.localhost, 127.0.0.1, ::1, RFC1918 addresses) are reached over HTTP without
+# this flag.
+string_flag(
+    name = "insecure",
+    build_setting_default = "disabled",
+    values = [
+        "disabled",
+        "enabled",
+    ],
+    visibility = ["//visibility:public"],
+)
+
 # When "enabled", `img deploy` (image_push / multi_deploy) is forbidden from
 # uploading layer blob bytes: layers may still be cross-mounted server-side or
 # skipped when already present, but an actual upload fails loudly. Use when layer

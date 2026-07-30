@@ -214,6 +214,13 @@ def _multi_deploy_impl(ctx):
         environment["IMG_CREDENTIAL_HELPER_REMOTE_CACHE"] = push_settings.credential_helper_remote_cache or load_settings.credential_helper_remote_cache
         inherited_environment.append("IMG_CREDENTIAL_HELPER_REMOTE_CACHE")
 
+    # Insecure registry access (plain HTTP, untrusted certificates). Always
+    # inherited, so IMG_INSECURE from the environment works when the flag is off;
+    # only set when the flag asks for it.
+    inherited_environment.append("IMG_INSECURE")
+    if push_settings.insecure or load_settings.insecure:
+        environment["IMG_INSECURE"] = "1"
+
     # Add REGISTRY_AUTH_FILE if docker_config_path is set
     docker_config_path = ctx.attr._docker_config_path[BuildSettingInfo].value
     if docker_config_path:

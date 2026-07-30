@@ -320,12 +320,12 @@ func downloadManifestFromSources(digest string, sources map[string][]string) ([]
 
 // downloadManifest downloads a manifest from a specific registry/repository
 func downloadManifest(registry, repository, digest string) ([]byte, error) {
-	ref, err := name.NewDigest(fmt.Sprintf("%s/%s@%s", registry, repository, digest))
+	ref, err := name.NewDigest(fmt.Sprintf("%s/%s@%s", registry, repository, digest), registryopts.NameOptions()...)
 	if err != nil {
 		return nil, fmt.Errorf("creating manifest reference: %w", err)
 	}
 
-	descriptor, err := remote.Get(ref, registryopts.Default().WithTransport(registryopts.WrapRetryAfter(remote.DefaultTransport)).Remote()...)
+	descriptor, err := remote.Get(ref, registryopts.Default().WithTransport(registryopts.WrapRetryAfter(registryopts.BaseTransport())).Remote()...)
 	if err != nil {
 		return nil, fmt.Errorf("getting manifest: %w", err)
 	}

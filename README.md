@@ -183,6 +183,16 @@ common --@rules_img//img/settings:registry_gateway=unix:/run/img-gateway.sock
 common --@rules_img//img/settings:registry_push_gateway=https://push-gateway.example.com
 common --@rules_img//img/settings:registry_pull_gateway=https://pull-gateway.example.com
 
+# Talk to registries insecurely: over plain HTTP instead of HTTPS, accepting
+# untrusted TLS certificates. The equivalent of crane's --insecure, meant for local
+# development registries (k3d, kind, `docker run registry:2`) that don't serve
+# HTTPS. Applies to `bazel run` pushes/loads and to the registry-touching build
+# actions. Hosts go-containerregistry already treats as local (localhost:PORT,
+# *.localhost, 127.0.0.1, ::1, RFC1918 addresses) don't need it. Disables transport
+# security for every registry the build talks to -- see
+# docs/insecure-registries.md.
+common --@rules_img//img/settings:insecure=enabled
+
 # [Experimental] Store layers compactly instead of as full tarballs.
 # When enabled, layer rules no longer produce the layer tar as a file output, so
 # layer blobs are never written to (or fetched from) the Bazel remote cache.
@@ -574,6 +584,7 @@ This results in a more complex implementation, but also allows for interesting o
 - [Image Signing Guide](docs/image-signing.md) - Sign pushed images with pluggable signer plugins (Notation, cosign, or your own)
 - [Push Strategies](docs/push-strategies.md) - Push strategies and [push at build time](docs/push-strategies.md#push-at-build-time)
 - [Authenticating Build Actions](docs/authenticating-build-actions.md) - Registry credentials for build-time pull/push, and the OCI distribution gateway
+- [Insecure (Plain-HTTP) Registries](docs/insecure-registries.md) - Push to a local development registry that speaks HTTP or has an untrusted certificate
 - [Compact Stream Representation](docs/compact-stream.md) - On-disk format behind the experimental cache-efficient layers (`experimental_compact_layers`)
 - [Migration Guide from rules_oci](docs/migration-from-rules_oci.md)
 
