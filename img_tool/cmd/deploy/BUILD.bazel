@@ -21,6 +21,7 @@ go_library(
         "//pkg/load",
         "//pkg/ocilayout",
         "//pkg/persistentworker",
+        "//pkg/progress",
         "//pkg/proto/blobcache",
         "//pkg/push",
         "//pkg/registryopts",
@@ -37,6 +38,7 @@ go_library(
 go_test(
     name = "deploy_test",
     srcs = [
+        "progress_test.go",
         "sign_sink_test.go",
         "sink_test.go",
         "sink_vfs_test.go",
@@ -46,6 +48,7 @@ go_test(
         "//pkg/api",
         "//pkg/deployvfs",
         "//pkg/ocilayout",
+        "//pkg/progress",
         "@com_github_google_go_containerregistry//pkg/v1:pkg",
         "@com_github_google_go_containerregistry//pkg/v1/empty",
         "@com_github_google_go_containerregistry//pkg/v1/mutate",

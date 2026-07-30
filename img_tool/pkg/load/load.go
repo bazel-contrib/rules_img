@@ -157,7 +157,7 @@ func storeBlob(ctx context.Context, store containerd.Store, desc ocispec.Descrip
 	if err == nil && info.Digest == desc.Digest && info.Size == desc.Size {
 		// Blob already exists with correct size, nothing to do.
 		// We still print a progress writer for consistency.
-		if err := progress.CompletedWriter(ctx, desc.Size, desc.Digest.Hex()[:12]); err != nil {
+		if err := progress.CompletedWriter(ctx, desc.Size, desc.Digest.String()); err != nil {
 			return fmt.Errorf("creating completed progress writer: %w", err)
 		}
 
@@ -179,7 +179,7 @@ func storeBlob(ctx context.Context, store containerd.Store, desc ocispec.Descrip
 	}
 	defer reader.Close()
 
-	pw, err := progress.Writer(ctx, desc.Size, desc.Digest.Hex()[:12])
+	pw, err := progress.Writer(ctx, desc.Size, desc.Digest.String())
 	if err != nil {
 		return fmt.Errorf("creating progress bar: %w", err)
 	}
@@ -197,14 +197,13 @@ func storeBlob(ctx context.Context, store containerd.Store, desc ocispec.Descrip
 		commitOpts = append(commitOpts, containerd.WithLabels(labels))
 	}
 
-	if err := writer.Commit(ctx, desc.Size, desc.Digest, commitOpts...); err != nil {
-		if containerd.IsAlreadyExists(err) {
-			// Blob was written by another process, that's ok
-			return nil
-		}
+	// An AlreadyExists error means the blob was written by another process
+	// concurrently, which is ok: the content store holds it either way.
+	if err := writer.Commit(ctx, desc.Size, desc.Digest, commitOpts...); err != nil && !containerd.IsAlreadyExists(err) {
 		return fmt.Errorf("committing data: %w", err)
 	}
 
+	progress.Transferred(ctx, desc.Digest.String())
 	return nil
 }
 

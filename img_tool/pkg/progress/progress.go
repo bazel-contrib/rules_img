@@ -5,11 +5,11 @@ import (
 	"errors"
 	"io"
 	"os"
-	"sync"
+	"strings"
 	"time"
 
+	"github.com/google/go-containerregistry/pkg/logs"
 	"github.com/jedib0t/go-pretty/v6/progress"
-	"golang.org/x/term"
 )
 
 type contextKey string
@@ -17,19 +17,29 @@ type contextKey string
 const (
 	writerKey   contextKey = "progressWriter"
 	trackersKey contextKey = "progressTrackers"
+	logVerbKey  contextKey = "progressLogVerb"
 )
 
-// InitProgress creates and starts a progress writer for tracking multiple concurrent operations.
-// Returns a context with the writer attached and a stop function to call when done.
-// Progress bars are only displayed if stderr is a TTY.
+// InitProgress starts progress reporting for multiple concurrent operations.
+// Returns a context to hand to the reporting functions below and a stop
+// function to call when done.
+//
+// doneMessage describes a finished transfer ("pushed", "loaded"): it labels the
+// completed progress bars in ModeBar and is the verb of the per-blob lines in
+// ModeLog.
 //
 // Usage:
 //
-//	ctx, stop := progress.InitProgress(ctx)
+//	ctx, stop := progress.InitProgress(ctx, "pushed")
 //	defer stop()
 func InitProgress(ctx context.Context, doneMessage string) (context.Context, func()) {
-	if !wantProgressBar() {
-		return ctx, func() {} // no-op when not a TTY
+	switch CurrentMode() {
+	case ModeBar:
+		// fall through to the progress bar setup below
+	case ModeLog:
+		return context.WithValue(ctx, logVerbKey, doneMessage), func() {}
+	default:
+		return ctx, func() {} // no-op when progress is not reported
 	}
 
 	pw := progress.NewWriter()
@@ -77,6 +87,16 @@ func trackersFromContext(ctx context.Context) map[string]*progress.Tracker {
 	return nil
 }
 
+// logVerbFromContext retrieves the verb describing a finished transfer
+// ("pushed", "loaded") from the context, as set by InitProgress. It reports
+// false if the context was not derived from an InitProgress context, in which
+// case nothing is reported - just like ModeBar reports nothing without a
+// progress writer in the context.
+func logVerbFromContext(ctx context.Context) (string, bool) {
+	verb, ok := ctx.Value(logVerbKey).(string)
+	return verb, ok
+}
+
 // DeclareTrackers pre-creates progress trackers in the specified order with DeferStart enabled.
 // This allows displaying all trackers in a deterministic order, even before they start.
 //
@@ -109,7 +129,7 @@ func DeclareTrackers(ctx context.Context, names []string, sizes []int64) context
 	trackers := make(map[string]*progress.Tracker)
 	for i, name := range names {
 		tracker := &progress.Tracker{
-			Message:    name,
+			Message:    barLabel(name),
 			Total:      sizes[i],
 			Units:      progress.UnitsBytes,
 			DeferStart: true,
@@ -124,21 +144,24 @@ func DeclareTrackers(ctx context.Context, names []string, sizes []int64) context
 // Writer creates an io.Writer that tracks progress for a single operation.
 // The io.Writer should be used with io.MultiWriter to track progress while writing to a destination.
 //
-// If a pre-declared tracker exists for the given description (via DeclareTrackers), it will be used
-// and started. Otherwise, a new tracker is created and appended dynamically.
+// In ModeBar, a pre-declared tracker for the given description (via
+// DeclareTrackers) is used if one exists, and a new tracker is appended
+// dynamically otherwise. ModeLog doesn't report a transfer while it is in
+// flight; call Transferred once it finished.
 //
-// Returns an error if no progress writer is in the context.
+// Returns an error if progress bars are requested but no progress writer is in the context.
 //
 // Usage:
 //
-//	ctx, stop := progress.InitProgress(ctx, "done")
+//	ctx, stop := progress.InitProgress(ctx, "pushed")
 //	defer stop()
 //
-//	pw, err := progress.Writer(ctx, size, "downloading layer")
+//	pw, err := progress.Writer(ctx, size, digest)
 //	if err != nil { return err }
 //	io.Copy(io.MultiWriter(destFile, pw), srcReader)
+//	progress.Transferred(ctx, digest)
 func Writer(ctx context.Context, size int64, desc string) (io.Writer, error) {
-	if !wantProgressBar() {
+	if CurrentMode() != ModeBar {
 		return io.Discard, nil
 	}
 
@@ -160,7 +183,7 @@ func Writer(ctx context.Context, size int64, desc string) (io.Writer, error) {
 
 	// No pre-declared tracker, create a new one dynamically
 	tracker := &progress.Tracker{
-		Message: desc,
+		Message: barLabel(desc),
 		Total:   size,
 		Units:   progress.UnitsBytes,
 	}
@@ -169,8 +192,34 @@ func Writer(ctx context.Context, size int64, desc string) (io.Writer, error) {
 	return &trackerWriter{tracker: tracker}, nil
 }
 
+// Transferred reports a transfer that finished, once its bytes are committed at
+// the destination: crane's "pushed blob: <desc>" line in ModeLog, with the verb
+// taken from InitProgress's doneMessage ("pushed", "loaded").
+//
+// It is a no-op in ModeBar, where the tracker of the matching Writer completes
+// as the bytes are written.
+func Transferred(ctx context.Context, desc string) {
+	if CurrentMode() != ModeLog {
+		return
+	}
+	if verb, ok := logVerbFromContext(ctx); ok {
+		logs.Progress.Printf("%s blob: %s", verb, desc)
+	}
+}
+
+// CompletedWriter reports an operation that finished without transferring any
+// bytes because the destination already had them: a full progress bar in
+// ModeBar, and crane's "existing blob" line in ModeLog.
 func CompletedWriter(ctx context.Context, size int64, desc string) error {
-	if !wantProgressBar() {
+	switch CurrentMode() {
+	case ModeBar:
+		// fall through to the tracker setup below
+	case ModeLog:
+		if _, ok := logVerbFromContext(ctx); ok {
+			logs.Progress.Printf("existing blob: %s", desc)
+		}
+		return nil
+	default:
 		return nil
 	}
 
@@ -192,7 +241,7 @@ func CompletedWriter(ctx context.Context, size int64, desc string) error {
 
 	// No pre-declared tracker, create a completed one dynamically
 	tracker := &progress.Tracker{
-		Message: desc,
+		Message: barLabel(desc),
 		Total:   size,
 		Units:   progress.UnitsBytes,
 	}
@@ -211,6 +260,27 @@ func (tw *trackerWriter) Write(p []byte) (int, error) {
 	tw.tracker.Increment(int64(n))
 	return n, nil
 }
+
+// barLabel shortens a digest to the first 12 hex characters, which is what the
+// progress bars are labelled with - a full digest would make every line wrap.
+// Descriptions that are not digests are used as they are. The log lines always
+// carry the full digest, like crane's do.
+func barLabel(desc string) string {
+	_, hex, ok := strings.Cut(desc, ":")
+	if !ok || len(hex) <= shortDigestLength {
+		return desc
+	}
+	for _, c := range hex {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return desc
+		}
+	}
+	return hex[:shortDigestLength]
+}
+
+// shortDigestLength is the number of hex characters of a digest shown in a
+// progress bar's label.
+const shortDigestLength = 12
 
 // Indeterminate represents a progress tracker with an initially unknown total.
 // The total can be updated once known using SetTotal, and progress is updated with SetComplete.
@@ -247,6 +317,10 @@ func (i *Indeterminate) Done(err error) {
 // If a progress writer is attached to the context (via InitProgress), it will add a tracker to it.
 // Otherwise, returns a no-op tracker.
 //
+// An aggregate byte counter has no crane-style equivalent, so this is a no-op
+// tracker in ModeLog: the per-blob lines are reported by go-containerregistry
+// and by Writer/CompletedWriter instead.
+//
 // Usage:
 //
 //	ctx, stop := progress.InitProgress(ctx)
@@ -256,8 +330,8 @@ func (i *Indeterminate) Done(err error) {
 //	tracker.SetTotal(totalSize) // once known
 //	tracker.SetComplete(bytesUploaded) // as progress is made
 func NewIndeterminate(ctx context.Context, message string) *Indeterminate {
-	if !wantProgressBar() {
-		return &Indeterminate{} // Return empty struct when not a TTY
+	if CurrentMode() != ModeBar {
+		return &Indeterminate{} // Return empty struct when progress bars are off
 	}
 
 	pw := fromContext(ctx)
@@ -275,18 +349,3 @@ func NewIndeterminate(ctx context.Context, message string) *Indeterminate {
 
 	return &Indeterminate{tracker: tracker}
 }
-
-var noProgressEnvVars = []string{
-	"NO_PROGRESS",
-	"NO_INTERACTIVE",
-	"NO_COLOR",
-}
-
-var wantProgressBar = sync.OnceValue(func() bool {
-	for _, envVar := range noProgressEnvVars {
-		if _, exists := os.LookupEnv(envVar); exists {
-			return false
-		}
-	}
-	return term.IsTerminal(int(os.Stderr.Fd()))
-})

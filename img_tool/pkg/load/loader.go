@@ -193,7 +193,7 @@ func (l *loader) LoadAll(ctx context.Context, ops []api.IndexedLoadDeployOperati
 				blobSizes := make([]int64, len(blobs))
 				for i, blob := range blobs {
 					digest, _ := blob.layer.Digest()
-					blobNames[i] = digest.Hex[:12]
+					blobNames[i] = digest.String()
 					blobSizes[i], err = blob.layer.Size()
 					if err != nil {
 						return nil, fmt.Errorf("getting size of blob %s: %w", digest.String(), err)
