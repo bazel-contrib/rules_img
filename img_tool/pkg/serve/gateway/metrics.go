@@ -56,6 +56,10 @@ const (
 	// attrMaterial names the on-disk material a reload concerned:
 	// "certificate", "ca", or "token".
 	attrMaterial = attribute.Key("oci.gateway.material")
+	// attrEvictionReason says why a cache entry was dropped: "capacity" (it was
+	// the least recently used entry when room was needed) or "expired" (its TTL
+	// had passed).
+	attrEvictionReason = attribute.Key("oci.gateway.cache.eviction.reason")
 	// attrPeer is the peer gateway a forwarder relays to. It is constant for the
 	// life of the process, so it costs no cardinality; it is attached anyway so a
 	// dashboard panel says which hop it is describing.
@@ -74,6 +78,10 @@ const (
 	uploadChunked    = "chunked"
 	uploadMount      = "mount"
 	uploadUnknown    = "unknown"
+
+	// Values of [attrEvictionReason].
+	evictedForCapacity = "capacity"
+	evictedForExpiry   = "expired"
 )
 
 const (
@@ -152,6 +160,11 @@ type metrics struct {
 	// existenceChecks counts HEAD requests by hit/miss, the signal push clients
 	// depend on to skip uploads that already exist upstream.
 	existenceChecks metric.Int64Counter
+	// blobCacheLookups counts the blob existence checks that could have been
+	// answered from the blob existence cache, by whether they were. It is what
+	// says whether the TTL and the memory bound are sized right; the requests it
+	// counts are the subset of existenceChecks that are cacheable at all.
+	blobCacheLookups metric.Int64Counter
 	// errors counts failures by error.type and upstream registry.
 	errors metric.Int64Counter
 
@@ -194,14 +207,14 @@ func (m *metrics) failures() metric.Int64Counter {
 }
 
 // newMetrics creates a serving gateway's instruments from mp (the global provider
-// when mp is nil). rules reports the number of rules in the active policy for the
-// oci.gateway.policy.rules gauge; nil omits that gauge.
+// when mp is nil), plus the asynchronous instruments backed by the callbacks in
+// sources.
 //
 // Instrument creation only fails for invalid names or units, which are compile
 // time constants here; on failure the returned metrics is still fully usable
 // (the API hands out no-op instruments alongside the error) so callers can log
 // and carry on serving.
-func newMetrics(mp metric.MeterProvider, rules func() int64) (*metrics, error) {
+func newMetrics(mp metric.MeterProvider, sources gaugeSources) (*metrics, error) {
 	b := newInstruments(mp)
 	m := b.shared()
 	m.io = b.counter("oci.gateway.io", "By",
@@ -216,6 +229,8 @@ func newMetrics(mp metric.MeterProvider, rules func() int64) (*metrics, error) {
 		"Size of blobs downloaded through the gateway.")
 	m.existenceChecks = b.counter("oci.gateway.existence_checks", "{check}",
 		"HEAD requests for blobs and manifests, by hit or miss upstream.")
+	m.blobCacheLookups = b.counter("oci.gateway.blob_existence_cache.lookups", "{lookup}",
+		"Cacheable blob existence checks, by whether the blob existence cache could answer them.")
 	m.errors = b.counter("oci.gateway.errors", "{error}",
 		"Failures serving or forwarding registry requests, by error type.")
 	m.upstreamDuration = b.seconds("oci.gateway.upstream.duration",
@@ -228,18 +243,64 @@ func newMetrics(mp metric.MeterProvider, rules func() int64) (*metrics, error) {
 		"Policy file reloads, by outcome. A failure means the previous policy is still in force.")
 	m.uploads = newUploadTracker(maxUploadSessions)
 
-	if rules != nil {
+	b.observe(sources)
+	return m, b.err()
+}
+
+// gaugeSources are the callbacks behind a serving gateway's asynchronous
+// instruments: state the process holds rather than events it counts. A nil field
+// omits its instruments.
+type gaugeSources struct {
+	// policyRules reports how many rules the active policy has.
+	policyRules func() int64
+	// blobCache reports the blob existence cache's occupancy and evictions. It is
+	// nil when the cache is disabled, which is how the cache's instruments stay
+	// absent rather than reporting a flat zero.
+	blobCache func() cacheStats
+}
+
+// observe registers the asynchronous instruments described by sources.
+func (b *instruments) observe(sources gaugeSources) {
+	if sources.policyRules != nil {
 		_, err := b.meter.Int64ObservableGauge("oci.gateway.policy.rules",
 			metric.WithUnit("{rule}"),
 			metric.WithDescription("Number of rules in the policy this instance has loaded."),
 			metric.WithInt64Callback(func(_ context.Context, o metric.Int64Observer) error {
-				o.Observe(rules())
+				o.Observe(sources.policyRules())
 				return nil
 			}),
 		)
 		b.track(err)
 	}
-	return m, b.err()
+	if sources.blobCache == nil {
+		return
+	}
+	// One callback for the three, so a scrape reads the cache's counters once and
+	// reports a consistent picture of them.
+	entries, err := b.meter.Int64ObservableGauge("oci.gateway.blob_existence_cache.entries",
+		metric.WithUnit("{entry}"),
+		metric.WithDescription("Blobs the existence cache is currently holding, including any whose TTL has passed but which have not been looked up or evicted since."),
+	)
+	b.track(err)
+	capacity, err := b.meter.Int64ObservableGauge("oci.gateway.blob_existence_cache.capacity",
+		metric.WithUnit("{entry}"),
+		metric.WithDescription("Blobs the existence cache has room for. Entries divided by this is how full it is; the memory behind it is allocated up front, so this does not move."),
+	)
+	b.track(err)
+	evictions, err := b.meter.Int64ObservableCounter("oci.gateway.blob_existence_cache.evictions",
+		metric.WithUnit("{entry}"),
+		metric.WithDescription("Entries the existence cache dropped, by reason. A capacity eviction rate above zero means the memory bound, not the TTL, is deciding how long blobs are remembered."),
+	)
+	b.track(err)
+	_, err = b.meter.RegisterCallback(func(_ context.Context, o metric.Observer) error {
+		stats := sources.blobCache()
+		o.ObserveInt64(entries, stats.entries)
+		o.ObserveInt64(capacity, stats.capacity)
+		o.ObserveInt64(evictions, stats.evictedCapacity, metric.WithAttributes(attrEvictionReason.String(evictedForCapacity)))
+		o.ObserveInt64(evictions, stats.evictedExpired, metric.WithAttributes(attrEvictionReason.String(evictedForExpiry)))
+		return nil
+	}, entries, capacity, evictions)
+	b.track(err)
 }
 
 // newForwardMetrics creates a forwarding gateway's instruments. It deliberately
@@ -487,6 +548,25 @@ func (o *observation) upstreamResponse(ctx context.Context, cls request, status 
 	}
 	if errType := statusErrorType(status); errType != "" {
 		o.fail(ctx, errType)
+	}
+}
+
+// blobCacheLookup records whether a cacheable blob existence check was answered
+// by the blob existence cache.
+//
+// A hit is *also* counted as an existence check that found the blob, which
+// [observation.upstreamResponse] would have done had the request gone upstream.
+// oci.gateway.existence_checks answers "how often was the content already
+// there", and leaving cached answers out of it would turn it into a function of
+// how the cache is configured.
+func (o *observation) blobCacheLookup(ctx context.Context, hit bool) {
+	result := resultMiss
+	if hit {
+		result = resultHit
+	}
+	o.m.blobCacheLookups.Add(ctx, 1, o.attrs(attrResult.String(result)))
+	if hit {
+		o.m.existenceChecks.Add(ctx, 1, o.attrs(attrResult.String(resultHit)))
 	}
 }
 

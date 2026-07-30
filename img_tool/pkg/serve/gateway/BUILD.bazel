@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "classify.go",
         "errclass.go",
+        "existencecache.go",
         "forward.go",
         "gateway.go",
         "metrics.go",
@@ -34,6 +35,8 @@ go_test(
     srcs = [
         "classify_test.go",
         "errclass_test.go",
+        "existencecache_serve_test.go",
+        "existencecache_test.go",
         "forward_test.go",
         "gateway_test.go",
         "h2_test.go",
