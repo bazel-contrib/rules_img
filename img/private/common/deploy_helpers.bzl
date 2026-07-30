@@ -5,8 +5,19 @@ load("//img/private/providers:deploy_info.bzl", "DeployInfo")
 load("//img/private/providers:index_info.bzl", "ImageIndexInfo")
 load("//img/private/providers:load_settings_info.bzl", "LoadSettingsInfo")
 load("//img/private/providers:manifest_info.bzl", "ImageManifestInfo")
+load("//img/private/providers:push_at_build_time_settings_info.bzl", "PushAtBuildTimeSettingsInfo")
 load("//img/private/providers:push_settings_info.bzl", "PushSettingsInfo")
 load("//img/private/providers:signing_config_info.bzl", "SigningConfigInfo")
+
+# Sentinel default for the per-target `push_at_build_time_blob_repository` and
+# `push_at_build_time_manifest_repository` string attributes. Left at this
+# sentinel, the attribute defers to the corresponding global setting; set to any
+# other string (including "") the value is used verbatim. This mirrors the
+# INHERIT_FROM_BASE sentinel used by image_manifest's entrypoint/cmd/etc.: it
+# lets the rule tell "untouched, use the global default" apart from "explicitly
+# set to empty (no staging repository)". The value is a human-readable
+# placeholder chosen to be extremely unlikely to collide with a real repository.
+USE_GLOBAL_SETTING = "<use global setting>"
 
 def get_tags(ctx):
     """Get the list of tags from the context, validating mutual exclusivity.
@@ -212,6 +223,85 @@ def resolve_daemon(ctx):
     if daemon == "auto":
         daemon = load_settings.daemon
     return daemon
+
+def resolve_push_at_build_time(ctx):
+    """Resolve the effective push-at-build-time settings for a push target.
+
+    Combines the per-target attributes (shared by `image_push` and
+    `image_push_spec` via COMMON_PUSH_ATTRS) with the global settings, so each
+    attribute either takes an explicit per-target value or defers to its global
+    flag:
+
+    - `push_at_build_time` / `push_at_build_time_content` / `forbid_layer_push`:
+      "auto" defers to the global setting.
+    - `push_at_build_time_blob_repository` / `push_at_build_time_manifest_repository`:
+      the USE_GLOBAL_SETTING sentinel defers to the global setting; any other
+      string (including "") is used verbatim.
+    - `push_at_build_time_exec_properties`: used verbatim (no global fallback).
+    - gateway endpoints: always global (there is no per-target attribute).
+
+    Args:
+        ctx: Rule context with the push-at-build-time attributes, `_push_settings`
+            and `_push_at_build_time_settings`.
+
+    Returns:
+        A struct with fields: mode, content, blob_repository, manifest_repository,
+        forbid_layer_push (bool), exec_properties (dict), gateway, push_gateway,
+        pull_gateway.
+    """
+    global_settings = ctx.attr._push_at_build_time_settings[PushAtBuildTimeSettingsInfo]
+    push_settings = ctx.attr._push_settings[PushSettingsInfo]
+
+    mode = ctx.attr.push_at_build_time
+    if mode == "auto":
+        mode = global_settings.mode
+
+    content = ctx.attr.push_at_build_time_content
+    if content == "auto":
+        content = global_settings.content
+
+    blob_repository = ctx.attr.push_at_build_time_blob_repository
+    if blob_repository == USE_GLOBAL_SETTING:
+        blob_repository = push_settings.blob_repository
+
+    manifest_repository = ctx.attr.push_at_build_time_manifest_repository
+    if manifest_repository == USE_GLOBAL_SETTING:
+        manifest_repository = global_settings.manifest_repository
+
+    forbid_layer_push = ctx.attr.forbid_layer_push
+    if forbid_layer_push == "auto":
+        forbid_layer_push = "enabled" if push_settings.forbid_layer_push else "disabled"
+
+    return struct(
+        mode = mode,
+        content = content,
+        blob_repository = blob_repository,
+        manifest_repository = manifest_repository,
+        forbid_layer_push = forbid_layer_push == "enabled",
+        exec_properties = ctx.attr.push_at_build_time_exec_properties,
+        gateway = global_settings.gateway,
+        push_gateway = global_settings.push_gateway,
+        pull_gateway = global_settings.pull_gateway,
+    )
+
+def cross_mount_blob_repository(mode, blob_repository):
+    """The blob staging repository to record in the deploy manifest, or "".
+
+    The `blob_repository` recorded in a push operation's deploy manifest drives
+    blob cross-mounting at `img deploy` (`bazel run`) time. Only record it when
+    push at build time actually stages the blobs (mode "enabled"/"best_effort");
+    otherwise a deploy would try to cross-mount layers from a staging repository
+    nothing was ever pushed to. So a non-empty blob_repository combined with a
+    "disabled" push_at_build_time yields "" (no cross-mount attempt).
+
+    Args:
+        mode: Resolved push-at-build-time mode string.
+        blob_repository: Resolved staging repository (may be "").
+
+    Returns:
+        blob_repository when push at build time is active, else "".
+    """
+    return blob_repository if mode in ("best_effort", "enabled") else ""
 
 def resolve_signing(ctx):
     """Resolve whether and how this push target is signed.

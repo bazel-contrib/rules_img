@@ -8,7 +8,7 @@ load("//img/private:layer_path_hints.bzl", "layer_hints_for_deploy_metadata")
 load("//img/private:soci_deploy.bzl", "soci_deploy_children")
 load("//img/private:stamp.bzl", "expand_or_write")
 load("//img/private/common:build.bzl", "TOOLCHAIN")
-load("//img/private/common:deploy_helpers.bzl", "content_tracking_json_vars")
+load("//img/private/common:deploy_helpers.bzl", "content_tracking_json_vars", "cross_mount_blob_repository")
 load("//img/private/providers:deploy_info.bzl", "DeployInfo")
 load("//img/private/providers:load_config_info.bzl", "LoadConfigInfo")
 load("//img/private/providers:push_config_info.bzl", "PushConfigInfo")
@@ -475,7 +475,8 @@ def build_time_push_actions(
         gateway,
         push_gateway,
         pull_gateway,
-        pull_info):
+        pull_info,
+        exec_requirements):
     """Create the PushImage validation actions for one push operation.
 
     Emits one action per blob (mnemonic PushImage) that pushes a single blob to
@@ -517,6 +518,8 @@ def build_time_push_actions(
       push_gateway: push-specific registry gateway override, or None.
       pull_gateway: pull-specific registry gateway override, or None.
       pull_info: PullInfo used when computing the manifest push metadata.
+      exec_requirements: dict forwarded as the execution_requirements of every
+        emitted PushImage action (e.g. {"requires-network": "1"}).
 
     Returns:
       List of Files to place in the `_validation` output group: the per-layer and
@@ -525,7 +528,6 @@ def build_time_push_actions(
     """
     img_toolchain_info = ctx.toolchains[TOOLCHAIN].imgtoolchaininfo
     tool = img_toolchain_info.tool_exe
-    exec_requirements = {"requires-network": "1"}
 
     # Route registry requests through the configured gateway(s), if any. These
     # actions both push (upload) and pull (shallow base layers), so all three
@@ -715,12 +717,6 @@ def process_deploy_specs(
         push_specs,
         load_specs,
         allow_manifest_tags,
-        push_at_build_time_mode = "disabled",
-        push_at_build_time_content = "blobs_and_manifests",
-        push_at_build_time_manifest_repository = "",
-        push_at_build_time_gateway = "",
-        push_at_build_time_push_gateway = "",
-        push_at_build_time_pull_gateway = "",
         sparse_layout = None):
     """Process push_specs and load_specs to produce a DeployInfo provider.
 
@@ -733,16 +729,14 @@ def process_deploy_specs(
         push_specs: List of targets providing PushConfigInfo.
         load_specs: List of targets providing LoadConfigInfo.
         allow_manifest_tags: If False, fail when a push spec has manifest_tags set.
-        push_at_build_time_mode: One of 'disabled', 'best_effort', 'enabled'. When
-            not 'disabled' and push_specs are present, PushImage validation actions
-            are emitted for each push spec.
-        push_at_build_time_content: One of 'blobs', 'blobs_and_manifests'.
-        push_at_build_time_manifest_repository: Repository the build-time manifest push (content='blobs_and_manifests') uploads manifest(s)/index and config to instead of the operation's own repository, or ''. Does not affect blob cross-mounting.
-        push_at_build_time_gateway: Shared registry gateway endpoint (IMG_REGISTRY_GATEWAY) for the build-time push actions, or ''.
-        push_at_build_time_push_gateway: Push registry gateway endpoint (IMG_REGISTRY_PUSH_GATEWAY) for the build-time push actions, or ''.
-        push_at_build_time_pull_gateway: Pull registry gateway endpoint (IMG_REGISTRY_PULL_GATEWAY) for the build-time push actions, or ''.
         sparse_layout: The image's sparse OCI layout tree artifact (required when
             push_at_build_time is active; supplies manifest(s) + config to the push).
+
+    Each push spec carries its own resolved push-at-build-time configuration
+    (mode, content, blob/manifest repository, exec properties, gateways) in its
+    PushConfigInfo. When a spec's mode is not 'disabled', PushImage validation
+    actions are emitted for it, and its blob staging repository is recorded in the
+    deploy manifest for cross-mounting at `bazel run` time.
 
     Returns:
         Tuple of (DeployInfo or None, validation_outputs). validation_outputs is a
@@ -826,15 +820,18 @@ def process_deploy_specs(
             destination_file = push_config.destination_file,
             output_prefix = "{}.push_deploy.{}".format(ctx.label.name, push_idx),
             signing = push_config.signing,
-            blob_repository = push_config.blob_repository,
+            # Only record the staging repository for cross-mounting when this spec
+            # actually pushes at build time; otherwise a deploy would try to mount
+            # from a repository nothing was staged to.
+            blob_repository = cross_mount_blob_repository(push_config.push_at_build_time_mode, push_config.blob_repository),
             forbid_layer_push = push_config.forbid_layer_push,
         )
         deploy_infos.append(struct(metadata = deploy_metadata, layer_hints = layer_hints))
         if push_config.signing != None:
             sign_config_infos.append(push_config.signing.config_info)
 
-        # Push at build time via PushImage validation actions.
-        if push_at_build_time_mode in ("best_effort", "enabled"):
+        # Push at build time via PushImage validation actions, per push spec.
+        if push_config.push_at_build_time_mode in ("best_effort", "enabled"):
             validation_outputs.extend(build_time_push_actions(
                 ctx,
                 push_idx = push_idx,
@@ -842,14 +839,15 @@ def process_deploy_specs(
                 manifest_info = manifest_info,
                 index_info = index_info,
                 sparse_layout = sparse_layout,
-                mode = push_at_build_time_mode,
-                content = push_at_build_time_content,
+                mode = push_config.push_at_build_time_mode,
+                content = push_config.push_at_build_time_content,
                 blob_repository = push_config.blob_repository,
-                manifest_repository = push_at_build_time_manifest_repository,
-                gateway = push_at_build_time_gateway,
-                push_gateway = push_at_build_time_push_gateway,
-                pull_gateway = push_at_build_time_pull_gateway,
+                manifest_repository = push_config.push_at_build_time_manifest_repository,
+                gateway = push_config.push_at_build_time_gateway,
+                push_gateway = push_config.push_at_build_time_push_gateway,
+                pull_gateway = push_config.push_at_build_time_pull_gateway,
                 pull_info = pull_info,
+                exec_requirements = push_config.push_at_build_time_exec_properties,
             ))
 
     for load_idx, deployment in enumerate(load_specs):

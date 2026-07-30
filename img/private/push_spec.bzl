@@ -2,7 +2,7 @@
 
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("//img/private/common:deploy_attrs.bzl", "COMMON_PUSH_ATTRS")
-load("//img/private/common:deploy_helpers.bzl", "extract_cross_mount_from", "extract_referrers", "get_tags", "resolve_push_registry", "resolve_push_strategy", "resolve_signing")
+load("//img/private/common:deploy_helpers.bzl", "extract_cross_mount_from", "extract_referrers", "get_tags", "resolve_push_at_build_time", "resolve_push_registry", "resolve_push_strategy", "resolve_signing")
 load("//img/private/common:transitions.bzl", "reset_platform_transition")
 load("//img/private/providers:push_config_info.bzl", "PushConfigInfo")
 load("//img/private/providers:push_settings_info.bzl", "PushSettingsInfo")
@@ -12,6 +12,7 @@ def _image_push_spec_impl(ctx):
     """Implementation of the push spec rule."""
     registry = resolve_push_registry(ctx)
     strategy = resolve_push_strategy(ctx)
+    pbt = resolve_push_at_build_time(ctx)
 
     build_settings = {}
     for name, target in ctx.attr.build_settings.items():
@@ -33,8 +34,15 @@ def _image_push_spec_impl(ctx):
         stamp_settings = ctx.attr._stamp_settings[StampSettingInfo],
         tracks_content = ctx.attr.tracks_content,
         signing = resolve_signing(ctx),
-        blob_repository = ctx.attr._push_settings[PushSettingsInfo].blob_repository,
-        forbid_layer_push = ctx.attr._push_settings[PushSettingsInfo].forbid_layer_push,
+        blob_repository = pbt.blob_repository,
+        forbid_layer_push = pbt.forbid_layer_push,
+        push_at_build_time_mode = pbt.mode,
+        push_at_build_time_content = pbt.content,
+        push_at_build_time_manifest_repository = pbt.manifest_repository,
+        push_at_build_time_exec_properties = pbt.exec_properties,
+        push_at_build_time_gateway = pbt.gateway,
+        push_at_build_time_push_gateway = pbt.push_gateway,
+        push_at_build_time_pull_gateway = pbt.pull_gateway,
     )]
 
 image_push_spec = rule(
