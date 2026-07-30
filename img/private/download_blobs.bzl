@@ -43,6 +43,11 @@ def _download_blob(ctx, output):
     if pull_gateway:
         env["IMG_REGISTRY_PULL_GATEWAY"] = pull_gateway
 
+    # Address the registry over plain HTTP (and accept untrusted certificates)
+    # when asked to, like the img tool's global --insecure flag.
+    if ctx.attr._insecure[BuildSettingInfo].value == "enabled":
+        env["IMG_INSECURE"] = "1"
+
     ctx.actions.run(
         outputs = [output],
         executable = img_toolchain_info.tool_exe,
@@ -112,6 +117,10 @@ If omitted, this falls back to `//img/settings:docker_config_path`.""",
         ),
         "_registry_pull_gateway": attr.label(
             default = Label("//img/settings:registry_pull_gateway"),
+            providers = [BuildSettingInfo],
+        ),
+        "_insecure": attr.label(
+            default = Label("//img/settings:insecure"),
             providers = [BuildSettingInfo],
         ),
     },

@@ -1,5 +1,5 @@
 load("@bazel_skylib//rules:build_test.bzl", "build_test")
-load("@rules_go//go:def.bzl", "go_binary", "go_library")
+load("@rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
 
 go_library(
     name = "img_lib",
@@ -33,6 +33,7 @@ go_library(
         "//cmd/sparseocilayout",
         "//cmd/syncocirefgraph",
         "//cmd/validate",
+        "//pkg/registryopts",
         "@com_github_google_go_containerregistry//pkg/logs",
     ],
 )
@@ -75,4 +76,11 @@ platform_tuples = [
 build_test(
     name = "test",
     targets = [":img"],
+)
+
+go_test(
+    name = "img_test",
+    srcs = ["img_test.go"],
+    embed = [":img_lib"],
+    deps = ["//pkg/registryopts"],
 )

@@ -121,7 +121,7 @@ func DownloadBlobProcess(ctx context.Context, args []string) {
 }
 
 func downloadFromRegistry(registry, repository, digest, outputPath string) (retErr error) {
-	ref, err := name.NewDigest(fmt.Sprintf("%s/%s@%s", registry, repository, digest))
+	ref, err := name.NewDigest(fmt.Sprintf("%s/%s@%s", registry, repository, digest), registryopts.NameOptions()...)
 	if err != nil {
 		return fmt.Errorf("creating blob reference: %w", err)
 	}

@@ -30,6 +30,7 @@ FIELDS = dict(
     push_at_build_time_gateway = "Shared OCI distribution gateway endpoint for the build-time push actions, or ''.",
     push_at_build_time_push_gateway = "Push OCI distribution gateway endpoint for the build-time push actions, or ''.",
     push_at_build_time_pull_gateway = "Pull OCI distribution gateway endpoint for the build-time push actions, or ''.",
+    insecure = "Bool: when True, the build-time push actions address registries over plain HTTP and accept untrusted TLS certificates (IMG_INSECURE).",
 )
 
 PushConfigInfo = provider(

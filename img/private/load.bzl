@@ -187,9 +187,16 @@ def _image_load_impl(ctx):
         "IMG_CREDENTIAL_HELPER_OCI_REGISTRY",
         "IMG_CREDENTIAL_HELPER_REMOTE_CACHE",
         "IMG_AUTH_DEBUG",
+        "IMG_INSECURE",
         "DOCKER_CONFIG",
         "LOADER_BINARY",
     ]
+
+    # Insecure registry access (plain HTTP, untrusted certificates) for the base
+    # image reads a lazy load performs. Only set when the global flag asks for it,
+    # so IMG_INSECURE from the environment keeps working when it doesn't.
+    if ctx.attr._load_settings[LoadSettingsInfo].insecure:
+        environment["IMG_INSECURE"] = "1"
 
     # Add REGISTRY_AUTH_FILE if docker_config_path is set
     docker_config_path = ctx.attr._docker_config_path[BuildSettingInfo].value

@@ -13,17 +13,27 @@
 //
 // Because go-cr applies options in order (last wins), any option added via
 // With/WithJobs/WithTransport overrides the corresponding default.
+//
+// It also holds the process-wide insecure-registry switch (the global --insecure
+// flag / IMG_INSECURE). Insecure mode has two halves, both of which a caller
+// must honor: the transport built here skips TLS verification, and references
+// must be parsed with [NameOptions] so the registry resolves to http:// instead
+// of https://.
 package registryopts
 
 import (
 	"bytes"
+	"crypto/tls"
 	"io"
 	"net/http"
 	"os"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
+	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/auth/registry"
@@ -46,6 +56,67 @@ const (
 	// server's Retry-After header.
 	EnvRetryMaxDelay = "IMG_REGISTRY_RETRY_MAX_DELAY"
 )
+
+// EnvInsecure enables insecure registry access for every registry operation,
+// exactly like the global --insecure flag: references address their registry over
+// plain HTTP and TLS certificates are not verified. Any non-empty value other
+// than "0"/"false" enables it, so both IMG_INSECURE=1 and IMG_INSECURE=true work
+// and an empty value (as set by a Bazel RunEnvironmentInfo default) leaves it
+// disabled.
+const EnvInsecure = "IMG_INSECURE"
+
+// insecure is the process-wide insecure-registry switch. It is initialized from
+// EnvInsecure and can be overridden by [SetInsecure] (the global --insecure
+// flag). It is read from every goroutine that builds a reference or a transport,
+// hence the atomic.
+var insecure atomic.Bool
+
+func init() {
+	insecure.Store(insecureFromEnv())
+}
+
+// SetInsecure enables or disables insecure registry access for the rest of the
+// process. It is called by the global --insecure flag before any subcommand runs
+// and overrides EnvInsecure.
+func SetInsecure(enabled bool) {
+	insecure.Store(enabled)
+}
+
+// Insecure reports whether registries are addressed insecurely: over plain HTTP
+// and without verifying TLS certificates.
+func Insecure() bool {
+	return insecure.Load()
+}
+
+// insecureFromEnv reports whether EnvInsecure asks for insecure registry access.
+func insecureFromEnv() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(EnvInsecure))) {
+	case "", "0", "false":
+		return false
+	default:
+		return true
+	}
+}
+
+// NameOptions returns the go-cr name-parsing options that every registry
+// reference must be parsed with, appended to the given ones: in insecure mode
+// name.Insecure, which makes the reference's registry resolve to http:// instead
+// of https://. Without it, go-cr would still speak HTTPS to a plain-HTTP
+// registry (unless the host happens to look local to go-cr, e.g. "localhost:5000"),
+// which fails with "server gave HTTP response to HTTPS client".
+//
+// Pass it at every site that turns a registry/repository string into a
+// name.Reference:
+//
+//	ref, err := name.NewTag(reg+"/"+repo+":"+tag, registryopts.NameOptions()...)
+func NameOptions(opts ...name.Option) []name.Option {
+	if !Insecure() {
+		return opts
+	}
+	all := make([]name.Option, 0, len(opts)+1)
+	all = append(all, opts...)
+	return append(all, name.Insecure)
+}
 
 // DefaultJobs is the default registry concurrency (concurrent manifest pushes,
 // and the per-pusher concurrent blob transfers via remote.WithJobs). It matches
@@ -74,15 +145,22 @@ type Options struct {
 }
 
 // Default returns the transport-independent enforced defaults: multi-keychain
-// auth, retry backoff, and default concurrency. Callers routing through the
-// gateway should use [Push]/[Pull]; callers with a bespoke transport (caching,
-// redirect, ...) start here and add [Options.WithTransport].
+// auth, retry backoff, and default concurrency. In insecure mode it also installs
+// [BaseTransport] so that untrusted TLS certificates are accepted; callers that
+// override the transport must build theirs on top of [BaseTransport] to keep that
+// property. Callers routing through the gateway should use [Push]/[Pull]; callers
+// with a bespoke transport (caching, redirect, ...) start here and add
+// [Options.WithTransport].
 func Default() *Options {
-	return &Options{opts: []remote.Option{
+	opts := []remote.Option{
 		registry.WithAuthFromMultiKeychain(),
 		RetryBackoffOption(),
 		remote.WithJobs(DefaultJobs),
-	}}
+	}
+	if Insecure() {
+		opts = append(opts, remote.WithTransport(BaseTransport()))
+	}
+	return &Options{opts: opts}
 }
 
 // Push returns the enforced defaults for push (write) operations, including a
@@ -147,12 +225,43 @@ func (o *Options) Remote() []remote.Option {
 // one transport across several pushers (e.g. `img deploy`) can build it once
 // here and pass it to [Options.WithTransport].
 func Transport(mode gateway.Mode) (http.RoundTripper, error) {
-	base, err := gateway.WrapTransport(remote.DefaultTransport, mode)
+	base, err := gateway.WrapTransport(BaseTransport(), mode)
 	if err != nil {
 		return nil, err
 	}
 	return WrapRetryAfter(base), nil
 }
+
+// BaseTransport returns the transport every registry request starts from:
+// go-cr's remote.DefaultTransport, or -- in insecure mode -- a clone of it that
+// accepts untrusted (e.g. self-signed or expired) TLS certificates. This mirrors
+// what crane's --insecure does to its default transport. Callers that build a
+// bespoke transport (caching, gateway routing, ...) should wrap this rather than
+// remote.DefaultTransport so insecure mode keeps working.
+//
+// Like remote.DefaultTransport, the returned transport is shared, so all callers
+// keep using one connection pool.
+func BaseTransport() http.RoundTripper {
+	if !Insecure() {
+		return remote.DefaultTransport
+	}
+	return insecureTransport()
+}
+
+// insecureTransport is the shared TLS-verification-skipping clone of
+// remote.DefaultTransport, built at most once. remote.DefaultTransport itself is
+// never mutated: it is shared with every other go-cr user in the process.
+var insecureTransport = sync.OnceValue(func() http.RoundTripper {
+	base, ok := remote.DefaultTransport.(*http.Transport)
+	if !ok {
+		return remote.DefaultTransport
+	}
+	clone := base.Clone()
+	clone.TLSClientConfig = &tls.Config{
+		InsecureSkipVerify: true, //nolint:gosec // requested via --insecure / IMG_INSECURE
+	}
+	return clone
+})
 
 // RetryBackoff returns the exponential backoff policy used for registry
 // operations. It deliberately replaces go-cr's short default (3 attempts over

@@ -349,7 +349,7 @@ func (h *deployWorkerHandler) registryTagOps(ctx context.Context, vfs *deployvfs
 			return nil, fmt.Errorf("locating manifest %s for registry_tag: %w", op.Root.Digest, err)
 		}
 		for _, tag := range op.Tags {
-			ref, err := name.NewTag(baseRef + ":" + tag)
+			ref, err := name.NewTag(baseRef+":"+tag, registryopts.NameOptions()...)
 			if err != nil {
 				return nil, fmt.Errorf("creating registry_tag ref %q: %w", tag, err)
 			}
@@ -478,6 +478,14 @@ func parseWorkerArgs(args []string) (*workerOpts, error) {
 				return nil, fmt.Errorf("--sink %q may only be set on the img deploy command line, not in a work request", value)
 			}
 			opts.sink = value
+		case key == "--insecure":
+			// The worker builds its transports and pusher once, at startup, so
+			// insecure mode cannot be turned on per work request. Reject it
+			// instead of silently pushing to https:// after the user asked for
+			// plain HTTP.
+			if !registryopts.Insecure() {
+				return nil, fmt.Errorf("--insecure must be passed when starting the img deploy worker (or set %s=1); it cannot be enabled per work request", registryopts.EnvInsecure)
+			}
 		}
 	}
 

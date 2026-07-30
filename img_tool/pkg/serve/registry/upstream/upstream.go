@@ -26,12 +26,12 @@ func New(registryURL string) *UpstreamBlobHandler {
 }
 
 func (h *UpstreamBlobHandler) Get(ctx context.Context, repo string, hash registryv1.Hash) (io.ReadCloser, error) {
-	ref, err := name.NewDigest(fmt.Sprintf("%s/%s@%s", h.registryURL, repo, hash.String()))
+	ref, err := name.NewDigest(fmt.Sprintf("%s/%s@%s", h.registryURL, repo, hash.String()), registryopts.NameOptions()...)
 	if err != nil {
 		return nil, fmt.Errorf("creating blob reference: %w", err)
 	}
 	transport := &redirectHandler{
-		underlying: remote.DefaultTransport,
+		underlying: registryopts.BaseTransport(),
 	}
 	layer, err := remote.Layer(ref, registryopts.Default().WithTransport(transport).Remote()...)
 	if err != nil {
@@ -52,13 +52,13 @@ func (h *UpstreamBlobHandler) Get(ctx context.Context, repo string, hash registr
 }
 
 func (h *UpstreamBlobHandler) Stat(ctx context.Context, repo string, hash registryv1.Hash) (int64, error) {
-	ref, err := name.NewDigest(fmt.Sprintf("%s/%s@%s", h.registryURL, repo, hash.String()))
+	ref, err := name.NewDigest(fmt.Sprintf("%s/%s@%s", h.registryURL, repo, hash.String()), registryopts.NameOptions()...)
 	if err != nil {
 		return 0, fmt.Errorf("creating blob reference: %w", err)
 	}
 	transport := &redirectHandler{
 		hash:       hash,
-		underlying: remote.DefaultTransport,
+		underlying: registryopts.BaseTransport(),
 	}
 	layer, err := remote.Layer(ref, registryopts.Default().WithTransport(transport).Remote()...)
 	if err != nil {

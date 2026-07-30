@@ -214,16 +214,16 @@ func (s *Syncer) commitRegistryTag(ctx context.Context, op api.IndexedRegistryTa
 	}
 
 	baseReference := fmt.Sprintf("%s/%s", op.Registry, op.Repository)
-	ref, err := name.NewRepository(baseReference)
+	ref, err := name.NewRepository(baseReference, registryopts.NameOptions()...)
 	if err != nil {
 		return fmt.Errorf("invalid repository %s: %w", baseReference, err)
 	}
 	remoteOpts := registryopts.Default().
-		WithTransport(registryopts.WrapRetryAfter(remote.DefaultTransport)).
+		WithTransport(registryopts.WrapRetryAfter(registryopts.BaseTransport())).
 		With(remote.WithContext(ctx)).
 		Remote()
 
-	digestRef, err := name.ParseReference(ref.String() + "@" + op.Root.Digest)
+	digestRef, err := name.ParseReference(ref.String()+"@"+op.Root.Digest, registryopts.NameOptions()...)
 	if err != nil {
 		return fmt.Errorf("failed to parse digest reference: %w", err)
 	}
@@ -263,13 +263,13 @@ func (s *Syncer) commitOne(ctx context.Context, pushOp api.IndexedPushDeployOper
 		pushOp.PushTarget.Registry,
 		pushOp.PushTarget.Repository)
 
-	ref, err := name.NewRepository(baseReference)
+	ref, err := name.NewRepository(baseReference, registryopts.NameOptions()...)
 	if err != nil {
 		return fmt.Errorf("invalid repository %s: %w", baseReference, err)
 	}
 
 	remoteOpts := registryopts.Default().
-		WithTransport(registryopts.WrapRetryAfter(remote.DefaultTransport)).
+		WithTransport(registryopts.WrapRetryAfter(registryopts.BaseTransport())).
 		With(remote.WithContext(ctx)).
 		Remote()
 
@@ -305,7 +305,7 @@ func (s *Syncer) commitOne(ctx context.Context, pushOp api.IndexedPushDeployOper
 		return nil
 	}
 
-	digestRef, err := name.ParseReference(ref.String() + "@" + rootBlob.Digest)
+	digestRef, err := name.ParseReference(ref.String()+"@"+rootBlob.Digest, registryopts.NameOptions()...)
 	if err != nil {
 		return fmt.Errorf("failed to parse digest reference: %w", err)
 	}
@@ -1120,12 +1120,12 @@ func (l *remoteStreamingLayer) Compressed() (io.ReadCloser, error) {
 	}
 	var attempts []string
 	for _, source := range l.sources {
-		ref, err := name.NewDigest(fmt.Sprintf("%s/%s@%s", source.Registry, source.Repository, l.digest))
+		ref, err := name.NewDigest(fmt.Sprintf("%s/%s@%s", source.Registry, source.Repository, l.digest), registryopts.NameOptions()...)
 		if err != nil {
 			attempts = append(attempts, fmt.Sprintf("%s/%s: %v", source.Registry, source.Repository, err))
 			continue
 		}
-		layer, err := remote.Layer(ref, registryopts.Default().WithTransport(registryopts.WrapRetryAfter(remote.DefaultTransport)).Remote()...)
+		layer, err := remote.Layer(ref, registryopts.Default().WithTransport(registryopts.WrapRetryAfter(registryopts.BaseTransport())).Remote()...)
 		if err != nil {
 			attempts = append(attempts, fmt.Sprintf("%s: %v", ref, err))
 			continue

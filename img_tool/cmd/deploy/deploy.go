@@ -494,7 +494,7 @@ func applyRegistryTagOperations(ctx context.Context, vfs *deployvfs.VFS, pusher 
 			return nil, fmt.Errorf("locating manifest %s for registry_tag on %s: %w", op.Root.Digest, baseRef, err)
 		}
 		for _, tag := range op.Tags {
-			ref, err := name.NewTag(baseRef + ":" + tag)
+			ref, err := name.NewTag(baseRef+":"+tag, registryopts.NameOptions()...)
 			if err != nil {
 				return nil, fmt.Errorf("creating registry_tag ref %q: %w", tag, err)
 			}
@@ -548,7 +548,7 @@ func preUploadStagingBlobs(ctx context.Context, vfs *deployvfs.VFS, ops []api.In
 		if overrideRegistry != "" {
 			reg = overrideRegistry
 		}
-		repo, err := name.NewRepository(reg + "/" + blobRepository)
+		repo, err := name.NewRepository(reg+"/"+blobRepository, registryopts.NameOptions()...)
 		if err != nil {
 			return fmt.Errorf("parsing staging repository %s/%s: %w", reg, blobRepository, err)
 		}

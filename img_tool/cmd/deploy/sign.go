@@ -88,7 +88,7 @@ func applySignOperations(ctx context.Context, pushOps []api.IndexedPushDeployOpe
 	}
 	emit := func(ctx context.Context, op api.IndexedPushDeployOperation, subject api.Descriptor, imgs []registryv1.Image) error {
 		reg, repo := opRegistry(op, opts), opRepository(op, opts)
-		repository, err := name.NewRepository(reg + "/" + repo)
+		repository, err := name.NewRepository(reg+"/"+repo, registryopts.NameOptions()...)
 		if err != nil {
 			return fmt.Errorf("parsing repository %q: %w", reg+"/"+repo, err)
 		}
