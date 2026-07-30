@@ -38,6 +38,11 @@ type deployWorkerHandler struct {
 }
 
 func newDeployWorkerHandler(jobs int, sinkSpec string) (*deployWorkerHandler, error) {
+	// --jobs is the ceiling on requests in flight to the destination registry.
+	// The worker handles several work requests at once, all sharing the pusher
+	// and transport built here, so the limit is process-wide by construction.
+	registryopts.LimitConcurrencyToJobs(jobs)
+
 	// Configure optional registry gateways. When IMG_REGISTRY_*_GATEWAY is set,
 	// push and base-image (pull) requests are routed through the gateway; when
 	// unset, WrapTransport returns the base transport unchanged.
@@ -198,6 +203,10 @@ func (h *deployWorkerHandler) processRequest(ctx context.Context, req persistent
 			return "", fmt.Errorf("load: %w", err)
 		}
 	}
+
+	// Registry counters are process-wide and this worker is long-lived, so the
+	// summary covers every request since startup, not just this request.
+	registryopts.LogConcurrencySummary(os.Stderr)
 
 	return output.String(), nil
 }

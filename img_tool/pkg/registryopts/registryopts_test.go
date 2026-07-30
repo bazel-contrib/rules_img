@@ -98,8 +98,22 @@ func TestTransportBuilds(t *testing.T) {
 	if rt == nil {
 		t.Fatalf("Transport returned nil")
 	}
-	if _, ok := rt.(*retryAfterTransport); !ok {
+	paced, ok := rt.(*retryAfterTransport)
+	if !ok {
 		t.Fatalf("Transport = %T, want *retryAfterTransport", rt)
+	}
+	// Concurrency accounting sits directly below the Retry-After pacing, so a
+	// rate-limit wait does not occupy a slot.
+	if _, ok := paced.inner.(*concurrencyTransport); !ok {
+		t.Fatalf("Transport inner = %T, want *concurrencyTransport", paced.inner)
+	}
+
+	direct, ok := DirectTransport().(*retryAfterTransport)
+	if !ok {
+		t.Fatalf("DirectTransport = %T, want *retryAfterTransport", DirectTransport())
+	}
+	if _, ok := direct.inner.(*concurrencyTransport); !ok {
+		t.Fatalf("DirectTransport inner = %T, want *concurrencyTransport", direct.inner)
 	}
 }
 

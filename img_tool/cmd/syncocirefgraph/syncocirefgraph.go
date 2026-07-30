@@ -325,7 +325,7 @@ func downloadManifest(registry, repository, digest string) ([]byte, error) {
 		return nil, fmt.Errorf("creating manifest reference: %w", err)
 	}
 
-	descriptor, err := remote.Get(ref, registryopts.Default().WithTransport(registryopts.WrapRetryAfter(registryopts.BaseTransport())).Remote()...)
+	descriptor, err := remote.Get(ref, registryopts.Default().WithTransport(registryopts.DirectTransport()).Remote()...)
 	if err != nil {
 		return nil, fmt.Errorf("getting manifest: %w", err)
 	}

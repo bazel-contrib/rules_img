@@ -99,7 +99,7 @@ func DeployProcess(ctx context.Context, args []string) {
 	flagSet.StringVar(&platforms, "platform", "", "Comma-separated list of platforms to load (e.g., linux/amd64). If not set, loads the platform closest to the host (or the single available platform). Use 'all' to load the full multi-platform index. Doesn't affect push, only load.")
 	flagSet.Var(&ociLayouts, "oci-layout", "Path to an OCI layout directory, sparse or standard (can be used multiple times)")
 	flagSet.Var(&explicitLayers, "layer", "Layer as digest=path or a bare path (can be used multiple times). The file may be a raw compressed layer blob or a compact stream (.cstream), auto-detected. For a bare path: a raw blob is hashed to derive its digest; a .cstream must embed its compressed digest.")
-	flagSet.IntVar(&jobs, "jobs", defaultDeployJobs(), "Maximum number of parallel push operations (defaults to GOMAXPROCS)")
+	flagSet.IntVar(&jobs, "jobs", defaultDeployJobs(), "Maximum number of concurrent requests to the destination registry, and of parallel push operations (defaults to GOMAXPROCS)")
 	flagSet.StringVar(&sink, "sink", "", "Override the destination of all push/load/registry_tag operations for testing. Format: <type>:<path> where type is one of oci-tar, docker-save, oci, distribution, distribution-flat. No registry or daemon network I/O is performed.")
 	flagSet.StringVar(&progressMode, "progress", "", "How to report progress on stderr: 'bar' (interactive progress bars), 'log' (one crane-style line per blob), 'none', or 'auto' (default: bars on a terminal, log lines otherwise). Overridable with $IMG_PROGRESS.")
 	flagSet.Var(&signSettingFiles, "sign_setting_file", "Additional sign_setting config file to ingest for signing (can be used multiple times)")
@@ -220,6 +220,9 @@ type DeployOptions struct {
 }
 
 func DeployWithExtras(ctx context.Context, rawRequest []byte, opts DeployOptions) error {
+	// --jobs is the ceiling on requests in flight to the destination registry.
+	registryopts.LimitConcurrencyToJobs(opts.Jobs)
+
 	var req api.DeployManifest
 	decoder := json.NewDecoder(bytes.NewReader(rawRequest))
 	decoder.DisallowUnknownFields()
@@ -347,6 +350,10 @@ func DeployWithExtras(ctx context.Context, rawRequest []byte, opts DeployOptions
 			return fmt.Errorf("creating pusher: %w", err)
 		}
 	}
+
+	// Report how concurrent the registry traffic got (opt-in, see
+	// registryopts.EnvLogConcurrency), including on the failure paths below.
+	defer registryopts.LogConcurrencySummary(os.Stderr)
 
 	var pushedTags []string
 	// groupCtx is cancelled once g.Wait returns; keep the outer ctx for work after it (registry_tag ops).
