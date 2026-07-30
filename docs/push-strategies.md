@@ -376,6 +376,53 @@ Then just build the image target — the push happens as a validation action:
 bazel build //your:image_target
 ```
 
+### Per-target configuration
+The global flags above set the baseline; each `image_push` target and each
+`image_push_spec` (the push config attached to an `image_manifest` / `image_index`
+via `push_specs`) can override push at build time on its own. The relevant
+attributes default to deferring to the global flag, so unset targets behave
+exactly as before:
+
+| Attribute | Default | Overrides global flag |
+| --- | --- | --- |
+| `push_at_build_time` | `auto` | `push_at_build_time` |
+| `push_at_build_time_content` | `auto` | `push_at_build_time_content` |
+| `push_at_build_time_blob_repository` | *(sentinel)* | `push_at_build_time_blob_repository` |
+| `push_at_build_time_manifest_repository` | *(sentinel)* | `push_at_build_time_manifest_repository` |
+| `forbid_layer_push` | `auto` | `forbid_layer_push` |
+| `push_at_build_time_exec_properties` | `{"requires-network": "1"}` | *(none — per-target only)* |
+
+`auto` (and the repository sentinel) means "use the global setting"; any other
+value is used verbatim — for the repository attributes, `""` forces "no staging
+repository" even when the global flag is set. `push_at_build_time_exec_properties`
+is forwarded as the `execution_requirements` of every `PushImage` action, so you
+can, for example, route the network-bound push actions to a specific remote
+execution pool per target.
+
+```python
+load("@rules_img//img:push.bzl", "image_push_spec")
+
+# This image pushes at build time to a staging repository and refuses to
+# re-upload layers on a later `bazel run`, regardless of the global default.
+image_push_spec(
+    name = "push_spec",
+    registry = "gcr.io",
+    repository = "my-project/my-app",
+    tag = "latest",
+    push_at_build_time = "enabled",
+    push_at_build_time_content = "blobs",
+    push_at_build_time_blob_repository = "my-project/_staging",
+    forbid_layer_push = "enabled",
+)
+```
+
+Because the staging repository is only used for cross-mounting when push at build
+time actually runs, setting `push_at_build_time_blob_repository` while
+`push_at_build_time` is `disabled` for a target records **no** cross-mount source
+in that target's deploy manifest — a later `bazel run` deploy will not try to
+mount blobs from a repository nothing was pushed to.
+
+
 ## Remote Cache Eviction
 
 The lazy and CAS registry push strategies stream blobs directly from Bazel's

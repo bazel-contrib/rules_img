@@ -9,14 +9,13 @@ load("//img/private:stamp.bzl", "expand_or_write")
 load("//img/private/common:build.bzl", "TOOLCHAINS")
 load("//img/private/common:default_deploy_tool.bzl", "default_deploy_tool")
 load("//img/private/common:deploy_attrs.bzl", "COMMON_PUSH_ATTRS")
-load("//img/private/common:deploy_helpers.bzl", "content_tracking_json_vars", "extract_cross_mount_from", "extract_referrers", "get_image_providers", "get_tags", "image_target_vars", "resolve_push_registry", "resolve_push_strategy", "resolve_signing")
+load("//img/private/common:deploy_helpers.bzl", "content_tracking_json_vars", "cross_mount_blob_repository", "extract_cross_mount_from", "extract_referrers", "get_image_providers", "get_tags", "image_target_vars", "resolve_push_at_build_time", "resolve_push_registry", "resolve_push_strategy", "resolve_signing")
 load("//img/private/common:transitions.bzl", "reset_platform_transition")
 load("//img/private/providers:deploy_info.bzl", "DeployInfo")
 load("//img/private/providers:deploy_tool_info.bzl", "DeployToolInfo")
 load("//img/private/providers:index_info.bzl", "ImageIndexInfo")
 load("//img/private/providers:manifest_info.bzl", "ImageManifestInfo")
 load("//img/private/providers:pull_info.bzl", "PullInfo")
-load("//img/private/providers:push_at_build_time_settings_info.bzl", "PushAtBuildTimeSettingsInfo")
 load("//img/private/providers:push_settings_info.bzl", "PushSettingsInfo")
 
 def _per_child_manifest_tag_file(*, ctx, child_index, child_info):
@@ -36,7 +35,7 @@ def _per_child_manifest_tag_file(*, ctx, child_index, child_info):
         extra_build_settings = extra,
     )
 
-def _compute_push_metadata(*, ctx, configuration_json, destination_file = None, signing = None):
+def _compute_push_metadata(*, ctx, configuration_json, pbt, destination_file = None, signing = None):
     manifest_info, index_info = get_image_providers(ctx)
     pull_info = ctx.attr.image[PullInfo] if PullInfo in ctx.attr.image else None
 
@@ -61,8 +60,11 @@ def _compute_push_metadata(*, ctx, configuration_json, destination_file = None, 
         destination_file = destination_file,
         output_prefix = ctx.label.name,
         signing = signing,
-        blob_repository = ctx.attr._push_settings[PushSettingsInfo].blob_repository,
-        forbid_layer_push = ctx.attr._push_settings[PushSettingsInfo].forbid_layer_push,
+        # Only record the staging repository for cross-mounting when this target
+        # actually pushes at build time; otherwise a deploy would try to mount
+        # from a repository nothing was staged to.
+        blob_repository = cross_mount_blob_repository(pbt.mode, pbt.blob_repository),
+        forbid_layer_push = pbt.forbid_layer_push,
     )
 
 def _image_push_impl(ctx):
@@ -74,6 +76,7 @@ def _image_push_impl(ctx):
         fail("'manifest_tags' can only be used when 'image' is an image_index")
 
     signing = resolve_signing(ctx)
+    pbt = resolve_push_at_build_time(ctx)
 
     registry = resolve_push_registry(ctx)
 
@@ -110,6 +113,7 @@ def _image_push_impl(ctx):
     deploy_metadata, layer_hints = _compute_push_metadata(
         ctx = ctx,
         configuration_json = configuration_json,
+        pbt = pbt,
         destination_file = ctx.file.destination_file,
         signing = signing,
     )
@@ -190,10 +194,10 @@ def _image_push_impl(ctx):
 
     # Push at build time via PushImage validation actions (mnemonic PushImage),
     # mirroring the push_specs path on image_manifest / image_index. Gated by the
-    # global push_at_build_time setting; a no-op (no actions) when disabled.
+    # resolved per-target push_at_build_time setting; a no-op (no actions) when
+    # disabled.
     output_groups = {"deploy_manifest": depset([deploy_metadata])}
-    push_at_build_time = ctx.attr._push_at_build_time_settings[PushAtBuildTimeSettingsInfo]
-    if push_at_build_time.mode in ("best_effort", "enabled"):
+    if pbt.mode in ("best_effort", "enabled"):
         validation_outputs = build_time_push_actions(
             ctx,
             push_idx = 0,
@@ -201,14 +205,15 @@ def _image_push_impl(ctx):
             manifest_info = manifest_info,
             index_info = index_info,
             sparse_layout = getattr(image_provider, "sparse_oci_layout", None),
-            mode = push_at_build_time.mode,
-            content = push_at_build_time.content,
-            blob_repository = ctx.attr._push_settings[PushSettingsInfo].blob_repository,
-            manifest_repository = push_at_build_time.manifest_repository,
-            gateway = push_at_build_time.gateway,
-            push_gateway = push_at_build_time.push_gateway,
-            pull_gateway = push_at_build_time.pull_gateway,
+            mode = pbt.mode,
+            content = pbt.content,
+            blob_repository = pbt.blob_repository,
+            manifest_repository = pbt.manifest_repository,
+            gateway = pbt.gateway,
+            push_gateway = pbt.push_gateway,
+            pull_gateway = pbt.pull_gateway,
             pull_info = ctx.attr.image[PullInfo] if PullInfo in ctx.attr.image else None,
+            exec_requirements = pbt.exec_properties,
         )
         if validation_outputs:
             output_groups["_validation"] = depset(validation_outputs)
@@ -363,10 +368,6 @@ Available options:
         _deploy_tool = attr.label(
             default = default_deploy_tool,
             providers = [DeployToolInfo],
-        ),
-        _push_at_build_time_settings = attr.label(
-            default = Label("//img/private/settings:push_at_build_time"),
-            providers = [PushAtBuildTimeSettingsInfo],
         ),
         _docker_config_path = attr.label(
             default = Label("//img/settings:docker_config_path"),

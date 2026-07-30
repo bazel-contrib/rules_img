@@ -21,8 +21,15 @@ FIELDS = dict(
     stamp_settings = "StampSettingInfo provider for stamp resolution.",
     tracks_content = "Bool: when True, expose the image digest to templates and re-stamp tags on content change.",
     signing = "struct(config_info, best_effort, targets) describing how to sign this push, or None.",
-    blob_repository = "When non-empty, the staging repository that image blobs are pushed to and cross-mounted from. At build time every blob (layers and config) is staged here; layers are cross-mounted into the image's real repository. Empty means blobs go to the image's own repository.",
+    blob_repository = "Resolved staging repository that image blobs are pushed to and cross-mounted from. At build time every blob (layers and config) is staged here; layers are cross-mounted into the image's real repository. Empty means blobs go to the image's own repository.",
     forbid_layer_push = "Bool: when True, `img deploy` refuses to upload layer blob bytes (layers must be cross-mounted or already present).",
+    push_at_build_time_mode = "Resolved push-at-build-time mode: 'disabled', 'best_effort', or 'enabled'.",
+    push_at_build_time_content = "Resolved push-at-build-time content: 'blobs' or 'blobs_and_manifests'.",
+    push_at_build_time_manifest_repository = "Resolved repository the build-time manifest push uploads manifest(s)/index and config to instead of the operation's own repository, or ''. Does not affect blob cross-mounting.",
+    push_at_build_time_exec_properties = "Dict(string, string) of execution_requirements forwarded to the PushImage build-time push actions.",
+    push_at_build_time_gateway = "Shared OCI distribution gateway endpoint for the build-time push actions, or ''.",
+    push_at_build_time_push_gateway = "Push OCI distribution gateway endpoint for the build-time push actions, or ''.",
+    push_at_build_time_pull_gateway = "Pull OCI distribution gateway endpoint for the build-time push actions, or ''.",
 )
 
 PushConfigInfo = provider(

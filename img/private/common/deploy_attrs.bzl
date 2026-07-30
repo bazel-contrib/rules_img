@@ -1,10 +1,12 @@
 """Common attributes shared by push/load rules and their library counterparts."""
 
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
+load("//img/private/common:deploy_helpers.bzl", "USE_GLOBAL_SETTING")
 load("//img/private/providers:deploy_info.bzl", "DeployInfo")
 load("//img/private/providers:index_info.bzl", "ImageIndexInfo")
 load("//img/private/providers:load_settings_info.bzl", "LoadSettingsInfo")
 load("//img/private/providers:manifest_info.bzl", "ImageManifestInfo")
+load("//img/private/providers:push_at_build_time_settings_info.bzl", "PushAtBuildTimeSettingsInfo")
 load("//img/private/providers:push_settings_info.bzl", "PushSettingsInfo")
 load("//img/private/providers:signing_config_info.bzl", "SigningConfigInfo")
 load("//img/private/providers:stamp_setting_info.bzl", "StampSettingInfo")
@@ -223,6 +225,106 @@ Overrides the global `--@rules_img//img/settings:sign_setting`. Only consulted
 when signing is enabled (see `sign`).
 """,
         providers = [SigningConfigInfo],
+    ),
+    push_at_build_time = attr.string(
+        doc = """Whether image content is pushed to the registry *during the build*.
+
+Push at build time wires extra `PushImage` build actions (one per blob, plus a
+manifest push in `blobs_and_manifests` mode) that upload directly to the registry
+as a Bazel validation action. See
+[push at build time](/docs/push-strategies.md#push-at-build-time).
+
+- **`auto`** (default): defer to the global `--@rules_img//img/settings:push_at_build_time` flag.
+- **`enabled`**: always push at build time; a push failure fails the build.
+- **`best_effort`**: push at build time, but a push failure is a warning and does not fail the build.
+- **`disabled`**: never push at build time.
+
+When `disabled`, blob cross-mounting via `push_at_build_time_blob_repository` is
+also not recorded in the deploy manifest, so a later `bazel run` deploy does not
+try to cross-mount from a staging repository nothing was pushed to.
+""",
+        default = "auto",
+        values = ["auto", "disabled", "best_effort", "enabled"],
+    ),
+    push_at_build_time_content = attr.string(
+        doc = """What the push-at-build-time actions upload.
+
+- **`auto`** (default): defer to the global `--@rules_img//img/settings:push_at_build_time_content` flag.
+- **`blobs`**: push only the layer blobs and the config blob. Manifests/tags are
+  written afterwards by `image_push` / `multi_deploy`.
+- **`blobs_and_manifests`**: push the blobs plus the config and manifest(s)/tags,
+  so the image is fully present in the registry when the build finishes.
+
+Only consulted when push at build time is active (see `push_at_build_time`).
+""",
+        default = "auto",
+        values = ["auto", "blobs", "blobs_and_manifests"],
+    ),
+    push_at_build_time_blob_repository = attr.string(
+        doc = """Staging repository for build-time blob uploads and cross-mounting.
+
+When non-empty, every image blob (all layers and the config) is pushed to this
+repository (a "staging" repository within the destination registry) and
+cross-mounted from there when the manifest is pushed to its real repository.
+
+Left at its sentinel default, this defers to the global
+`--@rules_img//img/settings:push_at_build_time_blob_repository` flag. Set it to a
+string to override per target, or to `""` to force "no staging repository" even
+when the global flag is set.
+
+Only takes effect when push at build time is active (see `push_at_build_time`):
+if push at build time is `disabled` for this target, no cross-mount source is
+recorded in the deploy manifest even when this is set.
+""",
+        default = USE_GLOBAL_SETTING,
+    ),
+    push_at_build_time_manifest_repository = attr.string(
+        doc = """Repository the build-time manifest push writes manifest(s)/config to.
+
+When non-empty and `push_at_build_time_content` is `blobs_and_manifests`, the
+build-time manifest push uploads the manifest(s)/index (and, directly, the
+config) to this repository instead of the image's real repository. This only
+redirects where manifests are written at build time; it does **not** change where
+layer blobs are cross-mounted from (that is `push_at_build_time_blob_repository`).
+
+Left at its sentinel default, this defers to the global
+`--@rules_img//img/settings:push_at_build_time_manifest_repository` flag. Set it
+to a string to override per target, or to `""` to force the image's real
+repository even when the global flag is set.
+""",
+        default = USE_GLOBAL_SETTING,
+    ),
+    forbid_layer_push = attr.string(
+        doc = """Whether `img deploy` is forbidden from uploading layer blob bytes.
+
+When `enabled`, a `bazel run` deploy of this push may only cross-mount layers
+server-side or skip layers already present; an actual layer upload fails loudly.
+Use it together with push at build time (which uploads the layer blobs) so a
+deploy that would re-upload them is caught instead of silently succeeding.
+
+- **`auto`** (default): defer to the global `--@rules_img//img/settings:forbid_layer_push` flag.
+- **`enabled`**: forbid layer blob uploads.
+- **`disabled`**: allow layer blob uploads.
+""",
+        default = "auto",
+        values = ["auto", "disabled", "enabled"],
+    ),
+    push_at_build_time_exec_properties = attr.string_dict(
+        doc = """Execution properties for the `PushImage` build-time push actions.
+
+Forwarded verbatim as the `execution_requirements` of every `PushImage` action
+emitted for this target. Defaults to `{"requires-network": "1"}` because the push
+actions talk to the registry (and are therefore non-hermetic). Override it to add
+or replace execution properties, for example to route the actions to a specific
+remote execution pool. Setting it to `{}` removes the `requires-network` marker.
+
+Only consulted when push at build time is active (see `push_at_build_time`).
+""",
+        default = {"requires-network": "1"},
+    ),
+    _push_at_build_time_settings = attr.label(
+        default = Label("//img/private/settings:push_at_build_time"),
+        providers = [PushAtBuildTimeSettingsInfo],
     ),
     _sign = attr.label(
         default = Label("//img/settings:sign"),
