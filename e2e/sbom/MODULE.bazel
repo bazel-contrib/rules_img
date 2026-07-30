@@ -35,7 +35,7 @@ local_path_override(
 
 # Required when building rules_img_signer_cosign from source: gazelle_override is
 # root-module-only and cannot be declared in the cosign module itself.
-bazel_dep(name = "gazelle", version = "0.51.3")
+bazel_dep(name = "gazelle", version = "0.52.2")
 
 go_deps = use_extension("@gazelle//:extensions.bzl", "go_deps")
 go_deps.gazelle_override(

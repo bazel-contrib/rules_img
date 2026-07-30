@@ -14,8 +14,8 @@ module(
 
 bazel_dep(name = "bazel_skylib", version = "1.9.0")
 bazel_dep(name = "platforms", version = "1.0.0")
-bazel_dep(name = "rules_go", version = "0.61.1")
-bazel_dep(name = "gazelle", version = "0.51.3")
+bazel_dep(name = "rules_go", version = "0.62.0")
+bazel_dep(name = "gazelle", version = "0.52.2")
 
 # rules_img (the root module) and its sibling modules. rules_img_signer_* are a
 # direct dep here (not in the root) so the root depends on them only transitively
