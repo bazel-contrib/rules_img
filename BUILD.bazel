@@ -64,5 +64,6 @@ filegroup(
 
 exports_files([
     ".bcr/metadata.template.json",
+    "modules/rules_img_signer_cosign/MODULE.bazel",
     "prebuilt_lockfile.json",
 ])
