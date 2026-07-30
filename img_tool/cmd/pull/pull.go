@@ -87,7 +87,7 @@ func PullProcess(ctx context.Context, args []string) {
 		fmt.Fprintf(os.Stderr, "Error configuring registry gateway: %v\n", err)
 		os.Exit(1)
 	}
-	transport := cachedblob.NewTransport(outputDir, registryopts.WrapRetryAfter(gatewayBase), cachedblob.WithAirgapped(airgapped))
+	transport := cachedblob.NewTransport(outputDir, registryopts.WrapRetryAfter(registryopts.WrapConcurrency(gatewayBase, registryopts.RoleSource)), cachedblob.WithAirgapped(airgapped))
 
 	// Default to docker.io if no registries specified
 	if len(registries) == 0 {

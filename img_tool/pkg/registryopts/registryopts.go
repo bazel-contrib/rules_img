@@ -2,7 +2,8 @@
 // the img tool enforces for every registry operation: multi-keychain
 // authentication, a patient retry backoff, a transport routed through the
 // oci-distribution-gateway (when one is configured) that honors a registry's
-// Retry-After header, and a default concurrency.
+// Retry-After header and accounts for how many requests are in flight, and a
+// default concurrency.
 //
 // Callers assemble options through a small builder so the enforced defaults live
 // in one place while still allowing per-call additions and overrides:
@@ -124,6 +125,12 @@ func NameOptions(opts ...name.Option) []name.Option {
 // of concurrent registry requests modest so operations are less likely to trip
 // server-side rate limits (HTTP 429). Commands may override it (for example
 // `img deploy` defaults to GOMAXPROCS); users override it with --jobs.
+//
+// On its own, jobs is a per-fan-out limit rather than a total: go-cr applies it
+// again inside every push (once for a manifest's children, once more for an
+// image's layers), so the requests actually in flight are the product of the
+// nested limits. Commands pass their jobs value to [LimitConcurrencyToJobs] to
+// make it the total for the destination registry.
 const DefaultJobs = 4
 
 const (
@@ -221,15 +228,31 @@ func (o *Options) Remote() []remote.Option {
 }
 
 // Transport builds the base transport for the given gateway mode: gateway
-// routing (when configured) wrapped to honor Retry-After. Commands that share
-// one transport across several pushers (e.g. `img deploy`) can build it once
-// here and pass it to [Options.WithTransport].
+// routing (when configured), instrumented for concurrency and wrapped to honor
+// Retry-After. Commands that share one transport across several pushers (e.g.
+// `img deploy`) can build it once here and pass it to [Options.WithTransport].
 func Transport(mode gateway.Mode) (http.RoundTripper, error) {
 	base, err := gateway.WrapTransport(BaseTransport(), mode)
 	if err != nil {
 		return nil, err
 	}
-	return WrapRetryAfter(base), nil
+	role := RoleSource
+	if mode == gateway.ModePush {
+		role = RoleDestination
+	}
+	// Concurrency accounting sits below Retry-After pacing (so a rate-limit wait
+	// does not occupy a slot) and above the gateway (so requests are logged
+	// against the registry they address, not the gateway).
+	return WrapRetryAfter(WrapConcurrency(base, role)), nil
+}
+
+// DirectTransport builds a transport that talks to registries without gateway
+// routing: concurrency accounting plus Retry-After pacing over [BaseTransport].
+// Server-side components that must reach the registry themselves (the BES syncer,
+// the OCI ref-graph sync) use it instead of [Transport]. It carries both
+// directions, so its requests are attributed by method ([RoleAuto]).
+func DirectTransport() http.RoundTripper {
+	return WrapRetryAfter(WrapConcurrency(BaseTransport(), RoleAuto))
 }
 
 // BaseTransport returns the transport every registry request starts from:

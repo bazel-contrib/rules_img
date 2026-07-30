@@ -219,7 +219,7 @@ func (s *Syncer) commitRegistryTag(ctx context.Context, op api.IndexedRegistryTa
 		return fmt.Errorf("invalid repository %s: %w", baseReference, err)
 	}
 	remoteOpts := registryopts.Default().
-		WithTransport(registryopts.WrapRetryAfter(registryopts.BaseTransport())).
+		WithTransport(registryopts.DirectTransport()).
 		With(remote.WithContext(ctx)).
 		Remote()
 
@@ -269,7 +269,7 @@ func (s *Syncer) commitOne(ctx context.Context, pushOp api.IndexedPushDeployOper
 	}
 
 	remoteOpts := registryopts.Default().
-		WithTransport(registryopts.WrapRetryAfter(registryopts.BaseTransport())).
+		WithTransport(registryopts.DirectTransport()).
 		With(remote.WithContext(ctx)).
 		Remote()
 
@@ -1125,7 +1125,7 @@ func (l *remoteStreamingLayer) Compressed() (io.ReadCloser, error) {
 			attempts = append(attempts, fmt.Sprintf("%s/%s: %v", source.Registry, source.Repository, err))
 			continue
 		}
-		layer, err := remote.Layer(ref, registryopts.Default().WithTransport(registryopts.WrapRetryAfter(registryopts.BaseTransport())).Remote()...)
+		layer, err := remote.Layer(ref, registryopts.Default().WithTransport(registryopts.DirectTransport()).Remote()...)
 		if err != nil {
 			attempts = append(attempts, fmt.Sprintf("%s: %v", ref, err))
 			continue

@@ -31,7 +31,7 @@ func manifestProcess(ctx context.Context, args []string) {
 	flagSet.StringVar(&manifestRepository, "manifest-repository", "", "Repository to upload the manifest(s)/index and config to instead of the operation's own repository. Layer blobs are still cross-mounted from where `push blob` put them (this does not change blob mounting).")
 	flagSet.StringVar(&mode, "mode", "enabled", "Failure mode: 'best_effort' (log, don't fail build) or 'enabled' (fail build).")
 	flagSet.StringVar(&markerPath, "marker", "", "Path to the marker file to write on success. Required.")
-	flagSet.IntVar(&jobs, "jobs", registryopts.DefaultJobs, "Maximum number of parallel push operations.")
+	flagSet.IntVar(&jobs, "jobs", registryopts.DefaultJobs, "Maximum number of concurrent requests to the destination registry, and of parallel push operations.")
 
 	if err := flagSet.Parse(args); err != nil {
 		os.Exit(1)
@@ -45,6 +45,9 @@ func manifestProcess(ctx context.Context, args []string) {
 }
 
 func pushManifest(ctx context.Context, requestFile string, ociLayouts, layerResults []string, manifestRepository string, jobs int) error {
+	// --jobs is the ceiling on requests in flight to the destination registry.
+	registryopts.LimitConcurrencyToJobs(jobs)
+
 	raw, err := os.ReadFile(requestFile)
 	if err != nil {
 		return fmt.Errorf("reading request file %s: %w", requestFile, err)
