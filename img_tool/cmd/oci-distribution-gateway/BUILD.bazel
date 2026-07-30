@@ -1,9 +1,24 @@
 load("@bazel_skylib//rules:build_test.bzl", "build_test")
-load("@rules_go//go:def.bzl", "go_binary", "go_library")
+load("@rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
+
+# The test target is maintained by hand, and its sources are hidden from
+# gazelle, so that it can keep a name far shorter than the one the naming
+# convention would give it ("oci-distribution-gateway_test"). Windows caps a
+# path at 260 characters, and a go_test's executable appears inside its own
+# runfiles tree, so the package and target name are each spelled twice:
+# the conventional name lands at 298 characters and the test cannot start at
+# all ("cannot shorten the path enough"). Keep this name short. Add any new
+# test dependency to deps below by hand — gazelle will not do it for you.
+# gazelle:exclude helpers_test.go
+# gazelle:exclude main_test.go
 
 go_library(
     name = "oci-distribution-gateway_lib",
-    srcs = ["main.go"],
+    srcs = [
+        "forward.go",
+        "main.go",
+        "serve.go",
+    ],
     importpath = "github.com/bazel-contrib/rules_img/img_tool/cmd/oci-distribution-gateway",
     visibility = ["//visibility:private"],
     deps = [
@@ -23,4 +38,17 @@ go_binary(
 build_test(
     name = "test",
     targets = [":oci-distribution-gateway"],
+)
+
+go_test(
+    name = "main_test",
+    size = "small",
+    # keep
+    srcs = [
+        "helpers_test.go",
+        "main_test.go",
+    ],
+    embed = [":oci-distribution-gateway_lib"],
+    # keep
+    deps = ["//pkg/serve/gateway"],
 )

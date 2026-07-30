@@ -104,8 +104,15 @@ func (r request) existenceCheck() bool {
 // classify inspects the request path and method and reports the repository, the
 // policy requirement, and whether it is a write. ok is false for paths the
 // gateway does not understand.
+//
+// The path is matched in its *escaped* form, which is the form the gateway
+// forwards ([url.URL.RequestURI] returns EscapedPath). Matching the decoded
+// [url.URL.Path] instead would let the two disagree: "/v2/a%2Fb/manifests/x"
+// would be authorized as repository "a/b" while "a%2Fb" is what the registry
+// receives. Since the repository grammar admits no "%", a percent-escape inside
+// the repository segment now simply fails to match and the request is refused.
 func classify(r *http.Request) (request, bool) {
-	path := r.URL.Path
+	path := r.URL.EscapedPath()
 	method := r.Method
 
 	if m := tagsRe.FindStringSubmatch(path); m != nil {

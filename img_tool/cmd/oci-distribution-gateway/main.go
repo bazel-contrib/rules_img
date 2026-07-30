@@ -1,13 +1,29 @@
 // Command oci-distribution-gateway runs a container registry gateway that only
-// forwards requests to real upstream registries.
+// forwards requests to real upstream registries. It has two modes:
 //
-// Clients connect anonymously and must set the X-rules_img-Original-Host header
-// to select the upstream registry. The gateway authenticates to that upstream
-// using the ambient registry credentials (docker config, cloud keychains, or an
-// optional Bazel credential helper) and authorizes every request against a
-// policy file: an ordered list of allow/deny rules matched on the upstream
-// registry host, repository path, and operation (blob/manifest read/write). The
-// policy file can be reloaded at runtime by sending the process a SIGHUP.
+//	oci-distribution-gateway serve   [OPTIONS]   # talk to registries (the default)
+//	oci-distribution-gateway forward [OPTIONS]   # relay to another gateway
+//
+// In serving mode, clients set the X-rules_img-Original-Host header to select the
+// upstream registry. The gateway authenticates to that upstream using the ambient
+// registry credentials (docker config, cloud keychains, or an optional Bazel
+// credential helper) and authorizes every request against a policy file: an
+// ordered list of allow/deny rules matched on the upstream registry host,
+// repository path, and operation (blob/manifest read/write). The policy file can
+// be reloaded at runtime by sending the process a SIGHUP. Clients connect
+// anonymously unless client authentication is configured (--client-ca-file,
+// --client-token-file, --client-serviceaccount-audience), which a gateway
+// reachable over the network should always do.
+//
+// In forwarding mode, the gateway holds no registry credentials and no policy at
+// all: it relays the very same protocol to a serving gateway named by --peer over
+// one multiplexed HTTP/2 connection, adding its peer credential. That is how a
+// build farm keeps the registry credentials in one shared deployment instead of
+// in every worker pod. See the "Two-hop deployment" section of this command's
+// README.
+//
+// A bare invocation with no subcommand means serving mode, so existing
+// deployments keep working unchanged.
 //
 // Traffic, blob transfers, and errors are reported as OpenTelemetry metrics,
 // either pushed to a collector over OTLP or scraped from a Prometheus endpoint;
@@ -24,18 +40,32 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
-	reg "github.com/bazel-contrib/rules_img/img_tool/pkg/auth/registry"
-	"github.com/bazel-contrib/rules_img/img_tool/pkg/serve/gateway"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/serve/telemetry"
 )
 
-// serviceName is the default OpenTelemetry service.name of the gateway. It is
-// overridden by OTEL_SERVICE_NAME.
-const serviceName = "oci-distribution-gateway"
+// Default OpenTelemetry service.name values, one per mode, so a sidecar fleet
+// and the shared serving deployment keep their series apart in the backend
+// without a metric attribute. Both are overridden by OTEL_SERVICE_NAME.
+const (
+	serveServiceName   = "oci-distribution-gateway"
+	forwardServiceName = "oci-distribution-gateway-forward"
+)
+
+const usage = `Usage: oci-distribution-gateway [COMMAND] [OPTIONS]
+
+Commands:
+  serve     forward requests to real upstream registries (the default)
+  forward   relay requests to another gateway running in serving mode
+
+Run "oci-distribution-gateway <command> --help" for the options of a command.
+With no command, the options are those of "serve", so existing deployments keep
+working unchanged.
+`
 
 // repeatedFlag collects every occurrence of a flag that may be given more than
 // once, which the flag package only supports through a [flag.Value].
@@ -48,61 +78,42 @@ func (f *repeatedFlag) Set(value string) error {
 	return nil
 }
 
-// newFlagSet builds the flag set with a usage banner and examples.
-func newFlagSet() *flag.FlagSet {
-	flagSet := flag.NewFlagSet("oci-distribution-gateway", flag.ContinueOnError)
-	flagSet.Usage = func() {
-		fmt.Fprintf(flagSet.Output(), "Run a forwarding OCI distribution gateway.\n\n")
-		fmt.Fprintf(flagSet.Output(), "The gateway forwards requests to the upstream registry named in the\n")
-		fmt.Fprintf(flagSet.Output(), "X-rules_img-Original-Host request header, subject to the policy file.\n\n")
-		fmt.Fprintf(flagSet.Output(), "Usage: oci-distribution-gateway --policy-file <path> [OPTIONS]\n")
-		flagSet.PrintDefaults()
-		examples := []string{
-			"oci-distribution-gateway --port 8080 --policy-file /etc/img/gateway-policy.json",
-			"oci-distribution-gateway --unix-socket /run/gw.sock --policy-file /etc/img/gateway-policy.yaml",
-			"oci-distribution-gateway --validate-policy --policy-file /etc/img/gateway-policy.json",
-			"oci-distribution-gateway --unix-socket /run/gw.sock --dangerously-allow-all",
-			"oci-distribution-gateway --port 8080 --policy-file /etc/img/policy.json --metrics-exporter prometheus",
-		}
-		fmt.Fprintf(flagSet.Output(), "\nExamples:\n")
-		for _, example := range examples {
-			fmt.Fprintf(flagSet.Output(), "  $ %s\n", example)
-		}
+// parseSubcommand splits os.Args into a mode and that mode's arguments. A first
+// argument that starts with "-" (or no argument at all) is a flag of the default
+// serving mode, which is what keeps every pre-subcommand invocation working.
+func parseSubcommand(args []string) (mode string, rest []string, err error) {
+	rest = args[1:]
+	if len(rest) == 0 || strings.HasPrefix(rest[0], "-") {
+		return "serve", rest, nil
 	}
-	return flagSet
+	switch rest[0] {
+	case "serve", "forward":
+		return rest[0], rest[1:], nil
+	default:
+		return "", nil, fmt.Errorf("unknown oci-distribution-gateway command %q (want serve or forward)", rest[0])
+	}
 }
 
 func Run(ctx context.Context, args []string) {
-	var (
-		address              string
-		port                 int
-		unixSocket           string
-		defaultRegistry      string
-		credentialHelperPath string
-		policyFile           string
-		validatePolicy       bool
-		dangerouslyAllowAll  bool
-		metricsExporter      string
-		metricsOTLPProtocol  string
-		metricsOTLPEndpoints repeatedFlag
-		metricsAddress       string
-	)
+	mode, rest, err := parseSubcommand(args)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "Error:", err)
+		fmt.Fprint(os.Stderr, usage)
+		os.Exit(1)
+	}
+	switch mode {
+	case "forward":
+		forwardProcess(ctx, rest)
+	default:
+		serveProcess(ctx, rest)
+	}
+}
 
-	flagSet := newFlagSet()
-	flagSet.StringVar(&address, "address", "localhost", "Address to bind the gateway to (ignored when --unix-socket is set)")
-	flagSet.IntVar(&port, "port", 0, "Port to bind the gateway to (0 picks a free port; ignored when --unix-socket is set)")
-	flagSet.StringVar(&unixSocket, "unix-socket", "", "Path to a UNIX domain socket to listen on instead of TCP")
-	flagSet.StringVar(&defaultRegistry, "default-registry", "", "Upstream registry to forward to when a request omits the X-rules_img-Original-Host header (must also be allowed by the policy)")
-	flagSet.StringVar(&credentialHelperPath, "credential-helper", "", "Path to a Bazel credential helper binary used to authenticate to upstream registries (optional)")
-	flagSet.StringVar(&policyFile, "policy-file", "", "Path to a JSON (or YAML) policy file with per-repository allow/deny rules. Required unless --dangerously-allow-all is set. Reloadable at runtime with SIGHUP.")
-	flagSet.BoolVar(&validatePolicy, "validate-policy", false, "Load and validate --policy-file, then exit (0 if valid, non-zero otherwise). Does not start the gateway.")
-	flagSet.BoolVar(&dangerouslyAllowAll, "dangerously-allow-all", false, "Allow every request to every upstream, ignoring the policy file. DANGEROUS: only for trusted, isolated environments.")
-	flagSet.StringVar(&metricsExporter, "metrics-exporter", "", "OpenTelemetry metric exporters to enable, comma-separated: otlp, prometheus, console, or none. Defaults to $OTEL_METRICS_EXPORTER, or to otlp when an OTLP endpoint is configured.")
-	flagSet.StringVar(&metricsOTLPProtocol, "metrics-otlp-protocol", "", "Protocol for the otlp exporter: grpc (collector port 4317) or http/protobuf (port 4318). Defaults to $OTEL_EXPORTER_OTLP_METRICS_PROTOCOL, $OTEL_EXPORTER_OTLP_PROTOCOL, then http/protobuf.")
-	flagSet.Var(&metricsOTLPEndpoints, "metrics-otlp-endpoint", "OTLP metrics endpoint URL to push to, e.g. http://collector:4318 (https:// to use TLS). Repeat the flag to push the same metrics to several collectors, which is only correct when at most one of them forwards them (a leader-elected set) or the backend deduplicates: if they all forward, every counter is multiplied. Each endpoint also costs another export per interval. Defaults to $IMG_METRICS_OTLP_ENDPOINTS (comma-separated), then to the single $OTEL_EXPORTER_OTLP_[METRICS_]ENDPOINT.")
-	flagSet.StringVar(&metricsAddress, "metrics-address", ":9464", "Address the prometheus exporter serves /metrics on. Reachable from outside the pod by default; keep it on a trusted network.")
-
-	if err := flagSet.Parse(args[1:]); err != nil {
+// parseFlags parses a mode's flag set, handling --help and errors the way the
+// gateway always has: --help prints usage and exits 0, anything else prints the
+// error plus usage and exits 1.
+func parseFlags(flagSet *flag.FlagSet, args []string) {
+	if err := flagSet.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			// flag already printed the usage.
 			os.Exit(0)
@@ -111,65 +122,54 @@ func Run(ctx context.Context, args []string) {
 		flagSet.Usage()
 		os.Exit(1)
 	}
+}
 
-	if validatePolicy {
-		if policyFile == "" {
-			fmt.Fprintln(os.Stderr, "Error: --validate-policy requires --policy-file")
-			os.Exit(1)
-		}
-		cp, err := gateway.LoadPolicyFile(policyFile)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Fprintf(os.Stderr, "policy %s is valid (%s)\n", policyFile, cp.Summary())
-		os.Exit(0)
+// printUsage writes the shared shape of a mode's usage message: a description, a
+// usage line, the flag defaults, and a list of examples.
+func printUsage(flagSet *flag.FlagSet, description, usageLine string, examples []string) {
+	fmt.Fprintf(flagSet.Output(), "%s\n\n", description)
+	fmt.Fprintf(flagSet.Output(), "Usage: %s\n", usageLine)
+	flagSet.PrintDefaults()
+	fmt.Fprintf(flagSet.Output(), "\nExamples:\n")
+	for _, example := range examples {
+		fmt.Fprintf(flagSet.Output(), "  $ %s\n", example)
 	}
+}
 
-	// Resolve the authorization policy. --dangerously-allow-all overrides (and
-	// ignores) any policy file; otherwise a policy file is required.
-	var authz *gateway.CompiledPolicy
-	switch {
-	case dangerouslyAllowAll:
-		if policyFile != "" {
-			log.Printf("warning: --dangerously-allow-all is set; ignoring --policy-file %s", policyFile)
-		}
-		log.Printf("WARNING: --dangerously-allow-all is set; the gateway will forward EVERY request to any upstream without policy checks")
-		authz = gateway.AllowAll()
-	case policyFile == "":
-		fmt.Fprintln(os.Stderr, "Error: --policy-file is required (or pass --dangerously-allow-all to disable policy checks)")
-		flagSet.Usage()
-		os.Exit(1)
-	default:
-		cp, err := gateway.LoadPolicyFile(policyFile)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
-		log.Printf("loaded policy from %s (%s)", policyFile, cp.Summary())
-		authz = cp
-	}
+// metricsFlags holds the OpenTelemetry flags both modes accept, so the two flag
+// sets and the Prometheus listener are declared in exactly one place.
+type metricsFlags struct {
+	exporter      string
+	otlpProtocol  string
+	otlpEndpoints repeatedFlag
+	address       string
+}
 
-	if credentialHelperPath != "" {
-		// reg.Keychain() resolves the OCI-registry credential helper from the
-		// environment; wire the flag through it as the registry-scoped helper.
-		if err := os.Setenv(reg.EnvCredentialHelperOCIRegistry, credentialHelperPath); err != nil {
-			log.Fatalf("Failed to set credential helper: %v", err)
-		}
-	}
+func (f *metricsFlags) register(flagSet *flag.FlagSet) {
+	flagSet.StringVar(&f.exporter, "metrics-exporter", "", "OpenTelemetry metric exporters to enable, comma-separated: otlp, prometheus, console, or none. Defaults to $OTEL_METRICS_EXPORTER, or to otlp when an OTLP endpoint is configured.")
+	flagSet.StringVar(&f.otlpProtocol, "metrics-otlp-protocol", "", "Protocol for the otlp exporter: grpc (collector port 4317) or http/protobuf (port 4318). Defaults to $OTEL_EXPORTER_OTLP_METRICS_PROTOCOL, $OTEL_EXPORTER_OTLP_PROTOCOL, then http/protobuf.")
+	flagSet.Var(&f.otlpEndpoints, "metrics-otlp-endpoint", "OTLP metrics endpoint URL to push to, e.g. http://collector:4318 (https:// to use TLS). Repeat the flag to push the same metrics to several collectors, which is only correct when at most one of them forwards them (a leader-elected set) or the backend deduplicates: if they all forward, every counter is multiplied. Each endpoint also costs another export per interval. Defaults to $IMG_METRICS_OTLP_ENDPOINTS (comma-separated), then to the single $OTEL_EXPORTER_OTLP_[METRICS_]ENDPOINT.")
+	flagSet.StringVar(&f.address, "metrics-address", ":9464", "Address the prometheus exporter serves /metrics on. Reachable from outside the pod by default; keep it on a trusted network.")
+}
 
-	// Metrics are opt-in: with no exporter configured, Setup returns a provider
-	// that discards every measurement.
+// setup installs the configured metric exporters and, when the pull-based
+// prometheus exporter is enabled, starts serving /metrics on --metrics-address.
+// The returned server (which may be nil) must be shut down by the caller; the
+// returned flush function must be deferred.
+//
+// Metrics are opt-in: with no exporter configured, this returns a provider that
+// discards every measurement.
+func (f *metricsFlags) setup(ctx context.Context, serviceName string) (*telemetry.Provider, *http.Server, func()) {
 	metrics, err := telemetry.Setup(ctx, telemetry.Config{
-		MetricExporters: metricsExporter,
-		OTLPProtocol:    metricsOTLPProtocol,
-		OTLPEndpoints:   metricsOTLPEndpoints,
+		MetricExporters: f.exporter,
+		OTLPProtocol:    f.otlpProtocol,
+		OTLPEndpoints:   f.otlpEndpoints,
 		ServiceName:     serviceName,
 	})
 	if err != nil {
 		log.Fatalf("Failed to set up metrics: %v", err)
 	}
-	defer func() {
+	flush := func() {
 		// Flush the last measurements. The context is fresh: the one that stopped
 		// the server may already be cancelled.
 		flushCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -177,112 +177,86 @@ func Run(ctx context.Context, args []string) {
 		if err := metrics.Shutdown(flushCtx); err != nil {
 			log.Printf("metrics shutdown error: %v", err)
 		}
-	}()
+	}
 	if metrics.Enabled() {
 		log.Printf("metrics enabled (exporters: %s)", strings.Join(metrics.Exporters, ", "))
-	}
-
-	handler := gateway.New(
-		gateway.WithAuthorizer(authz),
-		gateway.WithDefaultRegistry(defaultRegistry),
-		gateway.WithKeychain(reg.Keychain()),
-		gateway.WithMeterProvider(metrics.MeterProvider),
-	)
-
-	listener, cleanup, err := listen(unixSocket, address, port)
-	if err != nil {
-		log.Fatalf("Failed to listen: %v", err)
-	}
-	defer cleanup()
-
-	// Force HTTP/1.1: the registry protocol is request/response and some
-	// clients (and unix-socket transports) do not negotiate h2.
-	protocols := &http.Protocols{}
-	protocols.SetHTTP1(true)
-	protocols.SetHTTP2(false)
-	protocols.SetUnencryptedHTTP2(false)
-
-	server := &http.Server{
-		Handler:           handler,
-		Protocols:         protocols,
-		ReadHeaderTimeout: 30 * time.Second,
-		// Generous body timeouts: blob uploads and downloads can be large.
-		ReadTimeout:  30 * time.Minute,
-		WriteTimeout: 30 * time.Minute,
-		IdleTimeout:  5 * time.Minute,
 	}
 
 	// The Prometheus exporter is a pull exporter, so it needs an endpoint of its
 	// own. It never shares the registry listener: that one is the gateway's
 	// protocol surface (and may be a UNIX socket a scraper cannot reach).
-	var metricsServer *http.Server
-	if metrics.PrometheusHandler != nil {
-		if metricsAddress == "" {
-			log.Fatalf("Failed to serve metrics: the prometheus exporter requires --metrics-address")
-		}
-		mux := http.NewServeMux()
-		mux.Handle("/metrics", metrics.PrometheusHandler)
-		metricsServer = &http.Server{
-			Addr:              metricsAddress,
-			Handler:           mux,
-			ReadHeaderTimeout: 10 * time.Second,
-			WriteTimeout:      30 * time.Second,
-			IdleTimeout:       time.Minute,
-		}
-		metricsListener, err := net.Listen("tcp", metricsAddress)
-		if err != nil {
-			log.Fatalf("Failed to listen on --metrics-address %s: %v", metricsAddress, err)
-		}
-		go func() {
-			if err := metricsServer.Serve(metricsListener); err != nil && !errors.Is(err, http.ErrServerClosed) {
-				log.Printf("metrics endpoint error: %v", err)
-			}
-		}()
-		fmt.Fprintf(os.Stderr, "oci-distribution-gateway serving metrics on %s/metrics\n", metricsListener.Addr())
+	if metrics.PrometheusHandler == nil {
+		return metrics, nil, flush
 	}
-
-	// Reload the policy file on SIGHUP. A failed reload keeps the previous
-	// policy, so a bad edit never widens access or takes the gateway down.
-	// (With --dangerously-allow-all there is no file to reload.)
-	if policyFile != "" && !dangerouslyAllowAll {
-		hup := make(chan os.Signal, 1)
-		signal.Notify(hup, syscall.SIGHUP)
-		go func() {
-			for range hup {
-				if cp, err := handler.Reload(policyFile); err != nil {
-					log.Printf("policy reload FAILED, keeping previous policy: %v", err)
-				} else {
-					log.Printf("reloaded policy from %s (%s)", policyFile, cp.Summary())
-				}
-			}
-		}()
+	if f.address == "" {
+		log.Fatalf("Failed to serve metrics: the prometheus exporter requires --metrics-address")
 	}
+	mux := http.NewServeMux()
+	mux.Handle("/metrics", metrics.PrometheusHandler)
+	metricsServer := &http.Server{
+		Addr:              f.address,
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       time.Minute,
+	}
+	metricsListener, err := net.Listen("tcp", f.address)
+	if err != nil {
+		log.Fatalf("Failed to listen on --metrics-address %s: %v", f.address, err)
+	}
+	go func() {
+		if err := metricsServer.Serve(metricsListener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Printf("metrics endpoint error: %v", err)
+		}
+	}()
+	fmt.Fprintf(os.Stderr, "oci-distribution-gateway serving metrics on %s/metrics\n", metricsListener.Addr())
+	return metrics, metricsServer, flush
+}
 
-	// Shut down gracefully on SIGINT/SIGTERM so in-flight uploads/downloads can
-	// finish (or the deadline forces them closed).
+// gatewayServer bundles what a gateway process serves so both modes start and
+// stop it the same way.
+type gatewayServer struct {
+	server *http.Server
+	// serve starts serving; it is server.Serve or server.ServeTLS depending on
+	// whether the listener speaks TLS.
+	serve func() error
+	// addr is reported in the startup banner.
+	addr net.Addr
+	// metrics is the Prometheus endpoint, or nil when it is not enabled.
+	metrics *http.Server
+	// shutdownTimeout bounds how long in-flight transfers get to finish.
+	shutdownTimeout time.Duration
+	// banner names the mode in the startup line.
+	banner string
+}
+
+// run serves until the server fails or the process is asked to stop, shutting
+// down gracefully so in-flight uploads and downloads can finish (or the deadline
+// forces them closed).
+func (g *gatewayServer) run() {
 	shutdown := make(chan os.Signal, 1)
 	signal.Notify(shutdown, syscall.SIGINT, syscall.SIGTERM)
 	serveErr := make(chan error, 1)
-	go func() { serveErr <- server.Serve(listener) }()
+	go func() { serveErr <- g.serve() }()
 
-	fmt.Fprintf(os.Stderr, "oci-distribution-gateway listening on %s\n", listener.Addr())
+	fmt.Fprintf(os.Stderr, "%s on %s\n", g.banner, g.addr)
 
 	select {
 	case err := <-serveErr:
-		if err != nil && err != http.ErrServerClosed {
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Fatalf("Failed to serve: %v", err)
 		}
 	case sig := <-shutdown:
 		log.Printf("received %s, shutting down gracefully...", sig)
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), g.shutdownTimeout)
 		defer cancel()
-		if err := server.Shutdown(shutdownCtx); err != nil {
+		if err := g.server.Shutdown(shutdownCtx); err != nil {
 			log.Printf("graceful shutdown error: %v", err)
 		}
-		if metricsServer != nil {
+		if g.metrics != nil {
 			// After the gateway itself: the last requests should still be counted,
 			// and a scrape of the final numbers is still useful.
-			if err := metricsServer.Shutdown(shutdownCtx); err != nil {
+			if err := g.metrics.Shutdown(shutdownCtx); err != nil {
 				log.Printf("metrics endpoint shutdown error: %v", err)
 			}
 		}
@@ -291,8 +265,11 @@ func Run(ctx context.Context, args []string) {
 
 // listen opens the configured listener. When unixSocket is non-empty it listens
 // on that socket (removing any stale socket file first); otherwise it listens on
-// TCP. The returned cleanup removes the socket file on shutdown.
-func listen(unixSocket, address string, port int) (net.Listener, func(), error) {
+// TCP. socketMode, when non-zero, is applied to the socket file: the default
+// leaves the mode net.Listen created it with, which is what a Buildbarn runner
+// under a different uid needs. The returned cleanup removes the socket file on
+// shutdown.
+func listen(unixSocket, address string, port int, socketMode uint32) (net.Listener, func(), error) {
 	if unixSocket != "" {
 		// Remove a stale socket left by a previous run, if any.
 		if _, err := os.Stat(unixSocket); err == nil {
@@ -304,13 +281,58 @@ func listen(unixSocket, address string, port int) (net.Listener, func(), error) 
 		if err != nil {
 			return nil, func() {}, err
 		}
-		return l, func() { _ = os.Remove(unixSocket) }, nil
+		cleanup := func() { _ = os.Remove(unixSocket) }
+		if socketMode != 0 {
+			if err := os.Chmod(unixSocket, os.FileMode(socketMode)); err != nil {
+				l.Close()
+				cleanup()
+				return nil, func() {}, fmt.Errorf("setting mode of socket %q: %w", unixSocket, err)
+			}
+		}
+		return l, cleanup, nil
 	}
 	l, err := net.Listen("tcp", fmt.Sprintf("%s:%d", address, port))
 	if err != nil {
 		return nil, func() {}, err
 	}
 	return l, func() {}, nil
+}
+
+// parseSocketMode parses an octal --unix-socket-mode value. An empty value (or
+// "0") means "leave the mode net.Listen created the socket with".
+func parseSocketMode(value string) (uint32, error) {
+	if value == "" {
+		return 0, nil
+	}
+	mode, err := strconv.ParseUint(value, 8, 32)
+	if err != nil {
+		return 0, fmt.Errorf("--unix-socket-mode %q is not an octal file mode: %w", value, err)
+	}
+	if mode > 0o777 {
+		return 0, fmt.Errorf("--unix-socket-mode %q is out of range (want 0 to 0777)", value)
+	}
+	return uint32(mode), nil
+}
+
+// reachableFromNetwork reports whether a TCP listener on address accepts
+// connections from outside the machine, and is therefore a listener that needs
+// client authentication. A UNIX socket (empty address, non-empty unixSocket) and
+// a loopback address do not.
+func reachableFromNetwork(unixSocket, address string) bool {
+	if unixSocket != "" {
+		return false
+	}
+	// An empty or wildcard address binds every interface.
+	switch address {
+	case "", "0.0.0.0", "[::]", "::":
+		return true
+	}
+	if ip := net.ParseIP(strings.Trim(address, "[]")); ip != nil {
+		return !ip.IsLoopback()
+	}
+	// A hostname: only the unambiguous loopback spellings are treated as local,
+	// so anything else fails closed and requires authentication.
+	return address != "localhost" && !strings.HasSuffix(address, ".localhost")
 }
 
 func main() {

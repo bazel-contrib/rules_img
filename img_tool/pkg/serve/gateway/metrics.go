@@ -3,8 +3,10 @@ package gateway
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -51,6 +53,13 @@ const (
 	attrUploadKind = attribute.Key("oci.blob.upload.kind")
 	// attrDecision is the policy decision, "allow" or "deny".
 	attrDecision = attribute.Key("oci.policy.decision")
+	// attrMaterial names the on-disk material a reload concerned:
+	// "certificate", "ca", or "token".
+	attrMaterial = attribute.Key("oci.gateway.material")
+	// attrPeer is the peer gateway a forwarder relays to. It is constant for the
+	// life of the process, so it costs no cardinality; it is attached anyway so a
+	// dashboard panel says which hop it is describing.
+	attrPeer = attribute.Key("oci.gateway.peer")
 )
 
 // Values of [attrResult] and [attrUploadKind].
@@ -102,12 +111,34 @@ var sizeBuckets = []float64{
 // metrics holds the gateway's instruments plus the small amount of state needed
 // to keep attributes bounded and to attribute upload sizes to the request that
 // completes an upload. It is safe for concurrent use.
+//
+// The set of instruments depends on the role. A forwarding gateway relays the
+// same traffic a serving gateway then reports in full, so it deliberately does
+// *not* re-export the registry-shaped instruments: blob counts, blob sizes,
+// existence-check hit rates and bandwidth are reported once, by the tier that
+// actually talks to the registry. Summing `oci_gateway_*` across a fleet would
+// otherwise double every one of them. What a forwarder reports instead is what
+// only it can see — its own hop — under distinct `oci.gateway.forward.*` names
+// that can never be added to the serving tier's series by accident.
 type metrics struct {
+	// Reported by both roles.
+	//
 	// requestDuration is the semantic-convention http.server.request.duration.
-	// Its count series doubles as the gateway's request rate.
+	// Its count series doubles as the gateway's request rate. Being semconv, it is
+	// per-service by nature: every HTTP service in a cluster exports it, so it is
+	// always read with a service.name filter.
 	requestDuration metric.Float64Histogram
 	// activeRequests is the semantic-convention http.server.active_requests.
 	activeRequests metric.Int64UpDownCounter
+	// materialReloads counts reloads of the TLS keypair, the CA bundle, and the
+	// token files. A failed reload keeps the previous material, which is correct
+	// but also makes a persistently broken file invisible until the certificate
+	// expires — so failures are counted, not only logged. Both roles have material
+	// to reload, and an operator wants to alert on either.
+	materialReloads metric.Int64Counter
+
+	// Reported by a serving gateway only; nil in a forwarder.
+	//
 	// io counts bytes moved between clients and the gateway, split by
 	// network.io.direction: "receive" is what clients upload, "transmit" what
 	// they download. Being a proxy, the same bytes cross the upstream leg.
@@ -134,92 +165,71 @@ type metrics struct {
 	policyDecisions metric.Int64Counter
 	policyReloads   metric.Int64Counter
 
+	// Reported by a forwarding gateway only; nil in a server.
+	//
+	// peerDuration measures the hop to the peer gateway, until it returned
+	// response headers. Its count series is the relayed request rate, and its
+	// network.protocol.version attribute is how an operator confirms the hop is
+	// really using HTTP/2 rather than having silently fallen back.
+	peerDuration metric.Float64Histogram
+	// peerConnections counts connections opened to the peer. Divided into
+	// peerDuration's count it gives requests per connection, which is the one
+	// number that says whether multiplexing is working: it should be far above 1.
+	peerConnections metric.Int64Counter
+	// forwardErrors counts failures of a forwarder, by error.type. It is a
+	// separate instrument from errors so a fleet-wide sum of either one is
+	// meaningful on its own.
+	forwardErrors metric.Int64Counter
+
 	registries *boundedValues
 	uploads    *uploadTracker
 }
 
-// newMetrics creates the gateway's instruments from mp (the global provider when
-// mp is nil). rules reports the number of rules in the active policy for the
-// oci.gateway.policy.rules gauge.
+// failures returns the error counter of this role.
+func (m *metrics) failures() metric.Int64Counter {
+	if m.errors != nil {
+		return m.errors
+	}
+	return m.forwardErrors
+}
+
+// newMetrics creates a serving gateway's instruments from mp (the global provider
+// when mp is nil). rules reports the number of rules in the active policy for the
+// oci.gateway.policy.rules gauge; nil omits that gauge.
 //
 // Instrument creation only fails for invalid names or units, which are compile
 // time constants here; on failure the returned metrics is still fully usable
 // (the API hands out no-op instruments alongside the error) so callers can log
 // and carry on serving.
 func newMetrics(mp metric.MeterProvider, rules func() int64) (*metrics, error) {
-	if mp == nil {
-		mp = otel.GetMeterProvider()
-	}
-	meter := mp.Meter(meterName)
-
-	var errs []error
-	track := func(err error) {
-		if err != nil {
-			errs = append(errs, err)
-		}
-	}
-	seconds := func(name, desc string) metric.Float64Histogram {
-		h, err := meter.Float64Histogram(name,
-			metric.WithUnit("s"),
-			metric.WithDescription(desc),
-			metric.WithExplicitBucketBoundaries(durationBuckets...),
-		)
-		track(err)
-		return h
-	}
-	bytesHistogram := func(name, desc string) metric.Int64Histogram {
-		h, err := meter.Int64Histogram(name,
-			metric.WithUnit("By"),
-			metric.WithDescription(desc),
-			metric.WithExplicitBucketBoundaries(sizeBuckets...),
-		)
-		track(err)
-		return h
-	}
-	counter := func(name, unit, desc string) metric.Int64Counter {
-		c, err := meter.Int64Counter(name, metric.WithUnit(unit), metric.WithDescription(desc))
-		track(err)
-		return c
-	}
-
-	m := &metrics{
-		requestDuration: seconds("http.server.request.duration",
-			"Duration of registry requests served by the gateway."),
-		io: counter("oci.gateway.io", "By",
-			"Bytes transferred between clients and the gateway (receive: client uploads, transmit: client downloads)."),
-		blobUploads: counter("oci.gateway.blob.uploads", "{blob}",
-			"Blob uploads completed upstream, including cross-repository mounts."),
-		blobUploadSize: bytesHistogram("oci.gateway.blob.upload.size",
-			"Size of blobs uploaded through the gateway."),
-		blobDownloads: counter("oci.gateway.blob.downloads", "{blob}",
-			"Blob downloads served to completion."),
-		blobDownloadSize: bytesHistogram("oci.gateway.blob.download.size",
-			"Size of blobs downloaded through the gateway."),
-		existenceChecks: counter("oci.gateway.existence_checks", "{check}",
-			"HEAD requests for blobs and manifests, by hit or miss upstream."),
-		errors: counter("oci.gateway.errors", "{error}",
-			"Failures serving or forwarding registry requests, by error type."),
-		upstreamDuration: seconds("oci.gateway.upstream.duration",
-			"Time until the upstream registry returned response headers."),
-		authHandshakes: counter("oci.gateway.upstream.auth_handshakes", "{handshake}",
-			"Upstream authentication handshakes (ping and token exchange), which are cached per repository and scope."),
-		policyDecisions: counter("oci.gateway.policy.decisions", "{decision}",
-			"Authorization decisions taken against the active policy."),
-		policyReloads: counter("oci.gateway.policy.reloads", "{reload}",
-			"Policy file reloads, by outcome. A failure means the previous policy is still in force."),
-		registries: newBoundedValues(maxRegistryValues),
-		uploads:    newUploadTracker(maxUploadSessions),
-	}
-
-	activeRequests, err := meter.Int64UpDownCounter("http.server.active_requests",
-		metric.WithUnit("{request}"),
-		metric.WithDescription("Registry requests the gateway is currently serving."),
-	)
-	track(err)
-	m.activeRequests = activeRequests
+	b := newInstruments(mp)
+	m := b.shared()
+	m.io = b.counter("oci.gateway.io", "By",
+		"Bytes transferred between clients and the gateway (receive: client uploads, transmit: client downloads).")
+	m.blobUploads = b.counter("oci.gateway.blob.uploads", "{blob}",
+		"Blob uploads completed upstream, including cross-repository mounts.")
+	m.blobUploadSize = b.bytesHistogram("oci.gateway.blob.upload.size",
+		"Size of blobs uploaded through the gateway.")
+	m.blobDownloads = b.counter("oci.gateway.blob.downloads", "{blob}",
+		"Blob downloads served to completion.")
+	m.blobDownloadSize = b.bytesHistogram("oci.gateway.blob.download.size",
+		"Size of blobs downloaded through the gateway.")
+	m.existenceChecks = b.counter("oci.gateway.existence_checks", "{check}",
+		"HEAD requests for blobs and manifests, by hit or miss upstream.")
+	m.errors = b.counter("oci.gateway.errors", "{error}",
+		"Failures serving or forwarding registry requests, by error type.")
+	m.upstreamDuration = b.seconds("oci.gateway.upstream.duration",
+		"Time until the upstream registry returned response headers.")
+	m.authHandshakes = b.counter("oci.gateway.upstream.auth_handshakes", "{handshake}",
+		"Upstream authentication handshakes (ping and token exchange), which are cached per repository and scope.")
+	m.policyDecisions = b.counter("oci.gateway.policy.decisions", "{decision}",
+		"Authorization decisions taken against the active policy.")
+	m.policyReloads = b.counter("oci.gateway.policy.reloads", "{reload}",
+		"Policy file reloads, by outcome. A failure means the previous policy is still in force.")
+	m.uploads = newUploadTracker(maxUploadSessions)
 
 	if rules != nil {
-		_, err := meter.Int64ObservableGauge("oci.gateway.policy.rules",
+		_, err := b.meter.Int64ObservableGauge("oci.gateway.policy.rules",
 			metric.WithUnit("{rule}"),
 			metric.WithDescription("Number of rules in the policy this instance has loaded."),
 			metric.WithInt64Callback(func(_ context.Context, o metric.Int64Observer) error {
@@ -227,13 +237,91 @@ func newMetrics(mp metric.MeterProvider, rules func() int64) (*metrics, error) {
 				return nil
 			}),
 		)
-		track(err)
+		b.track(err)
 	}
+	return m, b.err()
+}
 
-	if len(errs) > 0 {
-		return m, errors.Join(errs...)
+// newForwardMetrics creates a forwarding gateway's instruments. It deliberately
+// creates none of the registry-shaped ones: a forwarder relays traffic the serving
+// gateway reports in full, so re-exporting blob counts, blob sizes,
+// existence-check results or bandwidth would double every fleet-wide sum. What it
+// adds instead describes the hop, which is the part only a forwarder can see.
+func newForwardMetrics(mp metric.MeterProvider) (*metrics, error) {
+	b := newInstruments(mp)
+	m := b.shared()
+	m.peerDuration = b.seconds("oci.gateway.forward.peer.duration",
+		"Time until the peer gateway returned response headers. Its count is the relayed request rate.")
+	m.peerConnections = b.counter("oci.gateway.forward.peer.connections", "{connection}",
+		"Connections opened to the peer gateway. Relayed requests divided by this is requests per connection, which is how multiplexing is verified.")
+	m.forwardErrors = b.counter("oci.gateway.forward.errors", "{error}",
+		"Failures relaying requests to the peer gateway, by error type.")
+	return m, b.err()
+}
+
+// instruments is the small builder both constructors share.
+type instruments struct {
+	meter metric.Meter
+	errs  []error
+}
+
+func newInstruments(mp metric.MeterProvider) *instruments {
+	if mp == nil {
+		mp = otel.GetMeterProvider()
 	}
-	return m, nil
+	return &instruments{meter: mp.Meter(meterName)}
+}
+
+// shared creates the instruments both roles report.
+func (b *instruments) shared() *metrics {
+	m := &metrics{
+		requestDuration: b.seconds("http.server.request.duration",
+			"Duration of registry requests served by the gateway."),
+		materialReloads: b.counter("oci.gateway.material.reloads", "{reload}",
+			"Reloads of on-disk TLS and token material, by material and outcome. A failure means the previous material is still in force."),
+		registries: newBoundedValues(maxRegistryValues),
+	}
+	activeRequests, err := b.meter.Int64UpDownCounter("http.server.active_requests",
+		metric.WithUnit("{request}"),
+		metric.WithDescription("Registry requests the gateway is currently serving."),
+	)
+	b.track(err)
+	m.activeRequests = activeRequests
+	return m
+}
+
+func (b *instruments) track(err error) {
+	if err != nil {
+		b.errs = append(b.errs, err)
+	}
+}
+
+func (b *instruments) err() error { return errors.Join(b.errs...) }
+
+func (b *instruments) seconds(name, desc string) metric.Float64Histogram {
+	h, err := b.meter.Float64Histogram(name,
+		metric.WithUnit("s"),
+		metric.WithDescription(desc),
+		metric.WithExplicitBucketBoundaries(durationBuckets...),
+	)
+	b.track(err)
+	return h
+}
+
+func (b *instruments) bytesHistogram(name, desc string) metric.Int64Histogram {
+	h, err := b.meter.Int64Histogram(name,
+		metric.WithUnit("By"),
+		metric.WithDescription(desc),
+		metric.WithExplicitBucketBoundaries(sizeBuckets...),
+	)
+	b.track(err)
+	return h
+}
+
+func (b *instruments) counter(name, unit, desc string) metric.Int64Counter {
+	c, err := b.meter.Int64Counter(name, metric.WithUnit(unit), metric.WithDescription(desc))
+	b.track(err)
+	return c
 }
 
 // observation accumulates one request's measurements. Attributes are discovered
@@ -256,6 +344,17 @@ type observation struct {
 	// errType is the error.type reported on the duration histogram. It is set by
 	// the first failure recorded for the request.
 	errType string
+	// principal is the authenticated client, when the listener requires
+	// authentication. It appears in log lines only, never as a metric attribute:
+	// on a build farm the set of clients is operator-controlled but the audit
+	// trail is the log, and keeping it out of the metrics keeps cardinality
+	// bounded by construction.
+	principal string
+	// requestID is the cross-hop correlation id a forwarding gateway sent, so a
+	// build action's request can be tied to this gateway's decision.
+	requestID string
+	// peer is the gateway a forwarder relays to; empty when serving.
+	peer string
 
 	method string
 	scheme string
@@ -290,6 +389,7 @@ func (m *metrics) begin(w http.ResponseWriter, r *http.Request) (*observation, h
 		),
 		w: &countingResponseWriter{ResponseWriter: w},
 	}
+	o.requestID = r.Header.Get(requestIDHeader)
 	m.activeRequests.Add(r.Context(), 1, metric.WithAttributeSet(o.activeAttrs))
 
 	// Count what the client uploads. The body is swapped on a shallow copy of the
@@ -325,16 +425,35 @@ func (o *observation) attrs(extra ...attribute.KeyValue) metric.MeasurementOptio
 	return metric.WithAttributes(kv...)
 }
 
+// logContext renders the audit fields that belong on every log line of a request
+// but are empty in the single-hop deployment: who the client authenticated as,
+// and the id correlating this request with the gateway it came through. Both are
+// quoted, because they can originate outside this process.
+func (o *observation) logContext() string {
+	if o == nil || (o.principal == "" && o.requestID == "") {
+		return ""
+	}
+	var b strings.Builder
+	if o.principal != "" {
+		fmt.Fprintf(&b, " client=%q", o.principal)
+	}
+	if o.requestID != "" {
+		fmt.Fprintf(&b, " request=%q", o.requestID)
+	}
+	return b.String()
+}
+
 // fail records a failure of errType and remembers it as the request's
 // error.type. Only the first failure is reported for a request: the later ones
 // are consequences of it (a refused upstream connection is also a failed
-// request), and counting both would double count.
+// request), and counting both would double count. The counter it lands in depends
+// on the role, so a fleet-wide sum of either is meaningful on its own.
 func (o *observation) fail(ctx context.Context, errType string) {
 	if o.errType != "" {
 		return
 	}
 	o.errType = errType
-	o.m.errors.Add(ctx, 1, o.attrs(semconv.ErrorTypeKey.String(errType)))
+	o.m.failures().Add(ctx, 1, o.attrs(semconv.ErrorTypeKey.String(errType)))
 }
 
 // policyDecision records an authorization decision.
@@ -369,6 +488,51 @@ func (o *observation) upstreamResponse(ctx context.Context, cls request, status 
 	if errType := statusErrorType(status); errType != "" {
 		o.fail(ctx, errType)
 	}
+}
+
+// peerResponse records the peer leg of a request a forwarding gateway relayed.
+//
+// It is deliberately *not* [observation.upstreamResponse]: bandwidth, blob counts
+// and existence-check results are reported by the serving gateway for this very
+// traffic, so a forwarder repeating them would double every fleet-wide sum. What
+// is recorded here is only what the forwarder alone can see — how long its hop
+// took, over which protocol version, and how many connections it needed.
+//
+// The failure classification is peer-aware: a 401 or 403 the peer produced itself
+// means this gateway's peer credential is wrong, which is a completely different
+// problem from a registry rejecting the gateway's registry credential.
+// gatewayError is the peer's diagnostic header, empty when the status is the
+// registry's own answer travelling back.
+func (o *observation) peerResponse(ctx context.Context, status int, proto, gatewayError string, latency time.Duration, newConnections int64) {
+	protoVersion := protocolVersion(proto)
+	o.m.peerDuration.Record(ctx, latency.Seconds(), o.attrs(
+		semconv.HTTPRequestMethodKey.String(o.method),
+		semconv.HTTPResponseStatusCode(status),
+		semconv.NetworkProtocolVersion(protoVersion),
+	))
+	if newConnections > 0 {
+		o.m.peerConnections.Add(ctx, newConnections, metric.WithAttributes(
+			attrPeer.String(o.peer),
+			semconv.NetworkProtocolVersion(protoVersion),
+		))
+	}
+	if errType := peerStatusErrorType(gatewayError, status); errType != "" {
+		o.fail(ctx, errType)
+	}
+}
+
+// protocolVersion maps an [http.Response.Proto] to the semantic-convention
+// network.protocol.version value ("1.1", "2"), which is what makes it possible to
+// see at a glance whether a hop is really multiplexed.
+func protocolVersion(proto string) string {
+	version := strings.TrimPrefix(proto, "HTTP/")
+	if version == "2.0" {
+		return "2"
+	}
+	if version == "" {
+		return "unknown"
+	}
+	return version
 }
 
 // existenceResult maps the upstream status of a HEAD request to a hit, a miss,
@@ -485,6 +649,11 @@ func (o *observation) finish(ctx context.Context) {
 	}
 	o.m.requestDuration.Record(ctx, time.Since(o.start).Seconds(), metric.WithAttributes(kv...))
 
+	// Bandwidth is a serving-gateway measurement: a forwarder moves the very same
+	// bytes, so counting them here too would double the fleet's reported traffic.
+	if o.m.io == nil {
+		return
+	}
 	if n := o.received(); n > 0 {
 		o.m.io.Add(ctx, n, o.attrs(semconv.NetworkIODirectionReceive))
 	}
@@ -502,6 +671,17 @@ func (m *metrics) recordReload(ctx context.Context, err error) {
 		result = resultFailure
 	}
 	m.policyReloads.Add(ctx, 1, metric.WithAttributes(attrResult.String(result)))
+}
+
+// recordMaterialReload records the outcome of reloading one piece of on-disk TLS
+// or token material.
+func (m *metrics) recordMaterialReload(ctx context.Context, material string, err error) {
+	result := resultSuccess
+	if err != nil {
+		result = resultFailure
+	}
+	m.materialReloads.Add(ctx, 1, metric.WithAttributes(
+		attrMaterial.String(material), attrResult.String(result)))
 }
 
 // normalizedMethod maps an HTTP method to the semantic-convention

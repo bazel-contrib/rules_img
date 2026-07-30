@@ -3,11 +3,601 @@
 A container registry gateway that only forwards: clients speak the OCI
 distribution protocol to it anonymously and name the upstream registry they want
 in the `X-rules_img-Original-Host` header, and the gateway authenticates to that
-registry itself and authorizes every request against a policy file.
+registry itself and authorizes every request against a policy file. Build actions
+therefore need no registry credentials of their own.
 
 See [Authenticating Build Actions](../../../docs/authenticating-build-actions.md#3-oci-distribution-gateway)
-for how build actions are pointed at a gateway, the full flag list, and the
-policy file format. This README documents running it as a service.
+for how build actions are pointed at a gateway. **This README documents running it
+as a service**: its modes, flags, policy file, client authentication, deployment,
+and metrics.
+
+## Modes
+
+```bash
+oci-distribution-gateway serve   [OPTIONS]   # talk to registries (the default)
+oci-distribution-gateway forward [OPTIONS]   # relay to another gateway
+oci-distribution-gateway         [OPTIONS]   # no verb: serving mode, unchanged
+```
+
+`serve` is the mode described above. `forward` holds no registry credentials and
+no policy at all: it relays the very same protocol to a serving gateway named by
+`--peer`, over one multiplexed HTTP/2 connection, adding only its own peer
+credential. That is how a build farm keeps its registry credentials in one shared
+deployment instead of in every worker pod — see
+[Two-hop deployment](#two-hop-deployment).
+
+A bare invocation with no verb means serving mode, so deployments that predate the
+subcommands keep working unchanged.
+
+Both modes answer `GET /healthz` with `200 ok` **before** any authentication, so a
+Kubernetes readiness probe works against a listener that requires a credential. It
+is deliberately unauthenticated and reveals nothing else.
+
+## Flags
+
+### `serve`
+
+| Flag | Default | Purpose |
+|---|---|---|
+| `--policy-file <path>` | (required) | JSON/YAML policy of per-repository allow/deny rules (see [Policy file](#policy-file)) |
+| `--dangerously-allow-all` | `false` | Allow every request to every upstream, ignoring the policy. **Dangerous**; only for trusted, isolated environments |
+| `--validate-policy` | `false` | Load and validate `--policy-file`, then exit without serving |
+| `--default-registry <host>` | — | Upstream to use when the request omits the host header (still policy-checked) |
+| `--credential-helper <path>` | — | Bazel credential helper for upstream auth |
+| `--deny-private-upstreams` | `false` | Refuse upstreams that resolve to a loopback, link-local, or private address (see [Restricting which upstreams are reachable](#restricting-which-upstreams-are-reachable)) |
+| `--tls-cert-file`, `--tls-key-file` | — | Serve TLS, which also enables HTTP/2 via ALPN. Hot-reloaded |
+| `--client-ca-file <path>` | — | CAs whose client certificates are accepted (enables mTLS). Requires `--tls-cert-file`. Hot-reloaded |
+| `--allowed-client-id <id>` | any cert from the CA | Permitted client identity: a SPIFFE ID or a DNS name (a single leading `*.` wildcard allowed). Repeatable |
+| `--client-token-file <path>` | — | File of accepted bearer tokens, one per line. Repeatable. Hot-reloaded |
+| `--client-serviceaccount-audience <s>` | — | Accept Kubernetes projected ServiceAccount tokens for this audience, validated with TokenReview |
+| `--allowed-serviceaccount <s>` | any for the audience | `system:serviceaccount:<ns>:<name>`. Repeatable |
+| `--dangerously-allow-plaintext-h2c` | `false` | Accept prior-knowledge h2c on the plaintext listener |
+| `--dangerously-allow-unauthenticated-clients` | `false` | Serve a network-reachable address with no client authentication |
+
+### `forward`
+
+Notably absent: `--policy-file`, `--default-registry` and `--credential-helper`. A
+forwarder authorizes nothing and holds no registry credentials — it is a pure
+pass-through, so a sidecar can never refuse something the (possibly newer) serving
+gateway would have allowed.
+
+| Flag | Default | Purpose |
+|---|---|---|
+| `--peer <url>` | (required) | `https://host[:port]` (HTTP/2 over TLS) or `http://host[:port]` (plaintext h2c) |
+| `--peer-ca-file <path>` | system roots | CAs used to verify the peer's certificate |
+| `--peer-server-name <name>` | — | Certificate name to verify, when dialing a pod IP directly |
+| `--peer-cert-file`, `--peer-key-file` | — | Client certificate for mTLS to the peer. Hot-reloaded; pooled connections are recycled so a rotated certificate takes effect |
+| `--peer-token-file <path>` | — | Bearer token presented to the peer. Re-read per request (10 s cache) so a projected ServiceAccount token keeps working |
+| `--forwarder-id <s>` | hostname | Identifies this forwarder in the peer's decision log |
+| `--dangerously-allow-plaintext-peer` | `false` | Permit an `http://` peer |
+| `--dangerously-allow-anonymous-peer` | `false` | Relay with no credential of our own (a service mesh authenticates the hop) |
+| `--dangerously-skip-peer-verification` | `false` | Do not verify the peer's certificate |
+
+### Both modes
+
+| Flag | Default | Purpose |
+|---|---|---|
+| `--unix-socket <path>` | — | Listen on a UNIX socket (else `--address`/`--port`) |
+| `--unix-socket-mode <octal>` | (as created) | `chmod` the socket after binding, e.g. `0660` |
+| `--address <host>`, `--port <n>` | `localhost`, `0` | TCP alternative to `--unix-socket` |
+| `--shutdown-timeout <dur>` | `30s` | How long in-flight transfers may take to finish after a shutdown signal |
+| `--metrics-*` | off | See [Metrics](#metrics) |
+
+Reloadable material — the policy file, TLS keypairs, CA bundles and token files —
+is re-read when it changes on disk and on `SIGHUP`. A failed reload keeps what is
+already in force, so a bad edit never widens access or takes the gateway down.
+
+> **Security:** by default the gateway is unauthenticated to its clients, so any
+> process that can reach the socket or port may use it within the configured
+> policy. Keep it on a UNIX socket or `localhost` and treat the policy file as the
+> guardrail, or configure [client authentication](#client-authentication) and serve
+> TLS. The gateway **refuses to start** on a network-reachable address with no
+> client authentication configured, unless you pass
+> `--dangerously-allow-unauthenticated-clients`.
+>
+> A UNIX socket is **not** an authentication boundary either: it is created with
+> the process umask, and the sidecar recipes below deliberately need it connectable
+> by the action's user. Anything that can `connect()` to it can use the gateway
+> within the policy.
+
+## Policy file
+
+The policy file lets you set different read/write rules per repository path and
+scope access to parts of a registry (allow `docker.acme.corp/team-a/**` while
+forbidding `docker.acme.corp/secret`).
+It is a JSON or YAML file following a simple schema.
+
+```json
+{
+  "version": 1,
+  "defaultAction": "deny",
+  "rules": [
+    {
+      "description": "explicitly forbid the secret repo (before any broader allow)",
+      "action": "deny",
+      "registry": "docker.acme.corp",
+      "repository": "secret",
+      "operations": ["blob:read", "blob:write", "manifest:read", "manifest:write"]
+    },
+    {
+      "description": "docker.acme.corp/team-a/** is fully writable (push)",
+      "action": "allow",
+      "registry": "docker.acme.corp",
+      "repository": "team-a/**",
+      "operations": ["blob:read", "blob:write", "manifest:read", "manifest:write"]
+    },
+    {
+      "description": "everything else under docker.acme.corp is read-only (pull)",
+      "action": "allow",
+      "registry": "docker.acme.corp",
+      "repository": "**",
+      "operations": ["blob:read", "manifest:read"]
+    },
+    {
+      "description": "Docker Hub official images: pull only",
+      "action": "allow",
+      "registry": "index.docker.io",
+      "repository": "library/**",
+      "operations": ["blob:read", "manifest:read"]
+    }
+  ]
+}
+```
+
+**Evaluation.** Rules are evaluated top-to-bottom and the **first match wins**;
+a request that matches no rule falls back to `defaultAction` (default `deny`, so
+the gateway fails closed). Because the first match wins, put narrow `deny` rules
+*before* broader `allow` rules — otherwise the broad allow shadows them. The
+winning rule is recorded in the gateway's decision log.
+
+**Matching** is against the *resolved* upstream, not the raw request:
+
+- `registry` matches the resolved host: an exact host (`docker.acme.corp`,
+  `index.docker.io`), a single leading `*.` wildcard matching one or more leading
+  labels (`*.docker.io` matches `index.docker.io` and `a.b.docker.io` but **not**
+  bare `docker.io`), or `*` for any host. `docker.io` resolves to
+  `index.docker.io`, and a bare host like `myregistry` resolves to Docker Hub, so
+  write the resolved host.
+- `repository` is a glob over the resolved repository path: `*` matches within one
+  path segment, `**` matches across segments (including zero, so `team-a/**` also
+  matches exactly `team-a`), and `?` matches a single non-`/` character. On Docker
+  Hub a single-segment name is normalized with the `library/` prefix
+  (`docker.io/ubuntu` → `library/ubuntu`), so match it as `library/**`.
+- `operations` lists the operations the rule speaks to; each is one of
+  `blob:read`, `blob:write`, `manifest:read`, `manifest:write`, or `*` for all
+  four. Tag listings and referrers count as `manifest:read`. A `HEAD` is allowed
+  when either the read or the write of that kind is permitted. A cross-repo blob
+  mount additionally requires `blob:read` on the source repository.
+
+A malformed or unreadable file — at startup or on reload — is a hard error:
+the gateway refuses to start, or (on reload) keeps the previous policy. Validate
+a file in CI without starting the gateway with `--validate-policy --policy-file
+<path>`.
+
+**Reloading.** Send the gateway process a `SIGHUP` to re-read the policy file
+without restarting or dropping connections. A reload that fails to parse or
+validate is logged and the previous policy is kept.
+
+### Restricting which upstreams are reachable
+
+The upstream registry is named by the client in the `X-rules_img-Original-Host`
+header, and go-containerregistry resolves a private, `.local` or loopback host to a
+**plaintext** endpoint. So a policy whose `registry` pattern is `*` — or
+`--dangerously-allow-all` — lets a client use the gateway to reach any address the
+*gateway* can reach, which is not the same set the client can reach. The gateway
+warns about such a policy at startup.
+
+`--deny-private-upstreams` refuses those addresses at dial time, against the
+address actually resolved, so DNS names and registry redirects are covered by the
+same check. It is off by default because a legitimate in-cluster registry behind a
+ClusterIP *is* a private address. For a gateway shared between workloads, turn it
+on and add an egress NetworkPolicy naming your registries.
+
+## Client authentication
+
+Needed whenever the gateway listens on an address other processes can reach — most
+importantly for the [two-hop topology](#two-hop-deployment), where a shared
+credential-holding deployment is reachable from every namespace in a cluster.
+
+**Any one configured method authenticates a request** (they are OR'd), so you can
+migrate between them with no downtime. Pick from:
+
+- **mTLS** — the strongest option and nearly free once you serve TLS. Set
+  `--client-ca-file` and, in practice always, `--allowed-client-id`: without an
+  allow-list, *any* workload holding a certificate from that CA can use the
+  gateway, which with a shared cluster CA is effectively cluster-wide access. Use a
+  dedicated issuer. cert-manager with DNS SANs is the documented default; SPIFFE
+  URI SANs work too (materialise the SVID to files with `spiffe-helper` or the
+  SPIFFE CSI driver).
+- **A shared bearer token** — simplest, and the right choice outside Kubernetes.
+  Several tokens are valid at once, which is the rotation story: publish the new
+  one, roll the clients, drop the old one. It carries no identity, so a single
+  compromise means rotating for everyone.
+- **A projected Kubernetes ServiceAccount token** — the only option with real
+  **revocation**: the API server rejects a token whose pod or ServiceAccount is
+  gone, so deleting a compromised worker pod invalidates its credential
+  immediately. It also needs no PKI. Project a token with an audience **dedicated
+  to the gateway** and bind `system:auth-delegator` to the gateway's
+  ServiceAccount.
+
+> **Never reuse the default ServiceAccount token** at
+> `/var/run/secrets/kubernetes.io/serviceaccount/token`: it is issued for the API
+> server's audience, every pod in the cluster has one, and a gateway that accepted
+> it would authenticate the whole cluster. The gateway rejects any token whose
+> TokenReview comes back without your audience, which is exactly this case.
+
+Client certificate identities are re-checked on **every request**, not just per
+connection, so removing one from `--allowed-client-id` takes effect at once even on
+an established connection. There is no CRL or OCSP, so that allow-list *is* the
+revocation mechanism for certificates; use short-lived leaves.
+
+## Two-hop deployment
+
+A gateway per worker pod means the upstream registry credentials in every worker
+pod. To keep them in **one** shared, auditable deployment instead, run the gateway
+in both modes:
+
+```text
+build action (img)
+  ── unix socket ──────────────▶ oci-distribution-gateway forward   (sidecar per worker pod, NO credentials)
+  ── HTTP/2, authenticated ────▶ oci-distribution-gateway serve     (shared Deployment + Service, credentials + policy)
+  ── authenticated HTTPS ──────▶ real registry
+```
+
+The second hop carries **exactly the same protocol** as the first, over one
+multiplexed HTTP/2 connection: many concurrent blob transfers share a single TCP
+connection, and the serving gateway needs no configuration beyond client
+authentication. Nothing changes on the Bazel side — build actions still point at a
+UNIX socket, exactly as in the single-hop setup.
+
+### Trust model
+
+- **The serving gateway is the security boundary.** It holds the credentials and
+  the only authoritative policy.
+- A build action **shares its worker pod's network namespace**, so it can dial the
+  serving Service directly, and a NetworkPolicy cannot separate the two (same pod
+  IP). The only boundary is that the peer credential is mounted into the **sidecar
+  container alone**. So: mount it only there, with `defaultMode: 0400`, never onto
+  the volume the action can read, and never through an environment variable. Leave
+  `shareProcessNamespace` at its `false` default.
+- **One serving Deployment per trust domain.** The policy is matched on registry,
+  repository and operation — not on who is asking — so every client of a given
+  deployment shares its entire grant. Two worker pools that must not read each
+  other's blobs need two deployments, with their own credentials, policy and
+  accepted identities.
+- Ship **NetworkPolicies** with the deployment: ingress from the worker namespace
+  only, egress to your registries only. The serving gateway is now the
+  credential-holding blast-radius centre.
+
+### Operational notes
+
+- **Metrics stay off in sidecars** by default, and should: thousands of worker pods
+  each pushing OTLP every 60 s is a real cost for data the serving tier already
+  reports. The two modes report **disjoint** instrument sets so nothing is counted
+  twice; see [Two hops](#two-hops) for what a forwarder reports and how to verify
+  the hop from it.
+- **Rolling updates are safe.** Shutdown sends a graceful HTTP/2 GOAWAY and the
+  connection stays open until in-flight streams finish, so multi-gigabyte transfers
+  survive and the sidecar re-dials. Set `--shutdown-timeout` above your longest
+  blob transfer, give the pod a larger `terminationGracePeriodSeconds`, and add a
+  `preStop` sleep so the Service drops the endpoint before shutdown begins. A
+  request dispatched in the moment a GOAWAY arrives can still fail with a 502; the
+  `img` client retries it.
+- **Load balancing** is an ordinary ClusterIP Service. Each sidecar dials
+  independently, so a fleet of them spreads evenly across replicas by itself. What
+  a single sidecar does *not* do is rebalance while it stays busy: its connection
+  is dropped after 90 s idle (and by the server's 5-minute idle timeout), which
+  bursty build traffic hits constantly. Watch for imbalance with the PromQL under
+  [Example queries](#example-queries).
+- **The hop is designed for in-cluster round-trip times.** HTTP/2 caps a
+  connection's flow-control window just below 4 MiB, so aggregate upload
+  throughput per connection is about `window / RTT`: ample at 0.2 ms, and roughly
+  80 MB/s at a cross-region 50 ms.
+- **Kubernetes credential rotation gotchas:** a Secret mounted with `subPath`
+  **never** updates, an `immutable: true` Secret never changes, and a projected
+  ServiceAccount token must be re-read (kubelet rotates it at 80 % of a lifetime
+  whose floor is 10 minutes) — which the forwarder does.
+- A failed reload keeps the previous material and increments
+  `oci_gateway_material_reloads_total{oci_result="failure"}` — alert on that, since
+  serving a stale certificate is otherwise invisible until it expires.
+
+### Sizing a shared serving deployment
+
+The HTTP/2 flow control windows a serving gateway advertises are credits rather
+than preallocations, but a stalled upstream registry realises them, so budget
+worst-case receive buffers as
+`MaxConcurrentStreams (64) × per-stream window (2 MiB) × connections`, i.e. about
+128 MiB per fully-loaded peer connection. Set the pod's memory request and limit
+with that in mind.
+
+### A serving deployment
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: oci-distribution-gateway
+  namespace: img-gateway
+spec:
+  replicas: 3
+  template:
+    spec:
+      serviceAccountName: oci-distribution-gateway
+      terminationGracePeriodSeconds: 1800   # > --shutdown-timeout
+      containers:
+        - name: gateway
+          image: <your oci-distribution-gateway image>
+          args:
+            - serve
+            - --address=0.0.0.0
+            - --port=8443
+            - --policy-file=/etc/img/policy.yaml
+            - --tls-cert-file=/tls/tls.crt
+            - --tls-key-file=/tls/tls.key
+            - --client-ca-file=/tls/ca.crt
+            - --allowed-client-id=spiffe://cluster.local/ns/buildbarn/sa/worker
+            - --shutdown-timeout=25m
+            - --deny-private-upstreams
+            - --metrics-exporter=prometheus
+          ports:
+            - {name: gateway, containerPort: 8443}
+            - {name: metrics, containerPort: 9464}
+          readinessProbe:
+            httpGet: {path: /healthz, port: gateway, scheme: HTTPS}
+          lifecycle:
+            preStop:
+              exec: {command: ["sleep", "10"]}   # let the Service drop us first
+          volumeMounts:
+            - {name: tls, mountPath: /tls, readOnly: true}
+            - {name: policy, mountPath: /etc/img, readOnly: true}
+      volumes:
+        # cert-manager writes tls.crt, tls.key and ca.crt here and rotates them.
+        - {name: tls, secret: {secretName: oci-gateway-tls, defaultMode: 0400}}
+        - {name: policy, configMap: {name: rules-img-gateway-policy}}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: oci-distribution-gateway
+  namespace: img-gateway
+spec:
+  selector: {app: oci-distribution-gateway}
+  ports:
+    - {name: gateway, port: 8443, targetPort: gateway}
+```
+
+Give the gateway's ServiceAccount the upstream registry credentials it needs, the
+same way a single-hop gateway gets them. If you use the ServiceAccount-token
+method, also bind the built-in delegator role so it may call TokenReview:
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: {name: oci-gateway-auth-delegator}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: system:auth-delegator}
+subjects:
+  - {kind: ServiceAccount, name: oci-distribution-gateway, namespace: img-gateway}
+```
+
+The matching sidecar is in [Buildbarn](#buildbarn) or
+[BuildBuddy self-hosted executors](#buildbuddy-self-hosted-executors) below.
+
+## Deploying as a sidecar
+
+Under remote execution the gateway runs alongside the worker, listening on a UNIX
+socket the build actions can reach. rules_img does not currently publish a gateway
+container image: build and publish one containing `oci-distribution-gateway`, then
+replace the image placeholders below, preferably with an immutable digest.
+
+### Buildbarn
+
+> This is one concrete deployment; adapt it to your setup and read the raw
+> manifests before editing — see [buildbarn/bb-deployments].
+
+In [bb-deployments] each worker runs `bb_worker` and `bb_runner` as two containers
+in one Pod that share the build directory over an `emptyDir` volume (named
+`worker`, mounted at `/worker` in both). `bb_worker` already talks to `bb_runner`
+over a UNIX socket on that volume (`unix:///worker/runner`), which is exactly the
+mechanism we reuse: run the gateway as a **sidecar container in the same Pod**,
+listening on another socket on the shared volume.
+
+1. Add the sidecar to the worker Pod (`kubernetes/worker-*.yaml`), mounting the
+   existing `worker` volume and listening on a socket on it. Mount the policy
+   file too (for example from a `ConfigMap`):
+
+   ```yaml
+   - name: oci-distribution-gateway
+     image: <your oci-distribution-gateway image>
+     args:
+       - --unix-socket=/worker/oci-gateway.sock
+       - --policy-file=/etc/img/gateway-policy.json
+     volumeMounts:
+       - name: worker
+         mountPath: /worker
+       - name: gateway-policy
+         mountPath: /etc/img
+   ```
+
+   This gives every worker Pod its own gateway, and therefore its own copy of the
+   upstream registry credentials. To keep them in one place instead, run the
+   sidecar in **forwarding mode** and point it at a shared serving deployment (see
+   [Two-hop deployment](#two-hop-deployment)). This sidecar has no policy and no
+   registry credentials at all:
+
+   ```yaml
+   - name: oci-distribution-gateway
+     image: <your oci-distribution-gateway image>
+     args:
+       - forward
+       - --unix-socket=/worker/oci-gateway.sock
+       - --peer=https://oci-distribution-gateway.img-gateway.svc:8443
+       - --peer-ca-file=/tls/ca.crt
+       - --peer-cert-file=/tls/tls.crt
+       - --peer-key-file=/tls/tls.key
+     volumeMounts:
+       - name: worker
+         mountPath: /worker
+       # Mounted into THIS container only: a build action shares the Pod's network
+       # namespace and could otherwise use the credential directly.
+       - name: gateway-peer-tls
+         mountPath: /tls
+         readOnly: true
+   ```
+
+   ```yaml
+   volumes:
+     - name: gateway-peer-tls
+       secret:
+         secretName: oci-gateway-client-tls   # written and rotated by cert-manager
+         defaultMode: 0400
+   ```
+
+   Reuse the existing `worker` volume rather than adding a new one. Consider a
+   Kubernetes native sidecar (an `initContainer` with `restartPolicy: Always`) so
+   the gateway is up before actions run. Editing the mounted policy and sending
+   the gateway a `SIGHUP` reloads it without a restart.
+
+2. Point Bazel at that socket. This is a **client-side** setting: rules_img bakes
+   the value into each action's environment, so you configure it at the Bazel
+   invocation, **not** in the `bb_worker`/`bb_runner` config:
+
+   ```bash
+   common --@rules_img//img/settings:registry_pull_gateway=unix:/worker/oci-gateway.sock
+   common --@rules_img//img/settings:registry_push_gateway=unix:/worker/oci-gateway.sock
+   ```
+
+   The path here must be identical to the sidecar's `--unix-socket`.
+
+3. Give the sidecar (or, in the two-hop setup, the serving deployment) the upstream
+   credentials it needs: a Docker config, a cloud keychain, or its own
+   `--credential-helper`. The gateway restricts which registries and operations are
+   allowed through its `--policy-file`, and authenticates upstream using the **same
+   mechanisms the `img` tool uses** (see
+   [How rules_img resolves credentials](../../../docs/authenticating-build-actions.md#how-rules_img-resolves-credentials)).
+   The actions themselves stay credential-free.
+
+#### Caveats
+
+- This only helps for actions that execute **on the worker** (remote execution).
+  If an action runs locally, a `/worker/...` socket path won't exist.
+- Sharing the `worker` volume does not by itself guarantee the socket is visible
+  **inside the action's sandbox**: `bb_runner` may confine the action to its input
+  root. Make sure the socket path resolves to something the action can
+  `connect()` to, and that the socket (and every parent directory) is reachable by
+  the action's user — the bb-deployments runner runs as uid `65534`, so the socket
+  typically must be group/other-connectable and its parent dirs traversable.
+  Verify against your `runner-*.jsonnet`.
+- The gateway is not part of bb-deployments — build and ship its image yourself.
+  Image tags/digests in bb-deployments drift over time.
+- The socket has to be connectable by the action's user, which means it is
+  connectable by **anything** in the Pod that can reach the path. Hop 1 is
+  unauthenticated by design. With a forwarding sidecar that is the reason its peer
+  credential must live only in the sidecar container's filesystem, never on the
+  shared `worker` volume.
+
+### BuildBuddy self-hosted executors
+
+Run one gateway as a **sidecar container in each BuildBuddy executor Pod**. The
+gateway is not a separate Pod or DaemonSet in this setup: the
+`extraContainers` value adds it to the executor Pod template, so each executor
+replica gets its own gateway.
+
+```text
+BuildBuddy executor Pod
+├── oci-distribution-gateway sidecar
+└── buildbuddy-executor
+    └── child OCI action container
+```
+
+The sidecar listens on a UNIX socket in a private `emptyDir`. The
+[BuildBuddy executor Helm chart] shares that socket with the executor and, with
+the chart's default OCI isolation, the executor bind-mounts it into child action
+containers. This requires configuration at three layers:
+
+1. An `emptyDir` shared by the gateway sidecar and executor Pod containers.
+2. An `extraVolumeMount` that makes the directory visible to the executor.
+3. An `executor.oci.mounts` entry that bind-mounts the directory into every
+   action container.
+
+First create a `ConfigMap` containing the gateway policy in the executor's
+Kubernetes namespace:
+
+```bash
+kubectl --namespace=buildbuddy create configmap rules-img-gateway-policy \
+  --from-file=policy.yaml=/path/to/gateway-policy.yaml
+```
+
+Then add these values to the `buildbuddy-executor` chart:
+
+```yaml
+extraVolumes:
+  - name: rules-img-gateway-socket
+    emptyDir: {}
+  - name: rules-img-gateway-policy
+    configMap:
+      name: rules-img-gateway-policy
+extraVolumeMounts:
+  - name: rules-img-gateway-socket
+    mountPath: /run/rules-img-gateway
+extraContainers:
+  - name: oci-distribution-gateway
+    image: <your oci-distribution-gateway image>
+    args:
+      - --unix-socket=/run/rules-img-gateway/gateway.sock
+      - --policy-file=/etc/rules-img-gateway/policy.yaml
+    volumeMounts:
+      - name: rules-img-gateway-socket
+        mountPath: /run/rules-img-gateway
+      - name: rules-img-gateway-policy
+        mountPath: /etc/rules-img-gateway
+        readOnly: true
+config:
+  executor:
+    oci:
+      mounts:
+        - type: bind
+          source: /run/rules-img-gateway
+          destination: /run/rules-img-gateway
+          options:
+            - bind
+            - ro
+```
+
+Point Bazel at the same socket path:
+
+```bash
+common --@rules_img//img/settings:registry_gateway=unix:/run/rules-img-gateway/gateway.sock
+```
+
+Give only the gateway sidecar the upstream credentials it needs, using its
+environment or additional secret volume mounts. The actions connect to the
+gateway anonymously and do not need registry credentials.
+
+To keep those credentials out of every executor Pod, replace the `args` above with
+a forwarding sidecar and run one shared serving deployment instead (see
+[Two-hop deployment](#two-hop-deployment)):
+
+```yaml
+    args:
+      - forward
+      - --unix-socket=/run/rules-img-gateway/gateway.sock
+      - --peer=https://oci-distribution-gateway.img-gateway.svc:8443
+      - --peer-token-file=/var/run/rules-img-gateway/token
+```
+
+Mount that token into the gateway container only, not into the shared
+`emptyDir`: the executor bind-mounts that directory into every action container.
+
+This example assumes the chart's default OCI isolation. Other isolation types
+need their own mechanism for exposing the socket inside action containers.
+`executor.oci.mounts` applies to every OCI action on the executor, so use a
+restrictive gateway policy and consider a dedicated executor pool. Also ensure
+the socket permissions allow the action user to connect. `extraContainers`
+start concurrently with the executor; if startup ordering is important, use a
+Kubernetes restartable init sidecar with a startup probe through the chart's
+`extraInitContainers` value. A separate Deployment or DaemonSet would require
+different network or volume plumbing and would expose the unauthenticated
+gateway beyond this private per-Pod socket.
 
 ## Metrics
 
@@ -20,14 +610,14 @@ environment variables, so the tooling a cluster already runs works unchanged:
 # Push to an OpenTelemetry collector (what the OpenTelemetry Operator injects).
 # With OTEL_EXPORTER_OTLP_ENDPOINT set, OTLP is enabled automatically.
 export OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318
-oci-distribution-gateway --policy-file /etc/img/policy.json --port 8080
+oci-distribution-gateway serve --policy-file /etc/img/policy.json --port 8080
 
 # Or expose a scrape endpoint for Prometheus on :9464/metrics.
-oci-distribution-gateway --policy-file /etc/img/policy.json --port 8080 \
+oci-distribution-gateway serve --policy-file /etc/img/policy.json --port 8080 \
   --metrics-exporter prometheus
 
 # Or print them to stderr while debugging.
-oci-distribution-gateway --policy-file /etc/img/policy.json --port 8080 \
+oci-distribution-gateway serve --policy-file /etc/img/policy.json --port 8080 \
   --metrics-exporter console
 ```
 
@@ -41,8 +631,10 @@ oci-distribution-gateway --policy-file /etc/img/policy.json --port 8080 \
 `OTEL_SERVICE_NAME`, `OTEL_RESOURCE_ATTRIBUTES`, `OTEL_METRIC_EXPORT_INTERVAL`,
 and the remaining `OTEL_EXPORTER_OTLP_*` variables (headers, TLS material,
 compression, timeouts) behave as specified. `service.name` defaults to
-`oci-distribution-gateway` and `service.instance.id` to the hostname — the pod
-name in Kubernetes — so **several gateway replicas keep their series apart**.
+`oci-distribution-gateway` when serving and `oci-distribution-gateway-forward`
+when forwarding, and `service.instance.id` to the hostname — the pod name in
+Kubernetes — so **several gateway replicas keep their series apart**, and a
+sidecar fleet stays distinguishable from the deployment it forwards to.
 
 > **Security:** `--metrics-address` binds all interfaces by default so a
 > Kubernetes scraper can reach it. The endpoint exposes upstream registry
@@ -56,7 +648,7 @@ and its own periodic reader on the one meter provider, and the same metrics are
 pushed to all of them:
 
 ```bash
-oci-distribution-gateway --policy-file /etc/img/policy.json --port 8080 \
+oci-distribution-gateway serve --policy-file /etc/img/policy.json --port 8080 \
   --metrics-otlp-protocol grpc \
   --metrics-otlp-endpoint http://collector-0.collectors:4317 \
   --metrics-otlp-endpoint http://collector-1.collectors:4317
@@ -90,12 +682,23 @@ just a log line.
 ### Instruments
 
 OTLP reports the dotted names; the Prometheus exporter's translation is shown
-next to them.
+next to them. **The two modes report deliberately disjoint sets**, so that summing
+any `oci_gateway_*` series across a whole fleet is correct without filtering — see
+[Two hops](#two-hops).
+
+Reported by **both** modes:
 
 | Instrument | Prometheus | Kind | What it measures |
 |---|---|---|---|
 | `http.server.request.duration` | `http_server_request_duration_seconds` | histogram (s) | Every request the gateway serves. Its `_count` series is the request rate |
 | `http.server.active_requests` | `http_server_active_requests` | up-down counter | Requests in flight (blob transfers can be long-lived) |
+| `oci.gateway.material.reloads` | `oci_gateway_material_reloads_total` | counter | Reloads of the TLS keypair, CA bundle and token files, by `oci.gateway.material` and `oci.result` |
+
+Reported by **`serve`** only — this is the tier that actually talks to a registry,
+so it is the one that counts registry traffic:
+
+| Instrument | Prometheus | Kind | What it measures |
+|---|---|---|---|
 | `oci.gateway.io` | `oci_gateway_io_bytes_total` | counter (By) | Bandwidth: bytes received from and sent to clients, by `network.io.direction` |
 | `oci.gateway.blob.downloads` | `oci_gateway_blob_downloads_total` | counter | Blobs downloaded to completion |
 | `oci.gateway.blob.download.size` | `oci_gateway_blob_download_size_bytes` | histogram (By) | Size distribution of those blobs |
@@ -109,6 +712,19 @@ next to them.
 | `oci.gateway.policy.reloads` | `oci_gateway_policy_reloads_total` | counter | `SIGHUP` reloads by `oci.result`; a `failure` means the old policy is still in force |
 | `oci.gateway.policy.rules` | `oci_gateway_policy_rules` | gauge | Rules in the policy this instance loaded |
 
+Reported by **`forward`** only — the hop, which is the part no other tier can see:
+
+| Instrument | Prometheus | Kind | What it measures |
+|---|---|---|---|
+| `oci.gateway.forward.peer.duration` | `oci_gateway_forward_peer_duration_seconds` | histogram (s) | Time until the peer gateway returned response headers. Its `_count` series is the relayed request rate, and its `network.protocol.version` attribute is how you confirm HTTP/2 is in use |
+| `oci.gateway.forward.peer.connections` | `oci_gateway_forward_peer_connections_total` | counter | Connections opened to the peer. Relayed requests divided by this is requests per connection — the number that says multiplexing works |
+| `oci.gateway.forward.errors` | `oci_gateway_forward_errors_total` | counter | Failures relaying to the peer, by `error.type` |
+
+> **Alert on `oci_gateway_material_reloads_total{oci_result="failure"}`.** A failed
+> reload deliberately keeps the previous certificate or token in force, which is
+> the safe behaviour but also what makes a persistently broken file invisible —
+> until the certificate expires and every client fails at once.
+
 ### Attributes
 
 `oci.registry` (the resolved upstream host) is on nearly every measurement,
@@ -118,6 +734,10 @@ alongside `oci.operation` (`blob.read`, `blob.head`, `blob.write`, `blob.upload`
 semantic-convention `http.request.method`, `url.scheme`,
 `http.response.status_code`, `http.route` (templated, e.g.
 `/v2/{name}/blobs/{digest}`), and `error.type` when they failed.
+
+A forwarder's hop instruments additionally carry `oci.gateway.peer` (the peer's
+host, constant for the process, so it costs no cardinality) and
+`network.protocol.version` (`1.1`, `2`, or `unknown`).
 
 `error.type` is a fixed set, grouped by who is at fault:
 
@@ -132,10 +752,22 @@ semantic-convention `http.request.method`, `url.scheme`,
   `upstream_rate_limited` (429)
 - **rejected request** — `missing_host`, `invalid_registry`,
   `invalid_repository`, `unsupported_endpoint`, `malformed_query`,
-  `redirect_refused`, `too_many_redirects`, `bad_upstream_request`
+  `redirect_refused`, `too_many_redirects`, `bad_upstream_request`,
+  `private_upstream` (`--deny-private-upstreams` refused the resolved address)
+- **client authentication**, reported by a serving gateway that rejected a client —
+  `peer_unauthenticated` (no credential), `peer_bad_credential` (rejected),
+  `peer_identity_denied` (verified but not in the allow-list), `peer_auth_failed`
+  (could not be validated, e.g. the Kubernetes API server was unreachable; fails
+  closed)
+- **peer**, reported by a forwarding gateway about *its* peer —
+  `peer_unauthorized` (the peer rejected our credential), `peer_forbidden` (the
+  peer rejected our identity). These are deliberately distinct from the
+  `upstream_*` family: they mean the gateway-to-gateway credential is wrong, not
+  that a registry rejected the gateway's registry credential
 
 Every error also names the registry it happened with, in the metric attribute and
 in the log line.
+
 
 ### Example queries
 
@@ -169,12 +801,85 @@ sum by (oci_registry, oci_operation) (rate(oci_gateway_policy_decisions_total{oc
 # 95th percentile serving latency, and requests in flight across the fleet.
 histogram_quantile(0.95, sum by (le) (rate(http_server_request_duration_seconds_bucket[5m])))
 sum(http_server_active_requests)
+
+# Is one replica of a shared serving deployment carrying the load? Each forwarding
+# sidecar pins one HTTP/2 connection to one replica for its life, so a small number
+# of busy sidecars can skew badly. 1.0 is perfectly even.
+    max by (service_instance_id) (rate(http_server_request_duration_seconds_count[5m]))
+  / avg by (service_name)        (rate(http_server_request_duration_seconds_count[5m]))
+
+# A failed reload keeps the previous certificate or token, so this is the only
+# signal that one is going stale. Alert on it.
+sum by (oci_gateway_material) (rate(oci_gateway_material_reloads_total{oci_result="failure"}[15m]))
+
+# Is a serving gateway rejecting clients? (Reported by the server.)
+sum by (error_type) (rate(oci_gateway_errors_total{error_type=~"peer_.*"}[5m]))
 ```
+
+### Two hops
+
+A forwarding gateway relays the very traffic the serving gateway then reports in
+full. If it re-exported the registry-shaped instruments, every fleet-wide
+`sum(rate(oci_gateway_blob_uploads_total[5m]))` would be **twice** the real number,
+and you would have to remember a `service_name` filter on every panel forever. So
+it does not export them at all: blobs, bytes, existence checks, policy decisions
+and upstream latency are reported once, by the tier that talks to the registry.
+
+What a forwarder exports instead is the hop, which nothing else can see, under
+`oci.gateway.forward.*` names that cannot be added to the serving tier's series
+even by accident. Both roles also export the semantic-convention
+`http.server.*` pair — every HTTP service in a cluster does, so those are always
+read with a `service_name` filter anyway — and their own
+`oci_gateway_material_reloads_total`, because both have certificates to rotate and
+you want to alert on either.
+
+`service.name` distinguishes them: `oci-distribution-gateway` when serving,
+`oci-distribution-gateway-forward` when forwarding (both overridden by
+`OTEL_SERVICE_NAME`).
+
+Three queries answer "is the second hop working?":
+
+```promql
+# 1. Is the hop up, and how fast? Its _count is the relayed request rate.
+sum by (oci_gateway_peer) (rate(oci_gateway_forward_peer_duration_seconds_count[5m]))
+histogram_quantile(0.95, sum by (le) (rate(oci_gateway_forward_peer_duration_seconds_bucket[5m])))
+
+# 2. Is it actually multiplexed? Requests per connection — should be far above 1.
+# A ratio near 1 means HTTP/2 was lost and every request is dialling again.
+  sum(rate(oci_gateway_forward_peer_duration_seconds_count[5m]))
+/ sum(rate(oci_gateway_forward_peer_connections_total[5m]))
+
+# ...and the direct answer, which should be entirely version "2":
+sum by (network_protocol_version) (rate(oci_gateway_forward_peer_duration_seconds_count[5m]))
+
+# 3. Is the hop failing, and whose fault is it?
+#    peer_unauthorized / peer_forbidden mean OUR peer credential is wrong.
+#    connection_refused / tls_certificate mean we cannot reach or trust the peer.
+sum by (error_type) (rate(oci_gateway_forward_errors_total[5m]))
+```
+
+Cross-checking the two tiers is then a meaningful comparison rather than a
+tautology: relayed requests (from the forwarders) should track requests served
+(from the serving gateway), and a persistent gap means requests are being lost on
+the hop.
+
+```promql
+  sum(rate(oci_gateway_forward_peer_duration_seconds_count[5m]))
+- sum(rate(http_server_request_duration_seconds_count{service_name="oci-distribution-gateway"}[5m]))
+```
+
+> **Leave `--metrics-exporter` unset in sidecars.** Thousands of worker pods each
+> pushing OTLP every 60 s is a real bill, and the serving tier already reports the
+> registry-facing half in full. Enable it on a handful of pods when you need to see
+> the hop itself, or scrape a few with Prometheus.
+
 
 ### Running several gateway instances
 
 Every instrument is additive, so a fleet is monitored by summing over instances,
-as the queries above do. Nothing is derived from state that only one replica
+as the queries above do — and because the two modes report disjoint sets (see
+[Two hops](#two-hops)), a sum over `oci_gateway_*` never counts the same traffic
+twice even with forwarders exporting. Nothing is derived from state that only one replica
 holds — except `oci_gateway_policy_rules`, which is per instance on purpose:
 `count by (oci_gateway_policy_rules)` (or graphing it per `service_instance_id`)
 shows when a replica is still serving an older policy.
@@ -196,3 +901,7 @@ A `404` is not an error — clients probe for content that does not exist as a
 matter of course, and those show up as existence-check misses. A partial (`206`)
 blob response counts toward bandwidth but not as a completed download, and a
 cross-repository mount counts as an upload with no size (it transfers no bytes).
+
+[buildbarn/bb-deployments]: https://github.com/buildbarn/bb-deployments
+[bb-deployments]: https://github.com/buildbarn/bb-deployments
+[BuildBuddy executor Helm chart]: https://github.com/buildbuddy-io/buildbuddy-helm/tree/master/charts/buildbuddy-executor
