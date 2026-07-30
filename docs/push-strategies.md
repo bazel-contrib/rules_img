@@ -104,6 +104,23 @@ bazel run //your:push_target
 bazel run //your:push_target
 ```
 
+4. (Optional) Use the local Bazel disk cache as an additional blob source:
+```bash
+export IMG_DISK_CACHE=$(bazel info disk_cache)
+bazel run //your:push_target
+```
+
+When `IMG_DISK_CACHE` is set, rules_img reads blobs directly from the local Bazel
+disk cache before falling back to the remote CAS. This can speed up pushes on
+developer machines that have a warm disk cache.
+
+> **Note:** In most setups this has little practical effect:
+> - With **Build without the Bytes** (BwoB) enabled, Bazel does not download action
+>   outputs to the disk cache, so the cache will be mostly empty for recently-built
+>   layers.
+> - If you are **not using lazy push** (for example, with the eager strategy), all
+>   blobs are already materialized as runfiles and the disk cache is never consulted.
+
 ## CAS Registry Push
 
 ### Overview
