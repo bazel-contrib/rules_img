@@ -13,6 +13,11 @@
 // Requests, transferred bytes, blob transfers, existence-check hit rates, and
 // errors are reported as OpenTelemetry metrics through the [metric.MeterProvider]
 // installed with [WithMeterProvider] (see metrics.go for the instruments).
+//
+// Successful blob existence checks can be memoized with
+// [WithBlobExistenceCache], which is what keeps a build farm's repeated "is this
+// layer already pushed?" probes from each costing an upstream round trip (see
+// existencecache.go).
 package gateway
 
 import (
@@ -25,6 +30,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -92,6 +98,13 @@ type Handler struct {
 	meterProvider metric.MeterProvider
 	metrics       *metrics
 
+	// blobCacheTTL and blobCacheMaxBytes are set by WithBlobExistenceCache and
+	// consumed by New, which builds blobCache from them. blobCache is nil when
+	// the cache is disabled, which every one of its methods tolerates.
+	blobCacheTTL      time.Duration
+	blobCacheMaxBytes int64
+	blobCache         *blobExistenceCache
+
 	cache authCache
 }
 
@@ -146,6 +159,32 @@ func WithPeerAuth(auth *PeerAuth) Option {
 	return func(h *Handler) { h.peerAuth = auth }
 }
 
+// WithBlobExistenceCache memoizes the successful answers to blob existence
+// checks (HEAD /v2/<name>/blobs/<digest>), so that a fleet asking the same
+// question about the same layer pays for one upstream round trip instead of
+// thousands. Entries are keyed by upstream registry, repository, and digest, and
+// held for ttl.
+//
+// maxBytes bounds the cache's memory, which is allocated in full at startup and
+// never grows; once it is full, the least recently used entry makes room for a
+// new one. A ttl or maxBytes that is not positive disables the cache, as does a
+// maxBytes below [MinBlobExistenceCacheBytes].
+//
+// ttl is the only thing standing between a client and a stale answer: a blob
+// cannot change, but a registry can garbage-collect one, and a push client that
+// believes a collected layer is still there will skip re-uploading it and commit
+// a manifest referring to nothing. Keep ttl well inside the window in which the
+// registry could collect a blob.
+//
+// Manifests and tags are never cached: both are mutable, and a HEAD on one is
+// exactly how a client finds out that it changed.
+func WithBlobExistenceCache(ttl time.Duration, maxBytes int64) Option {
+	return func(h *Handler) {
+		h.blobCacheTTL = ttl
+		h.blobCacheMaxBytes = maxBytes
+	}
+}
+
 // New constructs a gateway [Handler].
 func New(opts ...Option) *Handler {
 	h := &Handler{
@@ -163,12 +202,21 @@ func New(opts ...Option) *Handler {
 	}
 	h.policy.Store(policy)
 	h.cache.inner = make(map[string]*authEntry)
-	m, err := newMetrics(h.meterProvider, func() int64 {
-		if p := h.policy.Load(); p != nil {
-			return int64(p.RuleCount())
-		}
-		return 0
-	})
+	h.blobCache = newBlobExistenceCache(h.blobCacheTTL, h.blobCacheMaxBytes)
+	sources := gaugeSources{
+		policyRules: func() int64 {
+			if p := h.policy.Load(); p != nil {
+				return int64(p.RuleCount())
+			}
+			return 0
+		},
+	}
+	if h.blobCache != nil {
+		sources.blobCache = h.blobCache.stats
+		h.log.Printf("blob existence cache enabled: up to %d blobs over %d shards, each assumed present for %v",
+			h.blobCache.capacity, len(h.blobCache.shards), h.blobCacheTTL)
+	}
+	m, err := newMetrics(h.meterProvider, sources)
 	if err != nil {
 		// Instruments are still usable (no-ops at worst); serving matters more
 		// than measuring it.
@@ -341,7 +389,90 @@ func (h *Handler) serve(obs *observation, w http.ResponseWriter, r *http.Request
 		}
 	}
 
+	// A blob existence check may already be answerable without the upstream. The
+	// cache is deliberately consulted *after* the policy decision above: whether
+	// this client may ask the question is decided every time, and only the answer
+	// is memoized.
+	if h.serveCachedBlobHead(obs, w, r, repo, cls) {
+		return
+	}
+
 	h.forward(obs, w, r, repo, cls)
+}
+
+// serveCachedBlobHead answers a blob existence check from the blob existence
+// cache, and reports whether it did.
+//
+// The replayed response carries the two headers that mean something on a blob
+// HEAD: Content-Length, which is how a client sizes a layer without downloading
+// it, and Docker-Content-Digest, which for a content-addressed blob is the digest
+// the client just asked about and so needs no storing. Everything else a registry
+// might have sent (its Date, ETag, Accept-Ranges, or any header of its own) is
+// dropped rather than replayed to a different client minutes or hours later.
+func (h *Handler) serveCachedBlobHead(obs *observation, w http.ResponseWriter, r *http.Request, repo name.Repository, cls request) bool {
+	if !h.cacheableBlobHead(r, cls) {
+		return false
+	}
+	contentLength, ok := h.blobCache.lookup(repo.RegistryStr(), repo.RepositoryStr(), cls.digest)
+	obs.blobCacheLookup(r.Context(), ok)
+	if !ok {
+		return false
+	}
+	if contentLength >= 0 {
+		w.Header().Set("Content-Length", strconv.FormatInt(contentLength, 10))
+	}
+	w.Header().Set("Docker-Content-Digest", cls.digest)
+	w.WriteHeader(http.StatusOK)
+	h.log.Printf("%s %q (host=%s%s) -> 200 (cached)", r.Method, r.URL.EscapedPath(), repo.RegistryStr(), obs.logContext())
+	return true
+}
+
+// cacheableBlobHead reports whether a request may be answered from, or admitted
+// to, the blob existence cache. Only a plain HEAD of a digest-referenced blob
+// qualifies.
+func (h *Handler) cacheableBlobHead(r *http.Request, cls request) bool {
+	if h.blobCache == nil || cls.op != opNameBlobHead || cls.digest == "" {
+		return false
+	}
+	for _, header := range uncacheableHeaders {
+		if _, ok := r.Header[header]; ok {
+			return false
+		}
+	}
+	return true
+}
+
+// uncacheableHeaders make a response depend on more than whether the blob exists,
+// so a request carrying one is passed through untouched and its answer is not
+// stored: the upstream would answer it with a 206 or a 304, and the cache only
+// ever holds a plain 200. No OCI client sends one of these on a blob HEAD; the
+// check is here so that one which does gets the registry's real answer.
+var uncacheableHeaders = []string{
+	"Range",
+	"If-Match",
+	"If-None-Match",
+	"If-Modified-Since",
+	"If-Unmodified-Since",
+	"If-Range",
+}
+
+// blobLength is the Content-Length a registry reported for a blob, or -1 when it
+// reported none or an unusable value.
+//
+// The header is parsed rather than read from [http.Response.ContentLength] so
+// that a hand-rolled [http.RoundTripper] installed with [WithBaseTransport]
+// behaves like an [http.Transport], which fills that field in from this header
+// specifically for a HEAD response.
+func blobLength(resp *http.Response) int64 {
+	value := resp.Header.Get("Content-Length")
+	if value == "" {
+		return -1
+	}
+	n, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || n < 0 {
+		return -1
+	}
+	return n
 }
 
 // mountSourceReadable reports whether the cross-repo mount source repository is
@@ -409,6 +540,13 @@ func (h *Handler) forward(obs *observation, w http.ResponseWriter, r *http.Reque
 	}
 	defer resp.Body.Close()
 	obs.upstreamResponse(r.Context(), cls, resp.StatusCode, time.Since(started))
+
+	// Remember a blob the registry confirmed, so the next probe for it costs no
+	// round trip. Only a plain 200 is stored: that is the one answer that means
+	// "this blob is present", and it is the only one the cache replays.
+	if resp.StatusCode == http.StatusOK && h.cacheableBlobHead(r, cls) {
+		h.blobCache.store(repo.RegistryStr(), repo.RepositoryStr(), cls.digest, blobLength(resp))
+	}
 
 	copyResponseHeader(w.Header(), resp.Header, repo)
 	w.WriteHeader(resp.StatusCode)

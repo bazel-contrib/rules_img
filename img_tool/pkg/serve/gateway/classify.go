@@ -29,15 +29,23 @@ var (
 	nameGrammar = `[a-z0-9]+((\.|_|__|-+)[a-z0-9]+)*(/[a-z0-9]+((\.|_|__|-+)[a-z0-9]+)*)*`
 
 	blobUploadRe = regexp.MustCompile(`^/v2/(` + nameGrammar + `)/blobs/uploads/?(?P<reference>.*)$`)
-	blobRe       = regexp.MustCompile(`^/v2/(` + nameGrammar + `)/blobs/([^/]+)$`)
+	blobRe       = regexp.MustCompile(`^/v2/(` + nameGrammar + `)/blobs/(?P<reference>[^/]+)$`)
 	manifestRe   = regexp.MustCompile(`^/v2/(` + nameGrammar + `)/manifests/(.+)$`)
 	tagsRe       = regexp.MustCompile(`^/v2/(` + nameGrammar + `)/tags/list$`)
 	referrersRe  = regexp.MustCompile(`^/v2/(` + nameGrammar + `)/referrers/(.+)$`)
 
-	// uploadRefGroup is the submatch index of the upload session reference. The
-	// repository grammar contains groups of its own, so it is looked up by name
-	// rather than assumed to be a fixed index.
+	// digestRe matches a content descriptor digest per the distribution spec's
+	// grammar (algorithm ":" encoded). It gates what the blob existence cache
+	// keys on: a reference that is not a digest names nothing immutable, and
+	// matching bounds the key length as a side effect.
+	digestRe = regexp.MustCompile(`^[a-z0-9]+(?:[+._-][a-z0-9]+)*:[a-zA-Z0-9=_-]{32,128}$`)
+
+	// uploadRefGroup and blobRefGroup are the submatch indices of the upload
+	// session reference and of the blob reference. The repository grammar contains
+	// groups of its own, so they are looked up by name rather than assumed to be a
+	// fixed index.
 	uploadRefGroup = blobUploadRe.SubexpIndex("reference")
+	blobRefGroup   = blobRe.SubexpIndex("reference")
 )
 
 // Values of the oci.operation metric attribute: a stable, low-cardinality token
@@ -93,6 +101,11 @@ type request struct {
 	// forwarded: the gateway could otherwise authorize a different mount source
 	// than the one the upstream acts on.
 	malformedQuery bool
+	// digest is the blob digest a blob existence check asked about, and is set
+	// only for that operation and only when the reference really is a digest. It
+	// is the part of the blob existence cache's key that identifies the content;
+	// leaving it empty is how every other request opts out of the cache.
+	digest string
 }
 
 // existenceCheck reports whether this is a HEAD probe for a blob or manifest,
@@ -152,7 +165,14 @@ func classify(r *http.Request) (request, bool) {
 		case http.MethodGet:
 			return request{repo: m[1], req: reqBlobRead, kind: "blob read", op: opNameBlobRead, route: routeBlob}, true
 		case http.MethodHead:
-			return request{repo: m[1], req: reqBlobReadOrWrite, kind: "blob existence check", op: opNameBlobHead, route: routeBlob}, true
+			req := request{repo: m[1], req: reqBlobReadOrWrite, kind: "blob existence check", op: opNameBlobHead, route: routeBlob}
+			// Carry the digest only when the reference is one, so that the blob
+			// existence cache is never keyed on a reference no registry could
+			// answer for.
+			if digestRe.MatchString(m[blobRefGroup]) {
+				req.digest = m[blobRefGroup]
+			}
+			return req, true
 		default: // DELETE and anything else that mutates.
 			return request{repo: m[1], req: reqBlobWrite, kind: "blob write", op: opNameBlobWrite, route: routeBlob, write: true}, true
 		}

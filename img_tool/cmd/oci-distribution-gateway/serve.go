@@ -31,6 +31,10 @@ type serveFlags struct {
 	shutdownTimeout      time.Duration
 	denyPrivateUpstreams bool
 
+	// Blob existence cache.
+	blobCacheTTL       time.Duration
+	blobCacheMaxMemory byteSizeFlag
+
 	// TLS and client authentication.
 	tlsCertFile              string
 	tlsKeyFile               string
@@ -45,6 +49,13 @@ type serveFlags struct {
 	metrics metricsFlags
 }
 
+// defaultBlobCacheMemory is how much memory the blob existence cache is allowed
+// by default. It holds on the order of a hundred thousand blob digests, which
+// covers a build farm's working set several times over, and it is preallocated,
+// so it is a fixed addition to the pod's memory request rather than a number that
+// grows under load.
+const defaultBlobCacheMemory = 64 << 20
+
 func (f *serveFlags) register(flagSet *flag.FlagSet) {
 	flagSet.StringVar(&f.address, "address", "localhost", "Address to bind the gateway to (ignored when --unix-socket is set)")
 	flagSet.IntVar(&f.port, "port", 0, "Port to bind the gateway to (0 picks a free port; ignored when --unix-socket is set)")
@@ -57,6 +68,10 @@ func (f *serveFlags) register(flagSet *flag.FlagSet) {
 	flagSet.BoolVar(&f.dangerouslyAllowAll, "dangerously-allow-all", false, "Allow every request to every upstream, ignoring the policy file. DANGEROUS: only for trusted, isolated environments.")
 	flagSet.DurationVar(&f.shutdownTimeout, "shutdown-timeout", 30*time.Second, "How long in-flight requests may take to finish after a shutdown signal. Set this above your longest blob transfer, and give the pod a terminationGracePeriodSeconds larger still, or a rolling update cuts transfers short.")
 	flagSet.BoolVar(&f.denyPrivateUpstreams, "deny-private-upstreams", false, "Refuse upstream registries that resolve to a loopback, link-local, or private address. Recommended for a gateway shared between workloads; leave off when your registry is reachable only through an in-cluster (private) address.")
+
+	f.blobCacheMaxMemory = defaultBlobCacheMemory
+	flagSet.DurationVar(&f.blobCacheTTL, "blob-existence-cache-ttl", 6*time.Hour, "How long the gateway may assume a blob it has already seen is still in its repository, answering repeat HEAD probes for it without a round trip. 0 disables the cache. Keep it well inside the window in which your registry could garbage-collect a blob: a client that trusts a stale hit skips re-uploading a layer that is gone.")
+	flagSet.Var(&f.blobCacheMaxMemory, "blob-existence-cache-max-memory", "Memory the blob existence cache may use, e.g. 64MiB. It is allocated in full at startup and never grows; when it is full the least recently used blob makes room. 0 disables the cache.")
 
 	flagSet.StringVar(&f.tlsCertFile, "tls-cert-file", "", "PEM certificate (leaf plus any intermediates) to serve TLS with. Enables HTTP/2 via ALPN. Re-read when the file changes and on SIGHUP.")
 	flagSet.StringVar(&f.tlsKeyFile, "tls-key-file", "", "PEM private key matching --tls-cert-file. Both or neither.")
@@ -122,6 +137,13 @@ func serveProcess(ctx context.Context, args []string) {
 	}
 	if flags.clientCAFile != "" && flags.tlsCertFile == "" {
 		fmt.Fprintln(os.Stderr, "Error: --client-ca-file requires --tls-cert-file (a client certificate can only be presented over TLS)")
+		os.Exit(1)
+	}
+	// A bound too small to hold one blob would leave a cache that stores nothing
+	// while looking configured, so say so instead of starting up like that.
+	if flags.blobCacheTTL > 0 && flags.blobCacheMaxMemory > 0 && int64(flags.blobCacheMaxMemory) < gateway.MinBlobExistenceCacheBytes {
+		fmt.Fprintf(os.Stderr, "Error: --blob-existence-cache-max-memory %s is below the %d bytes one cached blob costs (pass 0 to disable the cache)\n",
+			flags.blobCacheMaxMemory, gateway.MinBlobExistenceCacheBytes)
 		os.Exit(1)
 	}
 
@@ -223,6 +245,7 @@ func serveProcess(ctx context.Context, args []string) {
 		gateway.WithDefaultRegistry(flags.defaultRegistry),
 		gateway.WithKeychain(reg.Keychain()),
 		gateway.WithMeterProvider(metrics.MeterProvider),
+		gateway.WithBlobExistenceCache(flags.blobCacheTTL, int64(flags.blobCacheMaxMemory)),
 	}
 	if peerAuth != nil {
 		handlerOpts = append(handlerOpts, gateway.WithPeerAuth(peerAuth))

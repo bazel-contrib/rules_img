@@ -22,6 +22,11 @@
 // in every worker pod. See the "Two-hop deployment" section of this command's
 // README.
 //
+// A serving gateway also memoizes the blob existence checks a push begins with, so
+// that a fleet asking whether the same layer is already upstream pays for one round
+// trip rather than thousands. See --blob-existence-cache-ttl and the "Blob
+// existence cache" section of the README.
+//
 // A bare invocation with no subcommand means serving mode, so existing
 // deployments keep working unchanged.
 //
@@ -36,6 +41,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"math"
 	"net"
 	"net/http"
 	"os"
@@ -75,6 +81,62 @@ func (f *repeatedFlag) String() string { return strings.Join(*f, ",") }
 
 func (f *repeatedFlag) Set(value string) error {
 	*f = append(*f, value)
+	return nil
+}
+
+// byteSizeFlag is a flag value for an amount of memory: a plain byte count, or a
+// number with a unit suffix. Binary units (KiB, MiB, GiB, and the Ki/Mi/Gi
+// spellings a Kubernetes resource quantity uses) and decimal ones (KB, MB, GB)
+// are both accepted.
+//
+// A bare K, M or G is deliberately rejected: Kubernetes reads them as powers of
+// ten and Docker as powers of two, so a flag in a manifest that accepted both
+// spellings would mean different things to whoever read it next.
+type byteSizeFlag int64
+
+var byteSizeUnits = []struct {
+	suffix string
+	scale  int64
+}{
+	// Longest suffix first: "MiB" has to be tried before "B".
+	{"KiB", 1 << 10}, {"MiB", 1 << 20}, {"GiB", 1 << 30},
+	{"Ki", 1 << 10}, {"Mi", 1 << 20}, {"Gi", 1 << 30},
+	{"KB", 1e3}, {"MB", 1e6}, {"GB", 1e9},
+	{"B", 1},
+}
+
+func (f byteSizeFlag) String() string {
+	if f == 0 {
+		return "0"
+	}
+	for _, unit := range []struct {
+		suffix string
+		scale  int64
+	}{{"GiB", 1 << 30}, {"MiB", 1 << 20}, {"KiB", 1 << 10}} {
+		if int64(f)%unit.scale == 0 {
+			return strconv.FormatInt(int64(f)/unit.scale, 10) + unit.suffix
+		}
+	}
+	return strconv.FormatInt(int64(f), 10)
+}
+
+func (f *byteSizeFlag) Set(value string) error {
+	digits := strings.TrimSpace(value)
+	scale := int64(1)
+	for _, unit := range byteSizeUnits {
+		if trimmed, ok := strings.CutSuffix(digits, unit.suffix); ok {
+			digits, scale = strings.TrimSpace(trimmed), unit.scale
+			break
+		}
+	}
+	n, err := strconv.ParseInt(digits, 10, 64)
+	if err != nil || n < 0 {
+		return fmt.Errorf("%q is not a size: want a byte count, or a number with a KiB/MiB/GiB (or KB/MB/GB) suffix", value)
+	}
+	if n > math.MaxInt64/scale {
+		return fmt.Errorf("%q is out of range", value)
+	}
+	*f = byteSizeFlag(n * scale)
 	return nil
 }
 

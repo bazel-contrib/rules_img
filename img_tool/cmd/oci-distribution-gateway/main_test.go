@@ -240,6 +240,87 @@ func TestParseSocketMode(t *testing.T) {
 	}
 }
 
+func TestByteSizeFlag(t *testing.T) {
+	for _, tc := range []struct {
+		in      string
+		want    byteSizeFlag
+		wantErr bool
+	}{
+		{in: "0", want: 0},
+		{in: "67108864", want: 64 << 20},
+		{in: "64MiB", want: 64 << 20},
+		{in: "64Mi", want: 64 << 20},
+		{in: "512KiB", want: 512 << 10},
+		{in: "2GiB", want: 2 << 30},
+		{in: "1024B", want: 1024},
+		{in: "64MB", want: 64_000_000},
+		{in: "2GB", want: 2_000_000_000},
+		{in: " 64MiB ", want: 64 << 20},
+		{in: "64 MiB", want: 64 << 20},
+		// A bare K/M/G is binary to Docker and decimal to Kubernetes, so it is
+		// refused rather than guessed at.
+		{in: "64M", wantErr: true},
+		{in: "64G", wantErr: true},
+		{in: "64mib", wantErr: true},
+		{in: "-1", wantErr: true},
+		{in: "1.5MiB", wantErr: true},
+		{in: "", wantErr: true},
+		{in: "MiB", wantErr: true},
+		{in: "9223372036854775807GiB", wantErr: true},
+	} {
+		var got byteSizeFlag
+		err := got.Set(tc.in)
+		if tc.wantErr {
+			if err == nil {
+				t.Errorf("byteSizeFlag.Set(%q) = %d, want an error", tc.in, got)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("byteSizeFlag.Set(%q): %v", tc.in, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("byteSizeFlag.Set(%q) = %d, want %d", tc.in, got, tc.want)
+		}
+	}
+}
+
+// TestByteSizeFlagString covers the flag defaults the usage message prints, which
+// is what an operator copies into a manifest.
+func TestByteSizeFlagString(t *testing.T) {
+	for _, tc := range []struct {
+		in   byteSizeFlag
+		want string
+	}{
+		{in: 0, want: "0"},
+		{in: 64 << 20, want: "64MiB"},
+		{in: 512 << 10, want: "512KiB"},
+		{in: 3 << 30, want: "3GiB"},
+		{in: 1000, want: "1000"},
+		{in: defaultBlobCacheMemory, want: "64MiB"},
+	} {
+		if got := tc.in.String(); got != tc.want {
+			t.Errorf("byteSizeFlag(%d).String() = %q, want %q", int64(tc.in), got, tc.want)
+		}
+	}
+}
+
+// TestByteSizeFlagRoundTrips checks that what the usage message prints parses
+// back to the same number, so a default copied out of --help means what it said.
+func TestByteSizeFlagRoundTrips(t *testing.T) {
+	for _, size := range []byteSizeFlag{0, 1, 1000, 1 << 10, defaultBlobCacheMemory, 3 << 30} {
+		var back byteSizeFlag
+		if err := back.Set(size.String()); err != nil {
+			t.Errorf("byteSizeFlag(%d).String() = %q, which does not parse: %v", int64(size), size, err)
+			continue
+		}
+		if back != size {
+			t.Errorf("byteSizeFlag(%d) printed as %q, which parses back as %d", int64(size), size, int64(back))
+		}
+	}
+}
+
 func TestServeProtocols(t *testing.T) {
 	// A UNIX socket stays HTTP/1.1 only: the registry protocol is request/response
 	// and the img tool's unix transport does not attempt h2 anyway.

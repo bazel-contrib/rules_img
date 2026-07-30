@@ -45,6 +45,8 @@ is deliberately unauthenticated and reveals nothing else.
 | `--default-registry <host>` | — | Upstream to use when the request omits the host header (still policy-checked) |
 | `--credential-helper <path>` | — | Bazel credential helper for upstream auth |
 | `--deny-private-upstreams` | `false` | Refuse upstreams that resolve to a loopback, link-local, or private address (see [Restricting which upstreams are reachable](#restricting-which-upstreams-are-reachable)) |
+| `--blob-existence-cache-ttl <dur>` | `6h` | How long a blob the registry confirmed is assumed to still be there (see [Blob existence cache](#blob-existence-cache)). `0` disables the cache |
+| `--blob-existence-cache-max-memory <size>` | `64MiB` | Memory that cache may use, preallocated at startup, e.g. `256MiB`. `0` disables the cache |
 | `--tls-cert-file`, `--tls-key-file` | — | Serve TLS, which also enables HTTP/2 via ALPN. Hot-reloaded |
 | `--client-ca-file <path>` | — | CAs whose client certificates are accepted (enables mTLS). Requires `--tls-cert-file`. Hot-reloaded |
 | `--allowed-client-id <id>` | any cert from the CA | Permitted client identity: a SPIFFE ID or a DNS name (a single leading `*.` wildcard allowed). Repeatable |
@@ -193,6 +195,95 @@ same check. It is off by default because a legitimate in-cluster registry behind
 ClusterIP *is* a private address. For a gateway shared between workloads, turn it
 on and add an egress NetworkPolicy naming your registries.
 
+## Blob existence cache
+
+A serving gateway memoizes one thing: the answer `200` to
+`HEAD /v2/<name>/blobs/<digest>`, the "is this layer already pushed?" probe every
+push begins with. On a build farm that request dominates registry traffic — a fleet
+re-pushing the same base image asks the same question thousands of times, and each
+answer is a round trip a client waits on.
+
+It is on by default, remembering a blob for six hours within 64 MiB of memory:
+
+```bash
+oci-distribution-gateway serve --policy-file /etc/img/policy.json \
+  --blob-existence-cache-ttl 6h \
+  --blob-existence-cache-max-memory 64MiB
+```
+
+Setting either flag to `0` turns the cache off, and every probe goes to the
+registry as before.
+
+**The key is the resolved upstream registry, the resolved repository, and the
+digest** — all three. A blob is present *in a repository of a registry*, not in
+general: the same digest in another repository of the same registry is a different
+question, and gets asked. Resolution happens first, so a request naming `docker.io`
+and one naming `index.docker.io` share entries (they are the same upstream) while
+`registry.example.com` and `registry.example.com:5000` do not.
+
+Only a plain `200` is remembered:
+
+- **A `404` is not cached.** A blob that is absent now can be pushed a second
+  later, so remembering "not there" would tell clients to re-upload content that
+  exists — and, worse, would not expire fast enough to be corrected.
+- **Errors are not cached**, so a `429` or a `503` cannot outlive the outage.
+- **Manifests and tags are never cached**, whatever the reference. Both are
+  mutable, and a `HEAD` on one is exactly how a client discovers that it changed.
+- **Conditional requests** (`Range`, `If-Match`, `If-None-Match`,
+  `If-Modified-Since`, `If-Unmodified-Since`, `If-Range`) go to the registry
+  untouched and their answers are not stored, since those depend on more than
+  whether the blob is there.
+
+A cached answer carries `Content-Length` (which is how a client sizes a layer
+without downloading it) and `Docker-Content-Digest` (the digest the client asked
+about, by definition of a content-addressed blob). Nothing else the registry
+happened to send is replayed to another client hours later, and every cached hit is
+logged with `(cached)` so the decision log still accounts for every request.
+
+**Authorization is not cached.** The policy is consulted on every request, before
+the cache is; a reload that revokes access takes effect on the next probe even
+though its answer is sitting in memory.
+
+### Sizing the TTL
+
+The TTL is the one thing between a client and a wrong answer. A blob cannot
+change, but a registry can **garbage-collect** one — and a push client that
+believes a collected layer is still there will skip re-uploading it and commit a
+manifest referring to a blob that is gone.
+
+Set the TTL well inside the window in which your registry could collect a blob:
+the grace period of its GC, the untagged-blob retention of your Artifactory or ECR
+lifecycle rule, whichever applies. The six-hour default suits a registry that
+collects daily at the earliest. If your registry collects aggressively, lower it;
+if blobs are never collected, raising it costs nothing but memory.
+
+### Sizing the memory
+
+The bound is allocated **in full at startup and never grows**, so the cache is a
+fixed addition to the pod's memory request rather than a number that moves under
+load. Nothing in a lookup or a store allocates, so it adds no garbage collection
+pressure either.
+
+An entry costs 376 bytes, so the default 64 MiB holds about 178,000 blob digests —
+several times a large farm's working set. When the cache is full the least recently
+used entry makes room for the new one, so a burst of one-off digests cannot push
+out blobs that are still being probed.
+
+Watch `oci_gateway_blob_existence_cache_entries / ..._capacity` for how full it is
+and `..._evictions_total{oci_gateway_cache_eviction_reason="capacity"}` for whether the
+memory bound, rather than the TTL, is deciding how long blobs are remembered — a
+capacity eviction rate above zero is the signal to raise
+`--blob-existence-cache-max-memory`. See [Metrics](#metrics).
+
+### In a two-hop deployment
+
+The cache lives in the **serving** tier, where the registry knowledge is: a
+forwarder has no policy, no credentials and no view of which upstream a request
+resolves to, and caching in every worker pod would multiply the memory by the fleet
+while sharing nothing. One shared serving deployment means one shared cache — and
+the more workers behind it, the better it works. Note that each replica keeps its
+own cache, so N replicas mean up to N upstream probes for the same first-seen blob.
+
 ## Client authentication
 
 Needed whenever the gateway listens on an address other processes can reach — most
@@ -309,6 +400,10 @@ worst-case receive buffers as
 `MaxConcurrentStreams (64) × per-stream window (2 MiB) × connections`, i.e. about
 128 MiB per fully-loaded peer connection. Set the pod's memory request and limit
 with that in mind.
+
+Add `--blob-existence-cache-max-memory` (64 MiB by default) on top: unlike the flow
+control windows, that one is allocated up front and held for the life of the
+process, so it is a flat addition to the request rather than a worst case.
 
 ### A serving deployment
 
@@ -704,7 +799,11 @@ so it is the one that counts registry traffic:
 | `oci.gateway.blob.download.size` | `oci_gateway_blob_download_size_bytes` | histogram (By) | Size distribution of those blobs |
 | `oci.gateway.blob.uploads` | `oci_gateway_blob_uploads_total` | counter | Blobs stored upstream, by `oci.blob.upload.kind` |
 | `oci.gateway.blob.upload.size` | `oci_gateway_blob_upload_size_bytes` | histogram (By) | Size distribution of uploaded blobs |
-| `oci.gateway.existence_checks` | `oci_gateway_existence_checks_total` | counter | `HEAD` probes by `oci.result` (`hit`/`miss`/`error`) |
+| `oci.gateway.existence_checks` | `oci_gateway_existence_checks_total` | counter | `HEAD` probes by `oci.result` (`hit`/`miss`/`error`). A probe answered from the [blob existence cache](#blob-existence-cache) counts as a `hit` here too, so this number means "how often was the content already there" whatever the cache is doing |
+| `oci.gateway.blob_existence_cache.lookups` | `oci_gateway_blob_existence_cache_lookups_total` | counter | Cacheable blob probes by whether the cache answered them (`oci.result`) |
+| `oci.gateway.blob_existence_cache.entries` | `oci_gateway_blob_existence_cache_entries` | gauge | Blobs the cache holds. Over `..._capacity`, how full it is |
+| `oci.gateway.blob_existence_cache.capacity` | `oci_gateway_blob_existence_cache_capacity` | gauge | Blobs it has room for. Fixed: the memory is preallocated |
+| `oci.gateway.blob_existence_cache.evictions` | `oci_gateway_blob_existence_cache_evictions_total` | counter | Entries dropped, by `oci.gateway.cache.eviction.reason` (`capacity`/`expired`) |
 | `oci.gateway.errors` | `oci_gateway_errors_total` | counter | Failures by `error.type` and registry |
 | `oci.gateway.upstream.duration` | `oci_gateway_upstream_duration_seconds` | histogram (s) | Time until the registry returned response headers |
 | `oci.gateway.upstream.auth_handshakes` | `oci_gateway_upstream_auth_handshakes_total` | counter | Ping + token exchanges (cached per repository and scope) |
@@ -738,6 +837,10 @@ semantic-convention `http.request.method`, `url.scheme`,
 A forwarder's hop instruments additionally carry `oci.gateway.peer` (the peer's
 host, constant for the process, so it costs no cardinality) and
 `network.protocol.version` (`1.1`, `2`, or `unknown`).
+
+The blob existence cache's occupancy instruments carry no registry at all — the
+memory is one pool shared by every upstream — and its evictions carry only
+`oci.gateway.cache.eviction.reason`.
 
 `error.type` is a fixed set, grouped by who is at fault:
 
@@ -791,6 +894,16 @@ histogram_quantile(0.5, sum by (le) (rate(oci_gateway_blob_download_size_bytes_b
 # HEAD hit rate: how often a push found the content already upstream.
   sum(rate(oci_gateway_existence_checks_total{oci_result="hit"}[5m]))
 / sum(rate(oci_gateway_existence_checks_total[5m]))
+
+# How much of that the gateway answered itself, without asking a registry — the
+# round trips the blob existence cache saved your build farm.
+  sum(rate(oci_gateway_blob_existence_cache_lookups_total{oci_result="hit"}[5m]))
+/ sum(rate(oci_gateway_blob_existence_cache_lookups_total[5m]))
+
+# Is that cache big enough? A capacity eviction rate above zero means the memory
+# bound, not the TTL, is deciding how long blobs are remembered.
+sum(rate(oci_gateway_blob_existence_cache_evictions_total{oci_gateway_cache_eviction_reason="capacity"}[5m]))
+sum(oci_gateway_blob_existence_cache_entries) / sum(oci_gateway_blob_existence_cache_capacity)
 
 # Errors per second by type and registry.
 sum by (error_type, oci_registry) (rate(oci_gateway_errors_total[5m]))
@@ -889,6 +1002,11 @@ counted once, by the replica that handles the committing request, but its size i
 reported as `oci.blob.upload.kind="unknown"` because no single instance saw all of
 the bytes; the `oci_gateway_io_bytes_total` bandwidth is exact either way.
 
+The blob existence cache is per replica, and its two occupancy gauges are written
+to be summed: `sum(..._entries) / sum(..._capacity)` is how full the fleet's caches
+are. A first-seen blob therefore costs up to one upstream probe per replica, which
+is the one place where adding replicas slightly lowers the hit rate.
+
 ### What is deliberately *not* measured
 
 Repository paths are never used as attributes: on a build farm they are
@@ -901,6 +1019,11 @@ A `404` is not an error — clients probe for content that does not exist as a
 matter of course, and those show up as existence-check misses. A partial (`206`)
 blob response counts toward bandwidth but not as a completed download, and a
 cross-repository mount counts as an upload with no size (it transfers no bytes).
+
+A probe the [blob existence cache](#blob-existence-cache) answered records no
+`oci.gateway.upstream.duration`, because there was no upstream leg to time. That is
+also how you tell the two apart on a dashboard: `existence_checks` counts the
+question, `upstream.duration` counts the ones that reached a registry.
 
 [buildbarn/bb-deployments]: https://github.com/buildbarn/bb-deployments
 [bb-deployments]: https://github.com/buildbarn/bb-deployments

@@ -53,8 +53,9 @@ func upstreamResponse(status int, header http.Header, body string) *http.Respons
 }
 
 // newMetricsHandler returns a gateway that records into a manual reader, plus a
-// collect function returning the metrics gathered so far.
-func newMetricsHandler(t *testing.T, cp *CompiledPolicy, upstream upstreamFunc) (*Handler, func() *metricdata.ResourceMetrics) {
+// collect function returning the metrics gathered so far. Any extra options are
+// applied after the fixed ones, so a test can add or override them.
+func newMetricsHandler(t *testing.T, cp *CompiledPolicy, upstream upstreamFunc, opts ...Option) (*Handler, func() *metricdata.ResourceMetrics) {
 	t.Helper()
 	reader := sdkmetric.NewManualReader()
 	provider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
@@ -63,13 +64,13 @@ func newMetricsHandler(t *testing.T, cp *CompiledPolicy, upstream upstreamFunc) 
 			t.Errorf("shutting down meter provider: %v", err)
 		}
 	})
-	h := New(
+	h := New(append([]Option{
 		WithAuthorizer(cp),
 		WithKeychain(authn.NewMultiKeychain()), // always anonymous, hermetic
 		WithLogger(log.New(io.Discard, "", 0)),
 		WithBaseTransport(upstream),
 		WithMeterProvider(provider),
-	)
+	}, opts...)...)
 	collect := func() *metricdata.ResourceMetrics {
 		t.Helper()
 		var rm metricdata.ResourceMetrics
