@@ -31,6 +31,7 @@ import (
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/gateway"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/load"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/persistentworker"
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/progress"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/proto/blobcache"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/push"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/registryopts"
@@ -60,6 +61,10 @@ func DeployProcess(ctx context.Context, args []string) {
 	}
 	if isPersistentWorker {
 		jobs := extractJobsFlag(processedArgs)
+		if err := applyProgressMode(extractProgressFlag(processedArgs), true); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
 		if err := persistentWorker(jobs, sinkSpec); err != nil {
 			fmt.Fprintf(os.Stderr, "Error in persistent worker: %v\n", err)
 			os.Exit(1)
@@ -78,6 +83,7 @@ func DeployProcess(ctx context.Context, args []string) {
 	var explicitLayers stringSliceFlag
 	var jobs int
 	var sink string
+	var progressMode string
 	var signSettingFiles stringSliceFlag
 	var defaultSignSetting string
 	var signForce bool
@@ -95,6 +101,7 @@ func DeployProcess(ctx context.Context, args []string) {
 	flagSet.Var(&explicitLayers, "layer", "Layer as digest=path or a bare path (can be used multiple times). The file may be a raw compressed layer blob or a compact stream (.cstream), auto-detected. For a bare path: a raw blob is hashed to derive its digest; a .cstream must embed its compressed digest.")
 	flagSet.IntVar(&jobs, "jobs", defaultDeployJobs(), "Maximum number of parallel push operations (defaults to GOMAXPROCS)")
 	flagSet.StringVar(&sink, "sink", "", "Override the destination of all push/load/registry_tag operations for testing. Format: <type>:<path> where type is one of oci-tar, docker-save, oci, distribution, distribution-flat. No registry or daemon network I/O is performed.")
+	flagSet.StringVar(&progressMode, "progress", "", "How to report progress on stderr: 'bar' (interactive progress bars), 'log' (one crane-style line per blob), 'none', or 'auto' (default: bars on a terminal, log lines otherwise). Overridable with $IMG_PROGRESS.")
 	flagSet.Var(&signSettingFiles, "sign_setting_file", "Additional sign_setting config file to ingest for signing (can be used multiple times)")
 	flagSet.StringVar(&defaultSignSetting, "default_sign_setting", "", "Default sign_setting for operations without one: a path to a config file, or sha256:<hex> referencing a discovered setting")
 	flagSet.BoolVar(&signForce, "sign_force", false, "Sign every push operation using the default sign_setting, even operations not configured to sign at build time")
@@ -112,6 +119,12 @@ func DeployProcess(ctx context.Context, args []string) {
 
 	if len(requestFiles) == 0 {
 		fmt.Fprintln(os.Stderr, "Error: at least one --request-file is required")
+		flagSet.Usage()
+		os.Exit(1)
+	}
+
+	if err := applyProgressMode(progressMode, false); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		flagSet.Usage()
 		os.Exit(1)
 	}
@@ -697,9 +710,21 @@ func extractJobsFlag(args []string) int {
 // a global oci-tar/docker-save sink must force one-shot mode before the normal
 // flag set is parsed.
 func extractSinkFlag(args []string) string {
+	return extractFlag(args, "--sink")
+}
+
+// extractProgressFlag pre-scans args for --progress, which the persistent
+// worker needs before (and instead of) the one-shot flag set is parsed.
+func extractProgressFlag(args []string) string {
+	return extractFlag(args, "--progress")
+}
+
+// extractFlag returns the value of the given `--flag=value` / `--flag value`
+// argument, or the empty string if it is not present.
+func extractFlag(args []string, flag string) string {
 	for i := 0; i < len(args); i++ {
 		key, value, hasValue := strings.Cut(args[i], "=")
-		if key == "--sink" {
+		if key == flag {
 			if !hasValue && i+1 < len(args) {
 				value = args[i+1]
 			}
@@ -707,6 +732,26 @@ func extractSinkFlag(args []string) string {
 		}
 	}
 	return ""
+}
+
+// applyProgressMode selects how the deploy reports progress on stderr. An empty
+// value auto-detects: interactive progress bars when stderr is a terminal,
+// crane-style log lines otherwise. Progress bars can't work in the persistent
+// worker - requests are multiplexed onto one stderr (the Bazel worker log) - so
+// they degrade to log lines there.
+func applyProgressMode(value string, isPersistentWorker bool) error {
+	mode, err := progress.ParseMode(value)
+	if err != nil {
+		return err
+	}
+	if mode == progress.ModeAuto {
+		mode = progress.AutoMode(progress.ModeLog)
+	}
+	if isPersistentWorker && mode == progress.ModeBar {
+		mode = progress.ModeLog
+	}
+	progress.SetMode(mode)
+	return nil
 }
 
 // deployToSink builds the requested sink, routes every operation into it, and

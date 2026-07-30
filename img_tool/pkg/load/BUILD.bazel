@@ -25,15 +25,19 @@ go_test(
     name = "load_test",
     srcs = [
         "loader_test.go",
+        "progress_test.go",
         "streamdockertar_test.go",
     ],
     embed = [":load"],
     deps = [
         "//pkg/api",
+        "//pkg/containerd",
+        "//pkg/progress",
         "@com_github_google_go_containerregistry//pkg/v1:pkg",
         "@com_github_google_go_containerregistry//pkg/v1/empty",
         "@com_github_google_go_containerregistry//pkg/v1/mutate",
         "@com_github_google_go_containerregistry//pkg/v1/static",
         "@com_github_google_go_containerregistry//pkg/v1/types",
+        "@com_github_opencontainers_go_digest//:go-digest",
     ],
 )
