@@ -306,6 +306,13 @@ def _source_bundle_impl(ctx):
         attributes.update(override.attributes)
         dest_src_map.update(override.dest_src_map)
 
+    # Override MODULE.bazel if provided (e.g. a release-cleaned version). Keyed
+    # with the strip_prefix so the stripping step below lands it at MODULE.bazel.
+    if ctx.file.module_bazel:
+        module_key = (ctx.attr.strip_prefix or "") + "MODULE.bazel"
+        dest_src_map[module_key] = ctx.file.module_bazel
+        attributes[module_key] = DEFAULT_ATTRIBUTES
+
     # Strip a leading path prefix from every destination (both source files and
     # override entries) so a module living in a subdirectory (e.g. a signer
     # plugin under modules/rules_img_signer_*) is packaged relative to its own
@@ -334,6 +341,10 @@ source_bundle = rule(
         "overrides": attr.label_list(providers = [OverrideSourceFilesInfo]),
         "strip_prefix": attr.string(
             doc = "Leading path prefix stripped from every packaged destination.",
+        ),
+        "module_bazel": attr.label(
+            allow_single_file = True,
+            doc = "Optional MODULE.bazel to substitute in the bundle (e.g. a release-cleaned version).",
         ),
     },
 )

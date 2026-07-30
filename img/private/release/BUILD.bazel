@@ -94,10 +94,9 @@ versioned_filename_info(
 # @rules_img_internal_tools//release:signer_*_prebuilt) into the packaged module
 # source, so a consumer (the e2e scratch workspace, or a real user of the
 # published module) downloads the prebuilt plugin instead of building it from
-# source. Building from this repo's root is what lets the release be fully
-# Bazel-native: the root MODULE.bazel carries the (root-only) gazelle proto
-# overrides the cosign plugin needs to compile, so the packaged plugin
-# MODULE.bazel stays clean and no MODULE.bazel rewriting is required.
+# source. source_bundle also injects a cleaned MODULE.bazel (with the
+# REMOVE_BEFORE_RELEASE sections stripped) so the released module no longer
+# carries the build-from-source gazelle setup that is broken outside this repo.
 # They are versioned independently of rules_img, so pin their BCR versions to
 # match module(version = ...) in each MODULE.bazel.
 version(
@@ -115,6 +114,7 @@ version(
 source_bundle(
     name = "signer_cosign_srcs",
     srcs = ["//:signer_cosign_source_files"],
+    module_bazel = "//img/private/release/module_bazel_release_prep:cleaned_cosign_module",
     overrides = ["@rules_img_internal_tools//release:signer_cosign_prebuilt"],
     strip_prefix = "modules/rules_img_signer_cosign/",
     tags = ["manual"],

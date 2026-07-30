@@ -11,6 +11,12 @@ clean_module_bazel(
     visibility = ["//visibility:public"],
 )
 
+clean_module_bazel(
+    name = "cleaned_cosign_module",
+    src = "//:modules/rules_img_signer_cosign/MODULE.bazel",
+    visibility = ["//img/private/release:__subpackages__"],
+)
+
 bzl_library(
     name = "defs",
     srcs = ["defs.bzl"],
