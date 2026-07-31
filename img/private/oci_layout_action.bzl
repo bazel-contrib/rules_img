@@ -11,6 +11,10 @@ def run_oci_layout_action(ctx, *, format, output, args, inputs, mnemonic):
     shared-base model.  The img tool produces relative symlinks, which are safe
     under remote execution and runfiles trees.  Tar outputs always embed blobs.
 
+    Symlinks are skipped on Windows exec platforms: Windows hardlinks to reparse
+    points propagate the (now-misplaced) relative target to the new file, turning
+    it into a dangling symlink when downstream tools copy blobs out of the tree.
+
     Args:
         ctx: Rule context.
         format: Output format, either "directory" or "tar".
@@ -19,16 +23,21 @@ def run_oci_layout_action(ctx, *, format, output, args, inputs, mnemonic):
         inputs: List of input files for the action.
         mnemonic: Action mnemonic string.
     """
-    if format == "directory" and bazel_features.rules.permits_treeartifact_uplevel_symlinks:
+    img_toolchain_info = ctx.toolchains[TOOLCHAIN].imgtoolchaininfo
+    tool = img_toolchain_info.tool_exe
+
+    # The img tool is img.exe on Windows exec platforms and img elsewhere.
+    is_windows_exec = tool.basename.endswith(".exe")
+
+    if format == "directory" and not is_windows_exec and bazel_features.rules.permits_treeartifact_uplevel_symlinks:
         args.add("--symlink")
 
     args.add("--output", output.path)
 
-    img_toolchain_info = ctx.toolchains[TOOLCHAIN].imgtoolchaininfo
     ctx.actions.run(
         inputs = inputs,
         outputs = [output],
-        executable = img_toolchain_info.tool_exe,
+        executable = tool,
         arguments = [args],
         env = {"RULES_IMG": "1"},
         mnemonic = mnemonic,
