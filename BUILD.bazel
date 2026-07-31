@@ -38,25 +38,46 @@ filegroup(
     visibility = ["//img/private/release:__subpackages__"],
 )
 
-# Source files for the signer plugin modules, packaged into the offline BCR so
-# `img deploy` signing can be exercised end-to-end (see //e2e/sbom). These are
-# their own Bazel modules (own MODULE.bazel); their packages are listed in
-# --deleted_packages so the root module can glob their source without building
-# them here. The bazel-* convenience symlinks (created when a module is built
-# standalone) are excluded via .bazelignore.
+# Source files of the signer plugin modules, packaged into their release archives
+# and into the offline BCR the e2e tests consume (see //e2e/sbom). Allowlists: a
+# released plugin resolves to a prebuilt binary, so its archive must contain no Go
+# sources and no BUILD file loading @rules_go/@gazelle — a published module has
+# only its own bazel_deps to resolve labels from.
+#
+# Every entry must be a glob pattern with allow_empty = True: this BUILD file also
+# ships in the rules_img release archive, which has no modules/ directory. The
+# completeness check lives in source_bundle(required_files) instead.
+# buildifier: disable=constant-glob
 filegroup(
     name = "signer_cosign_source_files",
     srcs = glob(
-        ["modules/rules_img_signer_cosign/**"],
+        [
+            "modules/rules_img_signer_cosign/BUILD.bazel",
+            "modules/rules_img_signer_cosign/MODULE.bazel",
+            "modules/rules_img_signer_cosign/README.md",
+            "modules/rules_img_signer_cosign/prebuilt_lockfile.json",
+            "modules/rules_img_signer_cosign/cli/**",
+            "modules/rules_img_signer_cosign/cosign/**",
+            "modules/rules_img_signer_cosign/prebuilt/**",
+        ],
         allow_empty = True,
     ),
     visibility = ["//img/private/release:__subpackages__"],
 )
 
+# buildifier: disable=constant-glob
 filegroup(
     name = "signer_notation_source_files",
     srcs = glob(
-        ["modules/rules_img_signer_notation/**"],
+        [
+            "modules/rules_img_signer_notation/BUILD.bazel",
+            "modules/rules_img_signer_notation/MODULE.bazel",
+            "modules/rules_img_signer_notation/README.md",
+            "modules/rules_img_signer_notation/prebuilt_lockfile.json",
+            "modules/rules_img_signer_notation/cli/**",
+            "modules/rules_img_signer_notation/notation/**",
+            "modules/rules_img_signer_notation/prebuilt/**",
+        ],
         allow_empty = True,
     ),
     visibility = ["//img/private/release:__subpackages__"],
@@ -65,5 +86,6 @@ filegroup(
 exports_files([
     ".bcr/metadata.template.json",
     "modules/rules_img_signer_cosign/MODULE.bazel",
+    "modules/rules_img_signer_notation/MODULE.bazel",
     "prebuilt_lockfile.json",
 ])

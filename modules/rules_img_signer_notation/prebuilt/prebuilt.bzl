@@ -5,6 +5,10 @@ This is self-contained: it does not depend on rules_img, so the module can be
 built and released independently. The decision is driven by
 `prebuilt_lockfile.json`, which is an empty list `[]` in source and is overwritten
 with per-platform digests when the release archive is produced.
+
+A released module declares no `source()` tag: its archive contains no Go sources,
+so unsupported platforms report that instead of referencing a `//cmd/...` package
+that is not packaged.
 """
 
 _URL_DEFAULT = "https://github.com/bazel-contrib/rules_img/releases/download/{tag}/{basename}_{os}_{cpu}{dot}{ext}"
@@ -18,6 +22,7 @@ _OS_CONSTRAINT = {
 _CPU_CONSTRAINT = {
     "amd64": "@platforms//cpu:x86_64",
     "arm64": "@platforms//cpu:aarch64",
+    "s390x": "@platforms//cpu:s390x",
 }
 
 def _prebuilt_download_impl(rctx):
@@ -53,9 +58,24 @@ _prebuilt_download = repository_rule(
         "integrity": attr.string(mandatory = True),
         "basename": attr.string(mandatory = True),
         "os": attr.string(values = ["darwin", "linux", "windows"]),
-        "cpu": attr.string(values = ["amd64", "arm64"]),
+        "cpu": attr.string(values = ["amd64", "arm64", "s390x"]),
         "url_templates": attr.string_list(default = [_URL_DEFAULT]),
     },
+)
+
+_ALIAS_TEMPLATE = """\
+alias(
+    name = "binary",
+    actual = {actual},
+    visibility = ["//visibility:public"],
+)
+"""
+
+_NO_MATCH_ERROR = (
+    "no prebuilt {basename} signer plugin binary for this platform. " +
+    "Released versions of the plugin publish binaries for linux (x86_64, arm64, s390x), " +
+    "macOS (x86_64, arm64) and Windows (x86_64, arm64) only. To use it elsewhere, build the " +
+    "plugin from source with a git_override on github.com/bazel-contrib/rules_img."
 )
 
 def _resolved_hub_impl(rctx):
@@ -63,13 +83,7 @@ def _resolved_hub_impl(rctx):
     select_map = json.decode(rctx.attr.select_map)
     if not select_map:
         # No prebuilt for this version: alias straight to the source go_binary.
-        rctx.file("BUILD.bazel", """\
-alias(
-    name = "binary",
-    actual = "{source}",
-    visibility = ["//visibility:public"],
-)
-""".format(source = rctx.attr.source))
+        rctx.file("BUILD.bazel", _ALIAS_TEMPLATE.format(actual = '"{}"'.format(rctx.attr.source)))
         return
 
     config_settings = []
@@ -90,25 +104,31 @@ config_setting(
             cpu_constraint = _CPU_CONSTRAINT[cpu],
         ))
         arms[":is_{}".format(platform_key)] = "@{}//:binary".format(repo)
-    arms["//conditions:default"] = rctx.attr.source
 
-    rctx.file("BUILD.bazel", """\
-{config_settings}
-alias(
-    name = "binary",
-    actual = select({arms}),
-    visibility = ["//visibility:public"],
-)
-""".format(
+    extra_select_args = ""
+    if rctx.attr.source:
+        arms["//conditions:default"] = rctx.attr.source
+    else:
+        extra_select_args = '\n        no_match_error = "{}",'.format(
+            _NO_MATCH_ERROR.format(basename = rctx.attr.basename),
+        )
+
+    rctx.file("BUILD.bazel", "{config_settings}\n{alias}".format(
         config_settings = "\n".join(config_settings),
-        arms = json.encode_indent(arms, prefix = "        ", indent = "    "),
+        alias = _ALIAS_TEMPLATE.format(actual = "select(\n        {arms},{extra}\n    )".format(
+            arms = json.encode_indent(arms, prefix = "        ", indent = "    "),
+            extra = extra_select_args,
+        )),
     ))
 
 _resolved_hub = repository_rule(
     implementation = _resolved_hub_impl,
     attrs = {
         "select_map": attr.string(mandatory = True),
-        "source": attr.string(mandatory = True),
+        "basename": attr.string(mandatory = True),
+        "source": attr.string(
+            doc = "Label of the source-built binary, or empty for a prebuilt-only (released) module.",
+        ),
     },
 )
 
@@ -120,7 +140,7 @@ _from_file = tag_class(attrs = {
 _source = tag_class(attrs = {"target": attr.label(mandatory = True)})
 
 def _impl(ctx):
-    source = None
+    source = ""
     lockfile_entries = []
     basename = None
     url_templates = [_URL_DEFAULT]
@@ -135,8 +155,8 @@ def _impl(ctx):
             url_templates = ff.url_templates
             lockfile_entries = json.decode(ctx.read(ff.lockfile))
 
-    if source == None or hub_name == None:
-        fail("prebuilt_signer requires both a source() and a from_file() tag")
+    if hub_name == None:
+        fail("prebuilt_signer requires a from_file() tag")
 
     select_map = {}
     for item in lockfile_entries:
@@ -156,9 +176,13 @@ def _impl(ctx):
         )
         select_map["{}_{}".format(os, cpu)] = repo
 
+    if not select_map and not source:
+        fail("prebuilt_signer: {} has neither a populated prebuilt lockfile nor a source() tag".format(hub_name))
+
     _resolved_hub(
         name = hub_name,
         select_map = json.encode(select_map),
+        basename = basename,
         source = source,
     )
 

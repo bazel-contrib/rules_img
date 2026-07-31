@@ -111,5 +111,7 @@ build_test(
         "//:push_image",
         "//:sbom_layer",
         "//:sbom_manifest",
+        "@rules_img_signer_cosign",
+        "@rules_img_signer_notation",
     ],
 )
