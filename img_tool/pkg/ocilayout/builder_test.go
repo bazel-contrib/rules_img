@@ -290,6 +290,38 @@ func TestOCILayoutDirectoryCleanIndex(t *testing.T) {
 	}
 }
 
+func TestOCILayoutSymlinksAreRelative(t *testing.T) {
+	manifest, manifestData, _, _, layerHex := makeTestManifest()
+	dir := t.TempDir()
+
+	configPath := filepath.Join(dir, "config")
+	os.WriteFile(configPath, []byte(`{"architecture":"amd64","os":"linux"}`), 0o644)
+	layerPath := filepath.Join(dir, "layer")
+	os.WriteFile(layerPath, []byte("fake layer content"), 0o644)
+
+	out := filepath.Join(dir, "layout")
+	mi := ManifestInput{Manifest: manifest, ManifestData: manifestData, Config: BlobFromPath(configPath)}
+	mi.Layers = []LayerInput{{Descriptor: manifest.Layers[0], Blob: BlobFromPath(layerPath), Present: true}}
+
+	if err := New(OCILayout()).WithLinkStrategy(true, false).AddManifest(mi).WriteDir(context.Background(), out); err != nil {
+		t.Fatalf("WriteDir: %v", err)
+	}
+
+	linkPath := filepath.Join(out, "blobs/sha256", layerHex)
+	target, err := os.Readlink(linkPath)
+	if err != nil {
+		t.Fatalf("reading symlink %s: %v", linkPath, err)
+	}
+	if filepath.IsAbs(target) {
+		t.Errorf("symlink target must be relative, got %q", target)
+	}
+	// The relative target must resolve to the original source file.
+	resolved := filepath.Join(filepath.Dir(linkPath), target)
+	if resolved != layerPath {
+		t.Errorf("resolved symlink: got %q want %q", resolved, layerPath)
+	}
+}
+
 func TestSparseLayout(t *testing.T) {
 	manifest, manifestData, _, configHex, layerHex := makeTestManifest()
 	dir := t.TempDir()

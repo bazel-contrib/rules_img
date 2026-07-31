@@ -19,10 +19,21 @@ bzl_library(
 )
 
 bzl_library(
+    name = "oci_layout_action",
+    srcs = ["oci_layout_action.bzl"],
+    visibility = ["//img:__subpackages__"],
+    deps = [
+        "//img/private/common:build",
+        "@bazel_features//:features",
+    ],
+)
+
+bzl_library(
     name = "index",
     srcs = ["index.bzl"],
     visibility = ["//img:__subpackages__"],
     deps = [
+        ":oci_layout_action",
         ":push_metadata",
         ":soci_deploy",
         ":stamp",
@@ -150,6 +161,7 @@ bzl_library(
     visibility = ["//img:__subpackages__"],
     deps = [
         ":annotations_util",
+        ":oci_layout_action",
         ":push_metadata",
         ":stamp",
         "//img/private/common:build",
@@ -176,6 +188,7 @@ bzl_library(
     srcs = ["optimize.bzl"],
     visibility = ["//img:__subpackages__"],
     deps = [
+        ":oci_layout_action",
         "//img/private/common:build",
         "//img/private/common:layer_helper",
         "//img/private/common:transitions",
