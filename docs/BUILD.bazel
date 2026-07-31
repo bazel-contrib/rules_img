@@ -3,6 +3,11 @@ load("//util:stardoc.bzl", "stardoc_with_diff_test", "update_docs")
 # gazelle:exclude_from_release
 
 stardoc_with_diff_test(
+    name = "base_images",
+    bzl_library_target = "//img:base_images",
+)
+
+stardoc_with_diff_test(
     name = "image",
     bzl_library_target = "//img:image",
 )

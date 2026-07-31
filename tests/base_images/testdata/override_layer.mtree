@@ -1,0 +1,2 @@
+#mtree v2.0
+./tmp type=dir mode=0700 uid=1000 gid=1000 time=0 nlink=1

@@ -182,3 +182,16 @@ bzl_library(
     visibility = ["//visibility:public"],
     deps = ["//img/private:signing_config"],
 )
+
+bzl_library(
+    name = "base_images",
+    srcs = ["base_images.bzl"],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//img/private/base_images:base_image_layer",
+        "//img/private/base_images:etc",
+        "//img/private/base_images:linux_skeleton",
+        "//img/private/base_images:system_libraries",
+        "//img/private/base_images:trust_store",
+    ],
+)

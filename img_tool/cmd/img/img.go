@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/go-containerregistry/pkg/logs"
 
+	"github.com/bazel-contrib/rules_img/img_tool/cmd/base"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/casdir"
 	compactstreamcmd "github.com/bazel-contrib/rules_img/img_tool/cmd/compactstream"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/compress"
@@ -45,6 +46,7 @@ Global flags (accepted by any command):
                            --insecure). Also settable via IMG_INSECURE=1.
 
 Commands:
+  base                     describes base image contents (subcommands: etc, trust-store, system-libraries, skeleton)
   compress                 (re-)compresses a layer
   docker-save              assembles a Docker save compatible directory or tarball
   download-blob            downloads a single blob from a registry
@@ -87,6 +89,8 @@ func Run(ctx context.Context, args []string) {
 
 	command := args[1]
 	switch command {
+	case "base":
+		base.BaseProcess(ctx, args[2:])
 	case "layer":
 		layer.LayerProcess(ctx, args[2:])
 	case "manifest":

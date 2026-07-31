@@ -1,0 +1,193 @@
+load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
+load("@rules_img//img:base_images.bzl", "base_image_layer", "etc_environment", "etc_hosts", "etc_passwd", "etc_release", "group_entry", "linux_skeleton", "passwd_entry", "system_libraries", "trust_store")
+load("@rules_img//img:layer.bzl", "file_metadata")
+load(":defs.bzl", "base_layer_mtree_test")
+
+# gazelle:exclude_from_release
+
+filegroup(
+    name = "all_files",
+    srcs = glob(["**"]),
+    visibility = ["//img/private/release:__subpackages__"],
+)
+
+bzl_library(
+    name = "defs",
+    srcs = ["defs.bzl"],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//img:providers",
+        "@bazel_skylib//rules:diff_test",
+    ],
+)
+
+platform(
+    name = "linux_amd64",
+    constraint_values = [
+        "@platforms//cpu:x86_64",
+        "@platforms//os:linux",
+    ],
+)
+
+platform(
+    name = "windows_amd64",
+    constraint_values = [
+        "@platforms//cpu:x86_64",
+        "@platforms//os:windows",
+    ],
+)
+
+# A complete base image description, exercising every content rule. The same
+# targets are built for Linux and for Windows below.
+
+linux_skeleton(name = "skeleton")
+
+etc_passwd(
+    name = "users",
+    groups = [
+        group_entry(
+            name = "root",
+            gid = 0,
+        ),
+        group_entry(
+            name = "app",
+            gid = 1000,
+            users = ["app"],
+        ),
+    ],
+    users = [
+        passwd_entry(
+            gid = 0,
+            home = "/root",
+            shell = "/bin/sh",
+            uid = 0,
+            username = "root",
+        ),
+        passwd_entry(
+            gecos = "Application",
+            gid = 1000,
+            home = "/home/app",
+            uid = 1000,
+            username = "app",
+        ),
+    ],
+)
+
+etc_hosts(
+    name = "hosts",
+    hosts = {"10.0.0.7": "database db.internal"},
+)
+
+etc_environment(
+    name = "environment",
+    env = {
+        "LANG": "C.UTF-8",
+        "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    },
+)
+
+etc_release(
+    name = "release",
+    os_release = {
+        "ID": "rules-img-test",
+        "NAME": "rules_img test base",
+        "VERSION_ID": "1",
+    },
+)
+
+trust_store(
+    name = "trust",
+    certs = ["testdata/root_ca.pem"],
+    java_keystore = True,
+)
+
+system_libraries(
+    name = "libs",
+    ldso_cache = True,
+    libdir_layout = "multiarch",
+    libs = ["testdata/libtest.so.1.2.3"],
+)
+
+base_image_layer(
+    name = "base_layer",
+    srcs = [
+        ":environment",
+        ":hosts",
+        ":libs",
+        ":release",
+        ":skeleton",
+        ":trust",
+        ":users",
+    ],
+    # Pinned so the goldens do not depend on the default compression setting.
+    compress = "gzip",
+    create_parent_directories = "enabled",
+    tags = ["manual"],
+)
+
+# Building the very same layer for Linux and for Windows is the platform-scoping
+# test: everything except the trust store is Linux-only, so the Windows golden
+# holds the certificates and nothing else.
+base_layer_mtree_test(
+    name = "linux_base_layer_test",
+    golden = "testdata/linux_base_layer.mtree",
+    layer = ":base_layer",
+    platform = ":linux_amd64",
+)
+
+base_layer_mtree_test(
+    name = "windows_base_layer_test",
+    golden = "testdata/windows_base_layer.mtree",
+    layer = ":base_layer",
+    platform = ":windows_amd64",
+)
+
+# The override case: two skeletons describing /tmp differently. The later src
+# must win, which is what makes a "standard base plus local tweaks" layering
+# work at all.
+linux_skeleton(
+    name = "loose_tmp",
+    bin_and_lib = "disabled",
+    etc = "disabled",
+    home = "disabled",
+    mount_points = "disabled",
+    opt_srv = "disabled",
+    root = "disabled",
+    run = "disabled",
+    var = "disabled",
+)
+
+linux_skeleton(
+    name = "private_tmp",
+    bin_and_lib = "disabled",
+    etc = "disabled",
+    extra_directories = {"/tmp": file_metadata(
+        gid = 1000,
+        mode = "0700",
+        uid = 1000,
+    )},
+    home = "disabled",
+    mount_points = "disabled",
+    opt_srv = "disabled",
+    root = "disabled",
+    run = "disabled",
+    tmp = "disabled",
+    var = "disabled",
+)
+
+base_image_layer(
+    name = "override_layer",
+    srcs = [
+        ":loose_tmp",
+        ":private_tmp",
+    ],
+    compress = "gzip",
+    tags = ["manual"],
+)
+
+base_layer_mtree_test(
+    name = "override_test",
+    golden = "testdata/override_layer.mtree",
+    layer = ":override_layer",
+    platform = ":linux_amd64",
+)

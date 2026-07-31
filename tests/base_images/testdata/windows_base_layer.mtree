@@ -1,0 +1,9 @@
+#mtree v2.0
+./etc/ssl/certs/ca-certificates.crt type=file size=664 mode=0644 uid=0 gid=0 sha256digest=ae116b12ac6d619bb3b50ccdfaedac32b240f78897d8c1ed8e31ec60c6ccef2c time=0 nlink=2
+./etc/ssl/certs/java/cacerts type=file size=702 mode=0644 uid=0 gid=0 sha256digest=df1e0843a45b840085a7e9efe864ee785640fadb1d2033713bda3d226f78bc5e time=0 nlink=1
+./etc type=dir mode=0755 uid=0 gid=0 time=0 nlink=1
+./etc/ssl type=dir mode=0755 uid=0 gid=0 time=0 nlink=1
+./etc/ssl/certs type=dir mode=0755 uid=0 gid=0 time=0 nlink=1
+./etc/ssl/certs/4e814f08.0 type=link size=20 mode=0777 uid=0 gid=0 time=0 link=d7f8516c8962ca7e.pem nlink=1
+./etc/ssl/certs/d7f8516c8962ca7e.pem type=file size=664 mode=0644 uid=0 gid=0 sha256digest=ae116b12ac6d619bb3b50ccdfaedac32b240f78897d8c1ed8e31ec60c6ccef2c time=0 nlink=2
+./etc/ssl/certs/java type=dir mode=0755 uid=0 gid=0 time=0 nlink=1

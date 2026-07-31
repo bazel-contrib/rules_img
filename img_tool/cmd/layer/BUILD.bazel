@@ -3,6 +3,7 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "layer",
     srcs = [
+        "basemetadata.go",
         "flagtypes.go",
         "layer.go",
         "metadata.go",
@@ -13,12 +14,14 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/api",
+        "//pkg/basemeta",
         "//pkg/compactstream",
         "//pkg/compress",
         "//pkg/contentmanifest",
         "//pkg/digestfs",
         "//pkg/kvfile",
         "//pkg/metadata",
+        "//pkg/proto/baselayer",
         "//pkg/tarcas",
         "//pkg/tree",
         "//pkg/tree/runfiles",

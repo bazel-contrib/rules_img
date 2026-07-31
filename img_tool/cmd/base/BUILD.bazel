@@ -1,0 +1,26 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "base",
+    srcs = [
+        "base.go",
+        "environment.go",
+        "flags.go",
+        "hosts.go",
+        "passwd.go",
+        "release.go",
+        "skeleton.go",
+        "systemlibraries.go",
+        "truststore.go",
+    ],
+    importpath = "github.com/bazel-contrib/rules_img/img_tool/cmd/base",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/basemeta",
+        "//pkg/basemeta/elfinfo",
+        "//pkg/basemeta/ldcache",
+        "//pkg/basemeta/pkgfile",
+        "//pkg/basemeta/truststore",
+        "//pkg/proto/baselayer",
+    ],
+)

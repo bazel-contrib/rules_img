@@ -589,6 +589,15 @@ func (c *CAS[HM]) StoreTreeKnownHash(fsys fs.FS, intendedPath string, treeHash [
 }
 
 func (c *CAS[HM]) writeHeaderOrDefer(hdr *tar.Header, data io.Reader, contentDigest []byte) error {
+	// Record every directory the caller describes explicitly, alongside the
+	// ones synthesized below, so a later entry underneath does not synthesize a
+	// second copy of it with default metadata. This happens here rather than at
+	// write time because in CASFirst mode directory headers are deferred to
+	// Close(), long after the files under them have been written.
+	if hdr.Typeflag == tar.TypeDir {
+		c.dirs[dirKey(hdr.Name)] = struct{}{}
+	}
+
 	if hdr.Typeflag != tar.TypeReg && c.structure == CASFirst && !c.closed {
 		// Defer writing the header for non-regular files
 		// until Close() is called.
@@ -612,6 +621,17 @@ func (c *CAS[HM]) writeHeaderOrDefer(hdr *tar.Header, data io.Reader, contentDig
 	// Or are in intertwined mode (CAS and non-CAS objects are mixed together as they are written)
 	// Or we are in CASFirst mode and we are about to close the tar (so we need to write the deferred files)
 	return c.writeHeaderAndData(hdr, data, contentDigest)
+}
+
+// dirKey normalizes a directory name for the `dirs` set. Synthesized parents
+// are keyed with a trailing slash (the tar convention for a directory), so an
+// explicitly written directory has to be keyed the same way whether or not its
+// header happened to carry one.
+func dirKey(name string) string {
+	if strings.HasSuffix(name, "/") {
+		return name
+	}
+	return name + "/"
 }
 
 func callbackModeFromTarType(hdr *tar.Header) WriteHeaderCallbackFilter {

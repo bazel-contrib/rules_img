@@ -255,6 +255,38 @@ func (e *emptyFilesFromFileArgs) Set(value string) error {
 	return nil
 }
 
+// baseMetadataArgs collects the paths of base metadata streams named directly
+// on the command line, in order.
+type baseMetadataArgs []string
+
+func (b *baseMetadataArgs) String() string {
+	return strings.Join(*b, ", ")
+}
+
+func (b *baseMetadataArgs) Set(value string) error {
+	if _, err := os.Stat(value); err != nil {
+		return fmt.Errorf("file %s does not exist: %w", value, err)
+	}
+	*b = append(*b, value)
+	return nil
+}
+
+// baseMetadataFromFileArgs collects parameter files that each list base
+// metadata stream paths, one per line.
+type baseMetadataFromFileArgs []string
+
+func (b *baseMetadataFromFileArgs) String() string {
+	return strings.Join(*b, ", ")
+}
+
+func (b *baseMetadataFromFileArgs) Set(value string) error {
+	if _, err := os.Stat(value); err != nil {
+		return fmt.Errorf("file %s does not exist: %w", value, err)
+	}
+	*b = append(*b, value)
+	return nil
+}
+
 type symlink struct {
 	LinkName string
 	Target   string
