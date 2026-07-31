@@ -1,0 +1,74 @@
+load("@rules_img//img:base_images.bzl", "base_image_layer", "etc_environment", "etc_hosts", "etc_passwd", "etc_release", "group_entry", "linux_skeleton", "passwd_entry", "trust_store")
+
+base_image_layer(
+    name = "base",
+    srcs = [
+        ":environment",
+        ":hosts",
+        ":release",
+        ":skeleton",
+        ":trust",
+        ":users",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+linux_skeleton(
+    name = "skeleton",
+    bin_and_lib = "enabled",
+)
+
+etc_passwd(
+    name = "users",
+    groups = [
+        group_entry(
+            name = "root",
+            gid = 0,
+        ),
+        group_entry(
+            name = "app",
+            gid = 1000,
+            users = ["app"],
+        ),
+    ],
+    users = [
+        passwd_entry(
+            gid = 0,
+            home = "/root",
+            shell = "/bin/sh",
+            uid = 0,
+            username = "root",
+        ),
+        passwd_entry(
+            gid = 1000,
+            home = "/var/lib/app",
+            shell = "/sbin/nologin",
+            uid = 1000,
+            username = "app",
+        ),
+    ],
+)
+
+etc_hosts(name = "hosts")
+
+etc_environment(
+    name = "environment",
+    env = {
+        "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+        "LANG": "C.UTF-8",
+    },
+)
+
+etc_release(
+    name = "release",
+    os_release = {
+        "ID": "rules_img-base",
+        "NAME": "rules_img Base Image",
+    },
+)
+
+trust_store(
+    name = "trust",
+    certs = ["@curl_ca_certs//file"],
+    exploded = False,
+)

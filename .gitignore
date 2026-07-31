@@ -1,6 +1,8 @@
 dist
 e2e/*/MODULE.bazel.lock
 *_tool/MODULE.bazel.lock
+modules/rules_img_private/MODULE.bazel.lock
+modules/rules_img_services/MODULE.bazel.lock
 bazel-*
 .bazelrc.user
 .github/workflows/.bazelrc.buildbuddy.generated

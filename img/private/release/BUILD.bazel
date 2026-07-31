@@ -1,7 +1,7 @@
 load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
 load("@rules_pkg//pkg:tar.bzl", "pkg_tar")
 load("//img/private/config:defs.bzl", "version")
-load(":defs.bzl", "PLATFORMS", "go_to_constraint_value", "offline_bcr", "offline_bundle", "release_files", "release_platform_flag", "source_bundle", "versioned_filename_info", name = "platform_name")
+load(":defs.bzl", "offline_bcr", "offline_bundle", "release_files", "source_bundle", "versioned_filename_info")
 
 # gazelle:exclude_from_release
 
@@ -17,19 +17,6 @@ pkg_tar(
     mode = "0755",
     strip_prefix = "/img_tool",
     tags = ["manual"],
-)
-
-[
-    platform(
-        name = name(p),
-        constraint_values = [go_to_constraint_value[goname] for goname in p],
-    )
-    for p in PLATFORMS
-]
-
-release_platform_flag(
-    name = "release_platform",
-    build_setting_default = "linux_amd64",
 )
 
 release_files(
@@ -237,5 +224,6 @@ bzl_library(
     srcs = ["defs.bzl"],
     deps = [
         "//img/private/config:defs",
+        "@rules_img_private//release_platforms:defs",
     ],
 )
