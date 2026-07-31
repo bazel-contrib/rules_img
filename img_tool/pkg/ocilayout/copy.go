@@ -31,7 +31,15 @@ func copyFile(src, dst string, useSymlinks bool) error {
 		if err != nil {
 			return err
 		}
-		return os.Symlink(absSrc, dst)
+		absDst, err := filepath.Abs(dst)
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(filepath.Dir(absDst), absSrc)
+		if err != nil {
+			return err
+		}
+		return os.Symlink(rel, dst)
 	}
 
 	if err := os.Link(src, dst); err == nil {

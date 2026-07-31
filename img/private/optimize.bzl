@@ -1,6 +1,7 @@
 """Image optimization rule for rewriting existing image layers."""
 
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
+load("//img/private:oci_layout_action.bzl", "run_oci_layout_action")
 load("//img/private/common:build.bzl", "TOOLCHAIN", "TOOLCHAINS")
 load("//img/private/common:layer_helper.bzl", "IMAGE_MTREE_ATTRS", "compression_tuning_args", "image_mtree_or_none")
 load("//img/private/common:transitions.bzl", "reset_platform_transition")
@@ -174,7 +175,6 @@ def _build_manifest_oci_layout(ctx, format, manifest):
     args.add("--format", format)
     args.add("--manifest", manifest.manifest.path)
     args.add("--config", manifest.config.path)
-    args.add("--output", oci_layout_output.path)
     if ctx.attr._oci_layout_settings[OCILayoutSettingsInfo].allow_shallow_oci_layout:
         args.add("--allow-missing-blobs")
 
@@ -184,13 +184,12 @@ def _build_manifest_oci_layout(ctx, format, manifest):
         inputs.append(layer.metadata)
         inputs.append(layer.blob)
 
-    img_toolchain_info = ctx.toolchains[TOOLCHAIN].imgtoolchaininfo
-    ctx.actions.run(
+    run_oci_layout_action(
+        ctx,
+        format = format,
+        output = oci_layout_output,
+        args = args,
         inputs = inputs,
-        outputs = [oci_layout_output],
-        executable = img_toolchain_info.tool_exe,
-        arguments = [args],
-        env = {"RULES_IMG": "1"},
         mnemonic = "OCIOptimizedLayout",
     )
 
@@ -208,7 +207,6 @@ def _build_index_oci_layout(ctx, format, index_out, manifests):
     args.add("oci-layout")
     args.add("--format", format)
     args.add("--index", index_out.path)
-    args.add("--output", oci_layout_output.path)
     if ctx.attr._oci_layout_settings[OCILayoutSettingsInfo].allow_shallow_oci_layout:
         args.add("--allow-missing-blobs")
 
@@ -223,13 +221,12 @@ def _build_index_oci_layout(ctx, format, index_out, manifests):
             inputs.append(layer.metadata)
             inputs.append(layer.blob)
 
-    img_toolchain_info = ctx.toolchains[TOOLCHAIN].imgtoolchaininfo
-    ctx.actions.run(
+    run_oci_layout_action(
+        ctx,
+        format = format,
+        output = oci_layout_output,
+        args = args,
         inputs = inputs,
-        outputs = [oci_layout_output],
-        executable = img_toolchain_info.tool_exe,
-        arguments = [args],
-        env = {"RULES_IMG": "1"},
         mnemonic = "OCIOptimizedIndexLayout",
     )
 
