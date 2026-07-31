@@ -17,6 +17,12 @@ clean_module_bazel(
     visibility = ["//img/private/release:__subpackages__"],
 )
 
+clean_module_bazel(
+    name = "cleaned_notation_module",
+    src = "//:modules/rules_img_signer_notation/MODULE.bazel",
+    visibility = ["//img/private/release:__subpackages__"],
+)
+
 bzl_library(
     name = "defs",
     srcs = ["defs.bzl"],

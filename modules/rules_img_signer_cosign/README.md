@@ -34,11 +34,12 @@ signing_config(
 ```
 
 `@rules_img_signer_cosign` resolves to a prebuilt binary for released versions
-(zero configuration), or a source-built `go_binary` otherwise. The `args` list
-holds the plugin flags documented below; `img deploy` invokes the plugin as
-`<tool> sign-oci-artifact <args...>` and passes the ambient process environment
-through to it (so `$COSIGN_PASSWORD`, `$SIGSTORE_ID_TOKEN`, `$SIGSTORE_*`, etc.
-reach the plugin).
+(zero configuration — the published module needs no Go toolchain), or a
+source-built `go_binary` when the module comes from a checkout of the rules_img
+repository. The `args` list holds the plugin flags documented below; `img deploy`
+invokes the plugin as `<tool> sign-oci-artifact <args...>` and passes the ambient
+process environment through to it (so `$COSIGN_PASSWORD`, `$SIGSTORE_ID_TOKEN`,
+`$SIGSTORE_*`, etc. reach the plugin).
 
 ### Common configurations
 
@@ -366,10 +367,17 @@ Deliberately **not** supported, with the reason:
 
 ## Building from source (git_override / local path)
 
+Released versions need none of this: the published archive contains only the
+Starlark needed to download the prebuilt plugin binary — no Go sources, no
+`rules_go`, no `gazelle`, no Go toolchain. Building from source therefore means
+building from a checkout of the [rules_img
+repository](https://github.com/bazel-contrib/rules_img) (`git_override` or a
+local path), not from the BCR archive.
+
 `sigstore-go` pulls proto-heavy transitive dependencies whose `.proto` sources
 do not build cleanly under gazelle's proto generation. Because `gazelle_override`
-is a **root-module-only** tag, a downstream *source* build (e.g. via
-`git_override`) requires adding the following to your **root** `MODULE.bazel`:
+is a **root-module-only** tag, such a source build requires adding the following
+to your **root** `MODULE.bazel`:
 
 ```python
 go_deps = use_extension("@gazelle//:extensions.bzl", "go_deps")
@@ -382,5 +390,3 @@ go_deps.gazelle_override(
     path = "github.com/google/certificate-transparency-go",
 )
 ```
-
-Released versions ship a prebuilt binary and need none of this.

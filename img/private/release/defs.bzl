@@ -329,6 +329,15 @@ def _source_bundle_impl(ctx):
         dest_src_map = stripped_dest_src
         attributes = stripped_attributes
 
+    # The srcs come from globs that must tolerate an empty match, so a pattern
+    # that stops matching would silently drop files from the archive.
+    missing = [dest for dest in ctx.attr.required_files if dest not in dest_src_map]
+    if missing:
+        fail("source_bundle {} would package an incomplete module: missing {}".format(
+            ctx.label,
+            ", ".join(missing),
+        ))
+
     return [
         DefaultInfo(files = depset(dest_src_map.values())),
         PackageFilesInfo(attributes = attributes, dest_src_map = dest_src_map),
@@ -345,6 +354,9 @@ source_bundle = rule(
         "module_bazel": attr.label(
             allow_single_file = True,
             doc = "Optional MODULE.bazel to substitute in the bundle (e.g. a release-cleaned version).",
+        ),
+        "required_files": attr.string_list(
+            doc = "Destinations (relative to the packaged module root) that must be present in the bundle.",
         ),
     },
 )

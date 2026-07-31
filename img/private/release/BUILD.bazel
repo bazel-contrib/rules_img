@@ -95,10 +95,25 @@ versioned_filename_info(
 # source, so a consumer (the e2e scratch workspace, or a real user of the
 # published module) downloads the prebuilt plugin instead of building it from
 # source. source_bundle also injects a cleaned MODULE.bazel (with the
-# REMOVE_BEFORE_RELEASE sections stripped) so the released module no longer
-# carries the build-from-source gazelle setup that is broken outside this repo.
+# REMOVE_BEFORE_RELEASE sections stripped), so the released module is
+# prebuilt-only: no Go sources, no rules_go, no gazelle.
 # They are versioned independently of rules_img, so pin their BCR versions to
 # match module(version = ...) in each MODULE.bazel.
+
+# Files a released plugin module must contain, relative to its module root.
+# //:signer_*_source_files has to glob with allow_empty = True, so this is what
+# turns a dropped release file into a build failure.
+SIGNER_REQUIRED_FILES = [
+    "BUILD.bazel",
+    "MODULE.bazel",
+    "README.md",
+    "prebuilt_lockfile.json",
+    "cli/BUILD.bazel",
+    "cli/cli.bzl",
+    "prebuilt/BUILD.bazel",
+    "prebuilt/prebuilt.bzl",
+]
+
 version(
     name = "signer_cosign_version",
     tags = ["manual"],
@@ -116,6 +131,7 @@ source_bundle(
     srcs = ["//:signer_cosign_source_files"],
     module_bazel = "//img/private/release/module_bazel_release_prep:cleaned_cosign_module",
     overrides = ["@rules_img_internal_tools//release:signer_cosign_prebuilt"],
+    required_files = SIGNER_REQUIRED_FILES + ["cosign/BUILD.bazel"],
     strip_prefix = "modules/rules_img_signer_cosign/",
     tags = ["manual"],
 )
@@ -132,7 +148,9 @@ pkg_tar(
 source_bundle(
     name = "signer_notation_srcs",
     srcs = ["//:signer_notation_source_files"],
+    module_bazel = "//img/private/release/module_bazel_release_prep:cleaned_notation_module",
     overrides = ["@rules_img_internal_tools//release:signer_notation_prebuilt"],
+    required_files = SIGNER_REQUIRED_FILES + ["notation/BUILD.bazel"],
     strip_prefix = "modules/rules_img_signer_notation/",
     tags = ["manual"],
 )

@@ -17,9 +17,12 @@ This is an **independent Bazel module**.
 bazel_dep(name = "rules_img_signer_notation", version = "<version>")
 ```
 
-`@rules_img_signer_notation` resolves to a prebuilt binary for released versions,
-or a source-built `go_binary` for any other commit / local / `git_override`
-build. Source builds of this module work with no extra configuration.
+`@rules_img_signer_notation` resolves to a prebuilt binary for released versions:
+the published archive contains only the Starlark needed to download it — no Go
+sources, no `rules_go`, no `gazelle`, no Go toolchain. Building the plugin from
+source means building from a checkout of the
+[rules_img repository](https://github.com/bazel-contrib/rules_img)
+(`git_override` or a local path), which works with no extra configuration.
 
 ## Usage
 

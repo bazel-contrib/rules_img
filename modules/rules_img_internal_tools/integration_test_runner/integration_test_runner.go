@@ -24,19 +24,43 @@ var (
 
 const signingEnvMarker = "RULES_IMG_E2E_SIGNING"
 
+// signerModules are the independently released signer plugin modules that the
+// signing-capable e2e workspaces depend on.
+var signerModules = []string{"rules_img_signer_cosign", "rules_img_signer_notation"}
+
 type commandLine struct {
 	name string
 	args []string
 }
 
-func prepareWorkspace(workspaceDir, sourceDir, mainRegistry string) error {
-	localBCR, err := runfiles.Rlocation("_main/img/private/release/bcr.local")
+// offlineReleaseArtifacts locates the offline BCR (every module's release
+// archive plus its extracted source) and the distdir holding the prebuilt
+// binaries the released modules download.
+func offlineReleaseArtifacts() (localBCR string, distdir string, err error) {
+	localBCR, err = runfiles.Rlocation("_main/img/private/release/bcr.local")
 	if err != nil {
-		return fmt.Errorf("failed to find local bcr: %v", err)
+		return "", "", fmt.Errorf("failed to find local bcr: %v", err)
 	}
-	distdir, err := runfiles.Rlocation("_main/img/private/release/airgapped.distdir")
+	distdir, err = runfiles.Rlocation("_main/img/private/release/airgapped.distdir")
 	if err != nil {
-		return fmt.Errorf("failed to find distdir: %v", err)
+		return "", "", fmt.Errorf("failed to find distdir: %v", err)
+	}
+	return localBCR, distdir, nil
+}
+
+// localBCRURL renders a local BCR directory as a --registry file:// URL.
+func localBCRURL(localBCR string) string {
+	path := filepath.ToSlash(localBCR)
+	if runtime.GOOS == "windows" {
+		return "file:///" + path
+	}
+	return "file://" + path
+}
+
+func prepareWorkspace(workspaceDir, sourceDir, mainRegistry string) error {
+	localBCR, distdir, err := offlineReleaseArtifacts()
+	if err != nil {
+		return err
 	}
 	bazelDepOverride, err := runfiles.Rlocation("_main/img/private/release/bcr_local_module_rules_img.bazel_dep")
 	if err != nil {
@@ -152,12 +176,7 @@ func prepareWorkspace(workspaceDir, sourceDir, mainRegistry string) error {
 			return fmt.Errorf("failed to write patched module file: %v", err)
 		}
 	}
-	localBCRUrlPath := filepath.ToSlash(localBCR)
-	if runtime.GOOS == "windows" {
-		localBCRUrlPath = "file:///" + localBCRUrlPath
-	} else {
-		localBCRUrlPath = "file://" + localBCRUrlPath
-	}
+	localBCRUrlPath := localBCRURL(localBCR)
 
 	var bazelrc string
 	if isWorkspaceMode {
@@ -199,14 +218,17 @@ func outputUserRoot() (string, func() error) {
 	}
 }
 
-func startupFlags() ([]string, func() error) {
+// startupFlags returns the Bazel startup flags for a run in a prepared
+// workspace, plus the rc file CI injects to share its remote cache.
+func startupFlags(bazelrcs ...string) ([]string, func() error) {
 	flags := []string{"--nosystem_rc", "--nohome_rc"}
 	root, cleanupRoot := outputUserRoot()
 	if len(root) > 0 {
 		flags = append(flags, "--output_user_root="+root)
 	}
-	flags = append(flags, "--bazelrc="+filepath.Join(".bazelrc"))
-	flags = append(flags, "--bazelrc="+filepath.Join(".bazelrc.generated"))
+	for _, bazelrc := range bazelrcs {
+		flags = append(flags, "--bazelrc="+bazelrc)
+	}
 	if injectedBazelrc := os.Getenv("BAZEL_INTEGRATION_TEST_INJECT_BAZELRC"); injectedBazelrc != "" {
 		flags = append(flags, "--bazelrc="+injectedBazelrc)
 	}
@@ -258,6 +280,17 @@ func runBazelCommands(bazel, workspaceDir string, startup []string) error {
 	// ensure all referenced BUILD files are included in the release tar
 	if err := runBazel(bazel, workspaceDir, startup, nil, "query", "query", "@rules_img//..."); err != nil {
 		return err
+	}
+	// Same check for the released signer plugin modules: they ship prebuilt
+	// binaries and no Go sources, and neither this workspace (in released mode)
+	// nor a real consumer provides rules_go/gazelle.
+	if os.Getenv(signingEnvMarker) == "1" {
+		for _, module := range signerModules {
+			label := "@" + module + "//..."
+			if err := runBazel(bazel, workspaceDir, startup, nil, "query "+module, "query", label); err != nil {
+				return err
+			}
+		}
 	}
 	if err := runBazel(bazel, workspaceDir, startup, nil, "test", append([]string{"test", "//..."}, metadataFlag...)...); err != nil {
 		return err
@@ -360,7 +393,7 @@ func run() int {
 		return 1
 	}
 
-	startup, cleanupRoot := startupFlags()
+	startup, cleanupRoot := startupFlags(".bazelrc", ".bazelrc.generated")
 	defer cleanupRoot()
 
 	// Shut down Bazel at the end to conserve memory.
@@ -373,12 +406,96 @@ func run() int {
 		return 1
 	}
 
+	if err := bcrPresubmitPhase(bazel); err != nil {
+		fmt.Fprintln(os.Stderr, err.Error())
+		return 1
+	}
+
 	if err := deployPhase(bazel, workspaceDir, startup, mainReg.hostPort); err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())
 		return 1
 	}
 
 	return 0
+}
+
+// bcrPresubmitPhase reproduces the Bazel Central Registry presubmit for each
+// signer plugin module, running it against the released module source extracted
+// into the offline BCR. Every other build in this repository sees the plugin
+// through its in-repo MODULE.bazel (with the rules_go/gazelle setup the release
+// strips) and as a dependency rather than as the root module, so this is the
+// only place a broken release archive shows up before the tag is pushed.
+func bcrPresubmitPhase(bazel string) error {
+	if os.Getenv(signingEnvMarker) != "1" {
+		return nil
+	}
+	localBCR, distdir, err := offlineReleaseArtifacts()
+	if err != nil {
+		return err
+	}
+	for _, module := range signerModules {
+		source, err := releasedModuleSource(localBCR, module)
+		if err != nil {
+			return err
+		}
+		if err := runBCRPresubmit(bazel, module, source, localBCR, distdir); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// releasedModuleSource returns the extracted release archive of module inside the
+// offline BCR.
+func releasedModuleSource(localBCR, module string) (string, error) {
+	moduleDir := filepath.Join(localBCR, "contents", module)
+	entries, err := os.ReadDir(moduleDir)
+	if err != nil {
+		return "", fmt.Errorf("listing versions of %s in the offline BCR: %v", module, err)
+	}
+	var versions []string
+	for _, entry := range entries {
+		if entry.IsDir() {
+			versions = append(versions, entry.Name())
+		}
+	}
+	if len(versions) != 1 {
+		return "", fmt.Errorf("expected exactly one version of %s in the offline BCR, got %v", module, versions)
+	}
+	return filepath.Join(moduleDir, versions[0], "src"), nil
+}
+
+// runBCRPresubmit copies the released module source out of the (read-only) BCR
+// tree and runs the presubmit's test target in it.
+func runBCRPresubmit(bazel, module, source, localBCR, distdir string) error {
+	workspaceDir, err := os.MkdirTemp("", "bcr-presubmit-")
+	if err != nil {
+		return fmt.Errorf("creating workspace for the %s BCR presubmit: %v", module, err)
+	}
+	defer os.RemoveAll(workspaceDir)
+
+	if err := copyFSWithSymlinks(workspaceDir, source); err != nil {
+		return fmt.Errorf("copying released %s source: %v", module, err)
+	}
+
+	// The distdir serves the prebuilt plugin binary the released module
+	// downloads, so this runs before the GitHub release exists.
+	bazelrc := fmt.Sprintf(`common --registry=%s --registry=https://bcr.bazel.build/
+common --distdir=%s
+`, localBCRURL(localBCR), filepath.ToSlash(distdir))
+	if err := os.WriteFile(filepath.Join(workspaceDir, ".bazelrc.generated"), []byte(bazelrc), 0o644); err != nil {
+		return fmt.Errorf("writing bazelrc for the %s BCR presubmit: %v", module, err)
+	}
+
+	startup, cleanupRoot := startupFlags(".bazelrc.generated")
+	defer cleanupRoot()
+	// Shut down this server before the next one starts, to conserve memory.
+	defer func() {
+		_ = runBazel(bazel, workspaceDir, startup, nil, "shutdown", "shutdown")
+	}()
+
+	// Keep in sync with test_targets in .bcr/modules/<module>/presubmit.yml.
+	return runBazel(bazel, workspaceDir, startup, nil, "bcr presubmit "+module, "test", "//:all")
 }
 
 // deployPhase runs `bazel run //:push` against the local registry, verifies the
