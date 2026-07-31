@@ -101,6 +101,48 @@ func TestBlobCacheKeyIsAllThreeParts(t *testing.T) {
 	}
 }
 
+// TestBlobCacheForget covers the one thing that unmakes an entry before its TTL:
+// the blob left the repository, and the cache was told.
+func TestBlobCacheForget(t *testing.T) {
+	c, _ := newTestCache(t, time.Hour, 64)
+
+	// Forgetting what the cache never held is not an error and costs nothing.
+	c.forget(testCacheRegistry, testCacheRepository, testCacheDigest)
+	if stats := c.stats(); stats.entries != 0 || stats.evictedDeleted != 0 {
+		t.Fatalf("forgetting an absent key: entries = %d, deleted evictions = %d; want 0 and 0", stats.entries, stats.evictedDeleted)
+	}
+
+	c.store(testCacheRegistry, testCacheRepository, testCacheDigest, 4096)
+	c.store(testCacheRegistry, testCacheRepository, blobDigest(1), 8192)
+	c.forget(testCacheRegistry, testCacheRepository, testCacheDigest)
+
+	if _, ok := c.lookup(testCacheRegistry, testCacheRepository, testCacheDigest); ok {
+		t.Error("a forgotten blob is still reported as present")
+	}
+	// Only that one key: forgetting is not a flush.
+	if _, ok := c.lookup(testCacheRegistry, testCacheRepository, blobDigest(1)); !ok {
+		t.Error("forgetting one blob dropped another")
+	}
+	if stats := c.stats(); stats.entries != 1 || stats.evictedDeleted != 1 {
+		t.Errorf("after forgetting one of two: entries = %d, deleted evictions = %d; want 1 and 1", stats.entries, stats.evictedDeleted)
+	}
+	// The slot went back into circulation rather than leaking, and the blob can be
+	// stored again — a delete is not a tombstone.
+	checkIntegrity(t, c)
+	c.store(testCacheRegistry, testCacheRepository, testCacheDigest, 4096)
+	if length, ok := c.lookup(testCacheRegistry, testCacheRepository, testCacheDigest); !ok || length != 4096 {
+		t.Errorf("re-storing a forgotten blob: length = %d, ok = %v; want 4096 and true", length, ok)
+	}
+	checkIntegrity(t, c)
+}
+
+// TestBlobCacheForgetOnDisabledCache: a nil cache tolerates every method, which is
+// what keeps the handler free of a second code path for the cache being off.
+func TestBlobCacheForgetOnDisabledCache(t *testing.T) {
+	var c *blobExistenceCache
+	c.forget(testCacheRegistry, testCacheRepository, testCacheDigest)
+}
+
 // TestBlobCacheHashCollisionMisses forces two keys to share a hash, which is the
 // case the stored key bytes exist to settle.
 func TestBlobCacheHashCollisionMisses(t *testing.T) {

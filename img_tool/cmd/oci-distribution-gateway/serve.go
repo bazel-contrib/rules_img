@@ -70,7 +70,7 @@ func (f *serveFlags) register(flagSet *flag.FlagSet) {
 	flagSet.BoolVar(&f.denyPrivateUpstreams, "deny-private-upstreams", false, "Refuse upstream registries that resolve to a loopback, link-local, or private address. Recommended for a gateway shared between workloads; leave off when your registry is reachable only through an in-cluster (private) address.")
 
 	f.blobCacheMaxMemory = defaultBlobCacheMemory
-	flagSet.DurationVar(&f.blobCacheTTL, "blob-existence-cache-ttl", 6*time.Hour, "How long the gateway may assume a blob it has already seen is still in its repository, answering repeat HEAD probes for it without a round trip. 0 disables the cache. Keep it well inside the window in which your registry could garbage-collect a blob: a client that trusts a stale hit skips re-uploading a layer that is gone.")
+	flagSet.DurationVar(&f.blobCacheTTL, "blob-existence-cache-ttl", 6*time.Hour, "How long the gateway may assume a blob it has seen -- probed for, or pushed through it -- is still in its repository, answering HEAD probes for it without a round trip. 0 disables the cache. Keep it well inside the window in which your registry could garbage-collect a blob: a client that trusts a stale hit skips re-uploading a layer that is gone.")
 	flagSet.Var(&f.blobCacheMaxMemory, "blob-existence-cache-max-memory", "Memory the blob existence cache may use, e.g. 64MiB. It is allocated in full at startup and never grows; when it is full the least recently used blob makes room. 0 disables the cache.")
 
 	flagSet.StringVar(&f.tlsCertFile, "tls-cert-file", "", "PEM certificate (leaf plus any intermediates) to serve TLS with. Enables HTTP/2 via ALPN. Re-read when the file changes and on SIGHUP.")

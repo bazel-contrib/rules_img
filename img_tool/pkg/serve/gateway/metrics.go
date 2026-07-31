@@ -57,8 +57,8 @@ const (
 	// "certificate", "ca", or "token".
 	attrMaterial = attribute.Key("oci.gateway.material")
 	// attrEvictionReason says why a cache entry was dropped: "capacity" (it was
-	// the least recently used entry when room was needed) or "expired" (its TTL
-	// had passed).
+	// the least recently used entry when room was needed), "expired" (its TTL
+	// had passed), or "deleted" (a delete for that blob went through the gateway).
 	attrEvictionReason = attribute.Key("oci.gateway.cache.eviction.reason")
 	// attrPeer is the peer gateway a forwarder relays to. It is constant for the
 	// life of the process, so it costs no cardinality; it is attached anyway so a
@@ -82,6 +82,7 @@ const (
 	// Values of [attrEvictionReason].
 	evictedForCapacity = "capacity"
 	evictedForExpiry   = "expired"
+	evictedForDelete   = "deleted"
 )
 
 const (
@@ -298,6 +299,7 @@ func (b *instruments) observe(sources gaugeSources) {
 		o.ObserveInt64(capacity, stats.capacity)
 		o.ObserveInt64(evictions, stats.evictedCapacity, metric.WithAttributes(attrEvictionReason.String(evictedForCapacity)))
 		o.ObserveInt64(evictions, stats.evictedExpired, metric.WithAttributes(attrEvictionReason.String(evictedForExpiry)))
+		o.ObserveInt64(evictions, stats.evictedDeleted, metric.WithAttributes(attrEvictionReason.String(evictedForDelete)))
 		return nil
 	}, entries, capacity, evictions)
 	b.track(err)

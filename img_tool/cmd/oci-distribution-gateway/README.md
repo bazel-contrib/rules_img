@@ -197,11 +197,11 @@ on and add an egress NetworkPolicy naming your registries.
 
 ## Blob existence cache
 
-A serving gateway memoizes one thing: the answer `200` to
-`HEAD /v2/<name>/blobs/<digest>`, the "is this layer already pushed?" probe every
-push begins with. On a build farm that request dominates registry traffic — a fleet
-re-pushing the same base image asks the same question thousands of times, and each
-answer is a round trip a client waits on.
+A serving gateway memoizes one fact: **this blob is in this repository**. It is the
+answer `200` to `HEAD /v2/<name>/blobs/<digest>`, the "is this layer already pushed?"
+probe every push begins with. On a build farm that request dominates registry
+traffic — a fleet re-pushing the same base image asks the same question thousands of
+times, and each answer is a round trip a client waits on.
 
 It is on by default, remembering a blob for six hours within 64 MiB of memory:
 
@@ -221,7 +221,7 @@ question, and gets asked. Resolution happens first, so a request naming `docker.
 and one naming `index.docker.io` share entries (they are the same upstream) while
 `registry.example.com` and `registry.example.com:5000` do not.
 
-Only a plain `200` is remembered:
+Of the answers a probe can get, only a plain `200` is remembered:
 
 - **A `404` is not cached.** A blob that is absent now can be pushed a second
   later, so remembering "not there" would tell clients to re-upload content that
@@ -241,15 +241,42 @@ happened to send is replayed to another client hours later, and every cached hit
 logged with `(cached)` so the decision log still accounts for every request.
 
 **Authorization is not cached.** The policy is consulted on every request, before
-the cache is; a reload that revokes access takes effect on the next probe even
-though its answer is sitting in memory.
+the cache is; a reload that revokes access takes effect on the next probe even though
+its answer is sitting in memory.
+
+### What fills and empties it
+
+A probe is not the only request that settles whether a blob is in a repository, and
+every request that does keeps the cache current:
+
+| Request | Effect |
+| --- | --- |
+| `HEAD .../blobs/<digest>` answered `200` | remembered |
+| `GET .../blobs/<digest>` answered `200`, with a `Docker-Content-Digest` naming that blob | remembered, with the size it served |
+| `PUT .../blobs/uploads/<ref>?digest=<digest>` answered `201` | remembered: the upload committed |
+| `POST .../blobs/uploads/?digest=<digest>` answered `201` | remembered: the whole blob arrived in one request |
+| `POST .../blobs/uploads/?mount=<digest>&from=<repo>` answered `201` | remembered: the mount was honoured |
+| `DELETE .../blobs/<digest>` forwarded | forgotten, whatever the registry answers |
+
+Only the response that *finishes* an upload counts — a `202` means a session was
+opened or a chunk accepted, and a client told that a half-uploaded blob is already
+there would skip an upload it still owes. A delete is read pessimistically the other
+way: a `5xx` or a timeout leaves the gateway unable to tell whether the blob survived,
+and dropping an entry only ever costs one probe. Those drops are counted under
+`..._evictions_total{oci_gateway_cache_eviction_reason="deleted"}`.
+
+An entry admitted by a commit or a mount carries no `Content-Length` — neither request
+sees the blob's bytes — so a probe it answers omits the header rather than inventing a
+size, exactly as it does for a registry that reports no length.
 
 ### Sizing the TTL
 
-The TTL is the one thing between a client and a wrong answer. A blob cannot
-change, but a registry can **garbage-collect** one — and a push client that
-believes a collected layer is still there will skip re-uploading it and commit a
-manifest referring to a blob that is gone.
+The TTL is what stands between a client and the wrong answer the gateway cannot see
+coming. A blob cannot change, but a registry can **garbage-collect** one behind the
+gateway's back — and a push client that believes a collected layer is still there will
+skip re-uploading it and commit a manifest referring to a blob that is gone. (A blob
+deleted *through* the gateway needs no such window; it is dropped when the delete goes
+past.)
 
 Set the TTL well inside the window in which your registry could collect a blob:
 the grace period of its GC, the untagged-blob retention of your Artifactory or ECR
@@ -803,7 +830,7 @@ so it is the one that counts registry traffic:
 | `oci.gateway.blob_existence_cache.lookups` | `oci_gateway_blob_existence_cache_lookups_total` | counter | Cacheable blob probes by whether the cache answered them (`oci.result`) |
 | `oci.gateway.blob_existence_cache.entries` | `oci_gateway_blob_existence_cache_entries` | gauge | Blobs the cache holds. Over `..._capacity`, how full it is |
 | `oci.gateway.blob_existence_cache.capacity` | `oci_gateway_blob_existence_cache_capacity` | gauge | Blobs it has room for. Fixed: the memory is preallocated |
-| `oci.gateway.blob_existence_cache.evictions` | `oci_gateway_blob_existence_cache_evictions_total` | counter | Entries dropped, by `oci.gateway.cache.eviction.reason` (`capacity`/`expired`) |
+| `oci.gateway.blob_existence_cache.evictions` | `oci_gateway_blob_existence_cache_evictions_total` | counter | Entries dropped, by `oci.gateway.cache.eviction.reason` (`capacity`/`expired`/`deleted`) |
 | `oci.gateway.errors` | `oci_gateway_errors_total` | counter | Failures by `error.type` and registry |
 | `oci.gateway.upstream.duration` | `oci_gateway_upstream_duration_seconds` | histogram (s) | Time until the registry returned response headers |
 | `oci.gateway.upstream.auth_handshakes` | `oci_gateway_upstream_auth_handshakes_total` | counter | Ping + token exchanges (cached per repository and scope) |

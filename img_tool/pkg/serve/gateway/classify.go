@@ -101,10 +101,12 @@ type request struct {
 	// forwarded: the gateway could otherwise authorize a different mount source
 	// than the one the upstream acts on.
 	malformedQuery bool
-	// digest is the blob digest a blob existence check asked about, and is set
-	// only for that operation and only when the reference really is a digest. It
-	// is the part of the blob existence cache's key that identifies the content;
-	// leaving it empty is how every other request opts out of the cache.
+	// digest is the blob digest this request is about: the one an existence check
+	// asks after, the one a read returns, the one an upload puts in the repository
+	// when it succeeds, or the one a delete takes away. It is set only for those
+	// requests, and only when the reference really is a digest. It is the part of the
+	// blob existence cache's key that identifies the content; leaving it empty is how
+	// every other request opts out of the cache.
 	digest string
 }
 
@@ -142,38 +144,56 @@ func classify(r *http.Request) (request, bool) {
 			route = routeUploadSession
 		}
 		req := request{repo: m[1], req: reqBlobWrite, kind: "blob upload", op: opNameBlobUpload, route: route, write: true}
-		// A cross-repo mount (POST ...?mount=<digest>&from=<repo>) copies an
-		// existing blob from another repository instead of re-uploading it; the
-		// source repository must be readable. Parse the query strictly and
-		// authorize exactly what will be forwarded upstream. Reject anything
-		// ambiguous: url.ParseQuery errors on (and drops) ';'-joined pairs that a
-		// lenient upstream might still act on, and duplicate mount/from values
-		// could let us authorize one source while the upstream mounts another.
-		if method == http.MethodPost {
+		// A POST opens a session (or finishes an upload outright) and a PUT closes
+		// one; those are the two steps whose query says which blob is being
+		// uploaded, and the only ones the gateway parses.
+		if method == http.MethodPost || method == http.MethodPut {
 			q, err := url.ParseQuery(r.URL.RawQuery)
-			switch {
-			case err != nil || len(q["mount"]) > 1 || len(q["from"]) > 1:
-				req.malformedQuery = true
-			case len(q["mount"]) == 1 && len(q["from"]) == 1:
-				req.mountFrom = q.Get("from")
+			// A cross-repo mount (POST ...?mount=<digest>&from=<repo>) copies an
+			// existing blob from another repository instead of re-uploading it; the
+			// source repository must be readable. Parse the query strictly and
+			// authorize exactly what will be forwarded upstream. Reject anything
+			// ambiguous: url.ParseQuery errors on (and drops) ';'-joined pairs that a
+			// lenient upstream might still act on, and duplicate mount/from values
+			// could let us authorize one source while the upstream mounts another.
+			if method == http.MethodPost {
+				switch {
+				case err != nil || len(q["mount"]) > 1 || len(q["from"]) > 1:
+					req.malformedQuery = true
+				case len(q["mount"]) == 1 && len(q["from"]) == 1:
+					req.mountFrom = q.Get("from")
+				}
+			}
+			// An ambiguous query is not read for a digest either: a request the
+			// gateway and the upstream could read differently must teach the cache
+			// nothing.
+			if err == nil && !req.malformedQuery {
+				req.digest = committedDigest(method, q)
 			}
 		}
 		return req, true
 	}
 	if m := blobRe.FindStringSubmatch(path); m != nil {
+		// Carry the reference as a digest only when it is one, so that the blob
+		// existence cache is never keyed on a reference no registry could answer
+		// for. Three requests turn on it: the HEAD that asks whether the blob is
+		// there, the GET that proves it is by returning it, and the DELETE that
+		// takes it away.
+		digest := ""
+		if digestRe.MatchString(m[blobRefGroup]) {
+			digest = m[blobRefGroup]
+		}
 		switch method {
 		case http.MethodGet:
-			return request{repo: m[1], req: reqBlobRead, kind: "blob read", op: opNameBlobRead, route: routeBlob}, true
+			return request{repo: m[1], req: reqBlobRead, kind: "blob read", op: opNameBlobRead, route: routeBlob, digest: digest}, true
 		case http.MethodHead:
-			req := request{repo: m[1], req: reqBlobReadOrWrite, kind: "blob existence check", op: opNameBlobHead, route: routeBlob}
-			// Carry the digest only when the reference is one, so that the blob
-			// existence cache is never keyed on a reference no registry could
-			// answer for.
-			if digestRe.MatchString(m[blobRefGroup]) {
-				req.digest = m[blobRefGroup]
-			}
-			return req, true
-		default: // DELETE and anything else that mutates.
+			return request{repo: m[1], req: reqBlobReadOrWrite, kind: "blob existence check", op: opNameBlobHead, route: routeBlob, digest: digest}, true
+		case http.MethodDelete:
+			// A delete is a blob write like any other to the policy and the metrics;
+			// the digest is carried because it is the one request whose success makes
+			// a cache entry false.
+			return request{repo: m[1], req: reqBlobWrite, kind: "blob write", op: opNameBlobWrite, route: routeBlob, write: true, digest: digest}, true
+		default: // Anything else that mutates.
 			return request{repo: m[1], req: reqBlobWrite, kind: "blob write", op: opNameBlobWrite, route: routeBlob, write: true}, true
 		}
 	}
@@ -188,4 +208,39 @@ func classify(r *http.Request) (request, bool) {
 		}
 	}
 	return request{op: opNameUnknown}, false
+}
+
+// committedDigest returns the blob digest a POST or PUT to an upload endpoint puts
+// in the repository if the registry answers 201 Created, or "" when the request
+// commits nothing.
+//
+// Three request shapes finish an upload, and each names its blob in the query:
+//
+//   - PUT /v2/<name>/blobs/uploads/<ref>?digest=<digest> closes the session the
+//     content was streamed to. This is what a go-containerregistry push sends.
+//   - POST /v2/<name>/blobs/uploads/?digest=<digest> carries the whole blob in the
+//     one request.
+//   - POST /v2/<name>/blobs/uploads/?mount=<digest>&from=<repo> copies a blob that
+//     is already in the registry, transferring no content at all.
+//
+// Every other step of a session — opening it, appending a chunk, querying its
+// status, cancelling it — commits nothing, and neither does a query that names two
+// blobs: the gateway will not guess which one an upstream acted on, and the price
+// of guessing wrong is telling a client that a blob is present when it is not.
+func committedDigest(method string, q url.Values) string {
+	var reference string
+	switch {
+	case method == http.MethodPost && len(q["mount"]) == 1 && len(q["from"]) == 1 && len(q["digest"]) == 0:
+		reference = q["mount"][0]
+	case len(q["digest"]) == 1 && len(q["mount"]) == 0:
+		reference = q["digest"][0]
+	default:
+		return ""
+	}
+	// Hold the cache to a real digest, exactly as an existence check is: a
+	// reference that is not one names nothing immutable.
+	if !digestRe.MatchString(reference) {
+		return ""
+	}
+	return reference
 }

@@ -24,8 +24,9 @@
 //
 // A serving gateway also memoizes the blob existence checks a push begins with, so
 // that a fleet asking whether the same layer is already upstream pays for one round
-// trip rather than thousands. See --blob-existence-cache-ttl and the "Blob
-// existence cache" section of the README.
+// trip rather than thousands. Reads and pushes it forwards keep that memo current,
+// and a blob delete takes an entry back. See --blob-existence-cache-ttl and the
+// "Blob existence cache" section of the README.
 //
 // A bare invocation with no subcommand means serving mode, so existing
 // deployments keep working unchanged.

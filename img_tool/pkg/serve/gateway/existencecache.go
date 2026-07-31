@@ -10,8 +10,8 @@ import (
 	"unsafe"
 )
 
-// This file implements the blob existence cache: a memo of the successful
-// answers to HEAD /v2/<name>/blobs/<digest>.
+// This file implements the blob existence cache: a memo of the fact that a blob
+// is in a repository, which is the answer 200 to HEAD /v2/<name>/blobs/<digest>.
 //
 // That one request dominates a build farm's registry traffic. Every push begins
 // by probing whether each layer is already upstream, so a fleet re-pushing the
@@ -19,8 +19,20 @@ import (
 // costs a round trip the client waits on. The answer is also the most cacheable
 // one in the protocol: a blob is immutable and content-addressed, so "this
 // digest is present in this repository" cannot become true-then-false-then-true
-// — it can only stop being true, when the registry garbage-collects the blob.
-// That single failure mode is what the TTL bounds.
+// — it can only stop being true, when the blob leaves the repository. That
+// single failure mode is what the TTL bounds, for the one way it happens out of
+// sight: a registry garbage-collecting the blob. The other way — a client
+// deleting it — travels through the gateway, which drops the entry there and
+// then (see Handler.forgetDeletedBlob).
+//
+// A probe is not the only request that establishes the fact, and the others fill
+// the cache from the side the fleet is already paying for: a read the registry
+// serves under the digest asked for, and an upload it carries through to a
+// commit. Whichever client loses the race to push a layer has then already
+// answered every probe that follows, so the fleet pays for neither the re-upload
+// nor the first probe. The commit response is the earliest point at which that is
+// true, and gateway.go is careful to admit nothing before it (see
+// Handler.rememberBlob).
 //
 // Manifests and tags are deliberately *not* cached. A tag is mutable by
 // definition, and a manifest HEAD is how a client discovers that a tag now
@@ -173,6 +185,7 @@ type cacheShard struct {
 	live            atomic.Int64
 	evictedCapacity atomic.Int64
 	evictedExpired  atomic.Int64
+	evictedDeleted  atomic.Int64
 }
 
 // newBlobExistenceCache builds a cache that treats a blob it has seen as present
@@ -313,6 +326,29 @@ func (c *blobExistenceCache) store(registry, repository, digest string, contentL
 	s.live.Add(1)
 }
 
+// forget drops the entry for a blob, so that the next probe for it asks the
+// registry again. Forgetting a key the cache does not hold does nothing.
+//
+// Other than an entry evicted to make room for another blob, this is the only way
+// one goes before its TTL. The cache's one failure mode is holding a blob that has
+// since gone, and a delete travelling through the gateway is the one moment it can
+// know that happened.
+func (c *blobExistenceCache) forget(registry, repository, digest string) {
+	if c == nil {
+		return
+	}
+	hash := c.hash(registry, repository, digest)
+	s := &c.shards[hash>>c.shardShift]
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if idx := s.find(hash, registry, repository, digest); idx >= 0 {
+		s.drop(idx)
+		s.evictedDeleted.Add(1)
+	}
+}
+
 // hash mixes the three parts of a key without concatenating them, so a lookup
 // allocates nothing.
 func (c *blobExistenceCache) hash(registry, repository, digest string) uint64 {
@@ -350,9 +386,11 @@ type cacheStats struct {
 	// capacity is the number of entries the memory bound allows.
 	capacity int64
 	// evictedCapacity counts entries dropped to make room, evictedExpired those
-	// dropped because their TTL had passed.
+	// dropped because their TTL had passed, and evictedDeleted those dropped
+	// because a blob delete travelled through the gateway.
 	evictedCapacity int64
 	evictedExpired  int64
+	evictedDeleted  int64
 }
 
 func (c *blobExistenceCache) stats() cacheStats {
@@ -365,6 +403,7 @@ func (c *blobExistenceCache) stats() cacheStats {
 		st.entries += s.live.Load()
 		st.evictedCapacity += s.evictedCapacity.Load()
 		st.evictedExpired += s.evictedExpired.Load()
+		st.evictedDeleted += s.evictedDeleted.Load()
 	}
 	return st
 }
