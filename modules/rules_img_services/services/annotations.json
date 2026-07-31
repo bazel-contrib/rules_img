@@ -1,0 +1,3 @@
+{
+    "org.opencontainers.image.source": "https://github.com/bazel-contrib/rules_img"
+}

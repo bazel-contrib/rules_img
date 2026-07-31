@@ -1,0 +1,30 @@
+load("@rules_img//img:multi_deploy.bzl", "multi_deploy")
+load("@rules_img//img:push.bzl", "image_push_spec")
+
+multi_deploy(
+    name = "push",
+    deploy_operations = ["push"],
+    operations = ["//{}/{}".format(
+        package_name(),
+        sub,
+    ) for sub in subpackages(include = ["*"])],
+    visibility = ["//:__pkg__"],
+)
+
+image_push_spec(
+    name = "push_spec",
+    repository = "bazel-contrib/rules_img/{{.image_target_name}}",
+    visibility = ["//services:__subpackages__"],
+)
+
+filegroup(
+    name = "image_labels",
+    srcs = ["labels.json"],
+    visibility = ["//services:__subpackages__"],
+)
+
+filegroup(
+    name = "image_annotations",
+    srcs = ["annotations.json"],
+    visibility = ["//services:__subpackages__"],
+)

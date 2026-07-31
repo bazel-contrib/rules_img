@@ -1,0 +1,122 @@
+load("@rules_img//img:image.bzl", "image_index", "image_manifest")
+load("@rules_img//img:layer.bzl", "image_layer")
+load("@rules_img//img:multi_deploy.bzl", "multi_deploy")
+load("@rules_img//img:oras.bzl", "oras_file_layer")
+load(":release_binaries.bzl", "release_asset_name", "release_binaries")
+
+_ORAS_DESCRIPTION = """\
+The img command line tool, as an ORAS artifact: one layer per release platform,
+each titled after the matching GitHub release asset.
+"""
+
+_CONTAINER_DESCRIPTION = """\
+The img command line tool, as a container image.
+"""
+
+_DOCUMENTATION = "https://github.com/bazel-contrib/rules_img"
+
+_BASENAME = "img"
+
+image_index(
+    name = "img",
+    manifests = [
+        "container_image_manifest_linux_amd64",
+        "container_image_manifest_linux_arm64",
+        "oras_manifest",
+    ],
+    push_specs = ["//services:push_spec"],
+    visibility = ["//visibility:public"],
+)
+
+_PLATFORMS = [
+    "darwin_amd64",
+    "darwin_arm64",
+    "linux_amd64",
+    "linux_arm64",
+    "linux_s390x",
+    "windows_amd64",
+    "windows_arm64",
+]
+
+release_binaries(
+    name = "binaries",
+    basename = _BASENAME,
+    binary = "@rules_img_tool//cmd/img",
+)
+
+[
+    filegroup(
+        name = "binary_%s" % platform,
+        srcs = [":binaries"],
+        output_group = release_asset_name(_BASENAME, platform),
+    )
+    for platform in _PLATFORMS
+]
+
+[
+    oras_file_layer(
+        name = "layer_%s" % platform,
+        src = ":binary_%s" % platform,
+        media_type = "application/x-executable",
+        title = release_asset_name(_BASENAME, platform),
+    )
+    for platform in _PLATFORMS
+]
+
+image_manifest(
+    name = "oras_manifest",
+    annotations = {
+        "org.opencontainers.image.title": package_name(),
+        "org.opencontainers.image.description": _ORAS_DESCRIPTION,
+        "org.opencontainers.image.documentation": _DOCUMENTATION,
+    },
+    annotations_file = "//services:image_annotations",
+    artifact_type = "application/vnd.rules_img.tools.v1",
+    config_media_type = "application/vnd.oci.empty.v1+json",
+    layers = [":layer_%s" % platform for platform in _PLATFORMS],
+)
+
+[
+    image_layer(
+        name = "container_image_layer_%s" % platform,
+        srcs = {"/usr/bin/img": "binary_%s" % platform},
+    )
+    for platform in [
+        "linux_amd64",
+        "linux_arm64",
+    ]
+]
+
+[
+    image_manifest(
+        name = "container_image_manifest_%s" % platform,
+        annotations = {
+            "org.opencontainers.image.title": package_name(),
+            "org.opencontainers.image.description": _CONTAINER_DESCRIPTION,
+            "org.opencontainers.image.documentation": _DOCUMENTATION,
+        },
+        annotations_file = "//services:image_annotations",
+        entrypoint = ["/usr/bin/img"],
+        labels = {
+            "org.label-schema.name": package_name(),
+            "org.label-schema.description": _CONTAINER_DESCRIPTION,
+            "org.label-schema.usage": _DOCUMENTATION,
+        },
+        layers = [
+            "//base",
+            ":container_image_layer_%s" % platform,
+        ],
+        platform = "//platform:%s" % platform,
+    )
+    for platform in [
+        "linux_amd64",
+        "linux_arm64",
+    ]
+]
+
+multi_deploy(
+    name = "push",
+    deploy_operations = ["push"],
+    operations = [":img"],
+    tags = ["manual"],
+)

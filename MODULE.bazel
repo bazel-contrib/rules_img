@@ -56,6 +56,13 @@ bazel_dep(name = "stardoc", version = "0.8.1", dev_dependency = True)
 # binaries; they all live here.
 bazel_dep(name = "rules_img_internal_tools", version = "0.0.1", dev_dependency = True)
 
+# Release platform definitions and the split transition over them. A module of
+# its own so that consumers which only build per-platform binaries (and do not
+# package them) can load it without @rules_pkg or @rules_go, both of which are
+# dev-only deps here and therefore invisible when rules_img is not the root
+# module.
+bazel_dep(name = "rules_img_private", version = "0.0.1", dev_dependency = True)
+
 # Register a source-built toolchain of the img tool
 # for use in this repository (in dev mode).
 register_toolchains(

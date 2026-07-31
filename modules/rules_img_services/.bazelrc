@@ -1,0 +1,21 @@
+common --override_module=rules_img=%workspace%/../../..
+common --override_module=rules_img_tool=%workspace%/../../../img_tool
+common --override_module=rules_img_private=%workspace%/../../../modules/rules_img_private
+
+import %workspace%/.bazelrc.common
+
+common --@rules_img//img/settings:destination_registry=ghcr.io
+common --@rules_img//img/settings:compress=zstd
+common --@rules_img//img/settings:compression_level=4
+common --@rules_img//img/settings:additional_image_labels_file=//services:image_labels
+common --@rules_go//go/config:pure
+
+# Workaround for rules_python no longer being autoloaded by Bazel 9:
+#  https://github.com/bazelbuild/bazel/pull/27593
+#
+#
+# Remove rules_python once googleapis loads rules_python explicitly in their BUILD files:
+#  https://github.com/googleapis/googleapis/blob/c9578f6385fe0fb9067c5dba8d7cdda39efac0ff/google/devtools/build/v1/BUILD.bazel#L168-L176
+common --incompatible_autoload_externally=+@rules_python
+
+try-import %workspace%/.bazelrc.user

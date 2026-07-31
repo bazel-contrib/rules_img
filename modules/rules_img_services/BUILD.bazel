@@ -1,0 +1,5 @@
+alias(
+    name = "push",
+    actual = "//services:push",
+    visibility = ["//visibility:public"],
+)

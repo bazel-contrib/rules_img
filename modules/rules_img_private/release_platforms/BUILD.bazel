@@ -1,0 +1,24 @@
+load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
+load(":defs.bzl", "PLATFORMS", "go_to_constraint_value", "release_platform_flag", name = "platform_name")
+
+package(
+    default_visibility = ["//visibility:public"],
+)
+
+[
+    platform(
+        name = name(p),
+        constraint_values = [go_to_constraint_value[goname] for goname in p],
+    )
+    for p in PLATFORMS
+]
+
+release_platform_flag(
+    name = "release_platform",
+    build_setting_default = "linux_amd64",
+)
+
+bzl_library(
+    name = "defs",
+    srcs = ["defs.bzl"],
+)
