@@ -160,6 +160,31 @@ func readEmptyFilesParamFile(paramFile string) ([]string, error) {
 	return paths, nil
 }
 
+// readBaseMetadataParamFile reads a parameter file listing base metadata stream
+// paths, one per line, and returns them in order. Order matters: for a path
+// described by several streams, the last one wins.
+func readBaseMetadataParamFile(paramFile string) ([]string, error) {
+	file, err := os.Open(paramFile)
+	if err != nil {
+		return nil, fmt.Errorf("opening parameter file: %w", err)
+	}
+	defer file.Close()
+
+	var paths []string
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if line == "" {
+			continue
+		}
+		paths = append(paths, line)
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("reading parameter file: %w", err)
+	}
+	return paths, nil
+}
+
 // readSymlinkPairsParamFile reads a parameter file where each line contains
 // three null-separated fields: source_prefix, dest_prefix, and dir_name.
 // For each line, it produces a symlink: source_prefix/dir_name -> dest_prefix/dir_name.

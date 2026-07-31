@@ -21,6 +21,7 @@ Supports both **Bzlmod** and **WORKSPACE** setups. For WORKSPACE setup instructi
 - 🗜️ **Cache-efficient layers** - Skip storing layer tarballs in the Bazel remote cache. Layer rules emit a compact [stream representation](docs/compact-stream.md) instead, and the full layer tar is reconstructed on demand only at push/load time
 - 🪶 **Smaller layers** - Deduplicates files using hardlinks
 - 🎯 **Shallow Base Images** - Avoid downloading layers from huge base images like CUDA
+- 🧱 **Bespoke Base Images** - Build your own base from scratch: directory skeleton, users, CA trust stores and shared libraries (see [base images](docs/base-images.md))
 - 🏢 **Enterprise Ready** - Remote Build Execution and Content Addressable Storage integration
 - ☁️ **Push at Build Time** - Upload layers in parallel straight from the remote execution cluster to the registry; bytes never touch the machine running Bazel
 

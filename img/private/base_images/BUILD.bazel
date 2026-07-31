@@ -1,0 +1,79 @@
+load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
+
+filegroup(
+    name = "all_files",
+    srcs = glob(["**"]),
+    visibility = ["//img/private/release:__subpackages__"],
+)
+
+bzl_library(
+    name = "base_image_layer",
+    srcs = ["base_image_layer.bzl"],
+    visibility = ["//img:__subpackages__"],
+    deps = [
+        "//img/private/common:build",
+        "//img/private/common:layer_attrs",
+        "//img/private/common:tar_layer",
+        "//img/private/providers:base_image_content_info",
+        "//img/private/providers:layers_info",
+    ],
+)
+
+bzl_library(
+    name = "common",
+    srcs = ["common.bzl"],
+    visibility = ["//img:__subpackages__"],
+    deps = [
+        "//img/private:stamp",
+        "//img/private/common:build",
+        "//img/private/config:defs",
+        "//img/private/providers:base_image_content_info",
+        "//img/private/providers:stamp_setting_info",
+        "@bazel_skylib//rules:common_settings",
+    ],
+)
+
+bzl_library(
+    name = "etc",
+    srcs = ["etc.bzl"],
+    visibility = ["//img:__subpackages__"],
+    deps = [
+        ":common",
+        "//img/private/common:build",
+        "//img/private/providers:base_image_content_info",
+    ],
+)
+
+bzl_library(
+    name = "linux_skeleton",
+    srcs = ["linux_skeleton.bzl"],
+    visibility = ["//img:__subpackages__"],
+    deps = [
+        ":common",
+        "//img/private/common:build",
+        "//img/private/providers:base_image_content_info",
+    ],
+)
+
+bzl_library(
+    name = "system_libraries",
+    srcs = ["system_libraries.bzl"],
+    visibility = ["//img:__subpackages__"],
+    deps = [
+        ":common",
+        "//img/private/common:build",
+        "//img/private/config:defs",
+        "//img/private/providers:base_image_content_info",
+    ],
+)
+
+bzl_library(
+    name = "trust_store",
+    srcs = ["trust_store.bzl"],
+    visibility = ["//img:__subpackages__"],
+    deps = [
+        ":common",
+        "//img/private/common:build",
+        "//img/private/providers:base_image_content_info",
+    ],
+)

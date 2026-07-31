@@ -1,0 +1,58 @@
+#mtree v2.0
+./etc/environment type=file size=83 mode=0644 uid=0 gid=0 sha256digest=386b14dcdab524d6158239fd17df56a7c01df229096cdb498cd41986f7fee4e7 time=0 nlink=1
+./etc/group type=file size=25 mode=0644 uid=0 gid=0 sha256digest=e053c9a390558430919db7429887977dc703c557c3ea2d8ca14d1e4792f7eec9 time=0 nlink=1
+./etc/hosts type=file size=180 mode=0644 uid=0 gid=0 sha256digest=e4a8d5aeaa124d906f33e5237a08f16b9e5621442499786254734925fb7ee3c8 time=0 nlink=1
+./etc/ld.so.cache type=file size=124 mode=0644 uid=0 gid=0 sha256digest=d92b146e94251cfbe66cd6658df33987caad12681aca616e048c2c74b6f0568e time=0 nlink=1
+./etc/ld.so.conf.d/00-rules-img.conf type=file size=26 mode=0644 uid=0 gid=0 sha256digest=10d473fdf0015247242e0c5a3b2d63367d857cdf8bf10c561309654ce689cff3 time=0 nlink=1
+./etc/passwd type=file size=78 mode=0644 uid=0 gid=0 sha256digest=3a2611193502e280d269960624fba8f78a11532b5230417bbdcc1846fa1ce297 time=0 nlink=1
+./etc/shadow type=file size=29 mode=0640 uid=0 gid=0 sha256digest=9e0406cceaaf4246c335a10038058ea9589d403a642e5bce6198699488d9d04b time=0 nlink=1
+./etc/ssl/certs/ca-certificates.crt type=file size=664 mode=0644 uid=0 gid=0 sha256digest=ae116b12ac6d619bb3b50ccdfaedac32b240f78897d8c1ed8e31ec60c6ccef2c time=0 nlink=2
+./etc/ssl/certs/java/cacerts type=file size=702 mode=0644 uid=0 gid=0 sha256digest=df1e0843a45b840085a7e9efe864ee785640fadb1d2033713bda3d226f78bc5e time=0 nlink=1
+./usr/lib/os-release type=file size=62 mode=0644 uid=0 gid=0 sha256digest=627ad25eec87d38d2f94d7b5ef9a4afc5dba2f7deea5ae4a51960d6b95bb6901 time=0 nlink=1
+./usr/lib/x86_64-linux-gnu/libtest.so.1.2.3 type=file size=450 mode=0755 uid=0 gid=0 sha256digest=8093154190f509d1f187c5a7a9a8c652bcd67e85d2f6efdd7a5194470422f6a8 time=0 nlink=1
+./bin type=link size=7 mode=0777 uid=0 gid=0 time=0 link=usr/bin nlink=1
+./dev type=dir mode=0755 uid=0 gid=0 time=0 nlink=1
+./etc type=dir mode=0755 uid=0 gid=0 time=0 nlink=1
+./etc/ld.so.conf.d type=dir mode=0755 uid=0 gid=0 time=0 nlink=1
+./etc/os-release type=link size=21 mode=0777 uid=0 gid=0 time=0 link=../usr/lib/os-release nlink=1
+./etc/ssl type=dir mode=0755 uid=0 gid=0 time=0 nlink=1
+./etc/ssl/certs type=dir mode=0755 uid=0 gid=0 time=0 nlink=1
+./etc/ssl/certs/4e814f08.0 type=link size=20 mode=0777 uid=0 gid=0 time=0 link=d7f8516c8962ca7e.pem nlink=1
+./etc/ssl/certs/d7f8516c8962ca7e.pem type=file size=664 mode=0644 uid=0 gid=0 sha256digest=ae116b12ac6d619bb3b50ccdfaedac32b240f78897d8c1ed8e31ec60c6ccef2c time=0 nlink=2
+./etc/ssl/certs/java type=dir mode=0755 uid=0 gid=0 time=0 nlink=1
+./home type=dir mode=0755 uid=0 gid=0 time=0 nlink=1
+./home/app type=dir mode=0750 uid=1000 uname=app gid=1000 time=0 nlink=1
+./lib type=link size=7 mode=0777 uid=0 gid=0 time=0 link=usr/lib nlink=1
+./lib64 type=link size=9 mode=0777 uid=0 gid=0 time=0 link=usr/lib64 nlink=1
+./media type=dir mode=0755 uid=0 gid=0 time=0 nlink=1
+./mnt type=dir mode=0755 uid=0 gid=0 time=0 nlink=1
+./opt type=dir mode=0755 uid=0 gid=0 time=0 nlink=1
+./proc type=dir mode=0555 uid=0 gid=0 time=0 nlink=1
+./root type=dir mode=0700 uid=0 uname=root gid=0 time=0 nlink=1
+./run type=dir mode=0755 uid=0 gid=0 time=0 nlink=1
+./run/lock type=dir mode=01777 uid=0 gid=0 time=0 nlink=1
+./sbin type=link size=8 mode=0777 uid=0 gid=0 time=0 link=usr/sbin nlink=1
+./srv type=dir mode=0755 uid=0 gid=0 time=0 nlink=1
+./sys type=dir mode=0555 uid=0 gid=0 time=0 nlink=1
+./tmp type=dir mode=01777 uid=0 gid=0 time=0 nlink=1
+./usr type=dir mode=0755 uid=0 gid=0 time=0 nlink=1
+./usr/bin type=dir mode=0755 uid=0 gid=0 time=0 nlink=1
+./usr/include type=dir mode=0755 uid=0 gid=0 time=0 nlink=1
+./usr/lib type=dir mode=0755 uid=0 gid=0 time=0 nlink=1
+./usr/lib/x86_64-linux-gnu type=dir mode=0755 uid=0 gid=0 time=0 nlink=1
+./usr/lib/x86_64-linux-gnu/libtest.so.1 type=link size=16 mode=0777 uid=0 gid=0 time=0 link=libtest.so.1.2.3 nlink=1
+./usr/lib64 type=dir mode=0755 uid=0 gid=0 time=0 nlink=1
+./usr/local type=dir mode=0755 uid=0 gid=0 time=0 nlink=1
+./usr/local/bin type=dir mode=0755 uid=0 gid=0 time=0 nlink=1
+./usr/local/lib type=dir mode=0755 uid=0 gid=0 time=0 nlink=1
+./usr/local/sbin type=dir mode=0755 uid=0 gid=0 time=0 nlink=1
+./usr/sbin type=dir mode=0755 uid=0 gid=0 time=0 nlink=1
+./usr/share type=dir mode=0755 uid=0 gid=0 time=0 nlink=1
+./var type=dir mode=0755 uid=0 gid=0 time=0 nlink=1
+./var/cache type=dir mode=0755 uid=0 gid=0 time=0 nlink=1
+./var/lib type=dir mode=0755 uid=0 gid=0 time=0 nlink=1
+./var/lock type=link size=11 mode=0777 uid=0 gid=0 time=0 link=../run/lock nlink=1
+./var/log type=dir mode=0755 uid=0 gid=0 time=0 nlink=1
+./var/run type=link size=6 mode=0777 uid=0 gid=0 time=0 link=../run nlink=1
+./var/spool type=dir mode=0755 uid=0 gid=0 time=0 nlink=1
+./var/tmp type=dir mode=01777 uid=0 gid=0 time=0 nlink=1

@@ -81,6 +81,16 @@ func (lm *LayerMetadata) ApplyToHeader(hdr *tar.Header, pathInImage string) erro
 	return nil
 }
 
+// markUsed records that a file metadata override was applied, so
+// VerifyAllFileMetadataUsed does not report it as unused. Callers that apply an
+// override themselves (rather than going through ApplyToHeader) must call this.
+func (lm *LayerMetadata) markUsed(pathInImage string) {
+	if lm == nil {
+		return
+	}
+	lm.usageCounts[pathInImage]++
+}
+
 // VerifyAllFileMetadataUsed checks if all file metadata entries have been used at least once
 // Returns an error if any entries are unused, listing all unused paths
 func (lm *LayerMetadata) VerifyAllFileMetadataUsed() error {

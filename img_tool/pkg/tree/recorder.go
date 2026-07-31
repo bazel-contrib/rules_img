@@ -265,6 +265,36 @@ func (r Recorder) EmptyFile(target string) error {
 	return r.tf.WriteRegular(hdr, strings.NewReader(""))
 }
 
+// Header records a non-regular entry (directory, symlink, device, ...) from a
+// caller-supplied tar header.
+//
+// Unlike the other Recorder methods, the header is used as given: no metadata
+// provider is consulted and no fields are defaulted. This is for callers that
+// have already decided every field, such as base image content rules whose
+// whole purpose is to specify modes and ownership.
+func (r Recorder) Header(hdr *tar.Header) error {
+	return r.tf.WriteHeader(hdr)
+}
+
+// RegularFromHeader records a regular file from a caller-supplied tar header
+// and an in-memory body. As with Header, the header is used verbatim.
+func (r Recorder) RegularFromHeader(hdr *tar.Header, content io.Reader) error {
+	if r.deduplicate {
+		return r.tf.WriteRegularDeduplicated(hdr, content)
+	}
+	return r.tf.WriteRegular(hdr, content)
+}
+
+// RegularFromHeaderAndPath records a regular file from a caller-supplied tar
+// header, with the content read from a file on disk. As with Header, the header
+// is used verbatim.
+func (r Recorder) RegularFromHeaderAndPath(hdr *tar.Header, filePath string) error {
+	if r.deduplicate {
+		return r.tf.WriteRegularFromPathDeduplicated(hdr, filePath)
+	}
+	return r.tf.WriteRegularFromPath(hdr, filePath)
+}
+
 func relativeSymlinkTarget(target, linkName string) string {
 	sourceDir := path.Dir(linkName)
 	if sourceDir == "." {
