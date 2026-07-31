@@ -16,8 +16,10 @@
 //
 // Successful blob existence checks can be memoized with
 // [WithBlobExistenceCache], which is what keeps a build farm's repeated "is this
-// layer already pushed?" probes from each costing an upstream round trip (see
-// existencecache.go).
+// layer already pushed?" probes from each costing an upstream round trip. Every
+// other request that settles whether a blob is in a repository keeps that memo
+// current: a read that serves the blob and an upload that commits it admit an entry,
+// and a delete takes one away (see existencecache.go).
 package gateway
 
 import (
@@ -165,16 +167,24 @@ func WithPeerAuth(auth *PeerAuth) Option {
 // thousands. Entries are keyed by upstream registry, repository, and digest, and
 // held for ttl.
 //
+// A blob read that the registry serves under the digest asked for is admitted too,
+// as is an upload that the gateway forwards to a successful commit: the registry has
+// just hashed that content against the digest, so a probe a moment later would answer
+// 200 and the client that pushed spares every other client the first probe. Only the
+// response that completes an upload counts, never the session it is the end of. A
+// blob delete forwarded the other way drops the entry again.
+//
 // maxBytes bounds the cache's memory, which is allocated in full at startup and
 // never grows; once it is full, the least recently used entry makes room for a
 // new one. A ttl or maxBytes that is not positive disables the cache, as does a
 // maxBytes below [MinBlobExistenceCacheBytes].
 //
-// ttl is the only thing standing between a client and a stale answer: a blob
-// cannot change, but a registry can garbage-collect one, and a push client that
-// believes a collected layer is still there will skip re-uploading it and commit
-// a manifest referring to nothing. Keep ttl well inside the window in which the
-// registry could collect a blob.
+// ttl is what stands between a client and the one stale answer the gateway cannot
+// see coming: a blob cannot change, but a registry can garbage-collect one behind
+// the gateway's back, and a push client that believes a collected layer is still
+// there will skip re-uploading it and commit a manifest referring to nothing. Keep
+// ttl well inside the window in which the registry could collect a blob. A blob a
+// client deletes through the gateway needs no such window — that entry goes at once.
 //
 // Manifests and tags are never cached: both are mutable, and a HEAD on one is
 // exactly how a client finds out that it changed.
@@ -442,6 +452,128 @@ func (h *Handler) cacheableBlobHead(r *http.Request, cls request) bool {
 	return true
 }
 
+// cacheableBlobRead reports whether a request is a read of a digest-referenced
+// blob, the answer to which can say the blob is there.
+func (h *Handler) cacheableBlobRead(cls request) bool {
+	return h.blobCache != nil && cls.op == opNameBlobRead && cls.digest != ""
+}
+
+// cacheableBlobUpload reports whether a request is one whose success puts a blob in
+// the repository under a digest the cache can be keyed on. [classify] carries the
+// digest for exactly those requests and no others (see [committedDigest]).
+func (h *Handler) cacheableBlobUpload(cls request) bool {
+	return h.blobCache != nil && cls.op == opNameBlobUpload && cls.digest != ""
+}
+
+// rememberBlob admits a blob to the existence cache when the response the gateway
+// just received is proof that the blob is in the repository. Three responses are:
+//
+//   - 200 to an existence check: the answer the cache exists to replay.
+//   - 200 to a blob read that the registry says is the blob asked for. Handing over
+//     the content is a stronger statement than answering a probe, and a fleet that
+//     pulls a layer today is one that will ask whether it needs to push it tomorrow.
+//   - 201 Created to the request that finishes an upload, which is the registry
+//     stating that it hashed the content it received, matched it against the
+//     digest, and stored it. A HEAD sent a moment later would answer 200, so the
+//     client that did the pushing warms the cache for everyone else instead of the
+//     next fleet member paying for a probe of its own.
+//
+// Nothing earlier in an upload counts. A 202 means only that a session was opened
+// or a chunk was accepted; until the commit succeeds there is no blob, and a client
+// told otherwise would skip an upload it still owes. Any status other than the one
+// each case names leaves the cache untouched — including the 206 that answers a
+// ranged read, whose Content-Length is a slice of the blob rather than its size.
+//
+// [Handler.forgetDeletedBlob] is the other direction.
+func (h *Handler) rememberBlob(r *http.Request, repo name.Repository, cls request, resp *http.Response) {
+	var length int64
+	switch {
+	case h.cacheableBlobHead(r, cls) && resp.StatusCode == http.StatusOK:
+		length = blobLength(resp)
+	case h.cacheableBlobRead(cls) && resp.StatusCode == http.StatusOK && servedDigest(resp, cls.digest):
+		length = blobLength(resp)
+	case h.cacheableBlobUpload(cls) && resp.StatusCode == http.StatusCreated && confirmsDigest(resp, cls.digest):
+		length = uploadedLength(r, cls)
+	default:
+		return
+	}
+	h.blobCache.store(repo.RegistryStr(), repo.RepositoryStr(), cls.digest, length)
+}
+
+// confirmsDigest reports whether the registry's own account of what it created
+// agrees with the digest the request asked it to create.
+//
+// Docker-Content-Digest is not required on a 201 and, when a registry does send
+// one, it is all but always the digest already in the request. A registry that
+// names a different blob is one whose reading of the request is not the gateway's,
+// which is the one case where remembering either answer would be a guess.
+func confirmsDigest(resp *http.Response, digest string) bool {
+	reported := resp.Header.Get("Docker-Content-Digest")
+	return reported == "" || reported == digest
+}
+
+// servedDigest reports whether the registry said, in so many words, that the body it
+// is answering a blob read with is the blob that was asked for.
+//
+// Here the header is required, not merely respected — the asymmetry with
+// [confirmsDigest] is the point. A commit is proof on its own, because the registry
+// hashed the content before answering; a read is only proof if the registry names
+// what it served, since the gateway streams the body through without hashing it and
+// a blob read may be redirected to storage that serves whatever it is pointed at. An
+// answer without the header is forwarded to the client and forgotten.
+func servedDigest(resp *http.Response, digest string) bool {
+	return resp.Header.Get("Docker-Content-Digest") == digest
+}
+
+// uploadedLength is the size of a blob whose upload just committed, when this one
+// request is proof of the size, and -1 (unknown) otherwise.
+//
+// The request whose body is the whole blob is a monolithic POST upload: the
+// registry's 201 says it hashed exactly those bytes into the digest that was asked
+// for. A session commit proves nothing about the size — the PUT that closes a
+// session usually carries no body at all, the content having gone upstream in PATCH
+// requests the gateway does not correlate with the commit — and a cross-repo mount
+// transfers no bytes in the first place.
+//
+// The *response's* Content-Length is not the blob's and must not be read as it: a
+// registry sets it to 0 on the 201, whose body is empty.
+//
+// An entry whose length is unknown is still worth keeping, since the existence
+// answer is what a push client is blocked on, and a HEAD answered from one simply
+// omits Content-Length — the same reply the cache already gives for a registry that
+// reports no length.
+func uploadedLength(r *http.Request, cls request) int64 {
+	if r.Method != http.MethodPost || cls.mountFrom != "" || r.ContentLength < 0 {
+		return -1
+	}
+	return r.ContentLength
+}
+
+// forgetDeletedBlob drops the cache entry for a blob a client asked the upstream to
+// delete. It is the counterpart of [Handler.rememberBlob], and the only thing that
+// unmakes an entry before its TTL runs out.
+//
+// The upstream's answer is deliberately not consulted, and this is called even when
+// no answer arrived. The 202 that a delete usually earns (some registries answer 200
+// or 204) means the entry is now false; a 5xx, a timeout, or a client that hung up
+// means the gateway does not know whether it is; a refusal means the blob is still
+// there. Only the last of those makes dropping the entry unnecessary, and dropping it
+// costs one existence check the next time somebody asks. Keeping a false one costs a
+// push client the layer it decided not to re-upload, and then a manifest that
+// references a blob which is gone — so a delete that passed through here is read
+// pessimistically.
+//
+// Dropping after the round trip rather than before it is what keeps a probe arriving
+// mid-delete from writing the entry straight back: the upstream answers such a probe
+// from the state before the delete.
+func (h *Handler) forgetDeletedBlob(repo name.Repository, cls request) {
+	// classify carries a digest on a blob write for a DELETE and nothing else.
+	if h.blobCache == nil || cls.op != opNameBlobWrite || cls.digest == "" {
+		return
+	}
+	h.blobCache.forget(repo.RegistryStr(), repo.RepositoryStr(), cls.digest)
+}
+
 // uncacheableHeaders make a response depend on more than whether the blob exists,
 // so a request carrying one is passed through untouched and its answer is not
 // stored: the upstream would answer it with a 206 or a 304, and the cache only
@@ -534,6 +666,10 @@ func (h *Handler) forward(obs *observation, w http.ResponseWriter, r *http.Reque
 	started := time.Now()
 	resp, err := client.Do(outReq)
 	if err != nil {
+		// A delete whose answer never came back may have taken effect all the same,
+		// and an entry for a blob that is gone is the one wrong answer this cache can
+		// give.
+		h.forgetDeletedBlob(repo, cls)
 		h.writeError(obs, w, r, http.StatusBadGateway, "UNKNOWN", transportErrorType(err),
 			fmt.Sprintf("forwarding to upstream %s: %v", repo.RegistryStr(), err))
 		return
@@ -541,12 +677,11 @@ func (h *Handler) forward(obs *observation, w http.ResponseWriter, r *http.Reque
 	defer resp.Body.Close()
 	obs.upstreamResponse(r.Context(), cls, resp.StatusCode, time.Since(started))
 
-	// Remember a blob the registry confirmed, so the next probe for it costs no
-	// round trip. Only a plain 200 is stored: that is the one answer that means
-	// "this blob is present", and it is the only one the cache replays.
-	if resp.StatusCode == http.StatusOK && h.cacheableBlobHead(r, cls) {
-		h.blobCache.store(repo.RegistryStr(), repo.RepositoryStr(), cls.digest, blobLength(resp))
-	}
+	// Bring the blob existence cache in line with what the registry just did: the
+	// 200 that says a blob is there and the 201 that says it was just put there
+	// admit an entry, and a delete takes one away.
+	h.rememberBlob(r, repo, cls, resp)
+	h.forgetDeletedBlob(repo, cls)
 
 	copyResponseHeader(w.Header(), resp.Header, repo)
 	w.WriteHeader(resp.StatusCode)
