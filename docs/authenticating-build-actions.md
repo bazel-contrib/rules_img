@@ -125,6 +125,7 @@ That is the whole client side. Everything about running the gateway is in the
 | [Modes] | `serve` talks to registries; `forward` relays to another gateway |
 | [Flags] | the full flag list for both modes |
 | [Policy file] | the JSON/YAML schema, how rules are matched, and reloading |
+| [Blob existence cache] | memoizing "is this layer already pushed?", and sharing that between replicas |
 | [Client authentication] | mTLS, bearer tokens, or Kubernetes ServiceAccount tokens |
 | [Two-hop deployment] | keep registry credentials in one shared deployment instead of in every worker pod |
 | [Deploying as a sidecar] | Kubernetes recipes for Buildbarn and BuildBuddy self-hosted executors |
@@ -142,6 +143,7 @@ Two things worth knowing before you start:
 [Modes]: ../img_tool/cmd/oci-distribution-gateway/README.md#modes
 [Flags]: ../img_tool/cmd/oci-distribution-gateway/README.md#flags
 [Policy file]: ../img_tool/cmd/oci-distribution-gateway/README.md#policy-file
+[Blob existence cache]: ../img_tool/cmd/oci-distribution-gateway/blob-existence-cache.md
 [Client authentication]: ../img_tool/cmd/oci-distribution-gateway/README.md#client-authentication
 [Two-hop deployment]: ../img_tool/cmd/oci-distribution-gateway/README.md#two-hop-deployment
 [Deploying as a sidecar]: ../img_tool/cmd/oci-distribution-gateway/README.md#deploying-as-a-sidecar

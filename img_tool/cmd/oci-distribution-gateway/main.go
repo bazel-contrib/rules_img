@@ -25,8 +25,15 @@
 // A serving gateway also memoizes the blob existence checks a push begins with, so
 // that a fleet asking whether the same layer is already upstream pays for one round
 // trip rather than thousands. Reads and pushes it forwards keep that memo current,
-// and a blob delete takes an entry back. See --blob-existence-cache-ttl and the
-// "Blob existence cache" section of the README.
+// and a blob delete takes an entry back. See --blob-existence-cache-ttl and
+// blob-existence-cache.md.
+//
+// Several serving instances can replicate that memo to each other, so that a
+// deployment of N replicas pays for one upstream probe per blob rather than N. The
+// peers are named with --blob-existence-cache-peer, or discovered from the
+// EndpointSlices of a Service with --blob-existence-cache-peer-service; a starting
+// instance seeds its cache from a peer before reporting itself healthy. Replication
+// is best effort throughout: no client request ever waits for a peer.
 //
 // A bare invocation with no subcommand means serving mode, so existing
 // deployments keep working unchanged.

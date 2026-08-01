@@ -41,6 +41,9 @@ const (
 	// errPrivateUpstream: the upstream resolved to a loopback, link-local, or
 	// private address and --deny-private-upstreams is set.
 	errPrivateUpstream = "private_upstream"
+	// errCacheSelfReplication: a cache replication request arrived from this very
+	// instance, which means it is in its own peer list.
+	errCacheSelfReplication = "cache_self_replication"
 )
 
 // Error types for authenticating the gateway's own clients, reported by a

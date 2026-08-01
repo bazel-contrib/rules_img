@@ -39,6 +39,12 @@ import (
 // points somewhere else, so memoizing either would hand out stale answers about
 // data that is meant to change.
 //
+// Each instance holds its own cache, and what it learns is broadcast to its peers
+// (see replication.go): the memory stays local — a shared cache would put a
+// network round trip in front of every probe, which is the very cost this exists
+// to remove — while the *fact* travels, so a fleet pays for one upstream probe
+// per blob rather than one per instance.
+//
 // The implementation is one preallocated block of memory, sharded for
 // concurrency:
 //
@@ -284,25 +290,43 @@ func (c *blobExistenceCache) lookup(registry, repository, digest string) (conten
 // store records that the blob exists in the repository, for the cache's TTL,
 // evicting the least recently used entry of its shard if that shard is full.
 // Storing a key that is already present refreshes its deadline in place.
+func (c *blobExistenceCache) store(registry, repository, digest string, contentLength int64) {
+	if c == nil {
+		return
+	}
+	c.insert(registry, repository, digest, contentLength, c.ttl)
+}
+
+// insert is store with an explicit lifetime, which is what a replicated entry
+// needs: an instance that donates part of its cache to a starting peer sends what
+// is *left* of each deadline, so the fact does not get a fresh TTL every time it
+// is copied to another instance (see [CacheReplication.warmUp]).
+//
+// A contentLength below zero means "unknown", and never overwrites a length the
+// cache already holds: a blob is content-addressed, so its size cannot have
+// changed, and a peer that learned of the blob from an upload knows no size while
+// this instance may have served it and know exactly.
 //
 // A key too long for an entry's arena slice is not stored. It is the one case
 // that is skipped silently: no registry serves a name that long, and the
 // alternative — a variable-length arena — would fragment and could not offer a
 // hard memory bound.
-func (c *blobExistenceCache) store(registry, repository, digest string, contentLength int64) {
-	if c == nil || len(registry)+len(repository)+len(digest) > entryBytes {
+func (c *blobExistenceCache) insert(registry, repository, digest string, contentLength int64, lifetime time.Duration) {
+	if c == nil || lifetime <= 0 || len(registry)+len(repository)+len(digest) > entryBytes {
 		return
 	}
 	hash := c.hash(registry, repository, digest)
 	s := &c.shards[hash>>c.shardShift]
-	expires := c.elapsed() + c.ttl.Nanoseconds()
+	expires := c.elapsed() + lifetime.Nanoseconds()
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	if idx := s.find(hash, registry, repository, digest); idx >= 0 {
 		s.slots[idx].expires = expires
-		s.slots[idx].contentLength = contentLength
+		if contentLength >= 0 {
+			s.slots[idx].contentLength = contentLength
+		}
 		s.touch(idx)
 		return
 	}
@@ -347,6 +371,120 @@ func (c *blobExistenceCache) forget(registry, repository, digest string) {
 		s.drop(idx)
 		s.evictedDeleted.Add(1)
 	}
+}
+
+// cacheEntry is one entry copied out of the cache, which is how an instance
+// hands part of its cache to a peer that is starting up.
+type cacheEntry struct {
+	registry, repository, digest string
+	// contentLength is the size the registry reported for the blob, or -1.
+	contentLength int64
+	// lifetime is what is left of the entry's deadline. It travels with the entry
+	// so that copying a fact between instances does not restart its TTL: the TTL
+	// bounds how long the gateway may believe a blob that has since been garbage
+	// collected upstream, and that bound has to survive the copy.
+	lifetime time.Duration
+}
+
+// maxSnapshotEntries is the ceiling on one call to [blobExistenceCache.hottest],
+// and so on the memory a snapshot allocates up front. It is enforced there rather
+// than left to the caller because limit reaches it from a peer's request: the
+// bound has to hold whatever anyone asks for.
+//
+// At 64k entries a snapshot is a few megabytes, which is a large farm's hot
+// working set several times over — a donation is a head start, not a copy of
+// everything a big cache holds.
+const maxSnapshotEntries = 1 << 16
+
+// hottest copies out up to limit of the cache's most recently used live entries,
+// which is what a starting instance asks a peer for so that its first probes are
+// not all misses (see [CacheReplication.warmUp]).
+//
+// Entries are taken from the head of every shard's LRU list, an equal share from
+// each: the cache has no global LRU order — that is the concurrency the sharding
+// buys — so "the hottest entries of each shard" is the closest thing to it, and
+// the difference does not matter for a set that is a hint either way.
+//
+// A shard's lock is held only for the copy of its key bytes; the strings are built
+// after it is released. A donating instance is a serving instance, and a request
+// hashing to the same shard must not wait for a donation to be marshalled.
+func (c *blobExistenceCache) hottest(limit int) []cacheEntry {
+	if c == nil || limit <= 0 {
+		return nil
+	}
+	// Two ceilings, both of which have to be applied before anything is sized from
+	// limit: there is nothing to copy beyond what the cache can hold, and
+	// maxSnapshotEntries is what keeps the allocations below bounded no matter what
+	// a peer asked for.
+	if int64(limit) > c.capacity {
+		limit = int(c.capacity)
+	}
+	if limit > maxSnapshotEntries {
+		limit = maxSnapshotEntries
+	}
+	perShard := (limit + len(c.shards) - 1) / len(c.shards)
+	now := c.elapsed()
+
+	// keys accumulates the key bytes of every entry taken, and spans records how
+	// to cut them apart again.
+	keys := make([]byte, 0, limit*entrySampleBytes)
+	spans := make([]entrySpan, 0, limit)
+	for i := range c.shards {
+		if len(spans) >= limit {
+			break
+		}
+		s := &c.shards[i]
+		s.mu.Lock()
+		taken := 0
+		for idx := s.head; idx >= 0 && taken < perShard && len(spans) < limit; idx = s.slots[idx].next {
+			e := &s.slots[idx]
+			if e.expires <= now {
+				// Expired but not yet evicted: it teaches a peer nothing.
+				continue
+			}
+			end := int(e.regLen) + int(e.repoLen) + int(e.digestLen)
+			keys = append(keys, s.arena[int(idx)*entryBytes:][:end]...)
+			spans = append(spans, entrySpan{
+				regLen:        e.regLen,
+				repoLen:       e.repoLen,
+				digestLen:     e.digestLen,
+				contentLength: e.contentLength,
+				lifetime:      e.expires - now,
+			})
+			taken++
+		}
+		s.mu.Unlock()
+	}
+
+	entries := make([]cacheEntry, 0, len(spans))
+	at := 0
+	for _, span := range spans {
+		key := keys[at:][:int(span.regLen)+int(span.repoLen)+int(span.digestLen)]
+		at += len(key)
+		regEnd := int(span.regLen)
+		repoEnd := regEnd + int(span.repoLen)
+		entries = append(entries, cacheEntry{
+			registry:      string(key[:regEnd]),
+			repository:    string(key[regEnd:repoEnd]),
+			digest:        string(key[repoEnd:]),
+			contentLength: span.contentLength,
+			lifetime:      time.Duration(span.lifetime),
+		})
+	}
+	return entries
+}
+
+// entrySampleBytes is how much room per entry [blobExistenceCache.hottest]
+// reserves for key bytes up front. It is a guess at a typical key — a sha256
+// digest is 71 bytes of it — not a limit: a longer key simply grows the buffer.
+const entrySampleBytes = 128
+
+// entrySpan is the fixed-size part of an entry copied out under a shard's lock,
+// paired with its key bytes in the buffer alongside.
+type entrySpan struct {
+	regLen, repoLen, digestLen uint16
+	contentLength              int64
+	lifetime                   int64
 }
 
 // hash mixes the three parts of a key without concatenating them, so a lookup

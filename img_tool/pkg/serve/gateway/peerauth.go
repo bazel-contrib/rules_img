@@ -675,6 +675,35 @@ func NewInClusterTokenReviewer() (TokenReviewer, error) {
 	if host == "" || port == "" {
 		return nil, errors.New("ServiceAccount authentication needs to run in a Kubernetes pod (KUBERNETES_SERVICE_HOST and KUBERNETES_SERVICE_PORT are unset)")
 	}
+	if _, err := os.Stat(serviceAccountTokenPath); err != nil {
+		return nil, fmt.Errorf("reading the gateway's ServiceAccount token: %w", err)
+	}
+	client, err := inClusterAPIClient(10 * time.Second)
+	if err != nil {
+		return nil, err
+	}
+	return &inClusterTokenReviewer{
+		endpoint:  fmt.Sprintf("https://%s/apis/authentication.k8s.io/v1/tokenreviews", net.JoinHostPort(host, port)),
+		tokenPath: serviceAccountTokenPath,
+		client:    client,
+	}, nil
+}
+
+// inClusterAPIServerURL is the API server a pod reaches, from the environment
+// every pod has.
+func inClusterAPIServerURL() (string, error) {
+	host, port := os.Getenv("KUBERNETES_SERVICE_HOST"), os.Getenv("KUBERNETES_SERVICE_PORT")
+	if host == "" || port == "" {
+		return "", errors.New("this needs to run in a Kubernetes pod (KUBERNETES_SERVICE_HOST and KUBERNETES_SERVICE_PORT are unset)")
+	}
+	return "https://" + net.JoinHostPort(host, port), nil
+}
+
+// inClusterAPIClient builds a client that trusts the Kubernetes API server, using
+// the CA every pod has mounted. A timeout of zero leaves the client without one,
+// which is what a long-lived watch needs — such a caller must bound its requests
+// with a context instead.
+func inClusterAPIClient(timeout time.Duration) (*http.Client, error) {
 	caPEM, err := os.ReadFile(serviceAccountCAPath)
 	if err != nil {
 		return nil, fmt.Errorf("reading the API server CA: %w", err)
@@ -683,17 +712,10 @@ func NewInClusterTokenReviewer() (TokenReviewer, error) {
 	if !pool.AppendCertsFromPEM(caPEM) {
 		return nil, fmt.Errorf("no PEM certificates in %s", serviceAccountCAPath)
 	}
-	if _, err := os.Stat(serviceAccountTokenPath); err != nil {
-		return nil, fmt.Errorf("reading the gateway's ServiceAccount token: %w", err)
-	}
-	return &inClusterTokenReviewer{
-		endpoint:  fmt.Sprintf("https://%s/apis/authentication.k8s.io/v1/tokenreviews", net.JoinHostPort(host, port)),
-		tokenPath: serviceAccountTokenPath,
-		client: &http.Client{
-			Timeout: 10 * time.Second,
-			Transport: &http.Transport{
-				TLSClientConfig: &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12},
-			},
+	return &http.Client{
+		Timeout: timeout,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12},
 		},
 	}, nil
 }

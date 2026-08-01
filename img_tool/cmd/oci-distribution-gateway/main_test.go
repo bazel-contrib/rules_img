@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestParseSubcommand(t *testing.T) {
@@ -178,6 +179,123 @@ func TestForwardFlagValidation(t *testing.T) {
 				t.Fatalf("validate() passed, want an error containing %q", tc.want)
 			case !strings.Contains(err.Error(), tc.want):
 				t.Errorf("validate() = %v, want an error containing %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// TestCacheReplicationFlagValidation covers the startup checks of cache
+// replication. They are all fail-closed in the same way: a flag combination that
+// could only half-work refuses to start, rather than serving with a control that
+// looks configured but is not.
+func TestCacheReplicationFlagValidation(t *testing.T) {
+	// The cache itself has to be on for there to be anything to replicate.
+	enabled := serveFlags{blobCacheTTL: time.Hour, blobCacheMaxMemory: defaultBlobCacheMemory, port: 8443}
+
+	withCache := func(mutate func(*serveFlags)) serveFlags {
+		flags := enabled
+		mutate(&flags)
+		return flags
+	}
+
+	for _, tc := range []struct {
+		name  string
+		flags serveFlags
+		want  string // a substring of the expected error; empty means it must pass
+		// off means replication must end up disabled rather than configured.
+		off bool
+	}{{
+		name:  "no peers configured",
+		flags: enabled,
+		off:   true,
+	}, {
+		// Silently ignoring this one would look like a control that is in force.
+		name:  "an allow-list with no peers",
+		flags: withCache(func(f *serveFlags) { f.allowedCachePeerIDs = repeatedFlag{"spiffe://cluster.local/ns/img/sa/gw"} }),
+		want:  "needs --blob-existence-cache-peer",
+	}, {
+		name:  "a peer token file with no peers",
+		flags: withCache(func(f *serveFlags) { f.cachePeerTokenFile = "/run/token" }),
+		want:  "needs --blob-existence-cache-peer",
+	}, {
+		name: "both ways of naming peers",
+		flags: withCache(func(f *serveFlags) {
+			f.cachePeers = repeatedFlag{"https://gw-1:8443"}
+			f.cachePeerService = "gw"
+		}),
+		want: "use one of them",
+	}, {
+		name: "peers without the cache",
+		flags: withCache(func(f *serveFlags) {
+			f.cachePeers = repeatedFlag{"https://gw-1:8443"}
+			f.blobCacheTTL = 0
+		}),
+		want: "needs the blob existence cache",
+	}, {
+		name: "peers cannot reach a UNIX socket",
+		flags: withCache(func(f *serveFlags) {
+			f.cachePeers = repeatedFlag{"https://gw-1:8443"}
+			f.unixSocket = "/run/gw.sock"
+		}),
+		want: "not --unix-socket",
+	}, {
+		name:  "a plaintext peer without the escape hatch",
+		flags: withCache(func(f *serveFlags) { f.cachePeers = repeatedFlag{"http://gw-1:8443"} }),
+		want:  "is plaintext",
+	}, {
+		name: "a plaintext peer with the escape hatch",
+		flags: withCache(func(f *serveFlags) {
+			f.cachePeers = repeatedFlag{"http://gw-1:8443"}
+			f.allowPlaintextCachePeer = true
+		}),
+	}, {
+		name:  "a peer with a path",
+		flags: withCache(func(f *serveFlags) { f.cachePeers = repeatedFlag{"https://gw-1:8443/v2/"} }),
+		want:  "scheme and host only",
+	}, {
+		name:  "a peer with an unsupported scheme",
+		flags: withCache(func(f *serveFlags) { f.cachePeers = repeatedFlag{"grpc://gw-1:8443"} }),
+		want:  "must use https:// or http://",
+	}, {
+		// A discovered peer is reached on the port this instance serves, which a
+		// listener that took whatever port was free does not have.
+		name: "discovery without a fixed port",
+		flags: withCache(func(f *serveFlags) {
+			f.cachePeerService = "gw"
+			f.port = 0
+			f.allowPlaintextCachePeer = true
+		}),
+		want: "needs an explicit --port",
+	}, {
+		// Past validation, discovery needs a pod's environment, which a test is not.
+		name: "discovery outside a pod",
+		flags: withCache(func(f *serveFlags) {
+			f.cachePeerService = "img-gateway/gw"
+			f.allowPlaintextCachePeer = true
+		}),
+		want: "Kubernetes pod",
+	}, {
+		name: "a plaintext gateway serving discovered peers needs the escape hatch",
+		flags: withCache(func(f *serveFlags) {
+			f.cachePeerService = "img-gateway/gw"
+		}),
+		want: "serves plaintext",
+	}} {
+		t.Run(tc.name, func(t *testing.T) {
+			// serverTLS is nil throughout: these are the checks that do not depend on
+			// the TLS material, and a nil one is a gateway serving plaintext.
+			replication, err := tc.flags.cacheReplication(nil)
+			switch {
+			case tc.want == "" && err != nil:
+				t.Fatalf("cacheReplication() = %v, want it to pass", err)
+			case tc.want == "" && tc.off != (replication == nil):
+				t.Fatalf("cacheReplication() returned %v, want replication off = %v", replication, tc.off)
+			case tc.want == "":
+				return
+			case err == nil:
+				t.Fatalf("cacheReplication() passed, want an error containing %q", tc.want)
+			case !strings.Contains(err.Error(), tc.want):
+				t.Errorf("cacheReplication() = %v, want an error containing %q", err, tc.want)
 			}
 		})
 	}

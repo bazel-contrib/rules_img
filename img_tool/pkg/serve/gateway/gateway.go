@@ -19,7 +19,10 @@
 // layer already pushed?" probes from each costing an upstream round trip. Every
 // other request that settles whether a blob is in a repository keeps that memo
 // current: a read that serves the blob and an upload that commits it admit an entry,
-// and a delete takes one away (see existencecache.go).
+// and a delete takes one away (see existencecache.go). With
+// [WithCacheReplication], what one instance learns is broadcast to its peers, so a
+// deployment of several replicas pays for one upstream probe per blob rather than
+// one per replica (see replication.go).
 package gateway
 
 import (
@@ -106,6 +109,19 @@ type Handler struct {
 	blobCacheTTL      time.Duration
 	blobCacheMaxBytes int64
 	blobCache         *blobExistenceCache
+
+	// replication replicates what this instance learns to its peers. It is nil
+	// when replication is off, which every one of its methods tolerates.
+	replication *CacheReplication
+
+	// warming reports that this instance is still seeding its cache from a peer
+	// and should be kept out of the load balancer until it is not — see
+	// [Handler.warmingUp]. warmingUntil is the deadline past which it reports
+	// itself healthy regardless.
+	warming      atomic.Bool
+	warmingUntil time.Time
+	// now is the clock, replaced in tests.
+	now func() time.Time
 
 	cache authCache
 }
@@ -201,6 +217,7 @@ func New(opts ...Option) *Handler {
 		keychain: authn.DefaultKeychain,
 		base:     defaultBaseTransport(),
 		log:      log.New(os.Stderr, "", log.LstdFlags),
+		now:      time.Now,
 	}
 	for _, o := range opts {
 		o(h)
@@ -226,6 +243,23 @@ func New(opts ...Option) *Handler {
 		h.log.Printf("blob existence cache enabled: up to %d blobs over %d shards, each assumed present for %v",
 			h.blobCache.capacity, len(h.blobCache.shards), h.blobCacheTTL)
 	}
+	if h.replication != nil && h.blobCache == nil {
+		// Nothing to fill or to hand out. Say so rather than starting a replication
+		// that could only ever send an empty batch.
+		h.log.Printf("warning: cache replication is configured but the blob existence cache is disabled; not replicating")
+		h.replication = nil
+	}
+	if h.replication != nil {
+		sources.cachePeers = h.replication.peerCount
+		// Report this instance as warming up from the very first probe, so a
+		// readiness check cannot see it as healthy before it has had its chance to
+		// seed. The deadline is authoritative: the flag being stuck for any reason
+		// still cannot keep the instance out of service past the warm-up budget.
+		if h.replication.warmupTimeout > 0 && h.replication.warmupEntries > 0 {
+			h.warming.Store(true)
+			h.warmingUntil = h.now().Add(h.replication.warmupTimeout)
+		}
+	}
 	m, err := newMetrics(h.meterProvider, sources)
 	if err != nil {
 		// Instruments are still usable (no-ops at worst); serving matters more
@@ -233,7 +267,34 @@ func New(opts ...Option) *Handler {
 		h.log.Printf("warning: creating metric instruments: %v", err)
 	}
 	h.metrics = m
+	if h.replication != nil {
+		h.replication.bind(h.blobCache, m)
+		h.log.Printf("blob existence cache replication enabled: %s", h.replication.summary())
+	}
 	return h
+}
+
+// RunCacheReplication runs the background half of cache replication until done is
+// closed: peer discovery, the warm-up that seeds this instance's cache from a
+// peer, and the batching of outbound events. It blocks, so call it in a goroutine,
+// and it is a no-op when replication is not configured.
+//
+// Call it once the listener is open. Until it runs, events queue (and, past the
+// queue's depth, are dropped) and — if warming up is configured — [Handler.serve]
+// answers the health endpoint with 503 until the warm-up deadline passes.
+func (h *Handler) RunCacheReplication(done <-chan struct{}) {
+	h.replication.run(done, func() { h.warming.Store(false) })
+}
+
+// warmingUp reports whether this instance is still seeding its cache from a peer,
+// and so should be kept out of the load balancer.
+//
+// The deadline is what makes this safe to answer a readiness probe with: a peer
+// that never answers, a peer set that never appears, or replication that is never
+// started all end the same way — the instance reports healthy once the warm-up
+// budget is spent, having lost nothing but the seeding.
+func (h *Handler) warmingUp() bool {
+	return h.warming.Load() && h.now().Before(h.warmingUntil)
 }
 
 // Reload swaps in a policy freshly loaded from path and returns it. If the file
@@ -285,6 +346,16 @@ func (h *Handler) serve(obs *observation, w http.ResponseWriter, r *http.Request
 	// can reach a listener that requires a credential.
 	if path == healthPath {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		if h.warmingUp() {
+			// Still seeding the blob existence cache from a peer. Serving now would
+			// send this instance's share of the fleet's probes upstream for nothing,
+			// so stay out of the Service until the seeding is done or its budget is
+			// spent (see Handler.warmingUp).
+			w.Header().Set("Retry-After", "1")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = io.WriteString(w, "warming up\n")
+			return
+		}
 		w.WriteHeader(http.StatusOK)
 		_, _ = io.WriteString(w, "ok\n")
 		return
@@ -299,6 +370,15 @@ func (h *Handler) serve(obs *observation, w http.ResponseWriter, r *http.Request
 			return
 		}
 		obs.principal = principal
+	}
+
+	// Cache replication between the instances of a serving deployment. It is
+	// answered before anything registry-shaped: it names no upstream registry, and
+	// what it may do to this instance's cache is gated by the identity of the peer
+	// rather than by the policy (see replication.go).
+	if strings.HasPrefix(path, replicationPathPrefix) {
+		h.serveCacheReplication(obs, w, r, path)
+		return
 	}
 
 	// Snapshot the policy once so a concurrent reload cannot split a single
@@ -498,6 +578,11 @@ func (h *Handler) rememberBlob(r *http.Request, repo name.Repository, cls reques
 		return
 	}
 	h.blobCache.store(repo.RegistryStr(), repo.RepositoryStr(), cls.digest, length)
+	// Tell the other instances of this deployment, so that the round trip this
+	// fact cost is paid once by the fleet rather than once by each of them. The
+	// event is queued, never sent from here: the client is waiting on this
+	// goroutine (see CacheReplication.record).
+	h.replication.record(r.Context(), repo.RegistryStr(), repo.RepositoryStr(), cls.digest, false)
 }
 
 // confirmsDigest reports whether the registry's own account of what it created
@@ -566,12 +651,34 @@ func uploadedLength(r *http.Request, cls request) int64 {
 // Dropping after the round trip rather than before it is what keeps a probe arriving
 // mid-delete from writing the entry straight back: the upstream answers such a probe
 // from the state before the delete.
-func (h *Handler) forgetDeletedBlob(repo name.Repository, cls request) {
+//
+// resp is the upstream's answer, or nil when none arrived. It decides only whether
+// the peers are told: dropping this instance's own entry is free, while asking the
+// whole fleet to forget is not, and the registry's answer is the only evidence that
+// a blob really left. A delete the registry refused (405 from a registry with
+// deletions disabled, 404, a 5xx) therefore costs this instance one probe and the
+// others nothing — and a client cannot flush the fleet's cache by sending deletes
+// the registry rejects.
+func (h *Handler) forgetDeletedBlob(ctx context.Context, repo name.Repository, cls request, resp *http.Response) {
 	// classify carries a digest on a blob write for a DELETE and nothing else.
 	if h.blobCache == nil || cls.op != opNameBlobWrite || cls.digest == "" {
 		return
 	}
 	h.blobCache.forget(repo.RegistryStr(), repo.RepositoryStr(), cls.digest)
+	if resp != nil && deleteSucceeded(resp.StatusCode) {
+		h.replication.record(ctx, repo.RegistryStr(), repo.RepositoryStr(), cls.digest, true)
+	}
+}
+
+// deleteSucceeded reports whether a registry's answer to a blob delete says the
+// blob is gone. The spec calls for 202 Accepted; registries answer 200 or 204 too.
+func deleteSucceeded(status int) bool {
+	switch status {
+	case http.StatusOK, http.StatusAccepted, http.StatusNoContent:
+		return true
+	default:
+		return false
+	}
 }
 
 // uncacheableHeaders make a response depend on more than whether the blob exists,
@@ -668,8 +775,9 @@ func (h *Handler) forward(obs *observation, w http.ResponseWriter, r *http.Reque
 	if err != nil {
 		// A delete whose answer never came back may have taken effect all the same,
 		// and an entry for a blob that is gone is the one wrong answer this cache can
-		// give.
-		h.forgetDeletedBlob(repo, cls)
+		// give. The peers are not told: with no answer there is no evidence a blob
+		// left, and each of them will hear it from their own traffic or its TTL.
+		h.forgetDeletedBlob(r.Context(), repo, cls, nil)
 		h.writeError(obs, w, r, http.StatusBadGateway, "UNKNOWN", transportErrorType(err),
 			fmt.Sprintf("forwarding to upstream %s: %v", repo.RegistryStr(), err))
 		return
@@ -679,9 +787,9 @@ func (h *Handler) forward(obs *observation, w http.ResponseWriter, r *http.Reque
 
 	// Bring the blob existence cache in line with what the registry just did: the
 	// 200 that says a blob is there and the 201 that says it was just put there
-	// admit an entry, and a delete takes one away.
+	// admit an entry, and a delete takes one away. Both tell the peers.
 	h.rememberBlob(r, repo, cls, resp)
-	h.forgetDeletedBlob(repo, cls)
+	h.forgetDeletedBlob(r.Context(), repo, cls, resp)
 
 	copyResponseHeader(w.Header(), resp.Header, repo)
 	w.WriteHeader(resp.StatusCode)

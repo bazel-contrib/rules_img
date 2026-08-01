@@ -3,10 +3,12 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strings"
@@ -35,6 +37,18 @@ type serveFlags struct {
 	blobCacheTTL       time.Duration
 	blobCacheMaxMemory byteSizeFlag
 
+	// Replication of the blob existence cache between the instances of a serving
+	// deployment.
+	cachePeers              repeatedFlag
+	cachePeerService        string
+	cachePeerServerName     string
+	cachePeerTokenFile      string
+	allowedCachePeerIDs     repeatedFlag
+	cacheBatchSize          int
+	cacheWarmupTimeout      time.Duration
+	cacheWarmupEntries      int
+	allowPlaintextCachePeer bool
+
 	// TLS and client authentication.
 	tlsCertFile              string
 	tlsKeyFile               string
@@ -56,6 +70,16 @@ type serveFlags struct {
 // grows under load.
 const defaultBlobCacheMemory = 64 << 20
 
+// Defaults of cache replication. The warm-up numbers are the ones an operator is
+// most likely to want to change: 20,000 entries is a large farm's hot working set
+// and costs a few megabytes to transfer, and ten seconds is long enough for a
+// peer to hand them over while being far inside any sensible readiness deadline.
+const (
+	defaultCacheBatchSize     = 256
+	defaultCacheWarmupTimeout = 10 * time.Second
+	defaultCacheWarmupEntries = 20_000
+)
+
 func (f *serveFlags) register(flagSet *flag.FlagSet) {
 	flagSet.StringVar(&f.address, "address", "localhost", "Address to bind the gateway to (ignored when --unix-socket is set)")
 	flagSet.IntVar(&f.port, "port", 0, "Port to bind the gateway to (0 picks a free port; ignored when --unix-socket is set)")
@@ -72,6 +96,16 @@ func (f *serveFlags) register(flagSet *flag.FlagSet) {
 	f.blobCacheMaxMemory = defaultBlobCacheMemory
 	flagSet.DurationVar(&f.blobCacheTTL, "blob-existence-cache-ttl", 6*time.Hour, "How long the gateway may assume a blob it has seen -- probed for, or pushed through it -- is still in its repository, answering HEAD probes for it without a round trip. 0 disables the cache. Keep it well inside the window in which your registry could garbage-collect a blob: a client that trusts a stale hit skips re-uploading a layer that is gone.")
 	flagSet.Var(&f.blobCacheMaxMemory, "blob-existence-cache-max-memory", "Memory the blob existence cache may use, e.g. 64MiB. It is allocated in full at startup and never grows; when it is full the least recently used blob makes room. 0 disables the cache.")
+
+	flagSet.Var(&f.cachePeers, "blob-existence-cache-peer", "Another instance of this gateway to replicate blob existence facts to, as https://host:port. Repeatable. Without it (or --blob-existence-cache-peer-service) each replica learns every blob for itself, so a first-seen blob costs one upstream probe per replica.")
+	flagSet.StringVar(&f.cachePeerService, "blob-existence-cache-peer-service", "", "Discover the peers to replicate to from the Kubernetes EndpointSlices of this Service, as [<namespace>/]<name>. The set follows scaling and rolling updates with no restart. Requires an explicit --port and RBAC to get, list and watch endpointslices.")
+	flagSet.StringVar(&f.cachePeerServerName, "blob-existence-cache-peer-server-name", "", "Name to verify in a peer's certificate. Needed with --blob-existence-cache-peer-service, which dials pod IPs that a Service certificate does not name.")
+	flagSet.StringVar(&f.cachePeerTokenFile, "blob-existence-cache-peer-token-file", "", "File holding the bearer token presented to peers. Not needed when the peers accept this gateway's own TLS certificate (--tls-cert-file), which is what a symmetric deployment does. Re-read periodically, so a projected ServiceAccount token keeps working.")
+	flagSet.Var(&f.allowedCachePeerIDs, "allowed-cache-peer-id", "Client identity permitted to write to this gateway's blob existence cache: a SPIFFE ID, a DNS name (a single leading \"*.\" wildcard is allowed), or a system:serviceaccount:<namespace>:<name>, matched as --allowed-client-id and --allowed-serviceaccount are. Repeatable. Without it every authenticated client may insert entries, and a client that inserts a blob which is not there makes push clients skip an upload they still owe.")
+	flagSet.IntVar(&f.cacheBatchSize, "blob-existence-cache-replication-batch-size", defaultCacheBatchSize, "How many facts one replication message may carry. Facts are batched for a few milliseconds and sent when the batch is full or the timer expires, whichever comes first.")
+	flagSet.DurationVar(&f.cacheWarmupTimeout, "blob-existence-cache-warmup-timeout", defaultCacheWarmupTimeout, "How long a starting instance may spend seeding its cache from a peer before reporting itself healthy. /healthz answers 503 until then, so a readiness probe keeps it out of the Service while it warms up. 0 starts serving immediately with an empty cache.")
+	flagSet.IntVar(&f.cacheWarmupEntries, "blob-existence-cache-warmup-entries", defaultCacheWarmupEntries, "How many of a peer's hottest entries a starting instance asks for. 0 disables seeding.")
+	flagSet.BoolVar(&f.allowPlaintextCachePeer, "dangerously-allow-plaintext-cache-peer", false, "Replicate the cache over plaintext HTTP. DANGEROUS: a bearer token presented to a peer then crosses the network in the clear, and anything on the path can inject facts about which blobs exist. The legitimate case is a service mesh providing mTLS underneath.")
 
 	flagSet.StringVar(&f.tlsCertFile, "tls-cert-file", "", "PEM certificate (leaf plus any intermediates) to serve TLS with. Enables HTTP/2 via ALPN. Re-read when the file changes and on SIGHUP.")
 	flagSet.StringVar(&f.tlsKeyFile, "tls-key-file", "", "PEM private key matching --tls-cert-file. Both or neither.")
@@ -250,6 +284,14 @@ func serveProcess(ctx context.Context, args []string) {
 	if peerAuth != nil {
 		handlerOpts = append(handlerOpts, gateway.WithPeerAuth(peerAuth))
 	}
+	replication, err := flags.cacheReplication(serverTLS)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	if replication != nil {
+		handlerOpts = append(handlerOpts, gateway.WithCacheReplication(replication))
+	}
 	if flags.denyPrivateUpstreams {
 		guarded, err := gateway.DenyPrivateAddresses(http.DefaultTransport)
 		if err != nil {
@@ -303,6 +345,11 @@ func serveProcess(ctx context.Context, args []string) {
 	if peerAuth != nil {
 		go peerAuth.Watch(done, 0)
 	}
+	// Peer discovery, the warm-up that seeds this instance's cache from a peer, and
+	// the batching of outbound facts. The listener is already open, so a peer's
+	// broadcast is accepted from here on — including while the warm-up runs, which
+	// is why it is started before the server rather than after.
+	go handler.RunCacheReplication(done)
 	hup := make(chan os.Signal, 1)
 	signal.Notify(hup, syscall.SIGHUP)
 	go func() {
@@ -335,6 +382,150 @@ func serveProcess(ctx context.Context, args []string) {
 		shutdownTimeout: flags.shutdownTimeout,
 		banner:          "oci-distribution-gateway listening",
 	}).run()
+}
+
+// cacheReplication builds the replication of the blob existence cache from the
+// flags, or nil when no peers are configured.
+//
+// The credential this gateway presents to its peers deliberately defaults to its
+// *serving* identity: in a symmetric deployment — one Deployment, one keypair, one
+// CA — every instance already holds a certificate its peers accept and a CA bundle
+// that verifies theirs, so replication needs no material of its own. A fleet whose
+// peers authenticate by token instead passes --blob-existence-cache-peer-token-file.
+func (f *serveFlags) cacheReplication(serverTLS *gateway.PeerTLS) (*gateway.CacheReplication, error) {
+	if len(f.cachePeers) == 0 && f.cachePeerService == "" {
+		// Refuse to ignore a flag that only makes sense with peers: silently doing
+		// nothing with --allowed-cache-peer-id would look like a control that is in
+		// force when it is not.
+		for _, orphan := range []struct {
+			flag string
+			set  bool
+		}{
+			{"--blob-existence-cache-peer-server-name", f.cachePeerServerName != ""},
+			{"--blob-existence-cache-peer-token-file", f.cachePeerTokenFile != ""},
+			{"--allowed-cache-peer-id", len(f.allowedCachePeerIDs) > 0},
+			{"--dangerously-allow-plaintext-cache-peer", f.allowPlaintextCachePeer},
+		} {
+			if orphan.set {
+				return nil, fmt.Errorf("%s configures cache replication, which needs --blob-existence-cache-peer or --blob-existence-cache-peer-service", orphan.flag)
+			}
+		}
+		return nil, nil
+	}
+	if len(f.cachePeers) > 0 && f.cachePeerService != "" {
+		return nil, errors.New("--blob-existence-cache-peer and --blob-existence-cache-peer-service name the peers two different ways; use one of them")
+	}
+	if f.blobCacheTTL <= 0 || f.blobCacheMaxMemory <= 0 {
+		return nil, errors.New("cache replication needs the blob existence cache: --blob-existence-cache-ttl and --blob-existence-cache-max-memory must both be above zero")
+	}
+	if f.unixSocket != "" {
+		return nil, errors.New("cache replication needs a TCP listener that peers can reach, not --unix-socket")
+	}
+
+	peers, err := f.cachePeerSource(serverTLS)
+	if err != nil {
+		return nil, err
+	}
+	var credential func(context.Context) (string, error)
+	if f.cachePeerTokenFile != "" {
+		credential = newTokenReader(f.cachePeerTokenFile).token
+	}
+	if serverTLS == nil && credential == nil {
+		log.Printf("WARNING: this gateway presents no credential to its cache replication peers; they must accept anonymous clients for replication to work")
+	}
+	if len(f.allowedCachePeerIDs) == 0 {
+		log.Printf("WARNING: no --allowed-cache-peer-id is set, so every client this gateway authenticates may insert blob existence facts into its cache; a false one makes push clients skip an upload they still owe")
+	}
+	return gateway.NewCacheReplication(gateway.ReplicationConfig{
+		Peers:          peers,
+		Client:         cachePeerClient(serverTLS, f.cachePeerServerName),
+		Credential:     credential,
+		AllowedPeerIDs: f.allowedCachePeerIDs,
+		BatchSize:      f.cacheBatchSize,
+		WarmupTimeout:  f.cacheWarmupTimeout,
+		WarmupEntries:  f.cacheWarmupEntries,
+	})
+}
+
+// cachePeerSource resolves the configured peers: either the static list, whose
+// URLs are validated here, or a Kubernetes Service whose endpoints are watched.
+func (f *serveFlags) cachePeerSource(serverTLS *gateway.PeerTLS) (gateway.PeerSource, error) {
+	servingTLS := serverTLS != nil && serverTLS.HasCertificate()
+	if f.cachePeerService == "" {
+		for _, peer := range f.cachePeers {
+			if err := f.validateCachePeer(peer); err != nil {
+				return nil, err
+			}
+		}
+		return gateway.StaticPeers(f.cachePeers), nil
+	}
+	// A discovered peer is a pod of this same Deployment, so it is reached the way
+	// this instance is: the same scheme, and the same container port.
+	if f.port == 0 {
+		return nil, errors.New("--blob-existence-cache-peer-service needs an explicit --port, since a discovered peer is reached on the port this gateway itself serves on")
+	}
+	scheme := "https"
+	if !servingTLS {
+		if !f.allowPlaintextCachePeer {
+			return nil, errors.New("this gateway serves plaintext, so replication to its peers would be plaintext too: configure --tls-cert-file, or pass --dangerously-allow-plaintext-cache-peer when a service mesh secures the hop")
+		}
+		scheme = "http"
+	}
+	if servingTLS && f.cachePeerServerName == "" {
+		log.Printf("warning: --blob-existence-cache-peer-service dials pod IPs, which a certificate issued for the Service name does not cover; set --blob-existence-cache-peer-server-name if replication fails to verify its peers")
+	}
+	return gateway.NewKubernetesPeers(gateway.KubernetesPeerOptions{
+		Service: f.cachePeerService,
+		Scheme:  scheme,
+		Port:    f.port,
+	})
+}
+
+// validateCachePeer checks one --blob-existence-cache-peer value.
+func (f *serveFlags) validateCachePeer(peer string) error {
+	peerURL, err := url.Parse(peer)
+	if err != nil {
+		return fmt.Errorf("--blob-existence-cache-peer %q is not a URL: %w", peer, err)
+	}
+	switch peerURL.Scheme {
+	case "https":
+	case "http":
+		if !f.allowPlaintextCachePeer {
+			return fmt.Errorf("--blob-existence-cache-peer %q is plaintext; use https:// or pass --dangerously-allow-plaintext-cache-peer", peer)
+		}
+	default:
+		return fmt.Errorf("--blob-existence-cache-peer %q must use https:// or http://", peer)
+	}
+	if peerURL.Host == "" {
+		return fmt.Errorf("--blob-existence-cache-peer %q is missing a host", peer)
+	}
+	if peerURL.RawQuery != "" || peerURL.User != nil || strings.Trim(peerURL.Path, "/") != "" {
+		return fmt.Errorf("--blob-existence-cache-peer %q must be a scheme and host only", peer)
+	}
+	return nil
+}
+
+// cachePeerClient builds the client that talks to peers.
+//
+// It is a plain HTTP/1.1-or-HTTP/2 client with pooled connections: replication is a
+// handful of small requests per second, so nothing here needs the flow control
+// tuning the forwarding hop does. No client timeout is set — every request is
+// bounded by its own context, and the warm-up donation is deliberately allowed to
+// take longer than a batch.
+func cachePeerClient(serverTLS *gateway.PeerTLS, serverName string) *http.Client {
+	transport := &http.Transport{
+		ForceAttemptHTTP2:   true,
+		MaxIdleConns:        16,
+		IdleConnTimeout:     90 * time.Second,
+		TLSHandshakeTimeout: 10 * time.Second,
+	}
+	if serverTLS != nil {
+		// The serving keypair is presented as a client certificate, and the client CA
+		// bundle verifies the peers: a symmetric deployment trusts its own CA both
+		// ways. A nil pool means the system roots.
+		transport.TLSClientConfig = serverTLS.ClientConfig(serverName, false)
+	}
+	return &http.Client{Transport: transport}
 }
 
 // serveProtocols is the protocol set of a serving listener.
