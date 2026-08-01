@@ -19,6 +19,7 @@ go_library(
         "//pkg/compress",
         "//pkg/contentmanifest",
         "//pkg/digestfs",
+        "//pkg/erofscas",
         "//pkg/kvfile",
         "//pkg/metadata",
         "//pkg/proto/baselayer",

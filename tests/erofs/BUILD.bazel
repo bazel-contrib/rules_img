@@ -1,0 +1,188 @@
+load("@bazel_skylib//rules:build_test.bzl", "build_test")
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@rules_img//img:image.bzl", "image_manifest")
+load("@rules_img//img:layer.bzl", "file_metadata", "image_layer", "layer_from_tar")
+load("@rules_img//img:load.bzl", "image_load")
+load("@rules_img//img:test.bzl", "image_structure_test")
+load("@rules_pkg//pkg:tar.bzl", "pkg_tar")
+load("//tests/mtree:defs.bzl", "mtree_golden_test")
+
+# gazelle:exclude_from_release
+
+# An EROFS layer's blob is a filesystem image rather than a tar changeset, so
+# these tests pin down the two properties that make the format usable at all:
+#
+#   - the layer's mtree is identical whether the blob was materialized (rendered
+#     with `img mtree --erofs`) or only described by a compact stream (rendered
+#     with `img mtree --erofs-cstream`, which reads the image sparsely, without
+#     any of the file payloads). mtree_golden_test builds both and diffs each
+#     against the same golden.
+#   - the golden itself records the format's inherent differences from a tar
+#     layer: every intermediate directory is present (a filesystem needs a
+#     complete tree), and directories carry real link counts.
+
+# config.txt and config_dup.txt hold identical content, so the layer writer
+# deduplicates the second into a hardlink -- a real EROFS hardlink, which the
+# mtree reports as nlink=2 on both paths, exactly as it does for a tar layer's
+# hardlink entry.
+write_file(
+    name = "config_txt",
+    out = "config.txt",
+    content = ["server.port=8080\n"],
+)
+
+write_file(
+    name = "config_dup_txt",
+    out = "config_dup.txt",
+    content = ["server.port=8080\n"],
+)
+
+write_file(
+    name = "tool_sh",
+    out = "tool.sh",
+    content = ["#!/bin/sh\necho hi\n"],
+)
+
+# Large enough to need a data extent of its own rather than being tail-packed
+# into its inode, so it becomes a content-addressed reference in the compact
+# stream. Its mtree digest then has to come from the reference table.
+write_file(
+    name = "big_txt",
+    out = "big.txt",
+    content = ["payload line %d\n" % i for i in range(1000)],
+)
+
+image_layer(
+    name = "erofs_layer",
+    srcs = {
+        "/etc/app/config.txt": ":config_txt",
+        "/etc/app/config_dup.txt": ":config_dup_txt",
+        "/usr/local/bin/tool": ":tool_sh",
+        "/var/lib/data/big.txt": ":big_txt",
+    },
+    compress = "none",
+    default_metadata = file_metadata(
+        gid = 1000,
+        gname = "devs",
+        mode = "0644",
+        mtime = "2023-01-01T00:00:00Z",
+        uid = 1000,
+        uname = "alice",
+    ),
+    format = "erofs",
+    symlinks = {"/etc/app/current.txt": "/etc/app/config.txt"},
+)
+
+mtree_golden_test(
+    name = "layer_mtree_test",
+    golden = "expected.mtree",
+    layer = ":erofs_layer",
+)
+
+# A second layer, so the manifest has a stack of EROFS layers rather than one.
+write_file(
+    name = "app_txt",
+    out = "app.txt",
+    content = ["app\n"],
+)
+
+image_layer(
+    name = "erofs_upper_layer",
+    srcs = {"/opt/app/app.txt": ":app_txt"},
+    compress = "none",
+    format = "erofs",
+)
+
+# A manifest over the layers, so the descriptor and config wiring is exercised:
+# the EROFS media types reach the manifest and `erofs` is derived into
+# os.features.
+image_manifest(
+    name = "image",
+    env = {"GREETING": "hello-erofs"},
+    layers = [
+        ":erofs_layer",
+        ":erofs_upper_layer",
+    ],
+    working_dir = "/app",
+)
+
+# The structure test reads the image's merged mtree, so it exercises the whole
+# chain: EROFS layer blob -> per-layer mtree -> merged image mtree -> assertions.
+image_structure_test(
+    name = "image_test",
+    size = "small",
+    configs = ["image.yaml"],
+    image = ":image",
+)
+
+# The same layer with the outer zstd compression, so the compressed media type,
+# the ".erofs.zst" output and reading a compressed blob back for the mtree are
+# all exercised. Its mtree must be the one the uncompressed layer produces:
+# compression is outside the image.
+image_layer(
+    name = "erofs_layer_zstd",
+    srcs = {
+        "/etc/app/config.txt": ":config_txt",
+        "/etc/app/config_dup.txt": ":config_dup_txt",
+        "/usr/local/bin/tool": ":tool_sh",
+        "/var/lib/data/big.txt": ":big_txt",
+    },
+    compress = "zstd",
+    default_metadata = file_metadata(
+        gid = 1000,
+        gname = "devs",
+        mode = "0644",
+        mtime = "2023-01-01T00:00:00Z",
+        uid = 1000,
+        uname = "alice",
+    ),
+    format = "erofs",
+    symlinks = {"/etc/app/current.txt": "/etc/app/config.txt"},
+)
+
+mtree_golden_test(
+    name = "layer_zstd_mtree_test",
+    golden = "expected.mtree",
+    layer = ":erofs_layer_zstd",
+)
+
+# Converting an existing tar layer: a format change can never reuse the source
+# blob, so this always rewrites the tar entry by entry into a filesystem image.
+# The tar carries AUFS whiteout markers, which must come out as overlayfs
+# whiteouts and must not appear as ".wh." names in the image.
+pkg_tar(
+    name = "source_tar",
+    srcs = [
+        ":config_txt",
+        ":tool_sh",
+    ],
+    package_dir = "/etc/app",
+)
+
+layer_from_tar(
+    name = "converted_layer",
+    src = ":source_tar",
+    format = "erofs",
+)
+
+mtree_golden_test(
+    name = "converted_mtree_test",
+    golden = "converted_expected.mtree",
+    layer = ":converted_layer",
+)
+
+# containerd with the EROFS snapshotter is the one daemon that can apply these
+# layers, so this must analyze. The rejection for every other daemon is an
+# analysis-time failure, which a test target cannot assert on: see
+# _reject_erofs_for_daemon in img/private/load.bzl.
+image_load(
+    name = "load_containerd",
+    daemon = "containerd",
+    image = ":image",
+    tag = "erofs:test",
+)
+
+build_test(
+    name = "load_test",
+    targets = [":load_containerd"],
+)

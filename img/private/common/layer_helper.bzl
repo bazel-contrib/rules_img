@@ -2,6 +2,7 @@
 
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("//img/private/common:build.bzl", "TOOLCHAIN")
+load("//img/private/common:media_types.bzl", "media_type_is_erofs")
 load("//img/private/providers:single_layer_info.bzl", "SingleLayerInfo")
 
 allow_tar_files = [".tar", ".tar.gz", ".tgz", ".tar.zst", ".tzst"]
@@ -189,39 +190,45 @@ def compression_tuning_args(ctx, compression, estargz):
         tuned_args.extend(["--compression-level", level])
     return tuned_args
 
-def build_layer_mtree(ctx, name, *, tar_blob = None, compact_stream = None):
-    """Produce an mtree spec describing the metadata of a tar layer.
+def build_layer_mtree(ctx, name, *, tar_blob = None, compact_stream = None, erofs_blob = None, erofs_compact_stream = None):
+    """Produce an mtree spec describing the metadata of a layer.
 
-    Runs `img mtree` over either a materialized (possibly compressed) tar blob or
-    a compact stream, writing a single mtree text file describing the tar entries.
+    Runs `img mtree` over exactly one of: a materialized (possibly compressed)
+    tar blob, a tar layer's compact stream, a materialized EROFS layer blob, or
+    an EROFS layer's compact stream (read as a sparse image whose file payloads
+    are absent). Writes a single mtree text file describing the layer's entries.
     The path layout, included fields, and layer layout are controlled by the
     //img/settings:mtree_path_prefix, :mtree_options, and :mtree_layer_layout
     build settings (read from ctx.attr, so the rule must expose the matching
     _mtree_* hidden attributes).
 
-    Exactly one of tar_blob or compact_stream must be set.
-
     Args:
         ctx: Rule context.
         name: Base name for the output file (the result is name + ".mtree").
         tar_blob: A layer tar File (optionally gzip/zstd compressed).
-        compact_stream: A compact stream (.cstream) File.
+        compact_stream: A tar layer's compact stream (.cstream) File.
+        erofs_blob: An EROFS layer blob File (optionally zstd compressed).
+        erofs_compact_stream: An EROFS layer's compact stream (.cstream) File.
 
     Returns:
         The generated mtree File.
     """
-    if (tar_blob == None) == (compact_stream == None):
-        fail("build_layer_mtree requires exactly one of tar_blob or compact_stream")
+    inputs = [i for i in [tar_blob, compact_stream, erofs_blob, erofs_compact_stream] if i != None]
+    if len(inputs) != 1:
+        fail("build_layer_mtree requires exactly one of tar_blob, compact_stream, erofs_blob or erofs_compact_stream")
+    input = inputs[0]
 
     mtree_out = ctx.actions.declare_file(name + ".mtree")
     args = ctx.actions.args()
     args.add("mtree")
     if tar_blob != None:
         args.add("--tar", tar_blob)
-        input = tar_blob
-    else:
+    elif compact_stream != None:
         args.add("--cstream", compact_stream)
-        input = compact_stream
+    elif erofs_blob != None:
+        args.add("--erofs", erofs_blob)
+    else:
+        args.add("--erofs-cstream", erofs_compact_stream)
     args.add("--output", mtree_out)
     args.add("--path-prefix", ctx.attr._mtree_path_prefix[BuildSettingInfo].value)
     args.add("--options", ctx.attr._mtree_options[BuildSettingInfo].value)
@@ -349,12 +356,13 @@ def image_layer_mtrees(ctx, layers, name_prefix = None):
     For each layer (in image/layer order):
     - if it already carries an `mtree` (produced by a rules_img layer rule, or by
       the pull/import rule for a blob-bearing layer), use it;
-    - else if it has a materialized tar blob (`blob` set and a tar media type),
-      render an mtree from that blob on the fly with build_layer_mtree -- this
-      covers raw tars added via `DefaultInfo` and any other blob-bearing tar layer
-      whose source did not precompute one;
-    - else skip it (a shallow/lazy layer with no blob, or a non-tar blob such as an
-      empty layer or a non-tar artifact).
+    - else if it has a materialized blob whose media type can be rendered (a tar
+      changeset or an EROFS filesystem image), render an mtree from that blob on
+      the fly with build_layer_mtree -- this covers raw tars added via
+      `DefaultInfo` and any other blob-bearing layer whose source did not
+      precompute one;
+    - else skip it (a shallow/lazy layer with no blob, or a blob that is neither,
+      such as an empty layer or a non-tar artifact).
 
     Skips are best-effort: if any layer is skipped the merged mtree represents only
     a subset of the image. The rule must expose the same hidden _mtree_* attributes
@@ -376,7 +384,11 @@ def image_layer_mtrees(ctx, layers, name_prefix = None):
     for i, layer in enumerate(layers):
         if layer.mtree != None:
             mtrees.append(layer.mtree)
-        elif layer.blob != None and media_type_is_tar(layer.media_type):
+        elif layer.blob == None:
+            continue
+        elif media_type_is_erofs(layer.media_type):
+            mtrees.append(build_layer_mtree(ctx, "{}_layer_{}".format(prefix, i), erofs_blob = layer.blob))
+        elif media_type_is_tar(layer.media_type):
             mtrees.append(build_layer_mtree(ctx, "{}_layer_{}".format(prefix, i), tar_blob = layer.blob))
     return mtrees
 
@@ -553,27 +565,44 @@ def recompress_layer(*, ctx, media_type, tar_file, metadata_file, output, target
         ztoc = None,
     )
 
-def optimize_layer(*, ctx, media_type, tar_file, metadata_file, output, target_compression, estargz, annotations):
-    """Optimizes a tar file.
+def optimize_layer(*, ctx, media_type, tar_file, metadata_file, output, target_compression, estargz, annotations, layer_format = "tar", erofs_block_size = 0, erofs_inline_threshold = 0, erofs_synthetic_directories = ""):
+    """Rewrites a tar file through the layer writer, deduplicating its contents.
+
+    With layer_format = "erofs" the same rewrite converts the tar into an EROFS
+    filesystem image: the tar is fed to the EROFS sink entry by entry, so every
+    entry keeps its metadata. A format change always takes this path, because the
+    source blob cannot be reused.
 
     Args:
         ctx: Rule context.
         media_type: Media type of the layer.
         tar_file: Input tar file.
-        metadata_file: Input metadata file.
-        output: Output optimized file.
+        metadata_file: Output metadata file.
+        output: Output rewritten layer file.
         target_compression: Target compression format.
         estargz: Boolean indicating whether the layer is an estargz layer.
         annotations: Dict of string annotations to add to the layer metadata.
+        layer_format: "tar" or "erofs".
+        erofs_block_size: EROFS filesystem block size (only for layer_format = "erofs").
+        erofs_inline_threshold: Cap on tail-packing file payloads into inodes
+            (only for layer_format = "erofs").
+        erofs_synthetic_directories: EROFS synthesized-directory policy (only for
+            layer_format = "erofs").
 
     Returns:
-        SingleLayerInfo provider with optimized blob and metadata.
+        SingleLayerInfo provider with the rewritten blob and metadata.
     """
+    is_erofs = layer_format == "erofs"
     inputs = [tar_file]
     args = ctx.actions.args()
     args.add("layer")
     args.add("--history", layer_history(ctx.attr.name))
     args.add("--format", target_compression)
+    if is_erofs:
+        args.add("--layer-format", "erofs")
+        args.add("--erofs-block-size", str(erofs_block_size))
+        args.add("--erofs-inline-threshold", str(erofs_inline_threshold))
+        args.add("--erofs-synthetic-directories", erofs_synthetic_directories)
     if estargz:
         args.add("--estargz")
     for key, value in annotations.items():
@@ -588,8 +617,12 @@ def optimize_layer(*, ctx, media_type, tar_file, metadata_file, output, target_c
         outputs = [output, metadata_file],
         executable = img_toolchain_info.tool_exe,
         arguments = [args],
-        mnemonic = "LayerOptimize",
+        mnemonic = "LayerErofs" if is_erofs else "LayerOptimize",
     )
+    if is_erofs:
+        mtree = build_layer_mtree(ctx, ctx.label.name, erofs_blob = output)
+    else:
+        mtree = build_layer_mtree(ctx, ctx.label.name, tar_blob = output)
     return SingleLayerInfo(
         blob = output,
         metadata = metadata_file,
@@ -599,6 +632,6 @@ def optimize_layer(*, ctx, media_type, tar_file, metadata_file, output, target_c
         layer_input_files = None,
         layer_input_files_cas = None,
         sources = [],
-        mtree = build_layer_mtree(ctx, ctx.label.name, tar_blob = output),
+        mtree = mtree,
         ztoc = None,
     )

@@ -31,6 +31,18 @@ const (
 	OriginalCompressionNone uint8 = 0
 	OriginalCompressionGzip uint8 = 1
 	OriginalCompressionZstd uint8 = 2
+
+	// ContentFormat values describe what the reconstructed stream *is*, which
+	// tools that interpret the content (rather than just rebuild the blob) need
+	// in order to pick a parser.
+	//
+	// Zero means "not declared", not "tar": a writer from before this field
+	// existed left the byte zero without saying anything about the content, so a
+	// reader must not read tar into it. Every writer that knows the format says
+	// so explicitly.
+	ContentFormatUnknown uint8 = 0
+	ContentFormatTar     uint8 = 1
+	ContentFormatErofs   uint8 = 2
 )
 
 type OriginalCompressionInfo struct {
@@ -55,6 +67,7 @@ type Writer struct {
 	hashSize            int
 	streamCompression   uint8
 	originalCompression OriginalCompressionInfo
+	contentFormat       uint8
 	currentOffset       uint64
 	inlineThreshold     int64
 	// compressedStreamDigest and compressedStreamSize optionally record the
@@ -82,6 +95,20 @@ func NewWriter(w io.Writer, hashAlgo uint16, hashSize uint16,
 
 func (w *Writer) InlineThreshold() int64 {
 	return w.inlineThreshold
+}
+
+// HashSize is the digest length in bytes that every CAS reference in this stream
+// must use.
+func (w *Writer) HashSize() int {
+	return w.hashSize
+}
+
+// SetContentFormat records what the reconstructed stream is (see the
+// ContentFormat constants), so a reader that wants to interpret the content
+// rather than just rebuild the blob knows which parser to use. A writer that
+// never calls this leaves ContentFormatUnknown.
+func (w *Writer) SetContentFormat(format uint8) {
+	w.contentFormat = format
 }
 
 // SetCompressedStreamInfo records the digest and size of the reconstructed,
@@ -186,7 +213,8 @@ func (w *Writer) Close() error {
 	}
 	header[15] = byte(w.originalCompression.CompressionLevel)
 	header[16] = w.originalCompression.CompressorJobs
-	// bytes 17-19: reserved
+	header[17] = w.contentFormat
+	// bytes 18-19: reserved
 	binary.BigEndian.PutUint32(header[20:24], w.originalCompression.EndPadding)
 	binary.BigEndian.PutUint64(header[24:32], refTableOffset)
 	binary.BigEndian.PutUint64(header[32:40], refTableSize)

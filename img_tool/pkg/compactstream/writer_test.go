@@ -403,3 +403,59 @@ func TestWriterCASRefsSortedByOffset(t *testing.T) {
 		prevOffset = offset
 	}
 }
+
+// TestContentFormatValues pins the wire values, which a reader outside this
+// repository decodes. Zero in particular must stay "not declared": a stream from
+// before the field existed leaves the byte zero, and reading tar into it would
+// make a reader claim a format the writer never stated.
+func TestContentFormatValues(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		got  uint8
+		want uint8
+	}{
+		{"unknown", ContentFormatUnknown, 0},
+		{"tar", ContentFormatTar, 1},
+		{"erofs", ContentFormatErofs, 2},
+	} {
+		if tc.got != tc.want {
+			t.Errorf("ContentFormat %s = %d, want %d", tc.name, tc.got, tc.want)
+		}
+	}
+}
+
+// TestWriterContentFormatDefaultsToUnknown checks that a writer nobody told
+// about the content leaves the byte at "not declared" rather than asserting tar.
+func TestWriterContentFormatDefaultsToUnknown(t *testing.T) {
+	var buf bytes.Buffer
+	iw := NewWriter(&buf, HashAlgoSHA256, 32, StreamCompressionNone, OriginalCompressionInfo{}, 0)
+	if err := iw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if got := buf.Bytes()[17]; got != ContentFormatUnknown {
+		t.Errorf("header byte 17 = %d, want %d (unknown)", got, ContentFormatUnknown)
+	}
+}
+
+// TestWriterRecordsContentFormat checks the declared format reaches the header
+// byte the format spec assigns it, and survives a round trip through Inspect.
+func TestWriterRecordsContentFormat(t *testing.T) {
+	for _, format := range []uint8{ContentFormatTar, ContentFormatErofs} {
+		var buf bytes.Buffer
+		iw := NewWriter(&buf, HashAlgoSHA256, 32, StreamCompressionNone, OriginalCompressionInfo{}, 0)
+		iw.SetContentFormat(format)
+		if err := iw.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if got := buf.Bytes()[17]; got != format {
+			t.Errorf("header byte 17 = %d, want %d", got, format)
+		}
+		info, err := Inspect(bytes.NewReader(buf.Bytes()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Header.ContentFormat != format {
+			t.Errorf("Inspect read content format %d, want %d", info.Header.ContentFormat, format)
+		}
+	}
+}

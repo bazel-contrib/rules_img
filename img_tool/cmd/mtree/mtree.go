@@ -1,18 +1,22 @@
 // Package mtree implements the `img mtree` subcommand, which writes an mtree(8)
 // specification describing the metadata of one or more layers.
 //
-// Inputs are given by repeatable --tar, --cstream, and --mtree flags and are
-// processed in the order they appear on the command line (they may be
-// interleaved). A tar blob (--tar) may be gzip/zstd-compressed; a compact stream
-// (--cstream) is reconstructed with zero-filled bodies and its content digests
-// come from the CAS reference table / inlined bytes; an mtree spec (--mtree) is
-// folded in with its keywords filtered to the requested field set and its paths
-// re-normalized. The path layout, field set, and layer layout are controlled by
-// --path-prefix, --options, and --layout.
+// Inputs are given by repeatable --tar, --cstream, --erofs, --erofs-cstream and
+// --mtree flags and are processed in the order they appear on the command line
+// (they may be interleaved). A tar blob (--tar) may be gzip/zstd-compressed; a
+// compact stream (--cstream) is reconstructed with zero-filled bodies and its
+// content digests come from the CAS reference table / inlined bytes; an EROFS
+// layer blob (--erofs) is walked as a filesystem image; an EROFS layer's compact
+// stream (--erofs-cstream) is walked as a sparse image whose payloads read as
+// zeros, with the content digests again coming from the reference table; an
+// mtree spec (--mtree) is folded in with its keywords filtered to the requested
+// field set and its paths re-normalized. The path layout, field set, and layer
+// layout are controlled by --path-prefix, --options, and --layout.
 package mtree
 
 import (
 	"archive/tar"
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"flag"
@@ -36,6 +40,8 @@ type inputKind int
 const (
 	tarKind inputKind = iota
 	cstreamKind
+	erofsKind
+	erofsCstreamKind
 	mtreeKind
 )
 
@@ -65,12 +71,14 @@ func MtreeProcess(ctx context.Context, args []string) {
 	flagSet := flag.NewFlagSet("mtree", flag.ExitOnError)
 	flagSet.Usage = func() {
 		fmt.Fprintf(flagSet.Output(), "Writes an mtree specification of one or more layers' metadata.\n\n")
-		fmt.Fprintf(flagSet.Output(), "Usage: img mtree (--tar <tar> | --cstream <cstream> | --mtree <mtree>)... --output <mtree|->\n")
+		fmt.Fprintf(flagSet.Output(), "Usage: img mtree (--tar <tar> | --cstream <cstream> | --erofs <blob> | --erofs-cstream <cstream> | --mtree <mtree>)... --output <mtree|->\n")
 		flagSet.PrintDefaults()
 		fmt.Fprintf(flagSet.Output(), "\nInputs are processed in command-line order and may be interleaved.\n")
 	}
 	flagSet.Var(orderedInput{tarKind, &inputs}, "tar", "Add a layer tar blob input (may be gzip- or zstd-compressed). Repeatable.")
 	flagSet.Var(orderedInput{cstreamKind, &inputs}, "cstream", "Add a compact stream (.cstream) input. Repeatable.")
+	flagSet.Var(orderedInput{erofsKind, &inputs}, "erofs", "Add an EROFS layer blob input (may be zstd-compressed). Repeatable.")
+	flagSet.Var(orderedInput{erofsCstreamKind, &inputs}, "erofs-cstream", "Add the compact stream of an EROFS layer, read as a sparse image whose file payloads are absent. Repeatable.")
 	flagSet.Var(orderedInput{mtreeKind, &inputs}, "mtree", "Add an existing mtree spec input. Repeatable.")
 	flagSet.StringVar(&outputPath, "output", "", `Path to write the mtree to, or "-" for stdout (required).`)
 	flagSet.StringVar(&pathPrefix, "path-prefix", defaults.PathPrefix, `Prefix for entry paths: "./" (full-path entries) or "" (bare tar paths).`)
@@ -83,7 +91,7 @@ func MtreeProcess(ctx context.Context, args []string) {
 	}
 
 	if len(inputs) == 0 {
-		fmt.Fprintf(os.Stderr, "Error: at least one of --tar, --cstream, or --mtree is required\n")
+		fmt.Fprintf(os.Stderr, "Error: at least one of --tar, --cstream, --erofs, --erofs-cstream, or --mtree is required\n")
 		flagSet.Usage()
 		os.Exit(1)
 	}
@@ -140,6 +148,23 @@ func run(ctx context.Context, refs []inputRef, opts mtree.Options, outputPath st
 			}
 			closers = append(closers, reader)
 			inputs = append(inputs, mtree.Input{Kind: mtree.TarInput, Reader: reader, Digester: cstreamDigester(reader)})
+		case erofsKind:
+			image, ierr := erofsImage(f)
+			if ierr != nil {
+				return fmt.Errorf("reading EROFS layer %s: %w", ref.path, ierr)
+			}
+			inputs = append(inputs, mtree.Input{Kind: mtree.ErofsInput, ReaderAt: image, Digester: mtree.HashContent})
+		case erofsCstreamKind:
+			sparse, serr := compactstream.NewSparseReaderAt(f)
+			if serr != nil {
+				return fmt.Errorf("reading compact stream %s: %w", ref.path, serr)
+			}
+			inputs = append(inputs, mtree.Input{
+				Kind:          mtree.ErofsInput,
+				ReaderAt:      sparse,
+				Digester:      mtree.HashContent,
+				RangeDigester: sparse.RefDigestAt,
+			})
 		case mtreeKind:
 			inputs = append(inputs, mtree.Input{Kind: mtree.MtreeInput, Reader: f})
 		}
@@ -199,3 +224,19 @@ func openOutput(outputPath string) (io.Writer, func() error, error) {
 type closerFunc func() error
 
 func (c closerFunc) Close() error { return c() }
+
+// erofsImage reads an EROFS layer blob into memory so it can be addressed
+// randomly, decompressing it first when it is zstd-compressed. Reading it whole
+// is what walking a filesystem image requires; the tar path streams instead
+// because a tar can only be read in order anyway.
+func erofsImage(r io.Reader) (io.ReaderAt, error) {
+	uncompressed, err := mtree.Decompress(r)
+	if err != nil {
+		return nil, err
+	}
+	data, err := io.ReadAll(uncompressed)
+	if err != nil {
+		return nil, err
+	}
+	return bytes.NewReader(data), nil
+}

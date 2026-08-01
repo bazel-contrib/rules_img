@@ -8,6 +8,58 @@ string_flag(
     values = [
         "gzip",
         "zstd",
+        "none",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+# Layer container format, orthogonal to :compress. "tar" writes an OCI tar
+# changeset; "erofs" writes a mountable EROFS filesystem image (see
+# docs/erofs-layers.md), which accepts only compress=none or zstd.
+string_flag(
+    name = "layer_format",
+    build_setting_default = "tar",
+    values = [
+        "tar",
+        "erofs",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+# Filesystem block size of an EROFS layer. 4096 matches the common page size, so
+# the image mounts without kernel support for sub-page block sizes.
+int_flag(
+    name = "erofs_block_size",
+    build_setting_default = 4096,
+    visibility = ["//visibility:public"],
+)
+
+# Maximum size (in bytes) of a file payload an EROFS layer may tail-pack into its
+# inode. A file at least this large gets a data extent of its own, and therefore
+# becomes a content-addressed reference in the compact stream rather than inline
+# bytes. 0 packs whatever fits in the inode's block. This shapes the image, so it
+# changes the layer's digest -- unlike
+# :experimental_compact_layers_inline_threshold, which only decides what a tar
+# layer's compact stream carries inline.
+int_flag(
+    name = "erofs_inline_threshold",
+    build_setting_default = 0,
+    visibility = ["//visibility:public"],
+)
+
+# Attributes for directories an EROFS layer has to invent because nothing
+# describes them. An EROFS layer is a filesystem, so its directory tree must be
+# complete, and whatever attributes an invented directory gets shadow the same
+# directory in lower layers. "inherit" copies the nearest described ancestor's
+# ownership (what mkfs.erofs does), "default" uses 0755 root:root, and "strict"
+# fails the layer rather than guessing.
+string_flag(
+    name = "erofs_synthetic_directories",
+    build_setting_default = "inherit",
+    values = [
+        "inherit",
+        "default",
+        "strict",
     ],
     visibility = ["//visibility:public"],
 )

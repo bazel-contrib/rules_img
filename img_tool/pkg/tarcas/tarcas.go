@@ -16,6 +16,7 @@ import (
 
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/api"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/digestfs"
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/tarmeta"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/tree/merkle"
 )
 
@@ -334,7 +335,7 @@ func (c *CAS[HM]) WriteRegularFromPathDeduplicated(hdr *tar.Header, filePath str
 	var linkPath string
 	var storeErr error
 
-	if isBlobTarHeader(hdr) {
+	if tarmeta.IsBlob(hdr) {
 		linkPath, storeErr = c.storeKnownHashAndSize(df, hash, size, hdr.Name)
 	} else {
 		linkPath, storeErr = c.storeNodeKnownHash(df, hdr, hash)
@@ -355,7 +356,7 @@ func (c *CAS[HM]) WriteRegularDeduplicated(hdr *tar.Header, r io.Reader) error {
 	var sz int64
 	var storeErr error
 
-	if isBlobTarHeader(hdr) {
+	if tarmeta.IsBlob(hdr) {
 		linkPath, _, sz, storeErr = c.Store(r, hdr.Name)
 	} else {
 		linkPath, _, sz, storeErr = c.StoreNode(r, hdr)
@@ -386,7 +387,7 @@ func (c *CAS[HM]) WriteRegularDeduplicatedKnownHash(hdr *tar.Header, r io.Reader
 	var linkPath string
 	var storeErr error
 
-	if isBlobTarHeader(hdr) {
+	if tarmeta.IsBlob(hdr) {
 		linkPath, storeErr = c.storeKnownHashAndSize(r, blobHash, hdr.Size, hdr.Name)
 	} else {
 		linkPath, storeErr = c.storeNodeKnownHash(r, hdr, blobHash)
@@ -408,7 +409,7 @@ func (c *CAS[HM]) linkToFirstOccurrence(hdr *tar.Header, linkPath string) error 
 		// we don't need to write a hardlink.
 		return nil
 	}
-	header := cloneTarHeader(hdr)
+	header := tarmeta.Clone(hdr)
 	header.Typeflag = tar.TypeLink
 	header.Linkname = linkPath
 	header.Size = 0
@@ -539,12 +540,12 @@ func (c *CAS[HM]) storeNodeKnownHash(r io.Reader, hdr *tar.Header, blobHash []by
 		return "", fmt.Errorf("invalid node header: %s", hdr.Name)
 	}
 
-	recordedTarHeader := cloneTarHeader(hdr)
+	recordedTarHeader := tarmeta.Clone(hdr)
 	recordedTarHeader.Name = ""
-	normalizeTarHeader(&recordedTarHeader)
+	tarmeta.Normalize(&recordedTarHeader)
 
 	hasher := helper.New()
-	hashTarHeader(hasher, recordedTarHeader)
+	tarmeta.Hash(hasher, recordedTarHeader)
 	hasher.Write(blobHash)
 	nodeHash := hasher.Sum(nil)
 	nodeHashStr := string(nodeHash)
@@ -897,5 +898,3 @@ func (p *paddedReader) Read(b []byte) (int, error) {
 
 	return n, err
 }
-
-var zeroBlock [512]byte

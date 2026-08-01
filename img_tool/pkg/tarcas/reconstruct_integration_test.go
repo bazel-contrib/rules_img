@@ -117,6 +117,17 @@ func TestReconstructThroughRealCAS(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// The compact stream has to declare what it holds: zero means "not
+	// declared", so a reader picking a parser would otherwise have nothing to
+	// go on even though this sink always writes a tar.
+	info, err := compactstream.Inspect(bytes.NewReader(idxBuf.Bytes()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Header.ContentFormat != compactstream.ContentFormatTar {
+		t.Errorf("content format %d, want %d (tar)", info.Header.ContentFormat, compactstream.ContentFormatTar)
+	}
+
 	// The CAS references content by its sha256, so a store of the file contents
 	// is sufficient to reconstruct.
 	store := newMemBlobStore()

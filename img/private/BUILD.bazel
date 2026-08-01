@@ -136,6 +136,7 @@ bzl_library(
         "//img/private/common:default_deploy_tool",
         "//img/private/common:deploy_attrs",
         "//img/private/common:deploy_helpers",
+        "//img/private/common:media_types",
         "//img/private/common:transitions",
         "//img/private/providers:deploy_info",
         "//img/private/providers:deploy_tool_info",
@@ -245,6 +246,7 @@ bzl_library(
     deps = [
         "//img/private/common:build",
         "//img/private/common:layer_helper",
+        "//img/private/common:media_types",
         "//img/private/providers:layers_info",
         "@bazel_skylib//rules:common_settings",
     ],

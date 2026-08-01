@@ -9,6 +9,7 @@ load("//img/private/common:build.bzl", "TOOLCHAIN", "TOOLCHAINS")
 load("//img/private/common:default_deploy_tool.bzl", "default_deploy_tool")
 load("//img/private/common:deploy_attrs.bzl", "COMMON_LOAD_ATTRS")
 load("//img/private/common:deploy_helpers.bzl", "content_tracking_json_vars", "get_image_providers", "get_tags", "image_target_vars", "resolve_daemon", "resolve_load_destination", "resolve_load_strategy")
+load("//img/private/common:media_types.bzl", "media_type_is_erofs")
 load("//img/private/common:transitions.bzl", "reset_platform_transition")
 load("//img/private/providers:deploy_info.bzl", "DeployInfo")
 load("//img/private/providers:deploy_tool_info.bzl", "DeployToolInfo")
@@ -105,8 +106,28 @@ def _build_docker_tarball(ctx, configuration_json, manifest_info = None, index_i
 
     return tarball_output
 
+# Daemons that can apply an EROFS layer. Applying one means mounting the blob,
+# which only containerd with the EROFS snapshotter does; every other daemon
+# expects to extract a tar changeset. "generic" is a user-supplied loader, so it
+# is trusted to know what it is doing.
+_EROFS_CAPABLE_DAEMONS = ["containerd", "generic"]
+
+def _reject_erofs_for_daemon(manifest_info, index_info, daemon):
+    """Fail if an image with EROFS layers is loaded into a daemon that cannot apply them."""
+    if daemon in _EROFS_CAPABLE_DAEMONS:
+        return
+    manifests = [manifest_info] if manifest_info != None else index_info.manifests
+    for manifest in manifests:
+        for layer in manifest.layers:
+            if media_type_is_erofs(layer.media_type):
+                fail(("image_load with daemon = \"{}\" cannot load an image whose layers are EROFS " +
+                      "filesystem images ({}): only containerd with the EROFS snapshotter can mount " +
+                      "them. Load it with daemon = \"containerd\", or build the image with tar layers.").format(
+                    daemon,
+                    layer.media_type,
+                ))
+
 def _image_load_impl(ctx):
-    """Implementation of the load rule."""
     manifest_info, index_info = get_image_providers(ctx)
     image_provider = manifest_info if manifest_info != None else index_info
 
@@ -117,11 +138,13 @@ def _image_load_impl(ctx):
     root_symlinks = calculate_root_symlinks(index_info, manifest_info, include_layers = include_layers, symlink_name_prefix = root_symlinks_prefix)
 
     registry, repository = resolve_load_destination(ctx)
+    daemon = resolve_daemon(ctx)
+    _reject_erofs_for_daemon(manifest_info, index_info, daemon)
     templates = dict(
         registry = registry,
         repository = repository,
         tags = get_tags(ctx),
-        daemon = resolve_daemon(ctx),
+        daemon = daemon,
     )
 
     # Prepare newline_delimited_lists_files if tag_file is provided

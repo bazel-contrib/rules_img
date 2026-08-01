@@ -37,7 +37,7 @@ func TestTreeMetadata(t *testing.T) {
 				t.Fatal(err)
 			}
 			var out bytes.Buffer
-			_, err = handleLayerState(api.Uncompressed, false, addFiles{
+			_, err = handleLayerState(api.TarFormat, erofsSettings{}, api.Uncompressed, false, addFiles{
 				{PathInImage: "app/first", File: dir, FileType: api.Directory},
 				{PathInImage: "app/second", File: dir, FileType: api.Directory},
 			}, nil, nil, symlinks{{LinkName: "links/alias", Target: "../app/first/a"}}, nil, nil,

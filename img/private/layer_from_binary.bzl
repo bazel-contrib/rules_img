@@ -6,8 +6,8 @@ load("//img/private/common:build.bzl", "TOOLCHAINS")
 load("//img/private/common:layer_attrs.bzl", "layer_attrs")
 load(
     "//img/private/common:tar_layer.bzl",
+    "create_single_layer",
     "create_tar_layer",
-    "create_tar_single_layer",
     "empty_runfile_short_path",
     "file_type",
     "files_arg",
@@ -334,7 +334,7 @@ def _create_grouped_layers(ctx, settings, exe, path_in_image, ordered_groups, ru
         if i == executable_group_index:
             _append_binary_args(ctx, exe, path_in_image, all_group_runfiles, runfiles_config, content_prefix, extra_args, extra_inputs, default_info.files)
 
-        layer_info, out, metadata, compact_stream, mtree, ztoc = create_tar_single_layer(ctx, settings, layer_name, extra_args, extra_inputs)
+        layer_info, out, metadata, compact_stream, mtree, ztoc = create_single_layer(ctx, settings, layer_name, extra_args, extra_inputs)
         all_layers.append(layer_info)
         if out:
             all_outs.append(out)
@@ -358,7 +358,7 @@ def _create_grouped_layers(ctx, settings, exe, path_in_image, ordered_groups, ru
         # layer above the group that owns it.
         _append_binary_args(ctx, exe, path_in_image, all_group_runfiles, runfiles_config, content_prefix, bin_extra_args, bin_extra_inputs, default_info.files)
 
-        layer_info, out, metadata, compact_stream, mtree, ztoc = create_tar_single_layer(ctx, settings, bin_layer_name, bin_extra_args, bin_extra_inputs)
+        layer_info, out, metadata, compact_stream, mtree, ztoc = create_single_layer(ctx, settings, bin_layer_name, bin_extra_args, bin_extra_inputs)
         all_layers.append(layer_info)
         if out:
             all_outs.append(out)

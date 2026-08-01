@@ -3,6 +3,7 @@
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("//img/private/common:build.bzl", "TOOLCHAINS")
 load("//img/private/common:layer_helper.bzl", "allow_tar_files", "build_layer_mtree", "calculate_layer_info", "extension_to_compression", "optimize_layer", "recompress_layer")
+load("//img/private/common:media_types.bzl", "EROFS_LAYER", "EROFS_ZSTD_LAYER")
 load("//img/private/providers:layers_info.bzl", "LayersInfo")
 
 def _layer_from_tar_impl(ctx):
@@ -18,19 +19,43 @@ def _layer_from_tar_impl(ctx):
         estargz = ctx.attr._default_estargz[BuildSettingInfo].value
     estargz_enabled = estargz == "enabled"
 
-    target_compression = compression if (explicit_target_compression or estargz_enabled or optimize) else source_compression
+    layer_format = ctx.attr.format
+    if layer_format == "auto":
+        layer_format = ctx.attr._default_layer_format[BuildSettingInfo].value
+    is_erofs = layer_format == "erofs"
+
+    if is_erofs:
+        # An EROFS layer is a different container format, not a different
+        # compression of the same bytes, so the source blob can never be reused:
+        # the tar is always read back entry by entry and rebuilt as a filesystem
+        # image. The compression default follows the same reasoning as for a
+        # built EROFS layer -- uncompressed, so the blob is mountable as it is.
+        if not explicit_target_compression:
+            compression = "none"
+        if compression == "gzip":
+            fail(("format = \"erofs\" cannot be gzip-compressed: there is no " +
+                  "application/vnd.erofs.layer.v1+gzip media type. Set compress = \"none\" or compress = \"zstd\"."))
+        if estargz_enabled:
+            fail("estargz is a tar format and cannot be combined with format = \"erofs\".")
+
+    target_compression = compression if (explicit_target_compression or estargz_enabled or optimize or is_erofs) else source_compression
 
     needs_recompression = source_compression != target_compression
-    needs_rewrite = needs_recompression or optimize
+    needs_rewrite = needs_recompression or optimize or is_erofs
 
     media_type = ctx.attr.media_type
     if media_type == "":
-        media_type = "application/vnd.oci.image.layer.v1.tar"
-        if target_compression != "none":
-            media_type += "+{}".format(target_compression)
+        if is_erofs:
+            media_type = EROFS_ZSTD_LAYER if target_compression == "zstd" else EROFS_LAYER
+        else:
+            media_type = "application/vnd.oci.image.layer.v1.tar"
+            if target_compression != "none":
+                media_type += "+{}".format(target_compression)
 
     metadata_file = ctx.actions.declare_file("{}_metadata.json".format(ctx.attr.name))
-    if target_compression == "gzip":
+    if is_erofs:
+        output_name_extension = ".erofs.zst" if target_compression == "zstd" else ".erofs"
+    elif target_compression == "gzip":
         output_name_extension = ".tgz"
     elif target_compression == "zstd":
         output_name_extension = ".tar.zst"
@@ -51,7 +76,7 @@ def _layer_from_tar_impl(ctx):
             annotations = ctx.attr.annotations,
             mtree = build_layer_mtree(ctx, ctx.attr.name, tar_blob = ctx.file.src),
         )
-    elif not optimize:
+    elif not optimize and not is_erofs:
         # here, we recompress the tar file and calculate the layer info
         # (recompress_layer builds the mtree from the recompressed blob).
         layer_info = recompress_layer(
@@ -65,8 +90,9 @@ def _layer_from_tar_impl(ctx):
             annotations = ctx.attr.annotations,
         )
     else:
-        # here, we optimize, recompress the tar file, and calculate the layer info
-        # (optimize_layer builds the mtree from the optimized blob).
+        # here, we rewrite the tar entry by entry -- deduplicating it, converting
+        # it to an EROFS image, or both -- and calculate the layer info
+        # (optimize_layer builds the mtree from the rewritten blob).
         layer_info = optimize_layer(
             ctx = ctx,
             media_type = media_type,
@@ -76,6 +102,10 @@ def _layer_from_tar_impl(ctx):
             target_compression = target_compression,
             estargz = estargz_enabled,
             annotations = ctx.attr.annotations,
+            layer_format = layer_format,
+            erofs_block_size = ctx.attr._erofs_block_size[BuildSettingInfo].value,
+            erofs_inline_threshold = ctx.attr._erofs_inline_threshold[BuildSettingInfo].value,
+            erofs_synthetic_directories = ctx.attr._erofs_synthetic_directories[BuildSettingInfo].value,
         )
 
     return [
@@ -157,6 +187,17 @@ This is useful for reducing the size of the image, but will take extra time and 
             doc = """Whether to use estargz format. If set to 'auto', uses the global default estargz setting.
 When enabled, the layer will be optimized for lazy pulling and will be compatible with the estargz format.""",
         ),
+        "format": attr.string(
+            default = "auto",
+            values = ["auto", "tar", "erofs"],
+            doc = """Container format of the layer blob. If set to 'auto', uses the global default
+--@rules_img//img/settings:layer_format setting.
+
+'erofs' converts the tar into a mountable EROFS filesystem image. That always rewrites the
+layer (a format change cannot preserve the source blob) and defaults to `compress = "none"`,
+since the resulting blob is mountable as it is. See docs/erofs-layers.md for what a
+filesystem image means for the layers below it.""",
+        ),
         "annotations": attr.string_dict(
             default = {},
             doc = """Annotations to add to the layer metadata as key-value pairs.""",
@@ -171,6 +212,22 @@ When enabled, the layer will be optimized for lazy pulling and will be compatibl
         ),
         "_default_estargz": attr.label(
             default = Label("//img/settings:estargz"),
+            providers = [BuildSettingInfo],
+        ),
+        "_default_layer_format": attr.label(
+            default = Label("//img/settings:layer_format"),
+            providers = [BuildSettingInfo],
+        ),
+        "_erofs_block_size": attr.label(
+            default = Label("//img/settings:erofs_block_size"),
+            providers = [BuildSettingInfo],
+        ),
+        "_erofs_inline_threshold": attr.label(
+            default = Label("//img/settings:erofs_inline_threshold"),
+            providers = [BuildSettingInfo],
+        ),
+        "_erofs_synthetic_directories": attr.label(
+            default = Label("//img/settings:erofs_synthetic_directories"),
             providers = [BuildSettingInfo],
         ),
         "_compression_jobs": attr.label(

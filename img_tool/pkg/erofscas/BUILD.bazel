@@ -1,0 +1,33 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "erofscas",
+    srcs = [
+        "erofscas.go",
+        "options.go",
+    ],
+    importpath = "github.com/bazel-contrib/rules_img/img_tool/pkg/erofscas",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/api",
+        "//pkg/compactstream",
+        "//pkg/digestfs",
+        "//pkg/go-erofs",
+        "//pkg/tarmeta",
+        "//pkg/tree/merkle",
+    ],
+)
+
+go_test(
+    name = "erofscas_test",
+    srcs = ["erofscas_test.go"],
+    embed = [":erofscas"],
+    deps = [
+        "//pkg/api",
+        "//pkg/compactstream",
+        "//pkg/compress",
+        "//pkg/digestfs",
+        "//pkg/go-erofs",
+        "@com_github_klauspost_compress//zstd",
+    ],
+)

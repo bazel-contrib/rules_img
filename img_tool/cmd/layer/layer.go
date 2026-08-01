@@ -17,6 +17,7 @@ import (
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/compress"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/contentmanifest"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/digestfs"
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/erofscas"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/kvfile"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/metadata"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/tarcas"
@@ -44,6 +45,11 @@ func LayerProcess(ctx context.Context, args []string) {
 	var baseMetadataFlags baseMetadataArgs
 	var baseMetadataFromFiles baseMetadataFromFileArgs
 	var formatFlag string
+	var layerFormatFlag string
+	var erofsBlockSizeFlag int
+	var erofsInlineThresholdFlag uint64
+	var erofsSyntheticDirectoriesFlag string
+	var erofsNoVerifyCASRefsFlag bool
 	var estargzFlag bool
 	var mediaTypeFlag string
 	var metadataOutputFlag string
@@ -95,6 +101,11 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 	flagSet.Var(&contentManifestInputFlags, "deduplicate", `Path of a content manifest of a previous layer that can be used for deduplication.`)
 	flagSet.StringVar(&contentManifestCollection, "deduplicate-collection", "", `Path of a content manifest collection file that can be used for deduplication.`)
 	flagSet.StringVar(&formatFlag, "format", "", `The compression format of the output layer. Can be "gzip", "zstd", or "none". Default is to guess the algorithm based on the filename, but fall back to "gzip".`)
+	flagSet.StringVar(&layerFormatFlag, "layer-format", "tar", `The container format of the output layer. "tar" writes an OCI tar changeset. "erofs" writes a mountable EROFS filesystem image, which accepts only --format none or zstd and no --estargz or --ztoc.`)
+	flagSet.IntVar(&erofsBlockSizeFlag, "erofs-block-size", 0, `Filesystem block size of an EROFS layer, in bytes. 0 uses 4096, which matches the common page size. Only used with --layer-format erofs.`)
+	flagSet.Uint64Var(&erofsInlineThresholdFlag, "erofs-inline-threshold", 0, `Maximum size (in bytes) of a file payload an EROFS layer may tail-pack into its inode. A file at least this large gets a data extent of its own, and therefore becomes a content-addressed reference in the compact stream rather than inline bytes. 0 packs whatever fits in the inode's block. Only used with --layer-format erofs.`)
+	flagSet.StringVar(&erofsSyntheticDirectoriesFlag, "erofs-synthetic-directories", "inherit", `Attributes for directories an EROFS layer has to invent because nothing describes them. "inherit" copies the nearest described ancestor's ownership (what mkfs.erofs does), "default" uses 0755 root:root, "strict" fails the layer instead of guessing. Only used with --layer-format erofs.`)
+	flagSet.BoolVar(&erofsNoVerifyCASRefsFlag, "erofs-no-verify-cas-refs", false, `Skip re-hashing each region an EROFS layer's compact stream replaces with a content-addressed reference. Verification is cheap and turns a wrong layout plan into a build failure, so only disable it to work around a bug.`)
 	flagSet.BoolVar(&estargzFlag, "estargz", false, `Use estargz format for compression. This creates seekable gzip streams optimized for lazy pulling.`)
 	flagSet.StringVar(&mediaTypeFlag, "media-type", "", `Override the layer media type in the metadata output. If empty, auto-detected from the compression format.`)
 	flagSet.StringVar(&compressorJobsFlag, "compressor-jobs", "", `Number of compressor jobs. For gzip, 1 uses single-threaded stdlib gzip and n>1 uses pgzip. For zstd, it is the number of parallel encoder goroutines, which is always at least 2. "nproc" uses the available cores. If unset, gzip is single-threaded and zstd uses 2 jobs.`)
@@ -159,10 +170,25 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 		}
 	}
 
+	var containerFormat api.ContainerFormat
+	switch layerFormatFlag {
+	case "", "tar":
+		containerFormat = api.TarFormat
+	case "erofs":
+		containerFormat = api.ErofsFormat
+	default:
+		fmt.Fprintf(os.Stderr, "Unknown layer format %s. Supported layer formats are tar and erofs.\n", layerFormatFlag)
+		os.Exit(1)
+	}
+
 	var compressionAlgorithm api.CompressionAlgorithm
 	switch formatFlag {
 	case "":
-		if compactStreamOnlyFlag {
+		if containerFormat == api.ErofsFormat {
+			// An EROFS image is mountable as it is, so leaving it uncompressed
+			// is the useful default; gzip does not exist for this family.
+			compressionAlgorithm = api.Uncompressed
+		} else if compactStreamOnlyFlag {
 			compressionAlgorithm = api.Gzip
 		} else if filepath.Ext(outputFilePath) == ".tar" {
 			compressionAlgorithm = api.Uncompressed
@@ -182,6 +208,37 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown format %s. Supported formats are gzip, zstd and uncompressed.\n", formatFlag)
 		os.Exit(1)
+	}
+
+	erofsSettings := erofsSettings{
+		blockSize:       erofsBlockSizeFlag,
+		inlineThreshold: erofsInlineThresholdFlag,
+		verifyCASRefs:   !erofsNoVerifyCASRefsFlag,
+	}
+	if containerFormat == api.ErofsFormat {
+		if compressionAlgorithm == api.Gzip {
+			fmt.Fprintf(os.Stderr, "Error: --layer-format erofs cannot be gzip-compressed; there is no application/vnd.erofs.layer.v1+gzip media type. Use --format none or --format zstd\n")
+			os.Exit(1)
+		}
+		if estargzFlag {
+			fmt.Fprintf(os.Stderr, "Error: --estargz is tar-specific and cannot be combined with --layer-format erofs\n")
+			os.Exit(1)
+		}
+		if ztocOutputFlag != "" {
+			fmt.Fprintf(os.Stderr, "Error: --ztoc indexes a gzip tar and cannot be combined with --layer-format erofs\n")
+			os.Exit(1)
+		}
+		switch erofsSyntheticDirectoriesFlag {
+		case "", "inherit":
+			erofsSettings.syntheticDirectories = erofscas.SyntheticDirectoriesInherit
+		case "default":
+			erofsSettings.syntheticDirectories = erofscas.SyntheticDirectoriesDefault
+		case "strict":
+			erofsSettings.syntheticDirectories = erofscas.SyntheticDirectoriesStrict
+		default:
+			fmt.Fprintf(os.Stderr, "Unknown --erofs-synthetic-directories value %s. Supported values are inherit, default and strict.\n", erofsSyntheticDirectoriesFlag)
+			os.Exit(1)
+		}
 	}
 
 	if ztocOutputFlag != "" && compressionAlgorithm != api.Gzip {
@@ -326,6 +383,7 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 	}
 
 	compressorState, err := handleLayerState(
+		containerFormat, erofsSettings,
 		compressionAlgorithm, estargzFlag, addFiles, importTarFlags, executableFlags, symlinkFlags, emptyFilePaths,
 		baseMetadataPaths,
 		casImporter, casExporter, outputFile, layerMetadata,
@@ -361,7 +419,7 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 			}
 		}()
 
-		if err := writeMetadata(layerHistory, compressionAlgorithm, estargzFlag, mediaTypeFlag, annotations, compressorState, metadataOutputFile); err != nil {
+		if err := writeMetadata(layerHistory, containerFormat, compressionAlgorithm, estargzFlag, mediaTypeFlag, annotations, compressorState, metadataOutputFile); err != nil {
 			fmt.Fprintf(os.Stderr, "Writing metadata: %v\n", err)
 			os.Exit(1)
 		}
@@ -429,7 +487,23 @@ func compactStreamCompressionLevel(level int) (int8, error) {
 	return int8(level), nil
 }
 
+// erofsSettings are the EROFS-only knobs of a layer action.
+type erofsSettings struct {
+	blockSize            int
+	inlineThreshold      uint64
+	verifyCASRefs        bool
+	syntheticDirectories erofscas.SyntheticDirectories
+}
+
+// finalizer is the part of a compressor the layer action needs once every byte
+// has been written: the digests and sizes of the blob and its uncompressed
+// content.
+type finalizer interface {
+	Finalize() (api.AppenderState, error)
+}
+
 func handleLayerState(
+	containerFormat api.ContainerFormat, erofs erofsSettings,
 	compressionAlgorithm api.CompressionAlgorithm, useEstargz bool, addFiles addFiles, importTars importTars, addExecutables executables, addSymlinks symlinks, emptyFiles []string,
 	baseMetadataPaths []string,
 	casImporter api.CASStateSupplier, casExporter api.CASStateExporter, outputFile io.Writer, layerMetadata *LayerMetadata,
@@ -459,20 +533,6 @@ func handleLayerState(
 		}
 	}
 
-	compressor, err := compress.TarAppenderFactory("sha256", string(compressionAlgorithm), useEstargz, outputFile, opts...)
-	if err != nil {
-		return compressorState, fmt.Errorf("creating compressor: %w", err)
-	}
-
-	var tarcasOpts []tarcas.Option
-	tarcasOpts = append(tarcasOpts,
-		tarcas.CreateParentDirectories(createParentDirectories),
-		tarcas.DeduplicateTreeArtifacts(treeArtifactHandling == "deduplicate_symlink"),
-	)
-	if layerMetadata != nil && (layerMetadata.Defaults != nil || len(layerMetadata.FileOverrides) > 0) {
-		tarcasOpts = append(tarcasOpts, tarcas.GeneratedMetadata(layerMetadata.applyToGeneratedHeader))
-	}
-
 	var csFile *os.File
 	var csWriter *compactstream.Writer
 	if compactStreamPath != "" {
@@ -498,8 +558,14 @@ func handleLayerState(
 			origComp = compactstream.OriginalCompressionNone
 		}
 
+		// An EROFS layer decides what is carried inline while it plans its
+		// layout -- a tail-packed payload lands in the metadata area -- so the
+		// compact stream itself makes no inlining decisions. That decision also
+		// shapes the image, so it comes from --erofs-inline-threshold rather
+		// than from a compact-stream flag: the blob must not depend on whether a
+		// compact stream was requested.
 		var inlineThreshold int64
-		if compactStreamInlineThreshold > 0 {
+		if compactStreamInlineThreshold > 0 && containerFormat != api.ErofsFormat {
 			inlineThreshold = int64(compactStreamInlineThreshold)
 		}
 
@@ -516,23 +582,68 @@ func handleLayerState(
 			},
 			inlineThreshold,
 		)
-		tarcasOpts = append(tarcasOpts, tarcas.WithCompactStreamWriter{Writer: csWriter})
 	}
 
-	tw, err := tarcas.CASFactoryWithDigestFS("sha256", compressor, digestFS, tarcasOpts...)
-	if err != nil {
-		return compressorState, fmt.Errorf("creating Content-addressable storage inside tar file: %w", err)
+	var tw api.TarCAS
+	var compressor finalizer
+	if containerFormat == api.ErofsFormat {
+		appender, appenderErr := compress.AppenderFactory("sha256", string(compressionAlgorithm), outputFile, opts...)
+		if appenderErr != nil {
+			return compressorState, fmt.Errorf("creating compressor: %w", appenderErr)
+		}
+		compressor = appender
+
+		erofsOpts := []erofscas.Option{
+			erofscas.VerifyCASRefs(erofs.verifyCASRefs),
+			erofscas.WithSyntheticDirectories(erofs.syntheticDirectories),
+			erofscas.DeduplicateTreeArtifacts(treeArtifactHandling == "deduplicate_symlink"),
+			erofscas.InlineThreshold(erofs.inlineThreshold),
+		}
+		if erofs.blockSize > 0 {
+			erofsOpts = append(erofsOpts, erofscas.BlockSize(erofs.blockSize))
+		}
+		if layerMetadata != nil && (layerMetadata.Defaults != nil || len(layerMetadata.FileOverrides) > 0) {
+			erofsOpts = append(erofsOpts, erofscas.GeneratedMetadata(layerMetadata.applyToGeneratedHeader))
+		}
+		if csWriter != nil {
+			erofsOpts = append(erofsOpts, erofscas.WithCompactStreamWriter{Writer: csWriter})
+		}
+		tw, err = erofscas.CASFactoryWithDigestFS("sha256", appender, digestFS, erofsOpts...)
+		if err != nil {
+			return compressorState, fmt.Errorf("creating EROFS layer writer: %w", err)
+		}
+	} else {
+		appender, appenderErr := compress.TarAppenderFactory("sha256", string(compressionAlgorithm), useEstargz, outputFile, opts...)
+		if appenderErr != nil {
+			return compressorState, fmt.Errorf("creating compressor: %w", appenderErr)
+		}
+		compressor = appender
+
+		tarcasOpts := []tarcas.Option{
+			tarcas.CreateParentDirectories(createParentDirectories),
+			tarcas.DeduplicateTreeArtifacts(treeArtifactHandling == "deduplicate_symlink"),
+		}
+		if layerMetadata != nil && (layerMetadata.Defaults != nil || len(layerMetadata.FileOverrides) > 0) {
+			tarcasOpts = append(tarcasOpts, tarcas.GeneratedMetadata(layerMetadata.applyToGeneratedHeader))
+		}
+		if csWriter != nil {
+			tarcasOpts = append(tarcasOpts, tarcas.WithCompactStreamWriter{Writer: csWriter})
+		}
+		tw, err = tarcas.CASFactoryWithDigestFS("sha256", appender, digestFS, tarcasOpts...)
+		if err != nil {
+			return compressorState, fmt.Errorf("creating Content-addressable storage inside tar file: %w", err)
+		}
 	}
 	// Finalization runs in this deferred closure so it executes on every exit
-	// path, and in a specific order: close the tar writer (flushing all tar data
-	// into the compressor and feeding the index observer), then finalize the
-	// compressor to obtain the compressed-stream digest and size, then record
-	// that information on the index and emit it. The index is written last
-	// because its compressed-stream digest is only known once the compressor has
-	// been finalized.
+	// path, and in a specific order: close the layer writer (flushing all layer
+	// data into the compressor and feeding the index observer), then finalize
+	// the compressor to obtain the compressed-stream digest and size, then
+	// record that information on the index and emit it. The index is written
+	// last because its compressed-stream digest is only known once the
+	// compressor has been finalized.
 	defer func() {
 		if err := tw.Close(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error closing tar writer: %v\n", err)
+			fmt.Fprintf(os.Stderr, "Error closing layer writer: %v\n", err)
 			os.Exit(1)
 		}
 		// Closing writes deferred symlinks and their parent directories.
@@ -646,7 +757,7 @@ func writeLayer(recorder tree.Recorder, addFiles addFiles, importTars importTars
 	return nil
 }
 
-func writeMetadata(history string, compressionAlgorithm api.CompressionAlgorithm, useEstargz bool, mediaTypeOverride string, annotations map[string]string, compressorState api.AppenderState, outputFile io.Writer) error {
+func writeMetadata(history string, containerFormat api.ContainerFormat, compressionAlgorithm api.CompressionAlgorithm, useEstargz bool, mediaTypeOverride string, annotations map[string]string, compressorState api.AppenderState, outputFile io.Writer) error {
 	// An empty --history asks for a layer with no history entries at all;
 	// omitting the flag defaults to MissingHistoryMarker, which falls
 	// through to the non-empty case below like any other value.
@@ -659,14 +770,23 @@ func writeMetadata(history string, compressionAlgorithm api.CompressionAlgorithm
 	var mediaType string
 	if mediaTypeOverride != "" {
 		mediaType = mediaTypeOverride
+	} else if containerFormat == api.ErofsFormat {
+		switch compressionAlgorithm {
+		case api.Uncompressed:
+			mediaType = api.ErofsLayer
+		case api.Zstd:
+			mediaType = api.ErofsZstdLayer
+		default:
+			return fmt.Errorf("unsupported compression algorithm for an EROFS layer: %s", compressionAlgorithm)
+		}
 	} else {
 		switch compressionAlgorithm {
 		case api.Uncompressed:
-			mediaType = "application/vnd.oci.image.layer.v1.tar"
+			mediaType = api.TarLayer
 		case api.Gzip:
-			mediaType = "application/vnd.oci.image.layer.v1.tar+gzip"
+			mediaType = api.TarGzipLayer
 		case api.Zstd:
-			mediaType = "application/vnd.oci.image.layer.v1.tar+zstd"
+			mediaType = api.TarZstdLayer
 		default:
 			return fmt.Errorf("unsupported compression algorithm: %s", compressionAlgorithm)
 		}

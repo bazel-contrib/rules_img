@@ -10,6 +10,12 @@
 //     materialized tar; the recorded CAS reference digest or inlined bytes for a
 //     compact stream). Hardlinks (tar TypeLink) are replaced by a copy of the
 //     entry they point at, so "link" is emitted only for symlinks.
+//   - EROFS inputs (an EROFS filesystem image, or a compact stream read as a
+//     sparse image whose payloads are absent) are walked and rendered as if
+//     their inodes had been tar entries. Two differences from the same layer
+//     rendered as a tar are inherent to the format and are documented in
+//     docs/erofs-layers.md: every intermediate directory is present, and
+//     deletions are overlayfs whiteouts rather than ".wh." marker files.
 //   - Mtree inputs are existing mtree specs; their entries are folded in as
 //     though they came from a tar. Their paths are re-normalized to the
 //     configured layout and their keywords are filtered down to the requested
@@ -103,6 +109,8 @@ const (
 	TarInput InputKind = iota
 	// MtreeInput reads the Reader as an existing mtree spec.
 	MtreeInput
+	// ErofsInput reads the ReaderAt as an EROFS filesystem image.
+	ErofsInput
 )
 
 // Input is one ordered source of entries.
@@ -110,9 +118,18 @@ type Input struct {
 	Kind InputKind
 	// Reader is an uncompressed tar (TarInput) or an mtree spec (MtreeInput).
 	Reader io.Reader
-	// Digester supplies content digests for TarInput regular files. Ignored for
-	// MtreeInput.
+	// ReaderAt is an EROFS filesystem image (ErofsInput). It may read the
+	// payload ranges as zeros, in which case the Digester has to supply the
+	// content digests.
+	ReaderAt io.ReaderAt
+	// Digester supplies content digests for TarInput and ErofsInput regular
+	// files. Ignored for MtreeInput.
 	Digester ContentDigester
+	// RangeDigester optionally reports a digest already recorded for a byte
+	// range of an ErofsInput's image, which lets a file whose payload is absent
+	// (a compact stream read as a sparse image) still get a sha256digest.
+	// Ranges it does not know fall back to Digester. Ignored for other kinds.
+	RangeDigester func(offset, size int64) ([]byte, bool)
 }
 
 // ContentDigester computes the sha256 of a regular file's content for the
@@ -155,6 +172,12 @@ func WriteMulti(w io.Writer, opts Options, inputs []Input) error {
 		switch in.Kind {
 		case TarInput:
 			es, err := collectTar(in.Reader, in.Digester, idx)
+			if err != nil {
+				return err
+			}
+			collected = append(collected, es...)
+		case ErofsInput:
+			es, err := collectErofs(in.ReaderAt, in.Digester, in.RangeDigester, idx)
 			if err != nil {
 				return err
 			}
@@ -211,6 +234,8 @@ type collectedEntry struct {
 	digest  []byte           // tar-origin content sha256
 	keyvals []gomtree.KeyVal // mtree-origin, already filtered/ordered
 	isDir   bool             // mtree-origin (tar-origin derives it from hdr)
+	nlink   int              // explicit link count (EROFS-origin); 0 = derive from the tar structure
+	overlay bool             // EROFS-origin: deletions are overlayfs whiteouts, not ".wh." markers
 	input   int              // index of the Input this entry came from (layer order)
 }
 
@@ -343,9 +368,14 @@ func materialize(collected []collectedEntry, inodes map[string]*inode, hardlinkO
 		kvs, err := keywordsForHeader(in.hdr, in.digest, in.nlink, opts.Keywords)
 		return ce.path, false, kvs, err
 	}
-	nlink := 1
-	if in, ok := inodes[ce.path]; ok {
-		nlink = in.nlink
+	// An EROFS inode records its own link count; a tar expresses the same thing
+	// with TypeLink entries, which groupHardlinks counted.
+	nlink := ce.nlink
+	if nlink == 0 {
+		nlink = 1
+		if in, ok := inodes[ce.path]; ok {
+			nlink = in.nlink
+		}
 	}
 	kvs, err := keywordsForHeader(ce.hdr, ce.digest, nlink, opts.Keywords)
 	return ce.path, ce.hdr.Typeflag == tar.TypeDir, kvs, err
@@ -409,6 +439,30 @@ func writeChangeset(dh *gomtree.DirectoryHierarchy, collected []collectedEntry, 
 		comps := strings.Split(p, "/")
 		base := comps[len(comps)-1]
 		parentComps := comps[:len(comps)-1]
+
+		// An EROFS layer expresses deletions the way overlayfs does rather than
+		// with marker files, so the changeset has to recognize both forms. Only
+		// an EROFS-origin entry is read that way: in a tar layer a character
+		// device with device number 0 is just an unusual device node, and a
+		// deletion is a ".wh." name.
+		if collected[i].overlay {
+			hdr := collected[i].hdr
+			if isOverlayWhiteout(hdr) {
+				parent := root.ensureDir(parentComps, input)
+				delete(parent.children, base)
+				continue
+			}
+			if isOverlayOpaque(hdr) {
+				dir := root.ensureDir(comps, input)
+				for name, child := range dir.children {
+					if !removeLowerLayerEntries(child, input) {
+						delete(dir.children, name)
+					}
+				}
+				// The directory itself still applies, so this falls through and
+				// its own attributes are recorded below.
+			}
+		}
 
 		switch {
 		case base == whiteoutOpaque:
