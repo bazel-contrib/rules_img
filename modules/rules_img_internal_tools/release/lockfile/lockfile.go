@@ -55,7 +55,7 @@ var (
 )
 
 func main() {
-	flag.StringVar(&tag, "tag", "", "Release tag the prebuilt binaries are published under (e.g. v0.3.18 or rules_img_signer_cosign-v0.0.1). Recorded verbatim as each entry's version so the prebuilt download URL resolves.")
+	flag.StringVar(&tag, "tag", "", "Release tag the prebuilt binaries are published under (e.g. v0.3.19 or rules_img_signer_cosign-v0.0.1). Recorded verbatim as each entry's version so the prebuilt download URL resolves.")
 	flag.Var(&binaries, "tool", "Key-value pairs of platform name to tool binary path.")
 	flag.Parse()
 	if flag.NArg() != 1 {

@@ -21,9 +21,9 @@ bazel_dep(name = "gazelle", version = "0.52.2")
 # direct dep here (not in the root) so the root depends on them only transitively
 # through this module, and so the signer CLIs / plugins can be re-exported and
 # prebuilt for the e2e tests.
-bazel_dep(name = "rules_img", version = "0.3.18")
+bazel_dep(name = "rules_img", version = "0.3.19")
 bazel_dep(name = "rules_img_private", version = "0.0.1")
-bazel_dep(name = "rules_img_tool", version = "0.3.18")
+bazel_dep(name = "rules_img_tool", version = "0.3.19")
 bazel_dep(name = "rules_img_signer_cosign", version = "0.0.1")
 bazel_dep(name = "rules_img_signer_notation", version = "0.0.1")
 
