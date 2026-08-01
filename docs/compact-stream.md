@@ -160,7 +160,8 @@ Offset  Size  Type       Field                  Description
 14      1     uint8      SeekableCompression    Whether seekable compression was used (0/1)
 15      1     int8       CompressionLevel       Original compression level (-1 = default)
 16      1     uint8      CompressorJobs         Number of parallel compression workers (0 = default)
-17      3     -          Reserved1              Must be zero
+17      1     uint8      ContentFormat          Identifier for the file type of the payload (see below)
+18      2     -          Reserved1              Must be zero
 20      4     uint32 BE  EndPadding             Trailing zero bytes in the original stream
 24      8     uint64 BE  RefTableOffset         Byte offset from file start to CAS ref table
 32      8     uint64 BE  RefTableSize           Size in bytes of the CAS reference table
@@ -203,6 +204,19 @@ fields are absent (zero) and must be ignored.
 | 0     | None        |
 | 1     | gzip        |
 | 2     | zstd        |
+
+### Content format values
+
+| Value | Format                                       |
+|-------|----------------------------------------------|
+| 0     | unknown (not declared)                       |
+| 1     | tar changeset                                |
+| 2     | [EROFS filesystem image](erofs-layers.md)    |
+
+`ContentFormat` identifies the filetype of the payload. Reconstruction itself
+does not need it, but a tool that interprets the content rather than just
+rebuilding it (`img mtree`, `img compact-stream ls`) needs to know which parser
+to use.
 
 ### Compression metadata
 

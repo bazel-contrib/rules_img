@@ -13,6 +13,9 @@ type (
 	CompressionAlgorithm string
 	HashAlgorithm        string
 	LayerFormat          string
+	// ContainerFormat selects the shape of a layer blob: a tar changeset or an
+	// EROFS filesystem image. It is orthogonal to the compression algorithm.
+	ContainerFormat string
 )
 
 const (
@@ -24,10 +27,19 @@ const (
 	// Hash algorithms
 	SHA256 HashAlgorithm = "sha256"
 
+	// Container formats
+	TarFormat   ContainerFormat = "tar"
+	ErofsFormat ContainerFormat = "erofs"
+
 	// Layer formats
 	TarLayer     = "application/vnd.oci.image.layer.v1.tar"
 	TarGzipLayer = "application/vnd.oci.image.layer.v1.tar+gzip"
 	TarZstdLayer = "application/vnd.oci.image.layer.v1.tar+zstd"
+
+	// EROFS layer formats. The blob is a mountable EROFS filesystem image
+	// rather than a tar changeset; see docs/erofs-layers.md.
+	ErofsLayer     = "application/vnd.erofs.layer.v1"
+	ErofsZstdLayer = "application/vnd.erofs.layer.v1+zstd"
 
 	// Config media types
 	MediaTypeEmptyJSON = "application/vnd.oci.empty.v1+json"
@@ -48,6 +60,21 @@ func ImageManifestMediaType[T ~string](mediaType T) T {
 	return mediaType
 }
 
+const (
+	// ErofsOSFeature is the os.features entry an image whose layers are EROFS
+	// images must carry, so a runtime that cannot mount them does not try.
+	ErofsOSFeature = "erofs"
+)
+
+// IsErofsLayer reports whether a layer media type belongs to the EROFS family.
+func IsErofsLayer(mediaType string) bool {
+	switch mediaType {
+	case ErofsLayer, ErofsZstdLayer:
+		return true
+	}
+	return false
+}
+
 func (h HashAlgorithm) Len() int {
 	switch h {
 	case SHA256:
@@ -59,11 +86,11 @@ func (h HashAlgorithm) Len() int {
 
 func (c LayerFormat) CompressionAlgorithm() CompressionAlgorithm {
 	switch c {
-	case TarLayer:
+	case TarLayer, ErofsLayer:
 		return Uncompressed
 	case TarGzipLayer:
 		return Gzip
-	case TarZstdLayer:
+	case TarZstdLayer, ErofsZstdLayer:
 		return Zstd
 	default:
 		return ""

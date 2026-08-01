@@ -50,7 +50,8 @@ func TestDirStoreResolvesByDigest(t *testing.T) {
 // buildTestIndex creates a small index with two CAS references separated by
 // inline stream segments (mimicking tar headers around file content). When
 // compressedDigest is non-nil, the optional compressed-stream digest and size
-// are recorded in the header.
+// are recorded in the header. The stream declares the tar content format, as a
+// stream produced for a tar layer does.
 func buildTestIndex(t *testing.T, d1, d2 [32]byte, compressedDigest []byte, compressedSize uint64) []byte {
 	t.Helper()
 	var buf bytes.Buffer
@@ -60,6 +61,7 @@ func buildTestIndex(t *testing.T, d1, d2 [32]byte, compressedDigest []byte, comp
 			CompressionLevel: -1,
 			CompressorJobs:   1,
 		}, 0)
+	iw.SetContentFormat(compactstream.ContentFormatTar)
 	for _, step := range []struct {
 		stream int
 		digest []byte
@@ -162,5 +164,43 @@ func TestWriteListingWithCompressedSize(t *testing.T) {
 		if !strings.Contains(got, sub) {
 			t.Errorf("listing missing %q\n--- full output ---\n%s", sub, got)
 		}
+	}
+}
+
+// TestWriteListingUndeclaredContentFormat checks the report does not claim a tar
+// for a stream that declares no content format -- which is every stream written
+// before the field existed. The neutral "content" keeps the labels readable
+// without asserting something the header does not say.
+func TestWriteListingUndeclaredContentFormat(t *testing.T) {
+	var buf bytes.Buffer
+	iw := compactstream.NewWriter(&buf, compactstream.HashAlgoSHA256, 32,
+		compactstream.StreamCompressionNone, compactstream.OriginalCompressionInfo{}, 0)
+	if err := iw.WriteStreamBytes(make([]byte, 512)); err != nil {
+		t.Fatal(err)
+	}
+	if err := iw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	info, err := compactstream.Inspect(bytes.NewReader(buf.Bytes()))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	writeListing(&out, "test.cstream", info, 600)
+	got := out.String()
+
+	for _, sub := range []string{
+		"Content:",
+		"unknown (not declared in the compact stream)",
+		"Reconstructed content (uncompressed):",
+		"Compact stream vs reconstructed content (uncompressed):",
+	} {
+		if !strings.Contains(got, sub) {
+			t.Errorf("listing missing %q\n--- full output ---\n%s", sub, got)
+		}
+	}
+	if strings.Contains(got, "Reconstructed tar") {
+		t.Errorf("listing claims tar for a stream that declares no format\n--- full output ---\n%s", got)
 	}
 }

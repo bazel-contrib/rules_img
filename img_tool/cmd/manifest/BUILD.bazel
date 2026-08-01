@@ -3,6 +3,7 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "manifest",
     srcs = [
+        "erofs.go",
         "flagtypes.go",
         "manifest.go",
     ],
