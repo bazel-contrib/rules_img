@@ -63,6 +63,10 @@ const (
 	opNameManifestWrite = "manifest.write"
 	opNameTagsList      = "tags.list"
 	opNameReferrers     = "referrers.read"
+	// The two endpoints of cache replication between gateway instances, which are
+	// not registry operations at all (see replication.go).
+	opNameCacheEvents = "cache.events"
+	opNameCacheDonate = "cache.donate"
 )
 
 // Values of the http.route metric attribute: the OCI distribution endpoints with

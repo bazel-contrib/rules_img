@@ -64,6 +64,9 @@ const (
 	// life of the process, so it costs no cardinality; it is attached anyway so a
 	// dashboard panel says which hop it is describing.
 	attrPeer = attribute.Key("oci.gateway.peer")
+	// attrCacheEvent is the kind of blob existence cache event replicated between
+	// gateway instances: "insert", "delete", or "warmup".
+	attrCacheEvent = attribute.Key("oci.gateway.cache.event")
 )
 
 // Values of [attrResult] and [attrUploadKind].
@@ -83,6 +86,11 @@ const (
 	evictedForCapacity = "capacity"
 	evictedForExpiry   = "expired"
 	evictedForDelete   = "deleted"
+
+	// Values of [attrCacheEvent].
+	cacheEventInsert = "insert"
+	cacheEventDelete = "delete"
+	cacheEventWarmup = "warmup"
 )
 
 const (
@@ -166,6 +174,18 @@ type metrics struct {
 	// says whether the TTL and the memory bound are sized right; the requests it
 	// counts are the subset of existenceChecks that are cacheable at all.
 	blobCacheLookups metric.Int64Counter
+	// replicationEvents counts the cache facts replicated between the instances of
+	// a serving deployment, by kind and direction. Receiving far fewer than the
+	// peers send is how a fleet sees that replication is not arriving.
+	replicationEvents metric.Int64Counter
+	// replicationBatches counts the messages those events travelled in, by
+	// direction and outcome. A failure rate above zero means peers are unreachable
+	// (or refusing this instance), which costs hit rate and nothing else.
+	replicationBatches metric.Int64Counter
+	// replicationDropped counts events that were never sent, because the queue to
+	// the sender or the sender itself was full. It is the signal that replication
+	// is shedding load to keep requests fast.
+	replicationDropped metric.Int64Counter
 	// errors counts failures by error.type and upstream registry.
 	errors metric.Int64Counter
 
@@ -232,6 +252,12 @@ func newMetrics(mp metric.MeterProvider, sources gaugeSources) (*metrics, error)
 		"HEAD requests for blobs and manifests, by hit or miss upstream.")
 	m.blobCacheLookups = b.counter("oci.gateway.blob_existence_cache.lookups", "{lookup}",
 		"Cacheable blob existence checks, by whether the blob existence cache could answer them.")
+	m.replicationEvents = b.counter("oci.gateway.blob_existence_cache.replication.events", "{event}",
+		"Blob existence facts replicated between gateway instances, by kind and direction.")
+	m.replicationBatches = b.counter("oci.gateway.blob_existence_cache.replication.batches", "{batch}",
+		"Replication messages exchanged with peer gateways, by direction and outcome. A failure means a peer did not get the facts in it, which costs it upstream probes and nothing else.")
+	m.replicationDropped = b.counter("oci.gateway.blob_existence_cache.replication.dropped", "{event}",
+		"Facts that were never replicated because the send queue was full. Replication sheds load rather than slowing a request down.")
 	m.errors = b.counter("oci.gateway.errors", "{error}",
 		"Failures serving or forwarding registry requests, by error type.")
 	m.upstreamDuration = b.seconds("oci.gateway.upstream.duration",
@@ -258,6 +284,9 @@ type gaugeSources struct {
 	// nil when the cache is disabled, which is how the cache's instruments stay
 	// absent rather than reporting a flat zero.
 	blobCache func() cacheStats
+	// cachePeers reports how many instances this one replicates its cache to. It
+	// is nil when replication is off.
+	cachePeers func() int64
 }
 
 // observe registers the asynchronous instruments described by sources.
@@ -268,6 +297,17 @@ func (b *instruments) observe(sources gaugeSources) {
 			metric.WithDescription("Number of rules in the policy this instance has loaded."),
 			metric.WithInt64Callback(func(_ context.Context, o metric.Int64Observer) error {
 				o.Observe(sources.policyRules())
+				return nil
+			}),
+		)
+		b.track(err)
+	}
+	if sources.cachePeers != nil {
+		_, err := b.meter.Int64ObservableGauge("oci.gateway.blob_existence_cache.replication.peers",
+			metric.WithUnit("{peer}"),
+			metric.WithDescription("Instances this one replicates its blob existence cache to. Zero means it is replicating to nobody, which for a deployment of several replicas is a discovery or connectivity problem."),
+			metric.WithInt64Callback(func(_ context.Context, o metric.Int64Observer) error {
+				o.Observe(sources.cachePeers())
 				return nil
 			}),
 		)
@@ -742,6 +782,82 @@ func (o *observation) finish(ctx context.Context) {
 	if n := o.w.written; n > 0 {
 		o.m.io.Add(ctx, n, o.attrs(semconv.NetworkIODirectionTransmit))
 	}
+}
+
+// The replication instruments are recorded off the request path, from the sender
+// goroutine and the receiving handler, so they take a metrics rather than an
+// observation. Every one of them tolerates a nil receiver and nil instruments: a
+// forwarding gateway creates none of them, and replication is bound after the
+// instruments exist.
+
+// recordReplicationSent counts one message sent to one peer, and the facts it
+// carried.
+func (m *metrics) recordReplicationSent(ctx context.Context, events []cacheEvent, err error) {
+	if m == nil || m.replicationBatches == nil {
+		return
+	}
+	result := resultSuccess
+	if err != nil {
+		result = resultFailure
+	}
+	m.replicationBatches.Add(ctx, 1, metric.WithAttributes(
+		semconv.NetworkIODirectionTransmit, attrResult.String(result)))
+	if err != nil {
+		// The facts did not arrive, so counting them as replicated would overstate
+		// what the fleet knows.
+		return
+	}
+	var inserts, deletes int
+	for _, event := range events {
+		if event.Deleted {
+			deletes++
+			continue
+		}
+		inserts++
+	}
+	m.addReplicatedEvents(ctx, semconv.NetworkIODirectionTransmit, inserts, deletes)
+}
+
+// recordReplicationReceived counts one message applied to the local cache.
+func (m *metrics) recordReplicationReceived(ctx context.Context, inserts, deletes int) {
+	if m == nil || m.replicationBatches == nil {
+		return
+	}
+	m.replicationBatches.Add(ctx, 1, metric.WithAttributes(
+		semconv.NetworkIODirectionReceive, attrResult.String(resultSuccess)))
+	m.addReplicatedEvents(ctx, semconv.NetworkIODirectionReceive, inserts, deletes)
+}
+
+func (m *metrics) addReplicatedEvents(ctx context.Context, direction attribute.KeyValue, inserts, deletes int) {
+	if inserts > 0 {
+		m.replicationEvents.Add(ctx, int64(inserts), metric.WithAttributes(
+			direction, attrCacheEvent.String(cacheEventInsert)))
+	}
+	if deletes > 0 {
+		m.replicationEvents.Add(ctx, int64(deletes), metric.WithAttributes(
+			direction, attrCacheEvent.String(cacheEventDelete)))
+	}
+}
+
+// recordReplicationDropped counts facts that were never sent because replication
+// was shedding load.
+func (m *metrics) recordReplicationDropped(ctx context.Context, events int) {
+	if m == nil || m.replicationDropped == nil || events <= 0 {
+		return
+	}
+	m.replicationDropped.Add(ctx, int64(events))
+}
+
+// recordWarmup counts the entries a starting instance was given by a peer. They
+// are received facts like any other, under their own event kind: a warm-up is one
+// request, not one per entry, so mixing them into the batch counter would make the
+// broadcast rate unreadable.
+func (m *metrics) recordWarmup(ctx context.Context, entries int) {
+	if m == nil || m.replicationEvents == nil || entries <= 0 {
+		return
+	}
+	m.replicationEvents.Add(ctx, int64(entries), metric.WithAttributes(
+		semconv.NetworkIODirectionReceive, attrCacheEvent.String(cacheEventWarmup)))
 }
 
 // recordReload records the outcome of a policy file reload. A failure means the

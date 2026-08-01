@@ -350,6 +350,44 @@ func TestBlobCacheSkipsOversizeKeys(t *testing.T) {
 	}
 }
 
+// TestBlobCacheHottestIsBounded pins the ceilings on a snapshot. limit reaches
+// hottest from a peer's request, so it must size nothing on its own: what a peer
+// asks for is clamped to what the cache holds and to maxSnapshotEntries, and only
+// live entries are copied out.
+func TestBlobCacheHottestIsBounded(t *testing.T) {
+	c, clock := newTestCache(t, time.Hour, 128)
+	for i := range 8 {
+		c.store(testCacheRegistry, testCacheRepository, blobDigest(i), int64(i))
+	}
+
+	// An absurd limit is an allocation this cache must not attempt: the answer is
+	// what it holds.
+	for _, limit := range []int{1 << 30, maxSnapshotEntries + 1, 1000} {
+		if got := c.hottest(limit); len(got) != 8 {
+			t.Fatalf("hottest(%d) returned %d entries, want the 8 the cache holds", limit, len(got))
+		}
+	}
+	if got := c.hottest(0); got != nil {
+		t.Fatalf("hottest(0) = %+v, want nothing", got)
+	}
+	if got := c.hottest(-1); got != nil {
+		t.Fatalf("hottest(-1) = %+v, want nothing", got)
+	}
+
+	// Entries are copied out whole, and an expired one teaches a peer nothing.
+	entry := c.hottest(1)
+	if len(entry) != 1 || entry[0].registry != testCacheRegistry || entry[0].repository != testCacheRepository {
+		t.Fatalf("hottest(1) = %+v, want one complete entry", entry)
+	}
+	if entry[0].lifetime <= 0 || entry[0].lifetime > time.Hour {
+		t.Fatalf("donated lifetime = %v, want what is left of the hour", entry[0].lifetime)
+	}
+	clock.advance(2 * time.Hour)
+	if got := c.hottest(100); len(got) != 0 {
+		t.Fatalf("hottest returned %d expired entries, want none", len(got))
+	}
+}
+
 // TestBlobCacheDoesNotAllocate is the load-bearing test for the cache's design:
 // the memory is taken once, at startup, so serving from it must not put anything
 // on the heap however long the process runs.

@@ -10,6 +10,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -159,6 +160,19 @@ type forwardStateKey struct{}
 func (f *ForwardHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	obs, w, r := f.metrics.begin(w, r)
 	defer obs.finish(r.Context())
+
+	// The one thing a forwarder does not pass through. The reserved /_rules_img/
+	// paths are the gateway's own control surface — cache replication, which is
+	// authorized by the peer's *identity* rather than by the policy — and this
+	// gateway's credential is what the serving gateway would see. Relaying one
+	// would let a build action write to a shared existence cache under the
+	// forwarder's identity, so it stops here.
+	if strings.HasPrefix(r.URL.EscapedPath(), reservedPathPrefix) {
+		obs.fail(r.Context(), errUnsupportedEndpoint)
+		f.log.Printf("%s %q -> 404: a forwarding gateway does not relay the gateway's own control endpoints", r.Method, r.URL.EscapedPath())
+		writeOCIError(w, http.StatusNotFound, "UNSUPPORTED", "a forwarding gateway relays registry requests only")
+		return
+	}
 
 	// Classify for observation only. An unrecognized path is still forwarded: the
 	// serving gateway decides what is allowed, and a sidecar must never reject
