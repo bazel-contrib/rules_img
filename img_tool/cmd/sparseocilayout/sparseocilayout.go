@@ -22,6 +22,7 @@ func SparseOCILayoutProcess(ctx context.Context, args []string) {
 	var layerCompactStreamFlags layerMappingFlag
 	var manifestPaths stringSliceFlag
 	var configPaths stringSliceFlag
+	var useSymlinks bool
 	var format string
 
 	flagSet := flag.NewFlagSet("sparse-oci-layout", flag.ExitOnError)
@@ -42,6 +43,7 @@ func SparseOCILayoutProcess(ctx context.Context, args []string) {
 	flagSet.Var(&layerCompactStreamFlags, "layer-compact-stream", "Layer compact stream as <metadata_path>=<cstream_path> (can be specified multiple times)")
 	flagSet.Var(&manifestPaths, "manifest-path", "Path to manifest file (for index, can be specified multiple times)")
 	flagSet.Var(&configPaths, "config-path", "Path to config file (for index, can be specified multiple times)")
+	flagSet.BoolVar(&useSymlinks, "symlink", false, "Use symlinks instead of copying files")
 
 	if err := flagSet.Parse(args); err != nil {
 		flagSet.Usage()
@@ -74,7 +76,7 @@ func SparseOCILayoutProcess(ctx context.Context, args []string) {
 			fmt.Fprintf(os.Stderr, "Error: --index requires at least one --manifest-path and --config-path\n")
 			os.Exit(1)
 		}
-		err = assembleSparseLayoutWithIndex(ctx, indexPath, outputDir, format, manifestPaths, configPaths, layerFlags, layerCompactStreamFlags)
+		err = assembleSparseLayoutWithIndex(ctx, indexPath, outputDir, format, manifestPaths, configPaths, layerFlags, layerCompactStreamFlags, useSymlinks)
 	} else {
 		if manifestPath == "" {
 			fmt.Fprintf(os.Stderr, "Error: either --manifest or --index is required\n")
@@ -90,7 +92,7 @@ func SparseOCILayoutProcess(ctx context.Context, args []string) {
 			fmt.Fprintf(os.Stderr, "Error: cannot use --manifest-path or --config-path without --index\n")
 			os.Exit(1)
 		}
-		err = assembleSparseLayout(ctx, manifestPath, configPath, outputDir, format, layerFlags, layerCompactStreamFlags)
+		err = assembleSparseLayout(ctx, manifestPath, configPath, outputDir, format, layerFlags, layerCompactStreamFlags, useSymlinks)
 	}
 
 	if err != nil {
@@ -166,7 +168,7 @@ func writeLayout(ctx context.Context, b *ocilayout.Builder, format, outputPath s
 	return b.WriteDir(ctx, outputPath)
 }
 
-func assembleSparseLayout(ctx context.Context, manifestPath, configPath, outputPath, format string, layers, layerCompactStreamFlags layerMappingFlag) error {
+func assembleSparseLayout(ctx context.Context, manifestPath, configPath, outputPath, format string, layers, layerCompactStreamFlags layerMappingFlag, useSymlinks bool) error {
 	manifestData, err := os.ReadFile(manifestPath)
 	if err != nil {
 		return fmt.Errorf("reading manifest: %w", err)
@@ -186,11 +188,12 @@ func assembleSparseLayout(ctx context.Context, manifestPath, configPath, outputP
 	}
 
 	b := ocilayout.New(ocilayout.SparseOCILayout()).
+		WithLinkStrategy(useSymlinks, false).
 		AddManifest(sparseManifestInput(&manifest, manifestData, configPath, metaByDigest, cstreamByDigest))
 	return writeLayout(ctx, b, format, outputPath)
 }
 
-func assembleSparseLayoutWithIndex(ctx context.Context, indexPath, outputPath, format string, manifestPaths, configPaths []string, layers, layerCompactStreamFlags layerMappingFlag) error {
+func assembleSparseLayoutWithIndex(ctx context.Context, indexPath, outputPath, format string, manifestPaths, configPaths []string, layers, layerCompactStreamFlags layerMappingFlag, useSymlinks bool) error {
 	indexData, err := os.ReadFile(indexPath)
 	if err != nil {
 		return fmt.Errorf("reading index: %w", err)
@@ -206,6 +209,7 @@ func assembleSparseLayoutWithIndex(ctx context.Context, indexPath, outputPath, f
 	}
 
 	b := ocilayout.New(ocilayout.SparseOCILayout()).
+		WithLinkStrategy(useSymlinks, false).
 		SetRootIndex(ocilayout.BlobFromBytes(indexData))
 
 	for i := range manifestPaths {

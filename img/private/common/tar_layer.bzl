@@ -4,6 +4,7 @@ load("@bazel_skylib//lib:paths.bzl", "paths")
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("//img/private/common:build.bzl", "TOOLCHAIN")
 load("//img/private/common:layer_helper.bzl", "build_layer_mtree", "compression_tuning_args", "layer_history", "layer_name")
+load("//img/private/common:tree_symlinks.bzl", "use_tree_symlinks")
 load("//img/private/providers:layers_info.bzl", "LayersInfo")
 load("//img/private/providers:single_layer_info.bzl", "SingleLayerInfo")
 
@@ -406,6 +407,10 @@ def _build_input_files_cas(ctx, name, extra_inputs):
     the layer), expanding tree artifacts and skipping pure symlinks (which carry
     no content blob). The resulting tree artifact lets a layer be reconstructed
     from its compact stream without materializing the layer blob.
+
+    Where the exec platform and Bazel version allow it, the entries are relative
+    symlinks to the input files instead of copies, so a layer's inputs are not
+    materialized twice (see use_tree_symlinks).
     """
     output_dir = ctx.actions.declare_directory(name + ".inputfilecas")
     input_files = depset(transitive = extra_inputs)
@@ -420,6 +425,8 @@ def _build_input_files_cas(ctx, name, extra_inputs):
     args.add("--output", output_dir.path)
 
     img_toolchain_info = ctx.toolchains[TOOLCHAIN].imgtoolchaininfo
+    if use_tree_symlinks(img_toolchain_info.tool_exe):
+        args.add("--symlink")
     ctx.actions.run(
         outputs = [output_dir],
         inputs = input_files,

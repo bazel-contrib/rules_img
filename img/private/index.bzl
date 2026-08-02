@@ -7,6 +7,7 @@ load("//img/private:soci_deploy.bzl", "soci_deploy_children")
 load("//img/private:stamp.bzl", "expand_or_write")
 load("//img/private/common:build.bzl", "TOOLCHAIN", "TOOLCHAINS")
 load("//img/private/common:transitions.bzl", "multi_platform_image_transition", "reset_platform_transition")
+load("//img/private/common:tree_symlinks.bzl", "use_tree_symlinks")
 load("//img/private/common:write_index_json.bzl", "write_index_json")
 load("//img/private/providers:index_info.bzl", "ImageIndexInfo")
 load("//img/private/providers:load_config_info.bzl", "LoadConfigInfo")
@@ -121,6 +122,8 @@ def _build_sparse_oci_layout(ctx, format, index_out, manifests):
         inputs.append(child.config)
 
     img_toolchain_info = ctx.toolchains[TOOLCHAIN].imgtoolchaininfo
+    if format == "directory" and use_tree_symlinks(img_toolchain_info.tool_exe):
+        args.add("--symlink")
     ctx.actions.run(
         inputs = inputs,
         outputs = [output],

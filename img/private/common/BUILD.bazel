@@ -69,7 +69,10 @@ bzl_library(
     name = "sparse_oci_layout",
     srcs = ["sparse_oci_layout.bzl"],
     visibility = ["//img:__subpackages__"],
-    deps = [":build"],
+    deps = [
+        ":build",
+        ":tree_symlinks",
+    ],
 )
 
 bzl_library(
@@ -79,11 +82,19 @@ bzl_library(
     deps = [
         ":build",
         ":layer_helper",
+        ":tree_symlinks",
         "//img/private/providers:layers_info",
         "//img/private/providers:single_layer_info",
         "@bazel_skylib//lib:paths",
         "@bazel_skylib//rules:common_settings",
     ],
+)
+
+bzl_library(
+    name = "tree_symlinks",
+    srcs = ["tree_symlinks.bzl"],
+    visibility = ["//img:__subpackages__"],
+    deps = ["@bazel_features//:features"],
 )
 
 bzl_library(
