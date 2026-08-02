@@ -1,0 +1,58 @@
+name: Push Service Images
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  push-ghcr:
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+    - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+    - name: Login to GHCR
+      uses: docker/login-action@v3
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    - name: Generate BuildBuddy bazelrc
+      uses: ./.github/actions/generate-buildbuddy-bazelrc
+      with:
+        template-path: .github/workflows/.bazelrc.buildbuddy
+        output-path: modules/rules_img_services/buildbuddy.bazelrc
+        api-key: ${{ secrets.BUILDBUDDY_API_KEY }}
+    - name: Setup Bazel
+      uses: bazel-contrib/setup-bazel@c5acdfb288317d0b5c0bbd7a396a3dc868bb0f86 # 0.19.0
+      with:
+        bazelisk-cache: true
+        repository-cache: true
+        bazelrc: import %workspace%/buildbuddy.bazelrc
+    - name: Push images to ghcr.io
+      working-directory: modules/rules_img_services
+      shell: bash
+      run: |
+        if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+          # Version tag: strip leading 'v', also push as 'latest'
+          VERSION_TAG="${GITHUB_REF_NAME#v}"
+          TAGS="--tag=${VERSION_TAG} --tag=latest"
+        else
+          # Push to main or manual run: pseudoversion
+          VERSION=$(sed -n 's/.*version = "\([^"]*\)".*/\1/p' ../../MODULE.bazel | head -1)
+          DATE=$(git log -1 --format=%cd --date=format:%Y%m%d)
+          SHORT_SHA="${GITHUB_SHA:0:7}"
+          TAGS="--tag=${VERSION}-${DATE}-${SHORT_SHA}"
+        fi
+        # shellcheck disable=SC2086
+        bazelisk run //:push -- ${TAGS}

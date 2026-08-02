@@ -554,6 +554,20 @@ This results in a more complex implementation, but also allows for interesting o
 - ✅ [eStargz / SOCI support for lazy pulling](#estargz-lazy-pulling)
 - ✅ [Incremental loading into daemons](#incremental-loading)
 
+## Published Images
+
+The following service images are published to GitHub Container Registry on every
+commit to main (as `<version>-<date>-<sha>`) and on every version tag (as
+`<version>` and `latest`). All images are multi-platform (linux/amd64,
+linux/arm64).
+
+| Image | Description |
+|---|---|
+| `ghcr.io/bazel-contrib/rules_img/oci-distribution-gateway` | Registry gateway: build actions speak the OCI distribution protocol to it anonymously; it authenticates upstream and enforces a policy file. See [docs](img_tool/cmd/oci-distribution-gateway/README.md). |
+| `ghcr.io/bazel-contrib/rules_img/cas-registry` | CAS-backed container registry for the [CAS push strategy](docs/push-strategies.md#cas-registry-push): reads layer blobs directly from a REAPI CAS instead of storing them itself. |
+| `ghcr.io/bazel-contrib/rules_img/bes-listener` | Build Event Stream listener for the [BES push strategy](docs/push-strategies.md#bes-push): assembles and pushes images as a side-effect of Bazel's BES uploads. |
+| `ghcr.io/bazel-contrib/rules_img/img` | The `img` command-line tool, as a container image and as an [ORAS](https://oras.land) artifact (one layer per platform, titled after the matching GitHub release asset). |
+
 ## Documentation
 
 - [API Reference](docs/)

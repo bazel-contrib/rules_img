@@ -150,7 +150,21 @@ Also note that the registry doesn't offer TLS nor authentication, so it should o
 - ❌ Registry must have access to CAS
 
 ### Setup Guide
-1. Deploy the CAS-integrated registry:
+1. Deploy the CAS-integrated registry using the pre-built image from GitHub Container Registry:
+
+```bash
+docker run --rm \
+  ghcr.io/bazel-contrib/rules_img/cas-registry:latest \
+  --reapi-endpoint grpc://your-cas-server:9092 \
+  --credential-helper tweag-credential-helper \
+  --address 0.0.0.0 \
+  --port 80 \
+  --grpc-port 4444 \
+  --enable-blobcache \
+  --blob-store reapi
+```
+
+Alternatively, build from source:
 ```bash
 # Build the registry
 bazel build @rules_img_tool//cmd/registry
@@ -217,7 +231,18 @@ Note that the BES service doesn't offer TLS nor authentication, so it should onl
 - ❌ Requires significant infrastructure
 
 ### Setup Guide
-1. Deploy the BES backend with image push support:
+1. Deploy the BES backend using the pre-built image from GitHub Container Registry:
+
+```bash
+docker run --rm \
+  ghcr.io/bazel-contrib/rules_img/bes-listener:latest \
+  --address 0.0.0.0 \
+  --port 8080 \
+  --cas-endpoint grpc://your-cas-server:9092 \
+  --credential-helper tweag-credential-helper
+```
+
+Alternatively, build from source:
 ```bash
 # Build the BES server
 bazel build @rules_img_tool//cmd/bes

@@ -13,6 +13,16 @@ and metrics. One feature has a document of its own — the
 [blob existence cache](blob-existence-cache.md), which is also where replicating it
 between the instances of a serving deployment is described.
 
+## Container image
+
+A pre-built multi-platform (linux/amd64, linux/arm64) image is published to
+GitHub Container Registry on every commit to main and on every version tag:
+
+```
+ghcr.io/bazel-contrib/rules_img/oci-distribution-gateway:latest
+ghcr.io/bazel-contrib/rules_img/oci-distribution-gateway:<version>
+```
+
 ## Modes
 
 ```bash
@@ -360,7 +370,7 @@ spec:
       terminationGracePeriodSeconds: 1800   # > --shutdown-timeout
       containers:
         - name: gateway
-          image: <your oci-distribution-gateway image>
+          image: ghcr.io/bazel-contrib/rules_img/oci-distribution-gateway:latest
           args:
             - serve
             - --address=0.0.0.0
@@ -451,7 +461,7 @@ listening on another socket on the shared volume.
 
    ```yaml
    - name: oci-distribution-gateway
-     image: <your oci-distribution-gateway image>
+     image: ghcr.io/bazel-contrib/rules_img/oci-distribution-gateway:latest
      args:
        - --unix-socket=/worker/oci-gateway.sock
        - --policy-file=/etc/img/gateway-policy.json
@@ -470,7 +480,7 @@ listening on another socket on the shared volume.
 
    ```yaml
    - name: oci-distribution-gateway
-     image: <your oci-distribution-gateway image>
+     image: ghcr.io/bazel-contrib/rules_img/oci-distribution-gateway:latest
      args:
        - forward
        - --unix-socket=/worker/oci-gateway.sock
@@ -585,7 +595,7 @@ extraVolumeMounts:
     mountPath: /run/rules-img-gateway
 extraContainers:
   - name: oci-distribution-gateway
-    image: <your oci-distribution-gateway image>
+    image: ghcr.io/bazel-contrib/rules_img/oci-distribution-gateway:latest
     args:
       - --unix-socket=/run/rules-img-gateway/gateway.sock
       - --policy-file=/etc/rules-img-gateway/policy.yaml
