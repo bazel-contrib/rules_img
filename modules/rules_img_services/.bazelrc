@@ -10,6 +10,29 @@ common --@rules_img//img/settings:compression_level=4
 common --@rules_img//img/settings:additional_image_labels_file=//services:image_labels
 common --@rules_go//go/config:pure
 
+# The images published from this module must be reproducible: the same commit has
+# to yield the same digests no matter which host built it.
+#
+# docs: https://bazel.build/reference/command-line-reference#flag--strip
+build --strip=always
+
+common --enable_platform_specific_config
+
+# Rewrite output paths in action command lines to a configuration-independent
+# `bazel-out/<mnemonic>` form. Without this, the output directory name embeds the
+# legacy `--cpu` value, which defaults to the *host* CPU even for a target that
+# transitions to another platform. Anything that bakes an output path into an
+# artifact -- the Go compiler records source paths of generated files for stack
+# traces -- then produces different bytes on a macOS host than on a Linux host
+# for the very same target.
+#
+# Only enabled on the platforms where path mapping works. Images built on a
+# Windows host keep the unmapped paths and so differ from the published ones,
+# which is acceptable: releases are built on Linux.
+# docs: https://bazel.build/reference/command-line-reference#flag--experimental_output_paths
+common:macos --experimental_output_paths=strip
+common:linux --experimental_output_paths=strip
+
 # Workaround for rules_python no longer being autoloaded by Bazel 9:
 #  https://github.com/bazelbuild/bazel/pull/27593
 #
