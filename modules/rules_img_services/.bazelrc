@@ -10,6 +10,9 @@ common --@rules_img//img/settings:compression_level=4
 common --@rules_img//img/settings:additional_image_labels_file=//services:image_labels
 common --@rules_go//go/config:pure
 
+build:cosign --@rules_img//img/settings:sign=enabled
+build:cosign --@rules_img//img/settings:sign_setting=//services:cosign_keyless
+
 # The images published from this module must be reproducible: the same commit has
 # to yield the same digests no matter which host built it.
 #

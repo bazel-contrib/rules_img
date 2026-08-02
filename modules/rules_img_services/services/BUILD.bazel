@@ -1,5 +1,6 @@
 load("@rules_img//img:multi_deploy.bzl", "multi_deploy")
 load("@rules_img//img:push.bzl", "image_push_spec")
+load("@rules_img//img:signing.bzl", "signing_config")
 
 multi_deploy(
     name = "push",
@@ -15,6 +16,16 @@ image_push_spec(
     name = "push_spec",
     repository = "bazel-contrib/rules_img/{{.image_target_name}}",
     visibility = ["//services:__subpackages__"],
+)
+
+signing_config(
+    name = "cosign_keyless",
+    targets = [
+        "roots",
+        "child_manifests",
+    ],
+    tool = "@rules_img_signer_cosign",
+    visibility = ["//visibility:public"],
 )
 
 filegroup(
