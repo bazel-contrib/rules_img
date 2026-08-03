@@ -198,12 +198,18 @@ warning at startup saying so. A forwarding sidecar deployment is exactly the cas
 where it is *not* true, and a forwarder refuses to relay `/_rules_img/` paths for
 the same reason.
 
+When the clients of that listener are anonymous, an allow-list has nothing to match
+on and the endpoints should not be there at all. Give replication a listener of its
+own with `--peer-port`, which moves them off the client listener entirely and lets
+the peers authenticate with mTLS while the clients do not — see
+[A second listener for peers](README.md#a-second-listener-for-peers).
+
 The credential this gateway presents to its peers defaults to its **serving
 identity**: with one Deployment, one keypair and one CA, every instance already
 holds a certificate its peers accept (`--client-ca-file`) and a bundle that
-verifies theirs, so replication needs no material of its own. Pass
-`--blob-existence-cache-peer-token-file` instead if your peers authenticate by
-token.
+verifies theirs, so replication needs no material of its own. With a peer listener
+it is that listener's keypair and CA instead. Pass
+`--blob-existence-cache-peer-token-file` if your peers authenticate by token.
 
 ### Discovering peers in Kubernetes
 
@@ -214,7 +220,8 @@ scale-up, a scale-down, a rolling update and a lost node with no restart and no
 configuration to keep in sync. It needs:
 
 - an explicit `--port`, since a discovered peer is reached at its endpoint address
-  on the port this instance itself serves,
+  on the port this instance itself serves replication on (`--peer-port` when
+  replication has [a listener of its own](README.md#a-second-listener-for-peers)),
 - `--blob-existence-cache-peer-server-name`, because a certificate issued for the
   Service name does not cover the pod IPs that are dialled,
 - and RBAC, which no built-in role grants:

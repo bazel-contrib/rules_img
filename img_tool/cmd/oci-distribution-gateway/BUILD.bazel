@@ -11,12 +11,14 @@ load("@rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
 # test dependency to deps below by hand — gazelle will not do it for you.
 # gazelle:exclude helpers_test.go
 # gazelle:exclude main_test.go
+# gazelle:exclude peerlistener_test.go
 
 go_library(
     name = "oci-distribution-gateway_lib",
     srcs = [
         "forward.go",
         "main.go",
+        "peerlistener.go",
         "serve.go",
     ],
     importpath = "github.com/bazel-contrib/rules_img/img_tool/cmd/oci-distribution-gateway",
@@ -47,6 +49,7 @@ go_test(
     srcs = [
         "helpers_test.go",
         "main_test.go",
+        "peerlistener_test.go",
     ],
     embed = [":oci-distribution-gateway_lib"],
     # keep

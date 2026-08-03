@@ -237,7 +237,7 @@ func TestCacheReplicationFlagValidation(t *testing.T) {
 			f.cachePeers = repeatedFlag{"https://gw-1:8443"}
 			f.unixSocket = "/run/gw.sock"
 		}),
-		want: "not --unix-socket",
+		want: "instead of --unix-socket",
 	}, {
 		name:  "a plaintext peer without the escape hatch",
 		flags: withCache(func(f *serveFlags) { f.cachePeers = repeatedFlag{"http://gw-1:8443"} }),
@@ -279,12 +279,13 @@ func TestCacheReplicationFlagValidation(t *testing.T) {
 		flags: withCache(func(f *serveFlags) {
 			f.cachePeerService = "img-gateway/gw"
 		}),
-		want: "serves plaintext",
+		want: "serves replication over plaintext",
 	}} {
 		t.Run(tc.name, func(t *testing.T) {
 			// serverTLS is nil throughout: these are the checks that do not depend on
-			// the TLS material, and a nil one is a gateway serving plaintext.
-			replication, err := tc.flags.cacheReplication(nil)
+			// the TLS material, and a nil one is a gateway serving plaintext. So is
+			// the peer listener, which these cases do not use.
+			replication, err := tc.flags.cacheReplication(nil, nil)
 			switch {
 			case tc.want == "" && err != nil:
 				t.Fatalf("cacheReplication() = %v, want it to pass", err)
