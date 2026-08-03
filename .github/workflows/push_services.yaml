@@ -19,6 +19,7 @@ jobs:
     permissions:
       contents: read
       packages: write
+      id-token: write
     steps:
     - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
     - name: Login to GHCR
@@ -39,6 +40,9 @@ jobs:
         bazelisk-cache: true
         repository-cache: true
         bazelrc: import %workspace%/buildbuddy.bazelrc
+    - name: Build images
+      working-directory: modules/rules_img_services
+      run: bazelisk build --config=cosign //:push
     - name: Push images to ghcr.io
       working-directory: modules/rules_img_services
       shell: bash
@@ -54,5 +58,10 @@ jobs:
           SHORT_SHA="${GITHUB_SHA:0:7}"
           TAGS="--tag=${VERSION}-${DATE}-${SHORT_SHA}"
         fi
+        OIDC_TOKEN_JSON="$(curl -sSf \
+          -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+          "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sigstore")"
+        SIGSTORE_ID_TOKEN="$(jq -er .value <<<"${OIDC_TOKEN_JSON}")"
+        export SIGSTORE_ID_TOKEN
         # shellcheck disable=SC2086
-        bazelisk run //:push -- ${TAGS}
+        bazelisk run --config=cosign //:push -- ${TAGS}
