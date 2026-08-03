@@ -283,6 +283,15 @@ func (f *metricsFlags) setup(ctx context.Context, serviceName string) (*telemetr
 	return metrics, metricsServer, flush
 }
 
+// gatewayListener is one HTTP server of a gateway process: the server itself, the
+// call that starts it (Serve or ServeTLS, depending on whether it speaks TLS), and
+// the address to report.
+type gatewayListener struct {
+	server *http.Server
+	serve  func() error
+	addr   net.Addr
+}
+
 // gatewayServer bundles what a gateway process serves so both modes start and
 // stop it the same way.
 type gatewayServer struct {
@@ -292,6 +301,9 @@ type gatewayServer struct {
 	serve func() error
 	// addr is reported in the startup banner.
 	addr net.Addr
+	// peer is the second listener carrying cache replication between instances, or
+	// nil when the gateway serves it on the main listener (or not at all).
+	peer *gatewayListener
 	// metrics is the Prometheus endpoint, or nil when it is not enabled.
 	metrics *http.Server
 	// shutdownTimeout bounds how long in-flight transfers get to finish.
@@ -306,10 +318,14 @@ type gatewayServer struct {
 func (g *gatewayServer) run() {
 	shutdown := make(chan os.Signal, 1)
 	signal.Notify(shutdown, syscall.SIGINT, syscall.SIGTERM)
-	serveErr := make(chan error, 1)
+	serveErr := make(chan error, 2)
 	go func() { serveErr <- g.serve() }()
 
 	fmt.Fprintf(os.Stderr, "%s on %s\n", g.banner, g.addr)
+	if g.peer != nil {
+		go func() { serveErr <- g.peer.serve() }()
+		fmt.Fprintf(os.Stderr, "%s for cache replication peers on %s\n", g.banner, g.peer.addr)
+	}
 
 	select {
 	case err := <-serveErr:
@@ -322,6 +338,13 @@ func (g *gatewayServer) run() {
 		defer cancel()
 		if err := g.server.Shutdown(shutdownCtx); err != nil {
 			log.Printf("graceful shutdown error: %v", err)
+		}
+		if g.peer != nil {
+			// After the traffic it exists to support: a fact learned while the last
+			// requests drain is still worth telling the fleet.
+			if err := g.peer.server.Shutdown(shutdownCtx); err != nil {
+				log.Printf("peer listener shutdown error: %v", err)
+			}
 		}
 		if g.metrics != nil {
 			// After the gateway itself: the last requests should still be counted,

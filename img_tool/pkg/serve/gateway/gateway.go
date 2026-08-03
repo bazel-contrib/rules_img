@@ -114,6 +114,12 @@ type Handler struct {
 	// when replication is off, which every one of its methods tolerates.
 	replication *CacheReplication
 
+	// replicationSeparate reports that replication is served on a listener of its
+	// own, so this handler refuses the replication endpoints outright. It is set
+	// by [Handler.SeparateReplicationHandler] during startup, and read on the
+	// request path.
+	replicationSeparate atomic.Bool
+
 	// warming reports that this instance is still seeding its cache from a peer
 	// and should be kept out of the load balancer until it is not — see
 	// [Handler.warmingUp]. warmingUntil is the deadline past which it reports
@@ -345,19 +351,7 @@ func (h *Handler) serve(obs *observation, w http.ResponseWriter, r *http.Request
 	// The health endpoint is answered before authentication so a Kubernetes probe
 	// can reach a listener that requires a credential.
 	if path == healthPath {
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		if h.warmingUp() {
-			// Still seeding the blob existence cache from a peer. Serving now would
-			// send this instance's share of the fleet's probes upstream for nothing,
-			// so stay out of the Service until the seeding is done or its budget is
-			// spent (see Handler.warmingUp).
-			w.Header().Set("Retry-After", "1")
-			w.WriteHeader(http.StatusServiceUnavailable)
-			_, _ = io.WriteString(w, "warming up\n")
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-		_, _ = io.WriteString(w, "ok\n")
+		h.serveHealth(w)
 		return
 	}
 
@@ -377,6 +371,15 @@ func (h *Handler) serve(obs *observation, w http.ResponseWriter, r *http.Request
 	// what it may do to this instance's cache is gated by the identity of the peer
 	// rather than by the policy (see replication.go).
 	if strings.HasPrefix(path, replicationPathPrefix) {
+		if h.replicationSeparate.Load() {
+			// Replication has a listener of its own, which is the only place these
+			// endpoints exist. Answering them here too would put the write path to
+			// this instance's cache back on the surface the separate listener was
+			// configured to take it off.
+			h.writeError(obs, w, r, http.StatusNotFound, "UNSUPPORTED", errUnsupportedEndpoint,
+				"this gateway replicates its blob existence cache on a separate listener")
+			return
+		}
 		h.serveCacheReplication(obs, w, r, path)
 		return
 	}
@@ -488,6 +491,26 @@ func (h *Handler) serve(obs *observation, w http.ResponseWriter, r *http.Request
 	}
 
 	h.forward(obs, w, r, repo, cls)
+}
+
+// serveHealth answers the unauthenticated health endpoint. Both of a gateway's
+// listeners answer it: a Kubernetes probe names a port, and a peer listener that
+// could not say whether it is ready would have to be probed through the client
+// one, which reports the readiness of a different socket.
+func (h *Handler) serveHealth(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	if h.warmingUp() {
+		// Still seeding the blob existence cache from a peer. Serving now would
+		// send this instance's share of the fleet's probes upstream for nothing,
+		// so stay out of the Service until the seeding is done or its budget is
+		// spent (see Handler.warmingUp).
+		w.Header().Set("Retry-After", "1")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = io.WriteString(w, "warming up\n")
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	_, _ = io.WriteString(w, "ok\n")
 }
 
 // serveCachedBlobHead answers a blob existence check from the blob existence

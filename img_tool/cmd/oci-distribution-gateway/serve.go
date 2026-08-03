@@ -60,6 +60,15 @@ type serveFlags struct {
 	allowPlaintextH2C        bool
 	allowUnauthenticatedText bool
 
+	// A second listener for peer (instance-to-instance) traffic, so a deployment
+	// can serve its clients one way and its peers another.
+	peerAddress                      string
+	peerPort                         int
+	peerTLSCertFile                  string
+	peerTLSKeyFile                   string
+	peerClientCAFile                 string
+	allowUnauthenticatedPeerListener bool
+
 	metrics metricsFlags
 }
 
@@ -117,6 +126,13 @@ func (f *serveFlags) register(flagSet *flag.FlagSet) {
 	flagSet.BoolVar(&f.allowPlaintextH2C, "dangerously-allow-plaintext-h2c", false, "Accept prior-knowledge HTTP/2 (h2c) on the plaintext listener. DANGEROUS: sniffing the h2c preface happens before any read deadline is set, so a client that connects and stalls holds a connection indefinitely. Only for a listener reachable solely through a service-mesh sidecar.")
 	flagSet.BoolVar(&f.allowUnauthenticatedText, "dangerously-allow-unauthenticated-clients", false, "Serve a network-reachable address without client authentication. DANGEROUS: this listener holds the upstream registry credentials, and a Kubernetes ClusterIP Service is reachable from every namespace.")
 
+	flagSet.StringVar(&f.peerAddress, "peer-address", "", "Address of a second listener carrying only cache replication between the instances of this deployment, so peers can be authenticated differently from clients -- mTLS between instances while clients connect over plaintext, for example. Setting it (or --peer-port) moves the /_rules_img/cache/ endpoints off the client listener entirely. Defaults to --address once --peer-port is set.")
+	flagSet.IntVar(&f.peerPort, "peer-port", 0, "Port of the peer listener. Required to enable it, and it is also the port a discovered peer is reached on, so every instance must use the same one.")
+	flagSet.StringVar(&f.peerTLSCertFile, "peer-tls-cert-file", "", "PEM certificate the peer listener serves TLS with. Defaults to --tls-cert-file. Re-read when the file changes and on SIGHUP.")
+	flagSet.StringVar(&f.peerTLSKeyFile, "peer-tls-key-file", "", "PEM private key matching --peer-tls-cert-file. Both or neither.")
+	flagSet.StringVar(&f.peerClientCAFile, "peer-client-ca-file", "", "PEM bundle of CAs whose client certificates the peer listener accepts. Setting it enables mTLS there and requires a certificate for that listener. Defaults to --client-ca-file. This is the flag that lets instances speak mTLS to each other while clients do not.")
+	flagSet.BoolVar(&f.allowUnauthenticatedPeerListener, "dangerously-allow-unauthenticated-peer-listener", false, "Run the peer listener with no client authentication. DANGEROUS: anything able to reach it can insert blob existence facts, and a client that believes a false one skips an upload it still owes.")
+
 	f.metrics.register(flagSet)
 }
 
@@ -137,6 +153,7 @@ func newServeFlagSet() (*flag.FlagSet, *serveFlags) {
 				"oci-distribution-gateway serve --unix-socket /run/gw.sock --dangerously-allow-all",
 				"oci-distribution-gateway serve --port 8080 --policy-file /etc/img/policy.json --metrics-exporter prometheus",
 				"oci-distribution-gateway serve --address 0.0.0.0 --port 8443 --policy-file /etc/img/policy.json \\\n      --tls-cert-file /tls/tls.crt --tls-key-file /tls/tls.key \\\n      --client-ca-file /tls/ca.crt --allowed-client-id spiffe://cluster.local/ns/bb/sa/worker",
+				"oci-distribution-gateway serve --address 0.0.0.0 --port 8080 --policy-file /etc/img/policy.json \\\n      --dangerously-allow-unauthenticated-clients \\\n      --peer-port 8443 --peer-tls-cert-file /tls/tls.crt --peer-tls-key-file /tls/tls.key \\\n      --peer-client-ca-file /tls/ca.crt --allowed-cache-peer-id oci-gateway.img-gateway.svc \\\n      --blob-existence-cache-peer-service oci-distribution-gateway",
 			})
 	}
 	return flagSet, flags
@@ -171,6 +188,10 @@ func serveProcess(ctx context.Context, args []string) {
 	}
 	if flags.clientCAFile != "" && flags.tlsCertFile == "" {
 		fmt.Fprintln(os.Stderr, "Error: --client-ca-file requires --tls-cert-file (a client certificate can only be presented over TLS)")
+		os.Exit(1)
+	}
+	if err := flags.validatePeerListener(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 	// A bound too small to hold one blob would leave a cache that stores nothing
@@ -245,6 +266,13 @@ func serveProcess(ctx context.Context, args []string) {
 		}
 	}
 
+	var peers *peerListener
+	peers, err = flags.buildPeerListener(onReload)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
 	var peerAuth *gateway.PeerAuth
 	if flags.clientCAFile != "" || len(flags.clientTokenFiles) > 0 || flags.serviceAccountAudience != "" {
 		peerAuth, err = gateway.NewPeerAuth(gateway.PeerAuthOptions{
@@ -284,7 +312,7 @@ func serveProcess(ctx context.Context, args []string) {
 	if peerAuth != nil {
 		handlerOpts = append(handlerOpts, gateway.WithPeerAuth(peerAuth))
 	}
-	replication, err := flags.cacheReplication(serverTLS)
+	replication, err := flags.cacheReplication(serverTLS, peers)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
@@ -301,6 +329,25 @@ func serveProcess(ctx context.Context, args []string) {
 	}
 	handler := gateway.New(handlerOpts...)
 	recordReload = handler.RecordMaterialReload
+
+	// Split cache replication off onto its own listener when one is configured. It
+	// has to happen before the client listener opens: from this call on, the client
+	// listener answers the replication endpoints with 404, and a window in which it
+	// still served them would be exactly the anonymous write path into this
+	// instance's cache that the separate listener exists to close.
+	var peerServer *gatewayListener
+	if peers.enabled() {
+		replicationHandler := handler.SeparateReplicationHandler(peers.auth)
+		if replicationHandler == nil {
+			fmt.Fprintln(os.Stderr, "Error: --peer-port configures a listener for cache replication, which is not enabled")
+			os.Exit(1)
+		}
+		peerServer, err = peers.serve(replicationHandler)
+		if err != nil {
+			log.Fatalf("Failed to listen for peers: %v", err)
+		}
+		log.Printf("cache replication served on its own listener (%s)", peers.summary())
+	}
 
 	listener, cleanup, err := listen(flags.unixSocket, flags.address, flags.port, socketMode)
 	if err != nil {
@@ -345,6 +392,7 @@ func serveProcess(ctx context.Context, args []string) {
 	if peerAuth != nil {
 		go peerAuth.Watch(done, 0)
 	}
+	peers.watch(done)
 	// Peer discovery, the warm-up that seeds this instance's cache from a peer, and
 	// the batching of outbound facts. The listener is already open, so a peer's
 	// broadcast is accepted from here on — including while the warm-up runs, which
@@ -371,6 +419,7 @@ func serveProcess(ctx context.Context, args []string) {
 					log.Printf("token reload FAILED, keeping previous tokens: %v", err)
 				}
 			}
+			peers.reload()
 		}
 	}()
 
@@ -378,6 +427,7 @@ func serveProcess(ctx context.Context, args []string) {
 		server:          server,
 		serve:           serve,
 		addr:            listener.Addr(),
+		peer:            peerServer,
 		metrics:         metricsServer,
 		shutdownTimeout: flags.shutdownTimeout,
 		banner:          "oci-distribution-gateway listening",
@@ -392,7 +442,12 @@ func serveProcess(ctx context.Context, args []string) {
 // CA — every instance already holds a certificate its peers accept and a CA bundle
 // that verifies theirs, so replication needs no material of its own. A fleet whose
 // peers authenticate by token instead passes --blob-existence-cache-peer-token-file.
-func (f *serveFlags) cacheReplication(serverTLS *gateway.PeerTLS) (*gateway.CacheReplication, error) {
+//
+// peers, when set, is the second listener replication is served on, and it takes
+// over from the client listener in every respect: its TLS material is what this
+// instance presents to its peers and verifies them with, and its port is the one a
+// discovered peer is dialled on.
+func (f *serveFlags) cacheReplication(serverTLS *gateway.PeerTLS, peers *peerListener) (*gateway.CacheReplication, error) {
 	if len(f.cachePeers) == 0 && f.cachePeerService == "" {
 		// Refuse to ignore a flag that only makes sense with peers: silently doing
 		// nothing with --allowed-cache-peer-id would look like a control that is in
@@ -405,6 +460,7 @@ func (f *serveFlags) cacheReplication(serverTLS *gateway.PeerTLS) (*gateway.Cach
 			{"--blob-existence-cache-peer-token-file", f.cachePeerTokenFile != ""},
 			{"--allowed-cache-peer-id", len(f.allowedCachePeerIDs) > 0},
 			{"--dangerously-allow-plaintext-cache-peer", f.allowPlaintextCachePeer},
+			{"--peer-port", peers.enabled()},
 		} {
 			if orphan.set {
 				return nil, fmt.Errorf("%s configures cache replication, which needs --blob-existence-cache-peer or --blob-existence-cache-peer-service", orphan.flag)
@@ -418,11 +474,18 @@ func (f *serveFlags) cacheReplication(serverTLS *gateway.PeerTLS) (*gateway.Cach
 	if f.blobCacheTTL <= 0 || f.blobCacheMaxMemory <= 0 {
 		return nil, errors.New("cache replication needs the blob existence cache: --blob-existence-cache-ttl and --blob-existence-cache-max-memory must both be above zero")
 	}
-	if f.unixSocket != "" {
-		return nil, errors.New("cache replication needs a TCP listener that peers can reach, not --unix-socket")
+	if f.unixSocket != "" && !peers.enabled() {
+		return nil, errors.New("cache replication needs a TCP listener that peers can reach: give the gateway --address/--port instead of --unix-socket, or serve replication on a peer listener of its own with --peer-port")
 	}
 
-	peers, err := f.cachePeerSource(serverTLS)
+	// The peer listener's material is what talks to peers when there is one: on a
+	// gateway whose clients are anonymous over plaintext, the client listener's
+	// (absent) TLS says nothing about the hop between instances.
+	replicationTLS := serverTLS
+	if peers.enabled() {
+		replicationTLS = peers.tls
+	}
+	peerSource, err := f.cachePeerSource(replicationTLS, peers)
 	if err != nil {
 		return nil, err
 	}
@@ -430,15 +493,15 @@ func (f *serveFlags) cacheReplication(serverTLS *gateway.PeerTLS) (*gateway.Cach
 	if f.cachePeerTokenFile != "" {
 		credential = newTokenReader(f.cachePeerTokenFile).token
 	}
-	if serverTLS == nil && credential == nil {
+	if replicationTLS == nil && credential == nil {
 		log.Printf("WARNING: this gateway presents no credential to its cache replication peers; they must accept anonymous clients for replication to work")
 	}
 	if len(f.allowedCachePeerIDs) == 0 {
 		log.Printf("WARNING: no --allowed-cache-peer-id is set, so every client this gateway authenticates may insert blob existence facts into its cache; a false one makes push clients skip an upload they still owe")
 	}
 	return gateway.NewCacheReplication(gateway.ReplicationConfig{
-		Peers:          peers,
-		Client:         cachePeerClient(serverTLS, f.cachePeerServerName),
+		Peers:          peerSource,
+		Client:         cachePeerClient(replicationTLS, f.cachePeerServerName),
 		Credential:     credential,
 		AllowedPeerIDs: f.allowedCachePeerIDs,
 		BatchSize:      f.cacheBatchSize,
@@ -449,8 +512,10 @@ func (f *serveFlags) cacheReplication(serverTLS *gateway.PeerTLS) (*gateway.Cach
 
 // cachePeerSource resolves the configured peers: either the static list, whose
 // URLs are validated here, or a Kubernetes Service whose endpoints are watched.
-func (f *serveFlags) cachePeerSource(serverTLS *gateway.PeerTLS) (gateway.PeerSource, error) {
-	servingTLS := serverTLS != nil && serverTLS.HasCertificate()
+func (f *serveFlags) cachePeerSource(replicationTLS *gateway.PeerTLS, peers *peerListener) (gateway.PeerSource, error) {
+	// Whether the *replication* hop is encrypted, which on a gateway with a peer
+	// listener is that listener's business and not the client listener's.
+	replicationTLSServed := replicationTLS != nil && replicationTLS.HasCertificate()
 	if f.cachePeerService == "" {
 		for _, peer := range f.cachePeers {
 			if err := f.validateCachePeer(peer); err != nil {
@@ -460,24 +525,29 @@ func (f *serveFlags) cachePeerSource(serverTLS *gateway.PeerTLS) (gateway.PeerSo
 		return gateway.StaticPeers(f.cachePeers), nil
 	}
 	// A discovered peer is a pod of this same Deployment, so it is reached the way
-	// this instance is: the same scheme, and the same container port.
-	if f.port == 0 {
-		return nil, errors.New("--blob-existence-cache-peer-service needs an explicit --port, since a discovered peer is reached on the port this gateway itself serves on")
+	// this instance is: the same scheme, and the same container port — the peer
+	// listener's when there is one, since that is where replication is served.
+	port, portFlag := f.port, "--port"
+	if peers.enabled() {
+		port, portFlag = peers.port, "--peer-port"
+	}
+	if port == 0 {
+		return nil, fmt.Errorf("--blob-existence-cache-peer-service needs an explicit %s, since a discovered peer is reached on the port this gateway itself serves replication on", portFlag)
 	}
 	scheme := "https"
-	if !servingTLS {
+	if !replicationTLSServed {
 		if !f.allowPlaintextCachePeer {
-			return nil, errors.New("this gateway serves plaintext, so replication to its peers would be plaintext too: configure --tls-cert-file, or pass --dangerously-allow-plaintext-cache-peer when a service mesh secures the hop")
+			return nil, errors.New("this gateway serves replication over plaintext, so replication to its peers would be plaintext too: configure --tls-cert-file (or --peer-tls-cert-file for a peer listener), or pass --dangerously-allow-plaintext-cache-peer when a service mesh secures the hop")
 		}
 		scheme = "http"
 	}
-	if servingTLS && f.cachePeerServerName == "" {
+	if replicationTLSServed && f.cachePeerServerName == "" {
 		log.Printf("warning: --blob-existence-cache-peer-service dials pod IPs, which a certificate issued for the Service name does not cover; set --blob-existence-cache-peer-server-name if replication fails to verify its peers")
 	}
 	return gateway.NewKubernetesPeers(gateway.KubernetesPeerOptions{
 		Service: f.cachePeerService,
 		Scheme:  scheme,
-		Port:    f.port,
+		Port:    port,
 	})
 }
 

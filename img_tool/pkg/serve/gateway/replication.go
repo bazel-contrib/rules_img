@@ -667,6 +667,73 @@ func principalIdentity(principal string) (string, bool) {
 	return "", false
 }
 
+// SeparateReplicationHandler splits cache replication off onto a listener of its
+// own and returns the [http.Handler] for it, or nil when this gateway does not
+// replicate.
+//
+// It exists for the deployment whose two audiences want two different transports:
+// build clients reaching the gateway over plaintext HTTP with no credential of
+// their own, while the instances of the deployment authenticate each other with
+// mTLS. Those cannot be the same socket — a listener either requires a client
+// certificate or it does not — so the peer traffic gets a second one, with its own
+// TLS material, its own client authentication, and nothing on it but the
+// replication endpoints and the health probe.
+//
+// Once it is called the registry-protocol listener answers /_rules_img/cache/ with
+// 404, so the write path into this instance's blob existence cache exists only on
+// the peer listener. That is the whole point of separating them: an anonymous
+// client that could insert facts could make a push client skip an upload it still
+// owes.
+//
+// peerAuth authenticates the peers. It may be nil, which is only appropriate when
+// the peer listener is unreachable except through something that authenticates it
+// (a service mesh, or a loopback address); the caller is expected to say so out
+// loud.
+func (h *Handler) SeparateReplicationHandler(peerAuth *PeerAuth) http.Handler {
+	if h.replication == nil {
+		return nil
+	}
+	h.replicationSeparate.Store(true)
+	return &replicationHandler{gateway: h, peerAuth: peerAuth}
+}
+
+// replicationHandler serves the replication endpoints (and the health probe) on a
+// listener of their own. It is what [Handler.SeparateReplicationHandler] returns.
+type replicationHandler struct {
+	gateway  *Handler
+	peerAuth *PeerAuth
+}
+
+// ServeHTTP implements [http.Handler]. It is deliberately a closed surface: the
+// health probe, the two replication endpoints, and 404 for everything else. None
+// of the registry protocol is reachable here, so a peer credential cannot be spent
+// on an upstream registry.
+func (rh *replicationHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	h := rh.gateway
+	obs, w, r := h.metrics.begin(w, r)
+	defer obs.finish(r.Context())
+
+	path := r.URL.EscapedPath()
+	if path == healthPath {
+		h.serveHealth(w)
+		return
+	}
+	if rh.peerAuth != nil {
+		principal, err := rh.peerAuth.Authenticate(r)
+		if err != nil {
+			h.writePeerAuthError(obs, w, r, err)
+			return
+		}
+		obs.principal = principal
+	}
+	if !strings.HasPrefix(path, replicationPathPrefix) {
+		h.writeError(obs, w, r, http.StatusNotFound, "UNSUPPORTED", errUnsupportedEndpoint,
+			"this listener serves blob existence cache replication only")
+		return
+	}
+	h.serveCacheReplication(obs, w, r, path)
+}
+
 // serveCacheReplication answers the two replication endpoints, or explains why it
 // will not.
 //

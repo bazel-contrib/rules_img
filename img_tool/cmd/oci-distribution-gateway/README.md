@@ -78,6 +78,10 @@ until it is done, or until its warm-up budget runs out.
 | `--allowed-serviceaccount <s>` | any for the audience | `system:serviceaccount:<ns>:<name>`. Repeatable |
 | `--dangerously-allow-plaintext-h2c` | `false` | Accept prior-knowledge h2c on the plaintext listener |
 | `--dangerously-allow-unauthenticated-clients` | `false` | Serve a network-reachable address with no client authentication |
+| `--peer-address <host>`, `--peer-port <n>` | `--address`, — | A [second listener](#a-second-listener-for-peers) carrying only cache replication between instances, so peers are authenticated differently from clients. `--peer-port` enables it |
+| `--peer-tls-cert-file`, `--peer-tls-key-file` | `--tls-cert-file`/`--tls-key-file` | TLS keypair of the peer listener. Hot-reloaded |
+| `--peer-client-ca-file <path>` | `--client-ca-file` | CAs whose client certificates the peer listener accepts. This is what lets instances speak mTLS while clients do not. Hot-reloaded |
+| `--dangerously-allow-unauthenticated-peer-listener` | `false` | Run the peer listener with no client authentication |
 
 ### `forward`
 
@@ -270,6 +274,65 @@ Client certificate identities are re-checked on **every request**, not just per
 connection, so removing one from `--allowed-client-id` takes effect at once even on
 an established connection. There is no CRL or OCSP, so that allow-list *is* the
 revocation mechanism for certificates; use short-lived leaves.
+
+### A second listener for peers
+
+A listener either asks its clients for a certificate or it does not. So a
+deployment that wants **anonymous plaintext for its build clients and mTLS between
+its own instances** cannot express that on one socket. `--peer-port` gives the
+instance-to-instance traffic — the [blob existence cache
+replication](blob-existence-cache.md#replicating-the-cache-between-instances) —
+a listener of its own, with its own TLS material and its own client
+authentication:
+
+```bash
+oci-distribution-gateway serve --policy-file /etc/img/policy.yaml \
+  --address 0.0.0.0 --port 8080 \
+  --dangerously-allow-unauthenticated-clients \
+  --peer-port 8443 \
+  --peer-tls-cert-file /tls/tls.crt --peer-tls-key-file /tls/tls.key \
+  --peer-client-ca-file /tls/ca.crt \
+  --allowed-cache-peer-id oci-distribution-gateway.img-gateway.svc \
+  --blob-existence-cache-peer-service oci-distribution-gateway
+```
+
+Enabling it **moves** the endpoints rather than duplicating them: from then on the
+client listener answers `/_rules_img/cache/` with `404`, and the peer listener is
+the only place they exist. That is the point of the split, not a side effect —
+inserting a cache entry is a write into this instance's view of what is upstream,
+and an anonymous client that could claim a blob exists would make push clients skip
+an upload they still owe.
+
+The peer listener is a closed surface: the two replication endpoints and
+`/healthz`, and `404` for everything else. None of the registry protocol is
+reachable there, so a peer credential cannot be spent on an upstream registry.
+Probe it on its own port — `/healthz` answers before authentication there too, and
+each listener reports the readiness of its own socket.
+
+What it inherits, so the common cases stay short:
+
+| Flag | Falls back to |
+|---|---|
+| `--peer-address` | `--address` |
+| `--peer-tls-cert-file` / `--peer-tls-key-file` | `--tls-cert-file` / `--tls-key-file` |
+| `--peer-client-ca-file` | `--client-ca-file` |
+| the peer identity allow-list | `--allowed-cache-peer-id` (the peers are this listener's only clients, so who may connect and who may write to the cache are the same question) |
+
+`--peer-port` is never inherited and never defaulted: it is the port a
+**discovered** peer is dialled on, so every instance of a deployment has to serve
+it on the same one. Replication follows the peer listener in every other respect
+too — its TLS decides whether the hop is `https`, so a gateway that is plaintext to
+its clients and TLS to its peers replicates over TLS, with no
+`--dangerously-allow-plaintext-cache-peer` needed.
+
+With this in play the Service needs both ports, and the peer one should be
+reachable only from the gateway's own namespace:
+
+```yaml
+ports:
+  - {name: gateway, port: 8080, targetPort: gateway}
+  - {name: peer,    port: 8443, targetPort: peer}
+```
 
 ## Two-hop deployment
 

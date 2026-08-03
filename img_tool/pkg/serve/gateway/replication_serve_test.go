@@ -19,14 +19,29 @@ import (
 // postEvents sends a batch to an instance's replication endpoint the way a peer
 // would, with the given origin identity, and returns the response.
 func postEvents(h *Handler, origin string, events ...cacheEvent) *http.Response {
+	return postEventsTo(h, origin, events, nil)
+}
+
+// postEventsTo is postEvents against any handler, so the same call works for the
+// client listener and for the separate one a gateway can serve replication on.
+// credential, when set, is presented as a bearer token.
+func postEventsTo(h http.Handler, origin string, events []cacheEvent, credential func(*http.Request)) *http.Response {
 	body, _ := json.Marshal(cacheEventBatch{Events: events})
 	r, _ := http.NewRequest(http.MethodPost, "http://gateway"+replicationEventsPath, strings.NewReader(string(body)))
 	if origin != "" {
 		r.Header.Set(cacheOriginHeader, origin)
 	}
+	if credential != nil {
+		credential(r)
+	}
 	recorder := httptest.NewRecorder()
 	h.ServeHTTP(recorder, r)
 	return recorder.Result()
+}
+
+// withBearer presents a bearer token on a replication request.
+func withBearer(token string) func(*http.Request) {
+	return func(r *http.Request) { r.Header.Set("Authorization", "Bearer "+token) }
 }
 
 // donate fetches a donation from an instance, as a warming peer would.

@@ -50,6 +50,7 @@ go_test(
         "peers_test.go",
         "peertls_test.go",
         "policy_test.go",
+        "replication_listener_test.go",
         "replication_serve_test.go",
         "replication_test.go",
         "testcerts_test.go",

@@ -18,6 +18,9 @@ const (
 	testCacheRegistry   = "registry.test"
 	testCacheRepository = "team/service/app"
 	testCacheDigest     = "sha256:6b0f2e1a4c3d5e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f7"
+	// testOtherDigest is a second blob, for a test that has to tell one entry from
+	// another rather than only whether the cache has anything in it.
+	testOtherDigest = "sha256:1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f809"
 )
 
 // fakeClock is a manually advanced clock, so the TTL tests neither sleep nor
