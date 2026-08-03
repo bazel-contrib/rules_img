@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -172,11 +173,13 @@ func extractCPIO(r io.Reader, match Matcher) ([]Entry, error) {
 			return nil, fmt.Errorf("cpio entry at offset %d: bad name size: %w", offset, err)
 		}
 
+		// Sizes are compared against the bytes that remain rather than added to
+		// the offset first, so the arithmetic cannot wrap.
 		nameStart := offset + cpioHeaderSize
-		nameEnd := nameStart + int(nameSize)
-		if nameEnd > len(data) {
+		if nameSize > len(data)-nameStart {
 			return nil, fmt.Errorf("cpio entry at offset %d claims a name past the end of the payload", offset)
 		}
+		nameEnd := nameStart + nameSize
 		name := strings.TrimSuffix(string(data[nameStart:nameEnd]), "\x00")
 		if name == cpioTrailer {
 			break
@@ -185,16 +188,15 @@ func extractCPIO(r io.Reader, match Matcher) ([]Entry, error) {
 		// The name and the file content are each padded to a 4-byte boundary,
 		// counted from the start of the header.
 		contentStart := align4(nameEnd-offset) + offset
-		contentEnd := contentStart + int(fileSize)
-		if contentEnd > len(data) {
+		if contentStart > len(data) || fileSize > len(data)-contentStart {
 			return nil, fmt.Errorf("cpio entry %q claims %d bytes past the end of the payload", name, fileSize)
 		}
+		contentEnd := contentStart + fileSize
 
 		if mode&cpioModeFileType == cpioModeRegular {
 			normalized := normalizeMemberPath(name)
 			if match(normalized) {
-				content := make([]byte, fileSize)
-				copy(content, data[contentStart:contentEnd])
+				content := bytes.Clone(data[contentStart:contentEnd])
 				entries = append(entries, Entry{Path: normalized, Content: content})
 			}
 		}
@@ -206,9 +208,18 @@ func extractCPIO(r io.Reader, match Matcher) ([]Entry, error) {
 }
 
 // parseCPIOHex reads one of the fixed-width, zero-padded hexadecimal fields of
-// a newc header.
-func parseCPIOHex(field string) (uint64, error) {
-	return strconv.ParseUint(field, 16, 64)
+// a newc header. The fields are eight digits wide, so a header can name a value
+// that does not fit in an int on a 32-bit host; such a value is far larger than
+// any payload read here and is rejected rather than truncated.
+func parseCPIOHex(field string) (int, error) {
+	value, err := strconv.ParseUint(field, 16, 64)
+	if err != nil {
+		return 0, err
+	}
+	if value > math.MaxInt32 {
+		return 0, fmt.Errorf("value %d is out of range", value)
+	}
+	return int(value), nil
 }
 
 // align4 rounds up to the next multiple of four.
