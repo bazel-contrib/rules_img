@@ -30,7 +30,29 @@ const (
 
 	// Config media types
 	MediaTypeEmptyJSON = "application/vnd.oci.empty.v1+json"
+
+	// Config media types of a runnable container image. Docker and OCI images use
+	// distinct types for the same thing.
+	MediaTypeOCIImageConfig    = "application/vnd.oci.image.config.v1+json"
+	MediaTypeDockerImageConfig = "application/vnd.docker.container.image.v1+json"
 )
+
+// IsImageConfigMediaType reports whether a config blob of this media type is a
+// container image config, i.e. describes something a runtime can execute. The
+// empty string means "unset", which defaults to the OCI image config.
+//
+// Manifests with any other config media type -- an empty config for an ORAS
+// artifact, a Helm chart config, ... -- are artifacts rather than images. They
+// have no platform of their own, so callers must not attach platform
+// information to them.
+func IsImageConfigMediaType(mediaType string) bool {
+	switch mediaType {
+	case "", MediaTypeOCIImageConfig, MediaTypeDockerImageConfig:
+		return true
+	default:
+		return false
+	}
+}
 
 func (h HashAlgorithm) Len() int {
 	switch h {

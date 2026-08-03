@@ -104,6 +104,15 @@ def _release_platforms_transition_impl(_settings, _attr):
         for platform in PLATFORM_NAMES
     }
 
+# Released binaries must also be built with `--experimental_output_paths=strip`,
+# which this transition cannot set: Bazel rejects `--experimental_*` options as
+# transition outputs. Modules building release binaries have to enable it in their
+# .bazelrc instead, per host platform, since path mapping does not work on Windows.
+# Without it, Bazel's output directory name embeds the legacy `--cpu` value, which
+# stays at its host-derived default even though we transition `--platforms` above,
+# so output paths that end up baked into an artifact -- the Go compiler records the
+# source paths of generated files for stack traces -- differ between a macOS and a
+# Linux build host.
 release_platforms_transition = transition(
     implementation = _release_platforms_transition_impl,
     inputs = [],

@@ -285,13 +285,23 @@ func ManifestProcess(_ context.Context, args []string) {
 		Digest:       digest.NewDigestFromBytes(digest.SHA256, manifestSHA256[:]),
 		Size:         int64(len(manifestRaw)),
 		ArtifactType: artifactType,
-		Platform: &specv1.Platform{
+		Annotations:  manifest.Annotations,
+	}
+
+	// Only a container image gets platform information. An artifact -- an ORAS
+	// artifact with an empty config, a Helm chart, ... -- has no platform of its
+	// own, and --os/--architecture default to the platform the manifest happens to
+	// be built for. Advertising that in an image index is both wrong (a runtime
+	// may pick the artifact as the image for that platform) and non-reproducible,
+	// because the default depends on the host that ran the build.
+	if api.IsImageConfigMediaType(configMediaType) {
+		descriptor.Platform = &specv1.Platform{
 			Architecture: architecture,
 			OS:           operatingSystem,
 			Variant:      variant,
-		},
-		Annotations: manifest.Annotations,
+		}
 	}
+
 	descriptorRaw, err := json.Marshal(descriptor)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to marshal manifest descriptor: %v\n", err)
