@@ -57,13 +57,9 @@ def calculate_root_symlinks(index_info, manifest_info, *, include_layers, symlin
     return root_symlinks
 
 def symlink_name_prefix(ctx):
-    # This value is embedded verbatim as a hermetic_launcher stub arg, which is
-    # capped at 256 bytes; a deeply nested package plus a long target name can
-    # exceed that on their own. Hash the label instead of embedding it so the
-    # prefix length never depends on path depth. The Go side only ever treats
-    # this as an opaque namespace prefix, so it doesn't need to be readable --
-    # same rationale as add_sign_setting_symlinks() in sign_settings.bzl, which
-    # already uses sha256.bzl for the same "collision-free basename" purpose.
+    # Hashed so length is independent of label depth (embedded verbatim as a
+    # hermetic_launcher stub arg, capped at 256 bytes). Opaque to the Go side,
+    # same as add_sign_setting_symlinks() in sign_settings.bzl.
     canonical_repo_name = ctx.label.repo_name if len(ctx.label.repo_name) > 0 else "_main"
     label_str = "{}//{}:{}".format(canonical_repo_name, ctx.label.package, ctx.label.name)
     return "++rules_img_private++/{}/".format(sha256(label_str))
