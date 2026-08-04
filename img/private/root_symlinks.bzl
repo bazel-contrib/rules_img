@@ -1,5 +1,6 @@
 """Helper functions to create a root symlink tree for pushing and loading."""
 
+load("@sha256.bzl", "sha256")
 load("//img/private:soci_deploy.bzl", "soci_deploy_children")
 
 def _layer_root_symlinks_for_manifest(manifest_info, operation_index, manifest_index, symlink_name_prefix):
@@ -55,18 +56,14 @@ def calculate_root_symlinks(index_info, manifest_info, *, include_layers, symlin
             root_symlinks.update(_layer_root_symlinks_for_manifest(manifest_info, operation_index, 0, symlink_name_prefix))
     return root_symlinks
 
-def _hash_hex(s):
-    """8 zero-padded lowercase hex digits from Starlark's builtin hash()."""
-    digits = "%x" % (hash(s) % (1 << 32))
-    return ("0" * (8 - len(digits))) + digits
-
 def symlink_name_prefix(ctx):
     # This value is embedded verbatim as a hermetic_launcher stub arg, which is
     # capped at 256 bytes; a deeply nested package plus a long target name can
-    # exceed that on their own (e.g. Kotlin presentation-gateway nodes). Hash the
-    # label instead of embedding it so the prefix length never depends on path
-    # depth. The Go side only ever treats this as an opaque namespace prefix.
+    # exceed that on their own. Hash the label instead of embedding it so the
+    # prefix length never depends on path depth. The Go side only ever treats
+    # this as an opaque namespace prefix, so it doesn't need to be readable --
+    # same rationale as add_sign_setting_symlinks() in sign_settings.bzl, which
+    # already uses sha256.bzl for the same "collision-free basename" purpose.
     canonical_repo_name = ctx.label.repo_name if len(ctx.label.repo_name) > 0 else "_main"
     label_str = "{}//{}:{}".format(canonical_repo_name, ctx.label.package, ctx.label.name)
-    digest = _hash_hex(label_str) + _hash_hex("img_root_symlinks:" + label_str)
-    return "++rules_img_private++/{}/".format(digest)
+    return "++rules_img_private++/{}/".format(sha256(label_str))
