@@ -60,3 +60,9 @@ def rules_img_dependencies():
         sha256 = "eeb520ca97697368a4d459e06f37600550971291171a1257f02a33e17fdd2df9",
         url = "https://github.com/hermeticbuild/hermetic-launcher/releases/download/v0.0.10/hermetic_launcher-v0.0.10.tar.gz",
     )
+
+    http_archive(
+        name = "sha256.bzl",
+        sha256 = "068dae10405e24f1df8912e1639c1b62cacddde0ac62bb421f72a7847caa093e",
+        url = "https://github.com/hermeticbuild/sha256.star/releases/download/v0.0.1/sha256.bzl-v0.0.1.tar.gz",
+    )
