@@ -390,6 +390,11 @@ img compact-stream reconstruct \
   --output layer.tgz
 ```
 
+With the [lazy push strategy](push-strategies.md#lazy-push) that directory is not
+shipped: the referenced blobs are fetched from Bazel's disk / remote cache by
+their content digest instead. This requires Bazel's digest function to be sha256
+(the default) — see [Digest Function](push-strategies.md#digest-function).
+
 ## Inspecting a compact stream without reconstruction
 
 `compact-stream list` (alias `ls`) prints a human-readable view of a compact stream — its

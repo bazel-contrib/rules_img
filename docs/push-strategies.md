@@ -62,6 +62,7 @@ The lazy push strategy optimizes uploads by checking the registry first and only
 - ❌ Requires a Bazel remote cache
 - ❌ Slightly more complex than eager push
 - ❌ Push fails if required blobs are evicted from the CAS before the push runs (see [Remote Cache Eviction](#remote-cache-eviction))
+- ❌ Requires `--digest_function=sha256` (the default; see [Digest Function](#digest-function))
 
 ### Setup Guide
 1. Ensure you have a Bazel remote cache configured:
@@ -148,6 +149,7 @@ Also note that the registry doesn't offer TLS nor authentication, so it should o
 - ❌ Requires special registry implementation
 - ❌ More complex infrastructure setup
 - ❌ Registry must have access to CAS
+- ❌ Requires `--digest_function=sha256` (the default; see [Digest Function](#digest-function))
 
 ### Setup Guide
 1. Deploy the CAS-integrated registry using the pre-built image from GitHub Container Registry:
@@ -229,6 +231,7 @@ Note that the BES service doesn't offer TLS nor authentication, so it should onl
 - ❌ Requires custom BES backend
 - ❌ Most complex setup
 - ❌ Requires significant infrastructure
+- ❌ Requires `--digest_function=sha256` (the default; see [Digest Function](#digest-function))
 
 ### Setup Guide
 1. Deploy the BES backend using the pre-built image from GitHub Container Registry:
@@ -478,6 +481,57 @@ fully offline even if the remote cache is unavailable.
 The safest approach is to use `bazel run` on the push target directly — the push
 happens immediately after the Bazel invocation, so all required blobs are probably
 present. If the push happens later, make sure to consume the blobs soon after the build.
+
+## Digest Function
+
+Every strategy that reads blobs from Bazel's cache requires Bazel's digest
+function to be **sha256** — which is the default. Do not set Bazel's
+`--digest_function` startup flag to anything else (`blake3`, `sha1`, …) when using
+one of those strategies.
+
+The reason: Bazel's remote cache (CAS) and a container registry are both
+content-addressed stores, and rules_img looks a layer up in the CAS under the very
+same digest the registry knows it by. That only works while both sides hash with
+the same function. Both ecosystems default to sha256 — but OCI registries are
+effectively pinned to it, while Bazel's digest function is configurable, so
+changing it on the Bazel side breaks the mapping.
+
+| Strategy | Requires `--digest_function=sha256` |
+|----------|-------------------------------------|
+| Eager | No — all blobs travel in the push target's runfiles, the CAS is never consulted |
+| Lazy | **Yes** — missing blobs are streamed from the CAS by digest |
+| CAS Registry | **Yes** — the registry serves blobs straight out of the CAS |
+| BES | **Yes** — the BES backend assembles images from CAS blobs |
+
+The same requirement applies to the other blob sources that are addressed by
+digest:
+- the local Bazel disk cache (`IMG_DISK_CACHE`), which is looked up as
+  `cas/<sha256>`, and
+- the CAS references inside [compact layers](compact-stream.md): during a lazy
+  push the layer's input files are fetched from the disk / remote cache by their
+  content digest.
+
+[Push at build time](#push-at-build-time) is *not* affected. Those actions receive
+the blobs — and, for compact layers, the content-addressed input directory — as
+regular action inputs, so they never look anything up in the CAS themselves.
+
+### Symptom
+With a non-sha256 digest function, the push fails while resolving a layer, and the
+remote CAS line of the blob-source report says the blob is not there:
+
+```
+Error during deploy: building VFS: locating source for layer with digest sha256:eda6250a… …
+layer with digest sha256:eda6250a… not found in any source:
+  …
+  - remote CAS: [blob missing] blob not found in remote CAS
+```
+
+The blob *is* in the CAS — just under a different (e.g. BLAKE3) digest, so
+rules_img cannot find it. If you hit this, remove the `--digest_function`
+override, or switch the affected targets to the eager strategy.
+
+Supporting Bazel's other digest functions is tracked in
+[issue #690](https://github.com/bazel-contrib/rules_img/issues/690).
 
 ## Choosing the Right Strategy
 
