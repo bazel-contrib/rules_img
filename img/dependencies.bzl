@@ -64,5 +64,6 @@ def rules_img_dependencies():
     http_archive(
         name = "sha256.bzl",
         sha256 = "068dae10405e24f1df8912e1639c1b62cacddde0ac62bb421f72a7847caa093e",
+        strip_prefix = "sha256.bzl-0.0.1",
         url = "https://github.com/hermeticbuild/sha256.star/releases/download/v0.0.1/sha256.bzl-v0.0.1.tar.gz",
     )

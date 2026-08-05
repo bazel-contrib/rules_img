@@ -1,5 +1,6 @@
 """Helper functions to create a root symlink tree for pushing and loading."""
 
+load("@sha256.bzl", "sha256")
 load("//img/private:soci_deploy.bzl", "soci_deploy_children")
 
 def _layer_root_symlinks_for_manifest(manifest_info, operation_index, manifest_index, symlink_name_prefix):
@@ -56,8 +57,8 @@ def calculate_root_symlinks(index_info, manifest_info, *, include_layers, symlin
     return root_symlinks
 
 def symlink_name_prefix(ctx):
-    return "++rules_img_private++/{canonical_repo_name}/{package}/{name}/".format(
-        canonical_repo_name = ctx.label.repo_name if len(ctx.label.repo_name) > 0 else "_main",
-        package = ctx.label.package,
-        name = ctx.label.name,
-    )
+    canonical_repo_name = ctx.label.repo_name if len(ctx.label.repo_name) > 0 else "_main"
+
+    # Hash label_str to avoid deeply nested names exceeding the limit of 256 bytes.
+    label_str = "{}//{}:{}".format(canonical_repo_name, ctx.label.package, ctx.label.name)
+    return "++rules_img_private++/{}/".format(sha256(label_str))
