@@ -47,6 +47,7 @@ var (
 	annotations               stringMap
 	stopSignal                string
 	created                   string
+	createdTimestamp          string
 	artifactType              string
 	subjectDescriptor         string
 	sociIndexDescriptor       string
@@ -98,6 +99,7 @@ func ManifestProcess(_ context.Context, args []string) {
 	flagSet.Var(&annotations, "annotation", `Metadata annotations for the manifest (can be specified multiple times as key=value).`)
 	flagSet.StringVar(&stopSignal, "stop-signal", "", `Signal to stop the container.`)
 	flagSet.StringVar(&created, "created", "", `A file containing a datetime string (RFC 3339 format) for when the image was created.`)
+	flagSet.StringVar(&createdTimestamp, "created-timestamp", "", `A datetime string (RFC 3339 format) for when the image was created. Takes effect only if --created is unset; the "created" value from --config-templates takes precedence.`)
 	flagSet.StringVar(&artifactType, "artifact-type", "", `Optional IANA media type of the artifact when the manifest is used for an artifact (e.g. application/vnd.cncf.helm.chart.v1, application/spdx+json).`)
 	flagSet.StringVar(&subjectDescriptor, "subject-descriptor", "", `A JSON file containing the descriptor of the subject manifest or index.`)
 	flagSet.StringVar(&sociIndexDescriptor, "soci-index-descriptor", "", `A JSON file containing the descriptor of this image's SOCI index. Its digest is recorded in the com.amazon.soci.index-digest manifest annotation (SOCI v2), which rewrites the manifest and changes its digest.`)
@@ -150,6 +152,13 @@ func ManifestProcess(_ context.Context, args []string) {
 		ct, err := readCreatedTimestamp(created)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to read created timestamp: %v\n", err)
+			os.Exit(1)
+		}
+		createdTime = ct
+	} else if inlineCreated := effectiveCreatedTimestamp(templatesData); inlineCreated != "" {
+		ct, err := parseCreatedTimestamp(inlineCreated)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to parse created timestamp: %v\n", err)
 			os.Exit(1)
 		}
 		createdTime = ct
@@ -670,6 +679,7 @@ type ConfigTemplates struct {
 	Env         map[string]string `json:"env"`
 	Labels      map[string]string `json:"labels"`
 	Annotations map[string]string `json:"annotations"`
+	Created     string            `json:"created"`
 }
 
 // applyStringConfig resolves a scalar config string field from its flag value
@@ -759,8 +769,23 @@ func readCreatedTimestamp(filePath string) (*time.Time, error) {
 		return nil, fmt.Errorf("created timestamp file is empty")
 	}
 
-	// Parse as RFC 3339
-	t, err := time.Parse(time.RFC3339, timestampStr)
+	return parseCreatedTimestamp(timestampStr)
+}
+
+// effectiveCreatedTimestamp returns the inline created timestamp to use: the
+// template-expanded "created" value when it is non-empty (it expands to the
+// empty string when stamping is inactive), else the literal --created-timestamp
+// value. The image_manifest rule only ever sets one of the two.
+func effectiveCreatedTimestamp(templatesData *ConfigTemplates) string {
+	if templatesData != nil && templatesData.Created != "" {
+		return templatesData.Created
+	}
+	return createdTimestamp
+}
+
+// parseCreatedTimestamp parses a datetime string as RFC 3339.
+func parseCreatedTimestamp(timestampStr string) (*time.Time, error) {
+	t, err := time.Parse(time.RFC3339, strings.TrimSpace(timestampStr))
 	if err != nil {
 		return nil, fmt.Errorf("parsing timestamp as RFC 3339: %w", err)
 	}

@@ -380,6 +380,27 @@ def _build_soci_index(ctx, layers, os, arch, variant):
         ztoc_pairs = ztoc_pairs,
     )
 
+def _created_timestamp_template(ctx):
+    """Resolve the image config's `created` timestamp template, or "".
+
+    The `created` file attribute wins over both the `created_timestamp` template
+    and the `stamp_created` shorthand. Setting `created_timestamp` together with
+    `created` is a mistake, so it fails instead of silently picking one.
+    """
+    if ctx.attr.created != None:
+        if ctx.attr.created_timestamp != "":
+            fail("created and created_timestamp are mutually exclusive: set only one of them")
+        return ""
+    if ctx.attr.created_timestamp != "":
+        return ctx.attr.created_timestamp
+
+    stamp_created = ctx.attr.stamp_created
+    if stamp_created == "auto":
+        stamp_created = ctx.attr._default_stamp_created[BuildSettingInfo].value
+    if stamp_created == "enabled":
+        return "{{.BUILD_TIMESTAMP_RFC3339}}"
+    return ""
+
 def _image_manifest_impl(ctx):
     inputs = []
     providers = []
@@ -562,6 +583,12 @@ def _image_manifest_impl(ctx):
         "annotations": computed_annotations,
     }
 
+    # The image config's `created` timestamp is only part of the templates when
+    # requested, so that images stay byte-identical when it is unused.
+    created_timestamp = _created_timestamp_template(ctx)
+    if created_timestamp != "":
+        templates["created"] = created_timestamp
+
     # Try to expand templates - this will return None if no templates need expansion
     config_json = expand_or_write(
         ctx = ctx,
@@ -586,6 +613,12 @@ def _image_manifest_impl(ctx):
             args.add("--label", "%s=%s" % (key, value))
         for key, value in computed_annotations.items():
             args.add("--annotation", "%s=%s" % (key, value))
+
+        # A `created` timestamp that still holds template placeholders here means
+        # stamping is inactive, so the field is left unset to keep the image
+        # reproducible.
+        if created_timestamp != "" and created_timestamp.find("{{") < 0:
+            args.add("--created-timestamp", created_timestamp)
 
     # Environment variables from a file are merged in by the tool.
     # Values from `env` (or expanded templates) take precedence over file entries.
@@ -968,8 +1001,51 @@ The target must provide either ImageManifestInfo or ImageIndexInfo.
             doc = """Optional file containing a datetime string (RFC 3339 format) for when the image was created.
 
 This is commonly used with Bazel's stamping mechanism to embed the build timestamp.
+
+Mutually exclusive with `created_timestamp`. Takes precedence over `stamp_created`.
 """,
             allow_single_file = True,
+        ),
+        "created_timestamp": attr.string(
+            doc = """Optional datetime string (RFC 3339 format) for when the image was created.
+
+Subject to [template expansion](/docs/templating.md), so the timestamp can come from
+a stamp value. `{{.BUILD_TIMESTAMP_RFC3339}}` is Bazel's build time, converted from
+the volatile `BUILD_TIMESTAMP` workspace status value:
+
+```python
+image_manifest(
+    name = "my_app",
+    created_timestamp = "{{.BUILD_TIMESTAMP_RFC3339}}",  # same as stamp_created = "enabled"
+    layers = [":app_layer"],
+)
+```
+
+If the expanded value is empty -- which is what happens when stamping is inactive --
+the `created` field is left unset, keeping the image reproducible.
+
+Mutually exclusive with `created`.
+""",
+            default = "",
+        ),
+        "stamp_created": attr.string(
+            doc = """Whether to stamp the image config's `created` timestamp with Bazel's build time.
+
+Shorthand for `created_timestamp = "{{.BUILD_TIMESTAMP_RFC3339}}"`.
+
+- **`auto`** (default): defers to the global `--@rules_img//img/settings:stamp_created`
+  setting, which itself defaults to `disabled`.
+- **`enabled`**: set the config's `created` field to the build time. Since `BUILD_TIMESTAMP`
+  is a volatile workspace status value, this is best-effort: it makes the image
+  non-reproducible, and the timestamp only refreshes when the image is rebuilt for
+  other reasons (see [templating](/docs/templating.md)). Requires stamping to be
+  active (Bazel's `--stamp`, or `stamp = "force"`); without it the field stays unset.
+- **`disabled`**: never stamp the `created` field.
+
+Ignored when `created` or `created_timestamp` is set.
+""",
+            default = "auto",
+            values = ["auto", "enabled", "disabled"],
         ),
         "build_settings": attr.string_keyed_label_dict(
             doc = """Build settings for template expansion.
@@ -1046,6 +1122,10 @@ See [template expansion](/docs/templating.md) for available stamp variables.
         "_stamp_settings": attr.label(
             default = Label("//img/private/settings:stamp"),
             providers = [StampSettingInfo],
+        ),
+        "_default_stamp_created": attr.label(
+            default = Label("//img/settings:stamp_created"),
+            providers = [BuildSettingInfo],
         ),
         "_mtree_path_prefix": attr.label(
             default = Label("//img/settings:mtree_path_prefix"),

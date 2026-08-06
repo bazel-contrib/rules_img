@@ -64,6 +64,20 @@ string_flag(
     visibility = ["//visibility:public"],
 )
 
+# Global default for the per-manifest `stamp_created` attribute: whether the
+# image config's `created` timestamp is stamped with the (volatile) Bazel build
+# time. Off by default, since a build timestamp in the config makes images
+# non-reproducible.
+string_flag(
+    name = "stamp_created",
+    build_setting_default = "disabled",
+    values = [
+        "enabled",
+        "disabled",
+    ],
+    visibility = ["//visibility:public"],
+)
+
 string_flag(
     name = "push_strategy",
     build_setting_default = "eager",
