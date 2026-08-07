@@ -64,4 +64,4 @@ jobs:
         SIGSTORE_ID_TOKEN="$(jq -er .value <<<"${OIDC_TOKEN_JSON}")"
         export SIGSTORE_ID_TOKEN
         # shellcheck disable=SC2086
-        bazelisk run --config=cosign //:push -- ${TAGS}
+        bazelisk run --config=cosign --stamp //:push -- ${TAGS}
