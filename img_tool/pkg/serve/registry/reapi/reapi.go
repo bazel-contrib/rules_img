@@ -91,6 +91,15 @@ func (h *REAPIBlobHandler) Stat(ctx context.Context, repo string, hash registryv
 	return 0, registry.ErrNotFound // Blob is missing.
 }
 
+// FindMissingBlobs reports which of the given blobs the CAS does not have.
+//
+// Asking is also what keeps a blob resident: a CAS that evicts by least recent
+// use counts this as a use, so a caller can keep blobs it still needs from
+// aging out without transferring any of their data.
+func (h *REAPIBlobHandler) FindMissingBlobs(ctx context.Context, digests []cas.Digest) ([]cas.Digest, error) {
+	return h.casReader.FindMissingBlobs(ctx, digests)
+}
+
 func (h *REAPIBlobHandler) Put(ctx context.Context, repo string, hash v1.Hash, rc io.ReadCloser) error {
 	// since we need to know the size of the blob for any REAPI operations,
 	// we ask the cache or upstream registry to find out if the blob exists.

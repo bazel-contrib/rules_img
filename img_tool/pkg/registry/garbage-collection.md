@@ -169,6 +169,12 @@ is prunable today.
 
 ## Keeping blobs alive elsewhere
 
+| Flag | Default | What it does |
+| --- | --- | --- |
+| `--cas-keepalive` | `false` | Ask the remote cache about live blobs so it keeps them. Requires `--blob-store reapi`. |
+| `--cas-remote-cache-ttl <dur>` | `24h` | How long the cache is believed to keep a blob nobody asks about. |
+| `--cas-keepalive-scan-interval <dur>` | `1h` | How often the keepalive looks for blobs due a refresh. Keep it well under half of `--cas-remote-cache-ttl`. |
+
 A registry backed by Bazel's CAS serves blobs it does not own, and
 [the remote execution API promises nothing](https://github.com/bazelbuild/remote-apis/blob/main/build/bazel/remote/execution/v2/remote_execution.proto)
 about how long the CAS keeps them. A manifest whose layers have been evicted is a
@@ -181,13 +187,20 @@ one — it transfers no blob data at all. So a goroutine wakes up every
 `ScanInterval`, takes the live blobs the collector knows about, and asks about the
 ones nobody has used lately.
 
-It takes three settings: whether it runs, `RemoteCacheTTL` — how long the cache is
-believed to keep a blob nobody asks about — and `ScanInterval`. A blob is refreshed
+It takes the three settings above: whether it runs, `RemoteCacheTTL` — how long the
+cache is believed to keep a blob nobody asks about — and `ScanInterval`. A blob is refreshed
 once `RemoteCacheTTL - 2*ScanInterval` has passed since it was last used or last
 refreshed; the two intervals of slack mean a blob is asked about before the cache
 could have dropped it even if one scan is missed or runs late. Scan far more often
 than the belief: at `ScanInterval >= RemoteCacheTTL/2` there is no slack left and
 every live blob is refreshed on every scan, which is safe but pointless traffic.
+
+```bash
+registry --blob-store reapi --reapi-endpoint grpc://your-cas-server:9092 \
+  --cas-keepalive \
+  --cas-remote-cache-ttl 24h \
+  --cas-keepalive-scan-interval 1h
+```
 
 Refreshes are recorded by the keepalive, not fed back into the collector. Feeding
 them back would extend the registry's own retention, and a blob would keep itself

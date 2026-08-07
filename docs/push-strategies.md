@@ -150,6 +150,7 @@ Also note that the registry doesn't offer TLS nor authentication, so it should o
 - ❌ More complex infrastructure setup
 - ❌ Registry must have access to CAS
 - ❌ Requires `--digest_function=sha256` (the default; see [Digest Function](#digest-function))
+- ❌ Images stop being pullable if the CAS evicts a layer underneath them (see [`--cas-keepalive`](#bounding-what-the-registry-keeps-and-keeping-blobs-alive))
 
 ### Setup Guide
 1. Deploy the CAS-integrated registry using the pre-built image from GitHub Container Registry:
@@ -204,18 +205,22 @@ bazel run //your:push_target
 
 The registry can use multiple blob backends, including a remote cache (`reapi`, default), another container registry (`upstream`), and an S3 bucket (`s3`). Those backends are experimental.
 
-### Bounding what the registry keeps
+### Bounding what the registry keeps, and keeping blobs alive
 
-The registry keeps every manifest it is pushed until the process exits. `--ttl` bounds
-that by garbage collecting manifests and blobs by tracing references, so nothing a tag
-or an unexpired index still names is ever collected.
+The registry keeps every manifest it is pushed until the process exits, and serves
+blobs the CAS may evict at any time. `--ttl` bounds the first by garbage collecting
+manifests and blobs by tracing references, so nothing a tag or an unexpired index still
+names is ever collected. `--cas-keepalive` handles the second by periodically asking
+the cache about the blobs live manifests reference, which keeps a cache that evicts by
+least recent use from dropping them.
 
 ```bash
-registry --blob-store reapi --reapi-endpoint grpc://your-cas-server:9092 --ttl 6h
+registry --blob-store reapi --reapi-endpoint grpc://your-cas-server:9092 \
+  --ttl 6h --cas-keepalive
 ```
 
 See [Garbage collection](../img_tool/pkg/registry/garbage-collection.md) for every
-retention flag, what the rules actually are, and what happens to a collected blob.
+flag, what the retention rules actually are, and how to size the keepalive.
 
 ## BES Push
 
@@ -494,6 +499,11 @@ fully offline even if the remote cache is unavailable.
 The safest approach is to use `bazel run` on the push target directly — the push
 happens immediately after the Bazel invocation, so all required blobs are probably
 present. If the push happens later, make sure to consume the blobs soon after the build.
+
+For the CAS registry the exposure outlasts the push: an image it has accepted stops
+being pullable once the CAS drops a layer underneath it.
+[`--cas-keepalive`](#bounding-what-the-registry-keeps-and-keeping-blobs-alive) keeps the
+registry asking the cache about the blobs its live manifests name.
 
 ## Digest Function
 

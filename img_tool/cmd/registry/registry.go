@@ -42,6 +42,9 @@ func Run(ctx context.Context, args []string) {
 	var credentialHelperPath string
 	var manifestTTL time.Duration
 	var tagTTLFlag optionalDuration
+	var casKeepAlive bool
+	var remoteCacheTTL time.Duration
+	var keepAliveScanInterval time.Duration
 
 	flagSet := flag.NewFlagSet("registry", flag.ExitOnError)
 	flagSet.Usage = func() {
@@ -52,6 +55,7 @@ func Run(ctx context.Context, args []string) {
 			"registry --address 0.0.0.0 --port 8080",
 			"registry --blob-store s3 --blob-store reapi",
 			"registry --blob-store reapi --ttl 6h --tag-ttl 168h",
+			"registry --blob-store reapi --cas-keepalive --cas-remote-cache-ttl 24h",
 		}
 		fmt.Fprintf(flagSet.Output(), "\nExamples:\n")
 		for _, example := range examples {
@@ -73,6 +77,9 @@ func Run(ctx context.Context, args []string) {
 	flagSet.StringVar(&credentialHelperPath, "credential-helper", "", "Path to credential helper binary (optional, defaults to no helper)")
 	flagSet.DurationVar(&manifestTTL, "ttl", 0, "How long a manifest or blob is kept after it was last pushed or pulled. Anything a tag or an unexpired index still references is kept regardless of its own age. 0 keeps everything until the process exits.")
 	flagSet.Var(&tagTTLFlag, "tag-ttl", "How long a tag is kept after it was last pushed or read. Defaults to --ttl, since a tag keeps everything it references alive. Set 0 to keep tags -- and their images -- forever.")
+	flagSet.BoolVar(&casKeepAlive, "cas-keepalive", false, `Periodically ask the remote cache about live blobs so it keeps them. Requires the "reapi" blob store.`)
+	flagSet.DurationVar(&remoteCacheTTL, "cas-remote-cache-ttl", 24*time.Hour, "How long the remote cache is believed to keep a blob nobody asks about. Used with --cas-keepalive.")
+	flagSet.DurationVar(&keepAliveScanInterval, "cas-keepalive-scan-interval", time.Hour, "How often --cas-keepalive wakes up to look for blobs due a refresh. Keep it well under half of --cas-remote-cache-ttl.")
 
 	if err := flagSet.Parse(args[1:]); err != nil {
 		fmt.Fprint(os.Stderr, err.Error())
@@ -161,14 +168,19 @@ func Run(ctx context.Context, args []string) {
 		}
 	}
 	var blobWriter combined.Writer
+	var reapiStore *reapi.REAPIBlobHandler
 	if wantREAPI {
 		var reapiUpstream combined.Handler = combined.NewCombinedBlobStore(blobSizeCache, nil /* writer */, combined.ReadOnlyMembers(nonREAPIStores...)...).(combined.Handler)
-		reapiStore, err := reapi.New(reapiUpstream, grpcClientConn, blobSizeCache)
+		var err error
+		reapiStore, err = reapi.New(reapiUpstream, grpcClientConn, blobSizeCache)
 		if err != nil {
 			log.Fatalf("Failed to create REAPI blob store: %v", err)
 		}
 		stores[reapiIndex] = reapiStore
 		blobWriter = reapiStore
+	}
+	if casKeepAlive && !wantREAPI {
+		log.Fatalln("--cas-keepalive requires --blob-store reapi")
 	}
 	if enableBlobCache {
 		if grpcClientConn == nil {
@@ -199,10 +211,12 @@ func Run(ctx context.Context, args []string) {
 	combinedStore := combined.NewCombinedBlobStore(blobSizeCache, blobWriter, combined.ReadOnlyMembers(stores...)...)
 	callbacker := combined.NewBlobSizeCacheCallback(blobSizeCache, combinedStore.(combined.Handler))
 
-	// The collector decides what the registry may forget.
+	// The collector decides what the registry may forget. It is also the only
+	// thing that knows which blobs are still reachable, so the keepalive needs
+	// one even when nothing is being evicted.
 	store := registry.NewMemStore()
 	var collector *registry.Collector
-	if manifestTTL > 0 || tagTTL > 0 {
+	if manifestTTL > 0 || tagTTL > 0 || casKeepAlive {
 		collector = registry.NewCollector(store, registry.CollectorConfig{
 			TTL:    manifestTTL,
 			TagTTL: tagTTL,
@@ -212,6 +226,17 @@ func Run(ctx context.Context, args []string) {
 		collector.OnBlobCollected(func(_ string, digest registryv1.Hash) {
 			blobSizeCache.Delete(digest)
 		})
+	}
+
+	if casKeepAlive {
+		keepAlive, err := combined.NewKeepAlive(collector, reapiStore, blobSizeCache, combined.KeepAliveConfig{
+			RemoteCacheTTL: remoteCacheTTL,
+			ScanInterval:   keepAliveScanInterval,
+		})
+		if err != nil {
+			log.Fatalf("Failed to set up blob keepalive: %v", err)
+		}
+		go keepAlive.Run(ctx)
 	}
 
 	protos := &http.Protocols{}
