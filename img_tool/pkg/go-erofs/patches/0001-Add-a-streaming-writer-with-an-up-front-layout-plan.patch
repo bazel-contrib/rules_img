@@ -1,0 +1,1948 @@
+From ee54aa427fe4a4fed270eae9f48b0ecffe27c8a2 Mon Sep 17 00:00:00 2001
+From: direntry <312071520+direntry@users.noreply.github.com>
+Date: Sun, 2 Aug 2026 12:38:19 +0100
+Subject: [PATCH 1/3] Add a streaming writer with an up-front layout plan
+
+An EROFS image can only be produced with a seekable destination today:
+Create lays the image out data-first and seeks back to write the real
+superblock once the metadata sizes are known. That rules out writing an
+image straight into a pipe, a compressor or a hash, and it gives the
+caller no way to learn where a file's payload will land before the bytes
+are gone.
+
+Add a second finalizer that does both. NewWriter builds the same tree but
+has no output attached; Prepare freezes it, plans the metadata-first
+layout and returns it; WriteTo emits exactly that layout in ascending
+offset order and needs no seeking. assignDataBlocks already supported a
+metadata-first layout, so this mostly factors the plan/serialize split
+out of Close.
+
+The returned Layout describes the out-of-line payloads as extents: for a
+regular file the range holds its bytes verbatim, followed by zero padding
+to the next block, so a caller can address a file's content inside the
+image without parsing it back. SetToken lets it carry per-entry context
+(a precomputed digest, say) through to the matching extent.
+
+Alongside that, the pieces a content-addressed producer needs:
+
+  - Link adds a second dirent for an existing inode, with nlink counted.
+  - ShareData points one inode's payload at another's extent, keeping the
+    two inodes' metadata independent, so duplicate content is stored once.
+    A shared payload is never tail-packed, since an inline payload has no
+    extent to share.
+  - WithInlineThreshold caps tail-packing so the caller decides which
+    files get an extent of their own.
+  - WithSyntheticDirMetadata and SyntheticDirs deal with the directories a
+    filesystem image needs but a layer changeset need not mention: the
+    hook gives them meaningful attributes (inheriting from the nearest
+    ancestor, as mkfs.erofs does), and the report names the ones that were
+    never described explicitly so a caller can warn or fail.
+  - Remove deletes an entry, which is the primitive behind
+    last-writer-wins replacement. It refuses to dangle a hardlink or a
+    shared payload.
+  - WithUUID sets the superblock UUID.
+
+Mkdir now updates an existing directory in place instead of failing,
+which is what makes it possible to describe a directory after something
+beneath it, and is also what clears the synthesized flag.
+
+Signed-off-by: direntry <312071520+direntry@users.noreply.github.com>
+---
+ README.md       |  37 +++
+ layout.go       |  33 ++-
+ mkfs.go         | 508 +++++++++++++++++++++++++++++++++----
+ prepare.go      | 203 +++++++++++++++
+ prepare_test.go | 659 ++++++++++++++++++++++++++++++++++++++++++++++++
+ writer.go       |  92 ++++---
+ 6 files changed, 1453 insertions(+), 79 deletions(-)
+ create mode 100644 prepare.go
+ create mode 100644 prepare_test.go
+
+diff --git a/README.md b/README.md
+index dde7676..8a4e232 100644
+--- a/README.md
++++ b/README.md
+@@ -80,3 +80,40 @@ w.Symlink("hello.txt", "/link")
+ w.Close()
+ outFile.Close()
+ ```
++
++`Create` needs a seekable destination: it lays the image out data-first and seeks
++back to fill in the superblock.
++
++## Streaming an image, with the layout known up front
++
++`NewWriter` builds the same tree but lays it out metadata-first, so the image can
++be written to a plain `io.Writer` — a pipe, a compressor, a hash. `Prepare`
++returns the layout before a single byte is emitted, which lets a caller
++pre-compute digests, plan a chunk index, or route each out-of-line payload
++somewhere of its own.
++
++```go
++w := erofs.NewWriter(erofs.WithBuildTime(0, 0))
++
++f, _ := w.Create("/bin/tool")
++io.Copy(f, payload)
++f.Close()
++w.SetToken("/bin/tool", payloadDigest) // recovered from the layout below
++
++layout, _ := w.Prepare()
++for _, e := range layout.Extents {
++    if e.Kind == erofs.ExtentFileData {
++        // [e.Offset, e.Offset+e.Size) is this file's bytes verbatim,
++        // followed by e.Pad zero bytes.
++        fmt.Println(e.Path, e.Offset, e.Size, e.Token)
++    }
++}
++
++w.WriteTo(dst) // emits exactly layout.ImageSize bytes, in ascending order
++```
++
++`Link` adds a second dirent for an existing inode, and `ShareData` gives two
++inodes with independent metadata one shared payload — so duplicate content can be
++stored once. `WithInlineThreshold` caps tail-packing, which decides what gets an
++extent of its own; `WithSyntheticDirMetadata` and `SyntheticDirs` deal with the
++directories a filesystem image needs but a layer changeset may not mention.
+diff --git a/layout.go b/layout.go
+index 9b2946b..19bb67e 100644
+--- a/layout.go
++++ b/layout.go
+@@ -14,7 +14,12 @@ func (w *erofsWriter) planLayout(root *erofsEntry) {
+ 	w.entries = nil
+ 	var walk func(e *erofsEntry)
+ 	walk = func(e *erofsEntry) {
+-		w.entries = append(w.entries, e)
++		// Hardlinks are extra dirents for an existing inode, so they get no
++		// inode (and no NID) of their own. They are never directories, so
++		// there is nothing to recurse into either.
++		if e.hardlinkTo == nil {
++			w.entries = append(w.entries, e)
++		}
+ 		if e.mode&disk.StatTypeMask == disk.StatTypeDir {
+ 			sort.Slice(e.children, func(i, j int) bool {
+ 				return e.children[i].name < e.children[j].name
+@@ -29,7 +34,7 @@ func (w *erofsWriter) planLayout(root *erofsEntry) {
+ 	w.totalInodes = uint64(len(w.entries))
+ 
+ 	// Block 0 holds: 1024-byte pad + 128-byte superblock + device slot(s) + padding
+-	// MetaBlkAddr is set later by write() depending on the on-disk layout.
++	// MetaBlkAddr is set later by the finalizer depending on the on-disk layout.
+ 
+ 	// Assign NIDs sequentially.
+ 	// NID = byte offset from metaStartPos / 32.
+@@ -58,6 +63,10 @@ func (w *erofsWriter) planLayout(root *erofsEntry) {
+ 		switch e.mode & disk.StatTypeMask {
+ 		case disk.StatTypeReg:
+ 			switch {
++			case e.shareSrc != nil:
++				// References another inode's extent; nothing of its own to
++				// store, and inlining would defeat the sharing.
++				e.layout = disk.LayoutFlatPlain
+ 			case e.size == 0 && len(e.chunks) == 0 && e.data == nil && !e.metadataOnly:
+ 				e.layout = disk.LayoutFlatPlain
+ 			case len(e.chunks) > 0 || e.metadataOnly:
+@@ -65,6 +74,8 @@ func (w *erofsWriter) planLayout(root *erofsEntry) {
+ 				if e.contiguous {
+ 					e.chunkBits = w.minChunkBits(e.size)
+ 				}
++			case !w.mayInline(e):
++				e.layout = disk.LayoutFlatPlain
+ 			default:
+ 				// Full-image mode: decide inline vs plain
+ 				if int(e.size) <= w.blockSize-headerSize {
+@@ -137,6 +148,24 @@ func (w *erofsWriter) planLayout(root *erofsEntry) {
+ 	w.rootNid = root.nid
+ }
+ 
++// mayInline reports whether a regular file's payload may be tail-packed into
++// its inode. A shared source has to stay out of line so the sharing inodes can
++// reference its extent, and WithInlineThreshold lets the caller cap tail
++// packing so it decides which files get their own extent.
++func (w *erofsWriter) mayInline(e *erofsEntry) bool {
++	if e.isShareSrc {
++		return false
++	}
++	switch {
++	case w.inlineThreshold == 0:
++		return true
++	case w.inlineThreshold < 0:
++		return false
++	default:
++		return e.size < uint64(w.inlineThreshold)
++	}
++}
++
+ // chunkIndexPad returns the padding inserted between an inode's xattr area and
+ // its chunk-index map so the map begins aligned to the chunk-index unit, as the
+ // kernel and reader both expect:
+diff --git a/mkfs.go b/mkfs.go
+index fee7700..6acdb3a 100644
+--- a/mkfs.go
++++ b/mkfs.go
+@@ -4,6 +4,7 @@ import (
+ 	"fmt"
+ 	"io"
+ 	"io/fs"
++	"maps"
+ 	"math/bits"
+ 	"os"
+ 	"path"
+@@ -20,6 +21,10 @@ import (
+ // Writer is a writable filesystem that produces an EROFS image on Close.
+ // Files are added via Create, Mkdir, Symlink, and Mknod, then finalized
+ // by calling Close which serializes the complete EROFS image.
++//
++// A Writer built with NewWriter has no output attached and is finalized with
++// Prepare and WriteTo instead, which emit a metadata-first image and need no
++// seeking.
+ type Writer struct {
+ 	out          io.WriteSeeker
+ 	closed       bool
+@@ -27,6 +32,7 @@ type Writer struct {
+ 	buildTime    uint64 // from WithBuildTime or buildTimer
+ 	buildTimeNs  uint32
+ 	hasBuildTime bool
++	uuid         [16]uint8           // from WithUUID; all-zero by default
+ 	wErr         error               // sticky error: once set, all subsequent ops return it
+ 	root         *fsEntry            // root directory
+ 	byPath       map[string]*fsEntry // path → entry (all types)
+@@ -38,6 +44,13 @@ type Writer struct {
+ 	copyMerge        bool   // merge mode: apply whiteouts
+ 	copyDeviceID     uint16 // device ID assigned to current MetadataOnly CopyFrom
+ 
++	inlineThreshold  int                                                             // from WithInlineThreshold
++	syntheticDirMeta func(string, SyntheticDirMetadata) (SyntheticDirMetadata, bool) // from WithSyntheticDirMetadata
++
++	// Set by Prepare; WriteTo emits exactly this layout.
++	layout *Layout
++	ew     *erofsWriter
++
+ 	dataFile *os.File // external data file (nil = spool mode)
+ 	dataOff  int64    // current byte offset in data file
+ 	spool    *os.File // temp spool (created lazily)
+@@ -68,6 +81,31 @@ type CopyOpt func(*Writer)
+ // Create returns a Writer that produces an EROFS image on Close.
+ // Options configure build time, data file, and temp directory.
+ func Create(out io.WriteSeeker, opts ...CreateOpt) *Writer {
++	fsys := newWriter(opts...)
++	fsys.out = out
++
++	if fsys.dataFile != nil {
++		// Reserve device slot 0 (DeviceID=1) for the data file.
++		// MetadataOnly CopyFrom device IDs will start at slot 1+.
++		// The reserved slot is filled in with the actual block count at Close.
++		fsys.devices = append(fsys.devices, 0)
++		off, err := fsys.dataFile.Seek(0, io.SeekEnd)
++		if err == nil {
++			fsys.dataOff = off
++		}
++	}
++
++	return fsys
++}
++
++// NewWriter returns a Writer with no attached output. It is finalized with
++// Prepare and WriteTo rather than Close, which produces a metadata-first image
++// and therefore requires no seekable destination.
++func NewWriter(opts ...CreateOpt) *Writer {
++	return newWriter(opts...)
++}
++
++func newWriter(opts ...CreateOpt) *Writer {
+ 	var o createOptions
+ 	for _, opt := range opts {
+ 		opt(&o)
+@@ -78,14 +116,16 @@ func Create(out io.WriteSeeker, opts ...CreateOpt) *Writer {
+ 		mode: disk.StatTypeDir | 0o755,
+ 	}
+ 	fsys := &Writer{
+-		out:          out,
+-		buildTime:    o.buildTime,
+-		buildTimeNs:  o.buildTimeNs,
+-		hasBuildTime: o.hasBuildTime,
+-		root:         root,
+-		byPath:       map[string]*fsEntry{"/": root},
+-		dataFile:     o.dataFile,
+-		tempDir:      o.tempDir,
++		buildTime:        o.buildTime,
++		buildTimeNs:      o.buildTimeNs,
++		hasBuildTime:     o.hasBuildTime,
++		uuid:             o.uuid,
++		root:             root,
++		byPath:           map[string]*fsEntry{"/": root},
++		inlineThreshold:  o.inlineThreshold,
++		syntheticDirMeta: o.syntheticDirMeta,
++		dataFile:         o.dataFile,
++		tempDir:          o.tempDir,
+ 	}
+ 
+ 	if o.blockSize != 0 {
+@@ -94,17 +134,6 @@ func Create(out io.WriteSeeker, opts ...CreateOpt) *Writer {
+ 		}
+ 	}
+ 
+-	if o.dataFile != nil {
+-		// Reserve device slot 0 (DeviceID=1) for the data file.
+-		// MetadataOnly CopyFrom device IDs will start at slot 1+.
+-		// The reserved slot is filled in with the actual block count at Close.
+-		fsys.devices = append(fsys.devices, 0)
+-		off, err := o.dataFile.Seek(0, io.SeekEnd)
+-		if err == nil {
+-			fsys.dataOff = off
+-		}
+-	}
+-
+ 	return fsys
+ }
+ 
+@@ -172,6 +201,63 @@ func WithTempDir(dir string) CreateOpt {
+ 	}
+ }
+ 
++// WithUUID sets the filesystem UUID. The default is all zero, which is already
++// deterministic; set an explicit value to distinguish images that are otherwise
++// byte-identical.
++func WithUUID(uuid [16]byte) CreateOpt {
++	return func(o *createOptions) {
++		o.uuid = uuid
++	}
++}
++
++// WithInlineThreshold caps tail-packing of regular file payloads into their
++// inodes, so the caller decides which files get a data extent of their own
++// (and therefore appear in [Layout.Extents]).
++//
++// A file is tail-packed only if its size is below n and it still fits in the
++// remainder of the inode's block. n == 0 (the default) keeps the implicit
++// "whatever fits" rule; a negative n disables tail packing entirely. Directory
++// blocks and symlink targets are unaffected.
++func WithInlineThreshold(n int) CreateOpt {
++	return func(o *createOptions) {
++		o.inlineThreshold = n
++	}
++}
++
++// SyntheticDirMetadata are the attributes given to a directory the Writer has
++// to synthesize because an entry beneath it was added without an entry of its
++// own.
++type SyntheticDirMetadata struct {
++	// Mode is the permission bits; the directory type bit is added by the Writer.
++	Mode uint16
++	// UID and GID are the numeric owner ids.
++	UID, GID uint32
++	// Mtime and MtimeNs are the modification timestamp.
++	Mtime   uint64
++	MtimeNs uint32
++	// Xattrs are extended attributes, or nil.
++	Xattrs map[string]string
++}
++
++// WithSyntheticDirMetadata installs a hook consulted whenever the Writer has to
++// synthesize a missing parent directory, so the caller can give it meaningful
++// attributes instead of the default 0755 root:root.
++//
++// fn receives the image path of the directory to synthesize and the attributes
++// of the nearest ancestor directory already present in the image (the root's
++// attributes if there is no closer one), which is what mkfs.erofs inherits
++// from. Returning false falls back to the default attributes.
++//
++// A directory that is later described explicitly (by Mkdir or CopyFrom) has its
++// synthesized attributes replaced, so the hook only decides the attributes of
++// directories that are never described at all. [Writer.SyntheticDirs] reports
++// which those are.
++func WithSyntheticDirMetadata(fn func(path string, ancestor SyntheticDirMetadata) (SyntheticDirMetadata, bool)) CreateOpt {
++	return func(o *createOptions) {
++		o.syntheticDirMeta = fn
++	}
++}
++
+ // --- Writer entry methods ---
+ 
+ // Create creates a regular file with default mode 0644. The caller must
+@@ -219,6 +305,11 @@ func (fsys *Writer) Create(name string) (*File, error) {
+ // Mkdir creates a directory. Only permission bits from perm are used,
+ // including setuid, setgid and sticky as os.Mkdir does; type bits are forced
+ // to directory. Mkdir("/", perm) sets root permissions.
++//
++// A directory that already exists — including one the Writer synthesized to
++// hold an entry added earlier — has its permissions updated in place and is no
++// longer reported by [Writer.SyntheticDirs]. Any other existing entry at name
++// is an error.
+ func (fsys *Writer) Mkdir(name string, perm fs.FileMode) error {
+ 	if fsys.wErr != nil {
+ 		return fsys.wErr
+@@ -229,6 +320,17 @@ func (fsys *Writer) Mkdir(name string, perm fs.FileMode) error {
+ 		fsys.root.mode = dirMode
+ 		return nil
+ 	}
++	if existing, ok := fsys.byPath[name]; ok {
++		if err := fsys.checkMutable(); err != nil {
++			return err
++		}
++		if existing.mode&disk.StatTypeMask != disk.StatTypeDir {
++			return fmt.Errorf("mkfs: %q already exists and is not a directory", name)
++		}
++		existing.mode = disk.StatTypeDir | uint16(perm.Perm())
++		existing.synthesized = false
++		return nil
++	}
+ 	if err := fsys.checkPath(name); err != nil {
+ 		return err
+ 	}
+@@ -372,6 +474,200 @@ func (fsys *Writer) SetNlink(name string, nlink uint32) error {
+ 	return nil
+ }
+ 
++// SetToken attaches an opaque value to the named entry. If the entry ends up
++// with an out-of-line payload, the value is reported as [Extent.Token] on the
++// corresponding entry of the layout returned by [Writer.Prepare], which lets a
++// caller recover per-entry context (for example a precomputed content digest)
++// without matching on paths.
++func (fsys *Writer) SetToken(name string, tok any) error {
++	if fsys.wErr != nil {
++		return fsys.wErr
++	}
++	e, err := fsys.lookup(name)
++	if err != nil {
++		return err
++	}
++	e.token = tok
++	return nil
++}
++
++// Link creates newname as a hardlink to oldname: a second directory entry
++// resolving to the same inode, with the inode's link count incremented.
++// Metadata is necessarily shared. Directories cannot be hardlinked.
++func (fsys *Writer) Link(oldname, newname string) error {
++	if fsys.wErr != nil {
++		return fsys.wErr
++	}
++	if err := fsys.checkMutable(); err != nil {
++		return err
++	}
++	target, err := fsys.lookup(oldname)
++	if err != nil {
++		return err
++	}
++	target = resolveHardlink(target)
++	if target.mode&disk.StatTypeMask == disk.StatTypeDir {
++		return fmt.Errorf("mkfs: cannot hardlink directory %q", oldname)
++	}
++	newname = cleanPath(newname)
++	if newname == "/" {
++		return fmt.Errorf("mkfs: cannot create hardlink at root")
++	}
++	if err := fsys.checkPath(newname); err != nil {
++		return err
++	}
++
++	fsys.ensureParent(newname)
++
++	e := &fsEntry{
++		path:       newname,
++		mode:       target.mode,
++		size:       target.size,
++		hardlinkTo: target,
++		fileClosed: true,
++	}
++	fsys.addChild(e)
++	target.extraLinks++
++	return nil
++}
++
++// ShareData makes dst's inode reference the same data extent as src, so the
++// payload is stored once. Both inodes keep independent metadata; dst's size is
++// set to src's. src must be a regular file with a payload; a shared payload is
++// never tail-packed into an inode, and appears exactly once in
++// [Layout.Extents].
++func (fsys *Writer) ShareData(src, dst string) error {
++	if fsys.wErr != nil {
++		return fsys.wErr
++	}
++	if err := fsys.checkMutable(); err != nil {
++		return err
++	}
++	s, err := fsys.lookup(src)
++	if err != nil {
++		return err
++	}
++	d, err := fsys.lookup(dst)
++	if err != nil {
++		return err
++	}
++	s, d = resolveHardlink(s), resolveHardlink(d)
++	for s.shareSrc != nil {
++		s = s.shareSrc
++	}
++	if s == d {
++		return fmt.Errorf("mkfs: cannot share %q with itself", dst)
++	}
++	if s.mode&disk.StatTypeMask != disk.StatTypeReg || d.mode&disk.StatTypeMask != disk.StatTypeReg {
++		return fmt.Errorf("mkfs: can only share data between regular files (%q, %q)", src, dst)
++	}
++	if s.size == 0 {
++		return fmt.Errorf("mkfs: cannot share data of empty file %q", src)
++	}
++	if len(s.chunks) > 0 || s.metadataOnly {
++		return fmt.Errorf("mkfs: cannot share data of chunk-based file %q", src)
++	}
++	s.shareRefs++
++	d.shareSrc = s
++	d.size = s.size
++	d.directData = nil
++	d.chunks = nil
++	d.fileClosed = true
++	return nil
++}
++
++// Remove deletes the entry at name, and for a directory its whole subtree, from
++// the pending image. It is the primitive behind last-writer-wins semantics: a
++// caller that has to replace an entry removes it first.
++//
++// Removing an entry that a hardlink or a shared payload still points at is an
++// error, because that would leave a dangling reference.
++func (fsys *Writer) Remove(name string) error {
++	if fsys.wErr != nil {
++		return fsys.wErr
++	}
++	if err := fsys.checkMutable(); err != nil {
++		return err
++	}
++	name = cleanPath(name)
++	if name == "/" {
++		return fmt.Errorf("mkfs: cannot remove root")
++	}
++	e, ok := fsys.byPath[name]
++	if !ok {
++		return &fs.PathError{Op: "remove", Path: name, Err: fs.ErrNotExist}
++	}
++	if err := checkUnreferenced(e); err != nil {
++		return err
++	}
++	if e.mode&disk.StatTypeMask == disk.StatTypeDir {
++		for _, c := range e.children {
++			if c.removed {
++				continue
++			}
++			if err := checkUnreferenced(c); err != nil {
++				return err
++			}
++		}
++	}
++	if e.hardlinkTo != nil {
++		e.hardlinkTo.extraLinks--
++	}
++	if e.shareSrc != nil {
++		e.shareSrc.shareRefs--
++	}
++	fsys.remove(name)
++	return nil
++}
++
++// SyntheticDirs returns the sorted image paths of directories the Writer
++// synthesized because an entry beneath them was added without an entry of their
++// own, and which were never described explicitly afterwards. A caller that
++// cares about lower-layer directory attributes (an EROFS image is a filesystem,
++// not a changeset, so the dirent tree has to be complete) can use this to warn
++// or fail.
++func (fsys *Writer) SyntheticDirs() []string {
++	var paths []string
++	for p, e := range fsys.byPath {
++		if e.synthesized && !e.removed {
++			paths = append(paths, p)
++		}
++	}
++	sort.Strings(paths)
++	return paths
++}
++
++// checkMutable reports an error if the tree can no longer be changed.
++func (fsys *Writer) checkMutable() error {
++	if fsys.closed {
++		return fmt.Errorf("mkfs: FS is closed")
++	}
++	if fsys.layout != nil {
++		return fmt.Errorf("mkfs: layout already prepared")
++	}
++	return nil
++}
++
++// resolveHardlink follows a chain of hardlinks to the inode they name.
++func resolveHardlink(e *fsEntry) *fsEntry {
++	for e.hardlinkTo != nil {
++		e = e.hardlinkTo
++	}
++	return e
++}
++
++// checkUnreferenced reports an error if removing e would dangle a hardlink or a
++// shared payload.
++func checkUnreferenced(e *fsEntry) error {
++	if e.extraLinks > 0 {
++		return fmt.Errorf("mkfs: %q still has %d hardlink(s) to it", e.path, e.extraLinks)
++	}
++	if e.shareRefs > 0 {
++		return fmt.Errorf("mkfs: %q payload is still shared by %d entr(ies)", e.path, e.shareRefs)
++	}
++	return nil
++}
++
+ // --- Writer bulk copy ---
+ 
+ // CopyFrom walks an fs.FS and adds all entries.
+@@ -585,12 +881,38 @@ func (fsys *Writer) Close() error {
+ 	if fsys.closed {
+ 		return fmt.Errorf("mkfs: FS already closed")
+ 	}
++	if fsys.out == nil {
++		return fmt.Errorf("mkfs: no output attached; finalize with WriteTo")
++	}
++	if fsys.layout != nil {
++		return fmt.Errorf("mkfs: layout already prepared; finalize with WriteTo")
++	}
+ 	fsys.closed = true
+ 
+ 	if fsys.spool != nil {
+ 		defer func() { _ = fsys.spool.Close() }()
+ 	}
+ 
++	ew, err := fsys.finalizeTree()
++	if err != nil {
++		return err
++	}
++
++	// Data-first layout: sbArea, data blocks, metadata. The sentinel makes
++	// assignDataBlocks place data before metadata.
++	ew.metaBlkAddr = 0xFFFFFFFF
++	ew.assignDataBlocks()
++	if err := ew.resolveSharedData(); err != nil {
++		return err
++	}
++
++	return ew.write(fsys.out)
++}
++
++// finalizeTree resolves the block size, converts the fsEntry tree into the
++// erofsEntry tree and plans the metadata area. The caller decides where data
++// blocks go by setting erofsWriter.metaBlkAddr and calling assignDataBlocks.
++func (fsys *Writer) finalizeTree() (*erofsWriter, error) {
+ 	fsys.resolveBlockSize()
+ 
+ 	if fsys.dataFile != nil {
+@@ -605,7 +927,10 @@ func (fsys *Writer) Close() error {
+ 	}
+ 
+ 	// Build erofsEntry tree from the fsEntry tree via BFS.
+-	root := fsys.buildErofsTree()
++	root, err := fsys.buildErofsTree()
++	if err != nil {
++		return nil, err
++	}
+ 
+ 	var chunkBits uint8
+ 	for cs := fsys.blockSize; cs < 4096; cs <<= 1 {
+@@ -613,18 +938,19 @@ func (fsys *Writer) Close() error {
+ 	}
+ 
+ 	ew := &erofsWriter{
+-		buildTime:   buildTime,
+-		buildTimeNs: fsys.buildTimeNs,
+-		devices:     fsys.devices,
+-		blockSize:   fsys.blockSize,
+-		chunkBits:   chunkBits,
+-		zeroBuf:     make([]byte, fsys.blockSize),
++		buildTime:       buildTime,
++		buildTimeNs:     fsys.buildTimeNs,
++		uuid:            fsys.uuid,
++		devices:         fsys.devices,
++		blockSize:       fsys.blockSize,
++		chunkBits:       chunkBits,
++		inlineThreshold: fsys.inlineThreshold,
++		zeroBuf:         make([]byte, fsys.blockSize),
+ 	}
+ 
+ 	ew.planLayout(root)
+ 	fixParentNids(root, root)
+-
+-	return ew.write(fsys.out)
++	return ew, nil
+ }
+ 
+ // Stat returns file info for the named path. The name is cleaned the same
+@@ -647,6 +973,11 @@ func (fsys *Writer) Open(name string) (fs.File, error) {
+ 	if !ok {
+ 		return nil, &fs.PathError{Op: "open", Path: name, Err: fs.ErrNotExist}
+ 	}
++	// A hardlink reads through to the inode it names.
++	e = resolveHardlink(e)
++	if e.shareSrc != nil {
++		e = e.shareSrc
++	}
+ 
+ 	typ := e.mode & disk.StatTypeMask
+ 	switch typ {
+@@ -764,11 +1095,21 @@ type fsEntry struct {
+ 	linkTarget string
+ 	chunks     []builder.Chunk
+ 	contiguous bool // data blocks are contiguous; flat-plain is sufficient
++	token      any  // from SetToken; surfaced as Extent.Token
+ 
+ 	// Tree structure — maintained during add/remove.
+ 	parent   *fsEntry
+ 	children []*fsEntry
+ 
++	// hardlinkTo, when set, marks this entry as an additional dirent for
++	// another inode (see Link). It gets no inode of its own.
++	hardlinkTo *fsEntry
++	extraLinks uint32 // number of hardlinks pointing at this entry
++	// shareSrc, when set, makes this inode reference another's data extent
++	// (see ShareData).
++	shareSrc  *fsEntry
++	shareRefs uint32 // number of entries sharing this entry's payload
++
+ 	// data location in spool file
+ 	spoolOff     int64
+ 	dataStartOff int64     // byte offset where file data begins (spool or data file)
+@@ -777,16 +1118,20 @@ type fsEntry struct {
+ 
+ 	removed      bool // true if removed by a whiteout in a merge layer
+ 	metadataOnly bool // from a metadata-only CopyFrom; use chunk-based layout
++	synthesized  bool // created by ensureParent, never described explicitly
+ }
+ 
+ // createOptions holds the parsed option values for Create.
+ type createOptions struct {
+-	buildTime    uint64
+-	buildTimeNs  uint32
+-	hasBuildTime bool
+-	blockSize    int      // 0 = use default
+-	dataFile     *os.File // external data file for metadata-only mode
+-	tempDir      string   // temp directory for spool file
++	buildTime        uint64
++	buildTimeNs      uint32
++	hasBuildTime     bool
++	uuid             [16]uint8
++	blockSize        int      // 0 = use default
++	dataFile         *os.File // external data file for metadata-only mode
++	tempDir          string   // temp directory for spool file
++	inlineThreshold  int      // see WithInlineThreshold
++	syntheticDirMeta func(string, SyntheticDirMetadata) (SyntheticDirMetadata, bool)
+ }
+ 
+ // blockSizer may be implemented by an fs.FS to declare its block size.
+@@ -859,6 +1204,17 @@ type erofsEntry struct {
+ 	// Extended attributes
+ 	xattrs map[string]string
+ 
++	// hardlinkTo, when set, marks this entry as an extra dirent for another
++	// inode: it gets no inode (and no NID) of its own.
++	hardlinkTo *erofsEntry
++	// shareSrc, when set, makes this inode reference another's data extent.
++	shareSrc *erofsEntry
++	// isShareSrc marks an entry whose payload other inodes reference, which
++	// keeps it out of line.
++	isShareSrc bool
++	// token is the caller value from Writer.SetToken.
++	token any
++
+ 	// EROFS layout (assigned during planning)
+ 	nid           uint64
+ 	parentNid     uint64
+@@ -873,6 +1229,15 @@ type erofsEntry struct {
+ 	dataBlkAddr uint32
+ }
+ 
++// direntTarget returns the inode an entry's dirent resolves to: itself, or the
++// hardlink target when the entry is an extra dirent for another inode.
++func direntTarget(e *erofsEntry) *erofsEntry {
++	if e.hardlinkTo != nil {
++		return e.hardlinkTo
++	}
++	return e
++}
++
+ // --- Internal helpers ---
+ 
+ // cleanPath normalizes a filesystem path to an absolute rooted form.
+@@ -1084,12 +1449,17 @@ func (fsys *Writer) add(p string, info fs.FileInfo) error {
+ 
+ 	// Handle duplicate paths (overwrite semantics).
+ 	if existing, ok := fsys.byPath[p]; ok {
+-		// Preserve tree linkage when overwriting.
++		// Preserve tree linkage, and the counts of references other entries
++		// hold on this one, when overwriting.
+ 		savedParent := existing.parent
+ 		savedChildren := existing.children
++		savedExtraLinks := existing.extraLinks
++		savedShareRefs := existing.shareRefs
+ 		*existing = *fe
+ 		existing.parent = savedParent
+ 		existing.children = savedChildren
++		existing.extraLinks = savedExtraLinks
++		existing.shareRefs = savedShareRefs
+ 		fe = existing
+ 	} else {
+ 		fsys.addChild(fe)
+@@ -1143,8 +1513,8 @@ func (fsys *Writer) add(p string, info fs.FileInfo) error {
+ 
+ // checkPath validates that a path hasn't already been registered.
+ func (fsys *Writer) checkPath(name string) error {
+-	if fsys.closed {
+-		return fmt.Errorf("mkfs: FS is closed")
++	if err := fsys.checkMutable(); err != nil {
++		return err
+ 	}
+ 	if _, ok := fsys.byPath[name]; ok {
+ 		return fmt.Errorf("mkfs: duplicate path %q", name)
+@@ -1160,8 +1530,10 @@ func (fsys *Writer) ensureParent(name string) {
+ 	}
+ 	// Walk up to find existing ancestors.
+ 	var missing []string
++	ancestor := fsys.root
+ 	for d := dir; d != "/"; d = path.Dir(d) {
+-		if _, ok := fsys.byPath[d]; ok {
++		if e, ok := fsys.byPath[d]; ok {
++			ancestor = e
+ 			break
+ 		}
+ 		missing = append(missing, d)
+@@ -1170,10 +1542,35 @@ func (fsys *Writer) ensureParent(name string) {
+ 	for i := len(missing) - 1; i >= 0; i-- {
+ 		d := missing[i]
+ 		e := &fsEntry{
+-			path: d,
+-			mode: disk.StatTypeDir | 0o755,
++			path:        d,
++			mode:        disk.StatTypeDir | 0o755,
++			synthesized: true,
++		}
++		if fsys.syntheticDirMeta != nil {
++			if meta, ok := fsys.syntheticDirMeta(d, ancestorMetadata(ancestor)); ok {
++				e.mode = disk.StatTypeDir | (meta.Mode & 0o7777)
++				e.uid = meta.UID
++				e.gid = meta.GID
++				e.mtime = meta.Mtime
++				e.mtimeNs = meta.MtimeNs
++				e.xattrs = maps.Clone(meta.Xattrs)
++			}
+ 		}
+ 		fsys.addChild(e)
++		ancestor = e
++	}
++}
++
++// ancestorMetadata describes an existing directory for the synthetic-directory
++// hook, mirroring what mkfs.erofs inherits from the nearest ancestor.
++func ancestorMetadata(e *fsEntry) SyntheticDirMetadata {
++	return SyntheticDirMetadata{
++		Mode:    e.mode & 0o7777,
++		UID:     e.uid,
++		GID:     e.gid,
++		Mtime:   e.mtime,
++		MtimeNs: e.mtimeNs,
++		Xattrs:  e.xattrs,
+ 	}
+ }
+ 
+@@ -1230,13 +1627,17 @@ func (fsys *Writer) removeSubtree(e *fsEntry) {
+ 
+ // buildErofsTree converts the fsEntry tree into an erofsEntry tree via BFS.
+ // Children are sorted for deterministic output. The Writer is consumed.
+-func (fsys *Writer) buildErofsTree() *erofsEntry {
++func (fsys *Writer) buildErofsTree() (*erofsEntry, error) {
+ 	type pair struct {
+ 		fs *fsEntry
+ 		er *erofsEntry
+ 	}
+ 
++	// Hardlinks and shared payloads point at other entries, which BFS may not
++	// have converted yet, so the pointers are wired up in a second pass.
++	converted := make(map[*fsEntry]*erofsEntry, len(fsys.byPath))
+ 	rootEr := fsys.fsToErofs(fsys.root)
++	converted[fsys.root] = rootEr
+ 	queue := []pair{{fsys.root, rootEr}}
+ 
+ 	for len(queue) > 0 {
+@@ -1263,6 +1664,7 @@ func (fsys *Writer) buildErofsTree() *erofsEntry {
+ 				continue
+ 			}
+ 			ent := fsys.fsToErofs(c)
++			converted[c] = ent
+ 			cur.er.children = append(cur.er.children, ent)
+ 			if c.mode&disk.StatTypeMask == disk.StatTypeDir {
+ 				queue = append(queue, pair{c, ent})
+@@ -1274,7 +1676,25 @@ func (fsys *Writer) buildErofsTree() *erofsEntry {
+ 			return cur.er.children[i].name < cur.er.children[j].name
+ 		})
+ 	}
+-	return rootEr
++
++	for fe, ee := range converted {
++		if fe.hardlinkTo != nil {
++			target, ok := converted[fe.hardlinkTo]
++			if !ok {
++				return nil, fmt.Errorf("mkfs: hardlink %q points at removed entry %q", fe.path, fe.hardlinkTo.path)
++			}
++			ee.hardlinkTo = target
++		}
++		if fe.shareSrc != nil {
++			src, ok := converted[fe.shareSrc]
++			if !ok {
++				return nil, fmt.Errorf("mkfs: %q shares data with removed entry %q", fe.path, fe.shareSrc.path)
++			}
++			ee.shareSrc = src
++			src.isShareSrc = true
++		}
++	}
++	return rootEr, nil
+ }
+ 
+ // fsToErofs converts a single fsEntry to an erofsEntry, resolving data readers.
+@@ -1286,11 +1706,12 @@ func (fsys *Writer) fsToErofs(e *fsEntry) *erofsEntry {
+ 	case e.mode&disk.StatTypeMask == disk.StatTypeDir:
+ 		nlink = 2 // adjusted by buildErofsTree
+ 	default:
+-		nlink = 1
++		nlink = 1 + e.extraLinks
+ 	}
+ 
+ 	var data io.Reader
+ 	if fsys.dataFile == nil && len(e.chunks) == 0 && !e.metadataOnly &&
++		e.hardlinkTo == nil && e.shareSrc == nil &&
+ 		e.mode&disk.StatTypeMask == disk.StatTypeReg && e.size > 0 {
+ 		if e.directData != nil {
+ 			data = e.directData
+@@ -1316,6 +1737,7 @@ func (fsys *Writer) fsToErofs(e *fsEntry) *erofsEntry {
+ 		metadataOnly:  e.metadataOnly,
+ 		data:          data,
+ 		xattrs:        e.xattrs,
++		token:         e.token,
+ 		erofsFileType: modeToFileType(e.mode),
+ 	}
+ }
+diff --git a/prepare.go b/prepare.go
+new file mode 100644
+index 0000000..0ff025a
+--- /dev/null
++++ b/prepare.go
+@@ -0,0 +1,203 @@
++package erofs
++
++import (
++	"fmt"
++	"io"
++)
++
++// ExtentKind classifies the payload a [Extent] covers.
++type ExtentKind int
++
++const (
++	// ExtentFileData is a regular file's payload, stored verbatim.
++	ExtentFileData ExtentKind = iota
++	// ExtentDirents is an out-of-line directory block (or run of blocks).
++	ExtentDirents
++	// ExtentSymlink is an out-of-line symlink target.
++	ExtentSymlink
++)
++
++func (k ExtentKind) String() string {
++	switch k {
++	case ExtentFileData:
++		return "file-data"
++	case ExtentDirents:
++		return "dirents"
++	case ExtentSymlink:
++		return "symlink"
++	default:
++		return fmt.Sprintf("ExtentKind(%d)", int(k))
++	}
++}
++
++// Extent is one out-of-line payload in the image's data area.
++//
++// Offset is absolute within the image and block-aligned. Size is the payload
++// length; the Pad bytes that follow it are zero. Consecutive extents, together
++// with their padding, tile [Layout.MetaSize, Layout.ImageSize) exactly.
++type Extent struct {
++	// Path is the image path of the inode that owns the payload.
++	Path string
++	// Kind is the payload's classification.
++	Kind ExtentKind
++	// Offset is the payload's absolute byte offset in the image.
++	Offset int64
++	// Size is the payload length in bytes, excluding trailing padding.
++	Size int64
++	// Pad is the number of zero bytes following the payload, up to the next
++	// block boundary.
++	Pad int64
++	// Token is the opaque value the caller attached to the owning inode with
++	// [Writer.SetToken], or nil.
++	Token any
++}
++
++// Layout is the on-disk layout [Writer.WriteTo] will produce.
++//
++// The layout is metadata-first: [0, MetaSize) holds the superblock area and the
++// inode metadata (including every inline payload), and [MetaSize, ImageSize) is
++// tiled by Extents and their padding.
++type Layout struct {
++	// BlockSize is the image's filesystem block size in bytes.
++	BlockSize int
++	// ImageSize is the total number of bytes WriteTo will emit.
++	ImageSize int64
++	// MetaSize is the size of the superblock plus metadata area; the data area
++	// starts here.
++	MetaSize int64
++	// Extents are the out-of-line payloads, ascending by Offset and
++	// non-overlapping.
++	Extents []Extent
++}
++
++// Prepare finalizes the tree and computes the on-disk layout without writing
++// anything.
++//
++// It is idempotent: repeated calls return the same *Layout, and [Writer.WriteTo]
++// produces exactly the layout Prepare returned. Prepare uses the metadata-first
++// layout, so WriteTo needs no seeking. After Prepare the tree must not be
++// modified; entry-adding methods return an error.
++func (fsys *Writer) Prepare() (*Layout, error) {
++	if fsys.wErr != nil {
++		return nil, fsys.wErr
++	}
++	if fsys.layout != nil {
++		return fsys.layout, nil
++	}
++	if fsys.closed {
++		return nil, fmt.Errorf("mkfs: FS already closed")
++	}
++
++	ew, err := fsys.finalizeTree()
++	if err != nil {
++		return nil, err
++	}
++
++	// Metadata-first: the metadata area starts immediately after the
++	// superblock area, and data blocks follow it.
++	ew.metaBlkAddr = uint32(ew.sbAreaBlocks())
++	ew.assignDataBlocks()
++	if err := ew.resolveSharedData(); err != nil {
++		return nil, err
++	}
++
++	metaBytes := ew.metadataBytes()
++	metaBlocks := (metaBytes + ew.blockSize - 1) / ew.blockSize
++	dataBlocks := 0
++	for _, e := range ew.entries {
++		if ds := ew.flatPlainDataSize(e); ds > 0 {
++			dataBlocks += (ds + ew.blockSize - 1) / ew.blockSize
++		}
++	}
++
++	fsys.ew = ew
++	fsys.layout = &Layout{
++		BlockSize: ew.blockSize,
++		MetaSize:  int64(ew.sbAreaBlocks()+metaBlocks) * int64(ew.blockSize),
++		ImageSize: int64(ew.sbAreaBlocks()+metaBlocks+dataBlocks) * int64(ew.blockSize),
++		Extents:   ew.buildExtents(),
++	}
++	return fsys.layout, nil
++}
++
++// WriteTo serializes the image to w in ascending offset order using the
++// metadata-first layout: superblock area, metadata, then data blocks. It
++// requires no seeking and emits exactly the layout [Writer.Prepare] returned.
++//
++// WriteTo calls Prepare if the caller has not. The Writer must not be used
++// afterwards.
++func (fsys *Writer) WriteTo(w io.Writer) (int64, error) {
++	layout, err := fsys.Prepare()
++	if err != nil {
++		return 0, err
++	}
++	if fsys.closed {
++		return 0, fmt.Errorf("mkfs: FS already closed")
++	}
++	fsys.closed = true
++	if fsys.spool != nil {
++		defer func() { _ = fsys.spool.Close() }()
++	}
++
++	ew := fsys.ew
++	ew.copyBuf = make([]byte, 256*1024)
++	out := &countingWriter{w: w}
++
++	if err := ew.writeBlock0(out); err != nil {
++		return out.n, err
++	}
++	meta := ew.newMetaBuffer()
++	if err := ew.writeMetadataInodes(meta); err != nil {
++		return out.n, err
++	}
++	if _, err := meta.WriteTo(out); err != nil {
++		return out.n, err
++	}
++	if err := ew.writeDataBlocks(out); err != nil {
++		return out.n, err
++	}
++
++	if out.n != layout.ImageSize {
++		return out.n, fmt.Errorf("mkfs: wrote %d bytes, layout planned %d", out.n, layout.ImageSize)
++	}
++	return out.n, nil
++}
++
++// countingWriter counts the bytes written through it. WriteTo uses it to check
++// the emitted image against the planned layout.
++type countingWriter struct {
++	w io.Writer
++	n int64
++}
++
++func (c *countingWriter) Write(p []byte) (int, error) {
++	n, err := c.w.Write(p)
++	c.n += int64(n)
++	return n, err
++}
++
++// buildExtents materializes the out-of-line payload list in the same order
++// writeDataBlocks emits it, which is also ascending by offset because
++// assignDataBlocks allocates in entry order.
++func (w *erofsWriter) buildExtents() []Extent {
++	var extents []Extent
++	for _, e := range w.entries {
++		ds := w.flatPlainDataSize(e)
++		if ds == 0 {
++			continue
++		}
++		var pad int64
++		if r := ds % w.blockSize; r != 0 {
++			pad = int64(w.blockSize - r)
++		}
++		extents = append(extents, Extent{
++			Path:   e.path,
++			Kind:   extentKind(e),
++			Offset: int64(e.dataBlkAddr) * int64(w.blockSize),
++			Size:   int64(ds),
++			Pad:    pad,
++			Token:  e.token,
++		})
++	}
++	return extents
++}
+diff --git a/prepare_test.go b/prepare_test.go
+new file mode 100644
+index 0000000..aa494fd
+--- /dev/null
++++ b/prepare_test.go
+@@ -0,0 +1,659 @@
++package erofs_test
++
++import (
++	"bytes"
++	"fmt"
++	"io/fs"
++	"strings"
++	"testing"
++
++	erofs "github.com/erofs/go-erofs"
++	"github.com/erofs/go-erofs/internal/erofstest"
++)
++
++// writeFile adds a regular file with the given content to fsys.
++func writeFile(t testing.TB, fsys *erofs.Writer, name, content string) {
++	t.Helper()
++	f, err := fsys.Create(name)
++	if err != nil {
++		t.Fatalf("create %s: %v", name, err)
++	}
++	if _, err := f.Write([]byte(content)); err != nil {
++		t.Fatalf("write %s: %v", name, err)
++	}
++	if err := f.Close(); err != nil {
++		t.Fatalf("close %s: %v", name, err)
++	}
++}
++
++// prepareAndWrite prepares fsys, serializes it with WriteTo, and checks the
++// image against the planned layout.
++func prepareAndWrite(t testing.TB, fsys *erofs.Writer) (*erofs.Layout, []byte) {
++	t.Helper()
++	layout, err := fsys.Prepare()
++	if err != nil {
++		t.Fatalf("Prepare: %v", err)
++	}
++	var buf bytes.Buffer
++	n, err := fsys.WriteTo(&buf)
++	if err != nil {
++		t.Fatalf("WriteTo: %v", err)
++	}
++	if n != layout.ImageSize {
++		t.Errorf("WriteTo wrote %d bytes, layout planned %d", n, layout.ImageSize)
++	}
++	if int64(buf.Len()) != layout.ImageSize {
++		t.Errorf("image is %d bytes, layout planned %d", buf.Len(), layout.ImageSize)
++	}
++	if layout.ImageSize%int64(layout.BlockSize) != 0 {
++		t.Errorf("image size %d is not a multiple of the block size %d", layout.ImageSize, layout.BlockSize)
++	}
++	erofstest.FsckErofsBytes(t, buf.Bytes())
++	return layout, buf.Bytes()
++}
++
++// checkExtentsTile verifies that the extents and their padding tile
++// [MetaSize, ImageSize) exactly, in ascending order.
++func checkExtentsTile(t testing.TB, layout *erofs.Layout) {
++	t.Helper()
++	pos := layout.MetaSize
++	for i, e := range layout.Extents {
++		if e.Offset != pos {
++			t.Errorf("extent %d (%s): offset %d, want %d", i, e.Path, e.Offset, pos)
++		}
++		if e.Offset%int64(layout.BlockSize) != 0 {
++			t.Errorf("extent %d (%s): offset %d is not block-aligned", i, e.Path, e.Offset)
++		}
++		if (e.Size+e.Pad)%int64(layout.BlockSize) != 0 {
++			t.Errorf("extent %d (%s): size %d + pad %d is not a whole number of blocks", i, e.Path, e.Size, e.Pad)
++		}
++		pos = e.Offset + e.Size + e.Pad
++	}
++	if pos != layout.ImageSize {
++		t.Errorf("extents end at %d, image size is %d", pos, layout.ImageSize)
++	}
++}
++
++// extentsFor returns the extents belonging to the named path.
++func extentsFor(layout *erofs.Layout, path string) []erofs.Extent {
++	var out []erofs.Extent
++	for _, e := range layout.Extents {
++		if e.Path == path {
++			out = append(out, e)
++		}
++	}
++	return out
++}
++
++// TestPrepareWriteToAgreement checks the core contract Prepare promises: the
++// image is exactly ImageSize bytes, every file-data extent holds that file's
++// bytes verbatim followed by zero padding, and the extents tile the data area.
++func TestPrepareWriteToAgreement(t *testing.T) {
++	fsys := erofs.NewWriter(erofs.WithBuildTime(0, 0))
++
++	// A payload larger than one block, so it must go out of line, plus a small
++	// one that is tail-packed, a multi-block directory and a long symlink.
++	big := strings.Repeat("0123456789abcdef", 1024) // 16 KiB
++	writeFile(t, fsys, "/big.bin", big)
++	writeFile(t, fsys, "/small.txt", "small\n")
++	if err := fsys.Mkdir("/dir", 0o755); err != nil {
++		t.Fatal(err)
++	}
++	for i := range 512 {
++		writeFile(t, fsys, fmt.Sprintf("/dir/f%03d", i), fmt.Sprintf("content %d\n", i))
++	}
++	if err := fsys.Symlink(strings.Repeat("a/", 200)+"target", "/link"); err != nil {
++		t.Fatal(err)
++	}
++
++	layout, image := prepareAndWrite(t, fsys)
++	checkExtentsTile(t, layout)
++
++	bigExtents := extentsFor(layout, "/big.bin")
++	if len(bigExtents) != 1 {
++		t.Fatalf("/big.bin: %d extents, want 1", len(bigExtents))
++	}
++	e := bigExtents[0]
++	if e.Kind != erofs.ExtentFileData {
++		t.Errorf("/big.bin: kind %v, want %v", e.Kind, erofs.ExtentFileData)
++	}
++	if e.Size != int64(len(big)) {
++		t.Errorf("/big.bin: extent size %d, want %d", e.Size, len(big))
++	}
++	if got := string(image[e.Offset : e.Offset+e.Size]); got != big {
++		t.Error("/big.bin: extent bytes do not match the source content")
++	}
++	for i, b := range image[e.Offset+e.Size : e.Offset+e.Size+e.Pad] {
++		if b != 0 {
++			t.Errorf("/big.bin: padding byte %d is %#x, want 0", i, b)
++			break
++		}
++	}
++
++	// A consumer that has the image's metadata but not its file payloads must
++	// still be able to walk the whole tree: only ExtentFileData ranges carry
++	// file content, so zeroing exactly those must leave the directory
++	// structure (including out-of-line dirent blocks and symlink targets)
++	// intact. This is what reading an EROFS layer out of a compact stream
++	// without fetching any blob does.
++	sparse := make([]byte, len(image))
++	copy(sparse, image)
++	for _, e := range layout.Extents {
++		if e.Kind != erofs.ExtentFileData {
++			continue
++		}
++		for i := e.Offset; i < e.Offset+e.Size; i++ {
++			sparse[i] = 0
++		}
++	}
++	efs, err := erofs.Open(bytes.NewReader(sparse))
++	if err != nil {
++		t.Fatalf("Open payload-free image: %v", err)
++	}
++	var files int
++	if err := fs.WalkDir(efs, ".", func(p string, d fs.DirEntry, err error) error {
++		if err != nil {
++			return err
++		}
++		if d.Type().IsRegular() {
++			files++
++		}
++		return nil
++	}); err != nil {
++		t.Fatalf("walking payload-free image: %v", err)
++	}
++	if want := 512 + 2; files != want {
++		t.Errorf("walked %d regular files, want %d", files, want)
++	}
++	erofstest.CheckSymlink(t, efs, "link", strings.Repeat("a/", 200)+"target")
++
++	// And the full image reads back correctly.
++	efs, err = erofs.Open(bytes.NewReader(image))
++	if err != nil {
++		t.Fatalf("Open: %v", err)
++	}
++	erofstest.CheckFile(t, efs, "big.bin", big)
++	erofstest.CheckFile(t, efs, "small.txt", "small\n")
++	erofstest.CheckFile(t, efs, "dir/f511", "content 511\n")
++	erofstest.CheckSymlink(t, efs, "link", strings.Repeat("a/", 200)+"target")
++}
++
++// TestPrepareIdempotent checks that Prepare can be called repeatedly and that
++// the tree is frozen afterwards.
++func TestPrepareIdempotent(t *testing.T) {
++	fsys := erofs.NewWriter(erofs.WithBuildTime(0, 0))
++	writeFile(t, fsys, "/a", "a\n")
++
++	first, err := fsys.Prepare()
++	if err != nil {
++		t.Fatal(err)
++	}
++	second, err := fsys.Prepare()
++	if err != nil {
++		t.Fatal(err)
++	}
++	if first != second {
++		t.Error("Prepare returned a different layout on the second call")
++	}
++	if _, err := fsys.Create("/b"); err == nil {
++		t.Error("Create after Prepare succeeded, want an error")
++	}
++	if err := fsys.Mkdir("/c", 0o755); err == nil {
++		t.Error("Mkdir after Prepare succeeded, want an error")
++	}
++}
++
++// TestWriteToMatchesClose checks that the metadata-first image produced by
++// WriteTo describes the same filesystem as the data-first image Close produces.
++func TestWriteToMatchesClose(t *testing.T) {
++	build := func(fsys *erofs.Writer) {
++		writeFile(t, fsys, "/big.bin", strings.Repeat("x", 9000))
++		writeFile(t, fsys, "/small", "s\n")
++		if err := fsys.Mkdir("/d", 0o700); err != nil {
++			t.Fatal(err)
++		}
++		writeFile(t, fsys, "/d/inner", "inner\n")
++		if err := fsys.Symlink("/d/inner", "/l"); err != nil {
++			t.Fatal(err)
++		}
++		if err := fsys.Setxattr("/d", "user.k", "v"); err != nil {
++			t.Fatal(err)
++		}
++	}
++
++	var seekBuf testBuffer
++	seekable := erofs.Create(&seekBuf, erofs.WithBuildTime(0, 0))
++	build(seekable)
++	if err := seekable.Close(); err != nil {
++		t.Fatal("Close:", err)
++	}
++
++	streamed := erofs.NewWriter(erofs.WithBuildTime(0, 0))
++	build(streamed)
++	_, streamImage := prepareAndWrite(t, streamed)
++
++	if len(seekBuf.Bytes()) != len(streamImage) {
++		t.Errorf("image sizes differ: seekable %d, streamed %d", len(seekBuf.Bytes()), len(streamImage))
++	}
++
++	for name, image := range map[string][]byte{"seekable": seekBuf.Bytes(), "streamed": streamImage} {
++		efs, err := erofs.Open(bytes.NewReader(image))
++		if err != nil {
++			t.Fatalf("%s: Open: %v", name, err)
++		}
++		erofstest.CheckFile(t, efs, "big.bin", strings.Repeat("x", 9000))
++		erofstest.CheckFile(t, efs, "small", "s\n")
++		erofstest.CheckFile(t, efs, "d/inner", "inner\n")
++		erofstest.CheckSymlink(t, efs, "l", "/d/inner")
++		erofstest.CheckXattrs(t, efs, "d", map[string]string{"user.k": "v"})
++		if st := erofstest.Stat(t, efs, "d"); st.Mode.Perm() != 0o700 {
++			t.Errorf("%s: /d mode %v, want 0700", name, st.Mode.Perm())
++		}
++	}
++}
++
++// TestLink checks hardlinks: one inode, two dirents, nlink counted.
++func TestLink(t *testing.T) {
++	fsys := erofs.NewWriter(erofs.WithBuildTime(0, 0))
++	content := strings.Repeat("linked payload\n", 1000)
++	writeFile(t, fsys, "/orig", content)
++	if err := fsys.Link("/orig", "/dir/alias"); err != nil {
++		t.Fatal("Link:", err)
++	}
++	if err := fsys.Link("/dir/alias", "/alias2"); err != nil {
++		t.Fatal("Link through a hardlink:", err)
++	}
++
++	layout, image := prepareAndWrite(t, fsys)
++	checkExtentsTile(t, layout)
++
++	// The payload is stored exactly once.
++	if got := len(extentsFor(layout, "/orig")); got != 1 {
++		t.Errorf("/orig: %d extents, want 1", got)
++	}
++	for _, p := range []string{"/dir/alias", "/alias2"} {
++		if got := len(extentsFor(layout, p)); got != 0 {
++			t.Errorf("%s: %d extents, want 0 (shares the target's inode)", p, got)
++		}
++	}
++
++	efs, err := erofs.Open(bytes.NewReader(image))
++	if err != nil {
++		t.Fatal(err)
++	}
++	erofstest.CheckFile(t, efs, "orig", content)
++	erofstest.CheckFile(t, efs, "dir/alias", content)
++	erofstest.CheckFile(t, efs, "alias2", content)
++
++	orig := erofstest.Stat(t, efs, "orig")
++	alias := erofstest.Stat(t, efs, "dir/alias")
++	if orig.Ino != alias.Ino {
++		t.Errorf("hardlink resolves to inode %d, target is %d", alias.Ino, orig.Ino)
++	}
++	if orig.Nlink != 3 {
++		t.Errorf("/orig nlink %d, want 3", orig.Nlink)
++	}
++}
++
++// TestLinkRejectsDirectory checks that directories cannot be hardlinked.
++func TestLinkRejectsDirectory(t *testing.T) {
++	fsys := erofs.NewWriter(erofs.WithBuildTime(0, 0))
++	if err := fsys.Mkdir("/d", 0o755); err != nil {
++		t.Fatal(err)
++	}
++	if err := fsys.Link("/d", "/e"); err == nil {
++		t.Error("Link to a directory succeeded, want an error")
++	}
++}
++
++// TestShareData checks that two inodes can reference one payload while keeping
++// independent metadata.
++func TestShareData(t *testing.T) {
++	fsys := erofs.NewWriter(erofs.WithBuildTime(0, 0))
++	content := strings.Repeat("shared\n", 100)
++	writeFile(t, fsys, "/a", content)
++	writeFile(t, fsys, "/b", content)
++	if err := fsys.ShareData("/a", "/b"); err != nil {
++		t.Fatal("ShareData:", err)
++	}
++	if err := fsys.Chmod("/b", 0o600); err != nil {
++		t.Fatal(err)
++	}
++	if err := fsys.Chown("/b", 1000, 1000); err != nil {
++		t.Fatal(err)
++	}
++
++	layout, image := prepareAndWrite(t, fsys)
++	checkExtentsTile(t, layout)
++
++	if got := len(extentsFor(layout, "/a")); got != 1 {
++		t.Errorf("/a: %d extents, want 1", got)
++	}
++	if got := len(extentsFor(layout, "/b")); got != 0 {
++		t.Errorf("/b: %d extents, want 0 (shares /a's extent)", got)
++	}
++
++	efs, err := erofs.Open(bytes.NewReader(image))
++	if err != nil {
++		t.Fatal(err)
++	}
++	erofstest.CheckFile(t, efs, "a", content)
++	erofstest.CheckFile(t, efs, "b", content)
++
++	a, b := erofstest.Stat(t, efs, "a"), erofstest.Stat(t, efs, "b")
++	if a.Ino == b.Ino {
++		t.Error("shared payload collapsed the two inodes; want independent inodes")
++	}
++	if b.Mode.Perm() != 0o600 {
++		t.Errorf("/b mode %v, want 0600", b.Mode.Perm())
++	}
++	if b.UID != 1000 || b.GID != 1000 {
++		t.Errorf("/b owner %d:%d, want 1000:1000", b.UID, b.GID)
++	}
++	if a.Nlink != 1 || b.Nlink != 1 {
++		t.Errorf("nlink %d/%d, want 1/1 (sharing data is not linking)", a.Nlink, b.Nlink)
++	}
++}
++
++// TestShareDataKeepsSourceOutOfLine checks that a tail-packable payload is
++// forced out of line once another inode references it, since an inline payload
++// has no extent to share.
++func TestShareDataKeepsSourceOutOfLine(t *testing.T) {
++	fsys := erofs.NewWriter(erofs.WithBuildTime(0, 0))
++	writeFile(t, fsys, "/a", "tiny\n")
++	writeFile(t, fsys, "/b", "tiny\n")
++	if err := fsys.ShareData("/a", "/b"); err != nil {
++		t.Fatal(err)
++	}
++
++	layout, image := prepareAndWrite(t, fsys)
++	if got := len(extentsFor(layout, "/a")); got != 1 {
++		t.Fatalf("/a: %d extents, want 1 (a shared payload must not be inlined)", got)
++	}
++	efs, err := erofs.Open(bytes.NewReader(image))
++	if err != nil {
++		t.Fatal(err)
++	}
++	erofstest.CheckFile(t, efs, "a", "tiny\n")
++	erofstest.CheckFile(t, efs, "b", "tiny\n")
++}
++
++// TestSetToken checks that a caller value attached to an entry is reported on
++// its extent.
++func TestSetToken(t *testing.T) {
++	fsys := erofs.NewWriter(erofs.WithBuildTime(0, 0))
++	writeFile(t, fsys, "/big", strings.Repeat("y", 5000))
++	if err := fsys.SetToken("/big", "digest-of-big"); err != nil {
++		t.Fatal(err)
++	}
++
++	layout, _ := prepareAndWrite(t, fsys)
++	extents := extentsFor(layout, "/big")
++	if len(extents) != 1 {
++		t.Fatalf("/big: %d extents, want 1", len(extents))
++	}
++	if extents[0].Token != "digest-of-big" {
++		t.Errorf("token %v, want %q", extents[0].Token, "digest-of-big")
++	}
++}
++
++// TestWithInlineThreshold checks that the threshold decides which payloads get
++// an extent of their own.
++func TestWithInlineThreshold(t *testing.T) {
++	for _, tc := range []struct {
++		name       string
++		threshold  int
++		wantInline bool
++	}{
++		{name: "default inlines", threshold: 0, wantInline: true},
++		{name: "above threshold goes out of line", threshold: 4, wantInline: false},
++		{name: "below threshold inlines", threshold: 64, wantInline: true},
++		{name: "negative disables inlining", threshold: -1, wantInline: false},
++	} {
++		t.Run(tc.name, func(t *testing.T) {
++			fsys := erofs.NewWriter(erofs.WithBuildTime(0, 0), erofs.WithInlineThreshold(tc.threshold))
++			writeFile(t, fsys, "/f", "0123456789")
++
++			layout, image := prepareAndWrite(t, fsys)
++			checkExtentsTile(t, layout)
++
++			inline := len(extentsFor(layout, "/f")) == 0
++			if inline != tc.wantInline {
++				t.Errorf("inlined = %v, want %v", inline, tc.wantInline)
++			}
++			efs, err := erofs.Open(bytes.NewReader(image))
++			if err != nil {
++				t.Fatal(err)
++			}
++			erofstest.CheckFile(t, efs, "f", "0123456789")
++		})
++	}
++}
++
++// TestWithUUID checks that the superblock carries the requested UUID.
++func TestWithUUID(t *testing.T) {
++	uuid := [16]byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}
++	fsys := erofs.NewWriter(erofs.WithBuildTime(0, 0), erofs.WithUUID(uuid))
++	writeFile(t, fsys, "/f", "f\n")
++	_, image := prepareAndWrite(t, fsys)
++
++	// UUID lives at offset 48 of the superblock, which starts at byte 1024.
++	const uuidOffset = 1024 + 48
++	if got := image[uuidOffset : uuidOffset+16]; !bytes.Equal(got, uuid[:]) {
++		t.Errorf("superblock UUID %x, want %x", got, uuid)
++	}
++}
++
++// TestSyntheticDirs checks the synthesized-parent hook and the report of
++// directories that were never described explicitly.
++func TestSyntheticDirs(t *testing.T) {
++	var asked []string
++	fsys := erofs.NewWriter(
++		erofs.WithBuildTime(0, 0),
++		erofs.WithSyntheticDirMetadata(func(p string, ancestor erofs.SyntheticDirMetadata) (erofs.SyntheticDirMetadata, bool) {
++			asked = append(asked, p)
++			if p == "/described" {
++				// Never consulted for a directory added explicitly first, but
++				// harmless if it is.
++				return erofs.SyntheticDirMetadata{}, false
++			}
++			if p == "/opt" {
++				return erofs.SyntheticDirMetadata{
++					Mode:   0o700,
++					UID:    70,
++					GID:    70,
++					Xattrs: map[string]string{"user.from": "hook"},
++				}, true
++			}
++			// Everything else inherits the nearest ancestor's ownership, the
++			// way mkfs.erofs does.
++			ancestor.Mode = 0o755
++			return ancestor, true
++		}),
++	)
++
++	if err := fsys.Mkdir("/described", 0o750); err != nil {
++		t.Fatal(err)
++	}
++	writeFile(t, fsys, "/described/f", "f\n")
++	writeFile(t, fsys, "/opt/app/bin/tool", "tool\n")
++
++	// A directory synthesized first and described afterwards keeps the
++	// explicit attributes and drops out of SyntheticDirs.
++	writeFile(t, fsys, "/late/f", "f\n")
++	if err := fsys.Mkdir("/late", 0o711); err != nil {
++		t.Fatal(err)
++	}
++
++	if want := []string{"/opt", "/opt/app", "/opt/app/bin", "/late"}; !equalStrings(asked, want) {
++		t.Errorf("hook consulted for %v, want %v", asked, want)
++	}
++	if want := []string{"/opt", "/opt/app", "/opt/app/bin"}; !equalStrings(fsys.SyntheticDirs(), want) {
++		t.Errorf("SyntheticDirs() = %v, want %v", fsys.SyntheticDirs(), want)
++	}
++
++	_, image := prepareAndWrite(t, fsys)
++	efs, err := erofs.Open(bytes.NewReader(image))
++	if err != nil {
++		t.Fatal(err)
++	}
++	opt := erofstest.Stat(t, efs, "opt")
++	if opt.Mode.Perm() != 0o700 || opt.UID != 70 || opt.GID != 70 {
++		t.Errorf("/opt = %v %d:%d, want 0700 70:70", opt.Mode.Perm(), opt.UID, opt.GID)
++	}
++	erofstest.CheckXattrs(t, efs, "opt", map[string]string{"user.from": "hook"})
++	// /opt/app inherits /opt's ownership through the hook's ancestor argument.
++	app := erofstest.Stat(t, efs, "opt/app")
++	if app.Mode.Perm() != 0o755 || app.UID != 70 || app.GID != 70 {
++		t.Errorf("/opt/app = %v %d:%d, want 0755 70:70", app.Mode.Perm(), app.UID, app.GID)
++	}
++	if late := erofstest.Stat(t, efs, "late"); late.Mode.Perm() != 0o711 {
++		t.Errorf("/late mode %v, want 0711 (explicit Mkdir wins)", late.Mode.Perm())
++	}
++}
++
++// TestSyntheticDirsDefault checks the unchanged default: 0755, root-owned.
++func TestSyntheticDirsDefault(t *testing.T) {
++	fsys := erofs.NewWriter(erofs.WithBuildTime(0, 0))
++	writeFile(t, fsys, "/a/b/c", "c\n")
++
++	_, image := prepareAndWrite(t, fsys)
++	efs, err := erofs.Open(bytes.NewReader(image))
++	if err != nil {
++		t.Fatal(err)
++	}
++	for _, p := range []string{"a", "a/b"} {
++		st := erofstest.Stat(t, efs, p)
++		if st.Mode.Perm() != 0o755 || st.UID != 0 || st.GID != 0 {
++			t.Errorf("/%s = %v %d:%d, want 0755 0:0", p, st.Mode.Perm(), st.UID, st.GID)
++		}
++	}
++}
++
++// TestRemove checks last-writer-wins replacement and the guards that keep a
++// hardlink or shared payload from dangling.
++func TestRemove(t *testing.T) {
++	fsys := erofs.NewWriter(erofs.WithBuildTime(0, 0))
++	writeFile(t, fsys, "/f", "first\n")
++
++	if err := fsys.Remove("/missing"); err == nil {
++		t.Error("Remove of a missing path succeeded, want an error")
++	}
++	if err := fsys.Remove("/"); err == nil {
++		t.Error("Remove of the root succeeded, want an error")
++	}
++
++	if err := fsys.Remove("/f"); err != nil {
++		t.Fatal("Remove:", err)
++	}
++	writeFile(t, fsys, "/f", "second\n")
++
++	// A referenced entry cannot be removed.
++	writeFile(t, fsys, "/target", "target\n")
++	if err := fsys.Link("/target", "/link"); err != nil {
++		t.Fatal(err)
++	}
++	if err := fsys.Remove("/target"); err == nil {
++		t.Error("Remove of a hardlink target succeeded, want an error")
++	}
++	if err := fsys.Remove("/link"); err != nil {
++		t.Fatal("Remove of a hardlink:", err)
++	}
++	if err := fsys.Remove("/target"); err != nil {
++		t.Fatal("Remove after dropping the last hardlink:", err)
++	}
++
++	writeFile(t, fsys, "/src", "shared\n")
++	writeFile(t, fsys, "/dst", "shared\n")
++	if err := fsys.ShareData("/src", "/dst"); err != nil {
++		t.Fatal(err)
++	}
++	if err := fsys.Remove("/src"); err == nil {
++		t.Error("Remove of a shared payload source succeeded, want an error")
++	}
++
++	// A directory takes its whole subtree with it.
++	writeFile(t, fsys, "/d/sub/x", "x\n")
++	if err := fsys.Remove("/d"); err != nil {
++		t.Fatal("Remove of a directory:", err)
++	}
++
++	_, image := prepareAndWrite(t, fsys)
++	efs, err := erofs.Open(bytes.NewReader(image))
++	if err != nil {
++		t.Fatal(err)
++	}
++	erofstest.CheckFile(t, efs, "f", "second\n")
++	if _, err := fs.Stat(efs, "d"); err == nil {
++		t.Error("/d survived Remove")
++	}
++	if _, err := fs.Stat(efs, "link"); err == nil {
++		t.Error("/link survived Remove")
++	}
++}
++
++// TestWriteToDeterministic checks that two identical builds produce identical
++// bytes.
++func TestWriteToDeterministic(t *testing.T) {
++	build := func() []byte {
++		fsys := erofs.NewWriter(erofs.WithBuildTime(0, 0))
++		writeFile(t, fsys, "/b", strings.Repeat("b", 7000))
++		writeFile(t, fsys, "/a", "a\n")
++		if err := fsys.Mkdir("/d", 0o755); err != nil {
++			t.Fatal(err)
++		}
++		writeFile(t, fsys, "/d/z", "z\n")
++		if err := fsys.Setxattr("/d/z", "user.b", "2"); err != nil {
++			t.Fatal(err)
++		}
++		if err := fsys.Setxattr("/d/z", "user.a", "1"); err != nil {
++			t.Fatal(err)
++		}
++		if err := fsys.Link("/a", "/d/a"); err != nil {
++			t.Fatal(err)
++		}
++		var buf bytes.Buffer
++		if _, err := fsys.WriteTo(&buf); err != nil {
++			t.Fatal(err)
++		}
++		return buf.Bytes()
++	}
++	if first, second := build(), build(); !bytes.Equal(first, second) {
++		t.Error("two identical builds produced different bytes")
++	}
++}
++
++// TestCloseAfterPrepare checks that the two finalizers are mutually exclusive.
++func TestCloseAfterPrepare(t *testing.T) {
++	var buf testBuffer
++	fsys := erofs.Create(&buf, erofs.WithBuildTime(0, 0))
++	writeFile(t, fsys, "/f", "f\n")
++	if _, err := fsys.Prepare(); err != nil {
++		t.Fatal(err)
++	}
++	if err := fsys.Close(); err == nil {
++		t.Error("Close after Prepare succeeded, want an error")
++	}
++}
++
++// TestWriteToWithoutOutput checks that a NewWriter cannot be finalized with
++// Close.
++func TestWriteToWithoutOutput(t *testing.T) {
++	fsys := erofs.NewWriter(erofs.WithBuildTime(0, 0))
++	writeFile(t, fsys, "/f", "f\n")
++	if err := fsys.Close(); err == nil {
++		t.Error("Close on a Writer with no output succeeded, want an error")
++	}
++}
++
++func equalStrings(a, b []string) bool {
++	if len(a) != len(b) {
++		return false
++	}
++	for i := range a {
++		if a[i] != b[i] {
++			return false
++		}
++	}
++	return true
++}
+diff --git a/writer.go b/writer.go
+index 828e45c..a9813b0 100644
+--- a/writer.go
++++ b/writer.go
+@@ -25,18 +25,20 @@ type onlyWriter struct{ io.Writer }
+ 
+ // erofsWriter serializes EROFS metadata to an io.Writer.
+ type erofsWriter struct {
+-	entries     []*erofsEntry // all entries in NID order
+-	rootNid     uint64
+-	metaBlkAddr uint32
+-	totalInodes uint64
+-	buildTime   uint64
+-	buildTimeNs uint32
+-	devices     []uint64 // per-device block counts (one slot per entry)
+-	blockSize   int
+-	chunkBits   uint8                        // log2(chunkSize / blockSize); chunkSize = blockSize << chunkBits
+-	copyBuf     []byte                       // reusable buffer for io.CopyBuffer
+-	zeroBuf     []byte                       // blockSize-length zero buffer for padding
+-	inodeBuf    [disk.SizeInodeExtended]byte // scratch buffer for writeInode
++	entries         []*erofsEntry // all entries in NID order
++	rootNid         uint64
++	metaBlkAddr     uint32
++	totalInodes     uint64
++	buildTime       uint64
++	buildTimeNs     uint32
++	uuid            [16]uint8
++	devices         []uint64 // per-device block counts (one slot per entry)
++	blockSize       int
++	chunkBits       uint8                        // log2(chunkSize / blockSize); chunkSize = blockSize << chunkBits
++	inlineThreshold int                          // see WithInlineThreshold
++	copyBuf         []byte                       // reusable buffer for io.CopyBuffer
++	zeroBuf         []byte                       // blockSize-length zero buffer for padding
++	inodeBuf        [disk.SizeInodeExtended]byte // scratch buffer for writeInode
+ }
+ 
+ // inodeSize returns the on-disk inode header size for e.
+@@ -80,12 +82,9 @@ func (w *erofsWriter) write(out io.WriteSeeker) error {
+ // data blocks, metadata. After everything is written, it seeks back to
+ // write the real superblock. This matches how mkfs.erofs lays out
+ // streaming sources — data is written as it arrives, metadata last.
++//
++// Data block addresses must already be assigned (see assignDataBlocks).
+ func (w *erofsWriter) writeSeekable(out io.WriteSeeker) error {
+-	// Data-first layout: sbArea, data blocks, metadata.
+-	// Set metaBlkAddr to a sentinel so assignDataBlocks uses data-first.
+-	w.metaBlkAddr = 0xFFFFFFFF
+-	w.assignDataBlocks()
+-
+ 	// Write placeholder superblock area.
+ 	if _, err := out.Write(make([]byte, w.sbAreaSize())); err != nil {
+ 		return err
+@@ -135,24 +134,14 @@ func (w *erofsWriter) newMetaBuffer() *bytes.Buffer {
+ // assignDataBlocks assigns data block addresses to flat-plain entries.
+ // For metadata-first layout, data follows metadata.
+ // For data-first layout, data starts after the superblock area.
++// Entries that share another entry's extent get no address here; see
++// resolveSharedData.
+ func (w *erofsWriter) assignDataBlocks() {
+ 	sbBlks := w.sbAreaBlocks()
+ 	if w.metaBlkAddr == uint32(sbBlks) {
+ 		// Metadata-first: data blocks come after metadata.
+-		totalMetaBytes := 0
+-		for _, e := range w.entries {
+-			expectedOff := int(e.nid) * 32
+-			sz := inodeCoreSize(e) + e.xattrSize + e.chunkPad + e.trailingSize
+-			if sz%32 != 0 {
+-				sz = (sz + 31) & ^31
+-			}
+-			end := expectedOff + sz
+-			if end > totalMetaBytes {
+-				totalMetaBytes = end
+-			}
+-		}
+-		metaBlocks := (totalMetaBytes + w.blockSize - 1) / w.blockSize
+-		addr := uint32(w.sbAreaBlocks() + metaBlocks)
++		metaBlocks := (w.metadataBytes() + w.blockSize - 1) / w.blockSize
++		addr := uint32(sbBlks + metaBlocks)
+ 		for _, e := range w.entries {
+ 			if ds := w.flatPlainDataSize(e); ds > 0 {
+ 				e.dataBlkAddr = addr
+@@ -161,7 +150,7 @@ func (w *erofsWriter) assignDataBlocks() {
+ 		}
+ 	} else {
+ 		// Data-first: data starts after superblock area.
+-		addr := uint32(w.sbAreaBlocks())
++		addr := uint32(sbBlks)
+ 		for _, e := range w.entries {
+ 			if ds := w.flatPlainDataSize(e); ds > 0 {
+ 				e.dataBlkAddr = addr
+@@ -172,6 +161,37 @@ func (w *erofsWriter) assignDataBlocks() {
+ 	}
+ }
+ 
++// resolveSharedData points every entry created by Writer.ShareData at its
++// source's data extent. It must run after assignDataBlocks, which is what
++// gives the source its address.
++func (w *erofsWriter) resolveSharedData() error {
++	for _, e := range w.entries {
++		src := e.shareSrc
++		if src == nil {
++			continue
++		}
++		if src.layout != disk.LayoutFlatPlain {
++			// planLayout forces a shared source out of line, so this can only
++			// trip if that invariant is broken.
++			return fmt.Errorf("mkfs: %s shares data with %s, which is not stored out of line", e.path, src.path)
++		}
++		e.dataBlkAddr = src.dataBlkAddr
++	}
++	return nil
++}
++
++// extentKind classifies an entry's out-of-line payload.
++func extentKind(e *erofsEntry) ExtentKind {
++	switch e.mode & disk.StatTypeMask {
++	case disk.StatTypeDir:
++		return ExtentDirents
++	case disk.StatTypeSymlink:
++		return ExtentSymlink
++	default:
++		return ExtentFileData
++	}
++}
++
+ // sbAreaSize returns the number of bytes needed for the superblock area
+ // (blocks before metadata): 1024-byte pad + superblock + device slots,
+ // rounded up to block boundary.
+@@ -247,6 +267,7 @@ func (w *erofsWriter) writeBlock0(buf io.Writer) error {
+ 		BuildTimeNs:     w.buildTimeNs,
+ 		Blocks:          uint32(totalBlocks),
+ 		MetaBlkAddr:     w.metaBlkAddr,
++		UUID:            w.uuid,
+ 		FeatureIncompat: featureIncompat,
+ 		ExtraDevices:    extraDevices,
+ 		DevtSlotOff:     devtSlotOff,
+@@ -543,10 +564,13 @@ func (w *erofsWriter) writeDirents(buf io.Writer, e *erofsEntry) (int, error) {
+ 	allEnts = append(allEnts, direntInfo{".", e.nid, disk.FileTypeDir})
+ 	allEnts = append(allEnts, direntInfo{"..", e.parentNid, disk.FileTypeDir})
+ 	for _, c := range e.children {
++		// A hardlink has no inode of its own: its dirent resolves to the
++		// target's NID and reports the target's file type.
++		target := direntTarget(c)
+ 		allEnts = append(allEnts, direntInfo{
+ 			name:     c.name,
+-			nid:      c.nid,
+-			fileType: c.erofsFileType,
++			nid:      target.nid,
++			fileType: target.erofsFileType,
+ 		})
+ 	}
+ 	sort.Slice(allEnts, func(i, j int) bool {

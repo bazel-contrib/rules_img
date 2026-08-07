@@ -1,0 +1,199 @@
+From 8a184904bb4edbe149b99898e12cb3f2a95e03c7 Mon Sep 17 00:00:00 2001
+From: direntry <312071520+direntry@users.noreply.github.com>
+Date: Sun, 2 Aug 2026 12:54:21 +0100
+Subject: [PATCH 2/3] Add AddFile and exported file-type mode constants
+
+A streaming producer needs to hand over a file's content without paying
+for a copy: AddFile records a regular file whose reader is read once, in
+order, when the image is serialized, so a caller with the content on disk
+can pass a reader that opens it lazily.
+
+Mknod's mode argument needs the S_IF* type bits, which were only
+available as internal constants, making the method unusable from outside
+the package. Export them.
+
+Signed-off-by: direntry <312071520+direntry@users.noreply.github.com>
+---
+ mkfs.go         | 58 ++++++++++++++++++++++++++++++++++-
+ prepare_test.go | 81 +++++++++++++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 138 insertions(+), 1 deletion(-)
+
+diff --git a/mkfs.go b/mkfs.go
+index 6acdb3a..c96b30b 100644
+--- a/mkfs.go
++++ b/mkfs.go
+@@ -302,6 +302,46 @@ func (fsys *Writer) Create(name string) (*File, error) {
+ 	return f, nil
+ }
+ 
++// AddFile adds a regular file (mode 0644) whose content is read from r when the
++// image is serialized. Nothing is copied or buffered now: r is read exactly
++// once, in order, by Close or WriteTo, so a caller with the content already on
++// disk can hand over a reader that opens the file lazily and pay for no spool
++// copy at all. If r implements io.Closer it is closed after being read.
++//
++// size must equal the number of bytes r will yield; a mismatch is reported when
++// the image is written.
++func (fsys *Writer) AddFile(name string, size int64, r io.Reader) error {
++	if fsys.wErr != nil {
++		return fsys.wErr
++	}
++	if size < 0 {
++		return fmt.Errorf("mkfs: negative size %d for %q", size, name)
++	}
++	name = cleanPath(name)
++	if name == "/" {
++		return fmt.Errorf("mkfs: cannot create file at root")
++	}
++	if err := fsys.checkPath(name); err != nil {
++		return err
++	}
++
++	fsys.ensureParent(name)
++
++	e := &fsEntry{
++		path:       name,
++		mode:       disk.StatTypeReg | 0o644,
++		size:       uint64(size),
++		fileClosed: true,
++	}
++	if size > 0 {
++		e.directData = r
++	} else if c, ok := r.(io.Closer); ok {
++		_ = c.Close()
++	}
++	fsys.addChild(e)
++	return nil
++}
++
+ // Mkdir creates a directory. Only permission bits from perm are used,
+ // including setuid, setgid and sticky as os.Mkdir does; type bits are forced
+ // to directory. Mkdir("/", perm) sets root permissions.
+@@ -372,7 +412,7 @@ func (fsys *Writer) Symlink(oldname, newname string) error {
+ }
+ 
+ // Mknod creates a device, FIFO, or socket. mode must include type bits
+-// (e.g. disk.StatTypeChrdev | 0o666).
++// (e.g. [ModeChardev] | 0o666).
+ func (fsys *Writer) Mknod(name string, mode uint16, rdev uint32) error {
+ 	if fsys.wErr != nil {
+ 		return fsys.wErr
+@@ -1938,6 +1978,22 @@ func (f *File) closeDataFile() error {
+ 
+ // --- Constants ---
+ 
++// Unix file type bits, as stored in an EROFS inode's i_mode. They match the
++// S_IF* values from <sys/stat.h>, which the on-disk format uses verbatim, and
++// are what [Writer.Mknod] expects in its mode argument.
++const (
++	ModeFifo     uint16 = 0o010000
++	ModeChardev  uint16 = 0o020000
++	ModeDir      uint16 = 0o040000
++	ModeBlockdev uint16 = 0o060000
++	ModeRegular  uint16 = 0o100000
++	ModeSymlink  uint16 = 0o120000
++	ModeSocket   uint16 = 0o140000
++
++	// ModeTypeMask selects the file type bits of a mode.
++	ModeTypeMask uint16 = 0o170000
++)
++
+ const (
+ 	minBlockSize     = 512
+ 	defaultBlockSize = 4096
+diff --git a/prepare_test.go b/prepare_test.go
+index aa494fd..50c812f 100644
+--- a/prepare_test.go
++++ b/prepare_test.go
+@@ -3,6 +3,7 @@ package erofs_test
+ import (
+ 	"bytes"
+ 	"fmt"
++	"io"
+ 	"io/fs"
+ 	"strings"
+ 	"testing"
+@@ -657,3 +658,83 @@ func equalStrings(a, b []string) bool {
+ 	}
+ 	return true
+ }
++
++// TestAddFile checks that content handed over as a reader is read once, at
++// serialization time, and closed afterwards.
++func TestAddFile(t *testing.T) {
++	big := strings.Repeat("payload\n", 2000)
++	src := &countingReader{Reader: strings.NewReader(big)}
++	fsys := erofs.NewWriter(erofs.WithBuildTime(0, 0))
++	if err := fsys.AddFile("/deep/dir/file", int64(len(big)), src); err != nil {
++		t.Fatal(err)
++	}
++	if err := fsys.Chmod("/deep/dir/file", 0o600); err != nil {
++		t.Fatal(err)
++	}
++	if src.reads != 0 {
++		t.Errorf("reader was read %d times before serialization, want 0", src.reads)
++	}
++
++	layout, image := prepareAndWrite(t, fsys)
++	checkExtentsTile(t, layout)
++	if !src.closed {
++		t.Error("reader was not closed after serialization")
++	}
++
++	efs, err := erofs.Open(bytes.NewReader(image))
++	if err != nil {
++		t.Fatal(err)
++	}
++	erofstest.CheckFile(t, efs, "deep/dir/file", big)
++	if st := erofstest.Stat(t, efs, "deep/dir/file"); st.Mode.Perm() != 0o600 {
++		t.Errorf("mode %v, want 0600", st.Mode.Perm())
++	}
++}
++
++// TestAddFileSizeMismatch checks that a lying size is reported rather than
++// silently truncating the image.
++func TestAddFileSizeMismatch(t *testing.T) {
++	fsys := erofs.NewWriter(erofs.WithBuildTime(0, 0))
++	if err := fsys.AddFile("/f", 9000, strings.NewReader("short")); err != nil {
++		t.Fatal(err)
++	}
++	if _, err := fsys.WriteTo(&bytes.Buffer{}); err == nil {
++		t.Error("WriteTo succeeded with a short reader, want an error")
++	}
++}
++
++// TestMknod checks that the exported mode constants drive Mknod, including the
++// overlayfs whiteout shape (a character device with rdev 0).
++func TestMknod(t *testing.T) {
++	fsys := erofs.NewWriter(erofs.WithBuildTime(0, 0))
++	if err := fsys.Mknod("/whiteout", erofs.ModeChardev|0o000, 0); err != nil {
++		t.Fatal(err)
++	}
++	if err := fsys.Mknod("/fifo", erofs.ModeFifo|0o644, 0); err != nil {
++		t.Fatal(err)
++	}
++	_, image := prepareAndWrite(t, fsys)
++	efs, err := erofs.Open(bytes.NewReader(image))
++	if err != nil {
++		t.Fatal(err)
++	}
++	erofstest.CheckDevice(t, efs, "whiteout", fs.ModeDevice|fs.ModeCharDevice, 0)
++	erofstest.CheckDevice(t, efs, "fifo", fs.ModeNamedPipe, 0)
++}
++
++// countingReader records how often it was read and whether it was closed.
++type countingReader struct {
++	io.Reader
++	reads  int
++	closed bool
++}
++
++func (r *countingReader) Read(p []byte) (int, error) {
++	r.reads++
++	return r.Reader.Read(p)
++}
++
++func (r *countingReader) Close() error {
++	r.closed = true
++	return nil
++}
