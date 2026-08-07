@@ -92,7 +92,8 @@ def compute_push_metadata(
         output_prefix,
         signing = None,
         blob_repository = "",
-        forbid_layer_push = False):
+        forbid_layer_push = False,
+        deduplicated_push = False):
     """Compute push metadata for a deploy operation.
 
     Args:
@@ -115,6 +116,11 @@ def compute_push_metadata(
         forbid_layer_push: When True, records in the deploy manifest that layer
             blob uploads are forbidden (deploy may only cross-mount or skip
             already-present layers). Guards deploys of build-time-pushed blobs.
+        deduplicated_push: When True, records in the deploy manifest that
+            `img deploy` should push through blob_repository in phases: check
+            which manifests the registry already has, upload each still-missing
+            blob once per registry, then cross-mount it into every destination
+            repository.
 
     Returns:
         Tuple of (metadata_file, layer_hints_file).
@@ -135,6 +141,8 @@ def compute_push_metadata(
         args.add("--blob-repository", blob_repository)
     if forbid_layer_push:
         args.add("--forbid-layer-push")
+    if deduplicated_push:
+        args.add("--deduplicated-push")
 
     if destination_file != None:
         inputs.append(destination_file)
@@ -833,6 +841,7 @@ def process_deploy_specs(
             # from a repository nothing was staged to.
             blob_repository = cross_mount_blob_repository(push_config.push_at_build_time_mode, push_config.blob_repository),
             forbid_layer_push = push_config.forbid_layer_push,
+            deduplicated_push = push_config.deduplicated_push,
         )
         deploy_infos.append(struct(metadata = deploy_metadata, layer_hints = layer_hints))
         if push_config.signing != None:

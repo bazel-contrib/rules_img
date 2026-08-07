@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path"
 	"path/filepath"
@@ -90,6 +91,46 @@ type VFS struct {
 	crossMountHints map[string]api.CrossMountSource
 	manifests       map[string]blobEntry
 	stats           *Stats
+	// mountOnly lists blob digests whose bytes must never be uploaded, keyed by
+	// digest string. It is empty for a VFS built by Builder.Build and populated
+	// only on the views returned by WithCrossMountPlan. Unlike
+	// Settings.ForbidLayerPush (which applies to every layer), this is scoped to
+	// the blobs the deploy itself uploaded to their cross-mount source.
+	mountOnly map[string]struct{}
+}
+
+// CrossMountPlan overrides the cross-mount sources of a VFS view.
+type CrossMountPlan struct {
+	// Sources maps a blob digest to the repository its bytes are mounted from. It
+	// takes precedence over the hints the VFS was built with.
+	Sources map[string]api.CrossMountSource
+	// MountOnly lists digests whose bytes must never be uploaded. The mount is
+	// known to be possible because this deploy put the blob in Sources[digest]
+	// itself, so a request for the bytes means the registry refused the
+	// cross-mount -- something we want to hear about rather than paper over with a
+	// full re-upload.
+	MountOnly map[string]struct{}
+}
+
+// WithCrossMountPlan returns a shallow view of vfs whose Layer applies plan's
+// cross-mount sources on top of the VFS's own hints, and serves plan.MountOnly
+// digests as mount-only layers: their metadata and mount reference work, but
+// reading their bytes fails.
+//
+// The blob and manifest maps and the Stats counters are shared with the receiver,
+// so the view is cheap and the receiver keeps serving real bytes -- which is what
+// the deploy's own blob uploads (via RawLayer) and any concurrent load operations
+// need.
+func (vfs *VFS) WithCrossMountPlan(plan CrossMountPlan) *VFS {
+	view := *vfs
+	// Sized from the receiver's hints alone: adding the two lengths would be a
+	// size computation CodeQL flags as a possible overflow, and the map grows on
+	// its own for the few sources the plan adds on top.
+	view.crossMountHints = make(map[string]api.CrossMountSource, len(vfs.crossMountHints))
+	maps.Copy(view.crossMountHints, vfs.crossMountHints)
+	maps.Copy(view.crossMountHints, plan.Sources)
+	view.mountOnly = plan.MountOnly
+	return &view
 }
 
 // Stats returns the current statistics for the VFS.
@@ -102,24 +143,27 @@ func (vfs *VFS) Layer(digest registryv1.Hash) (registryv1.Layer, error) {
 	if !found {
 		return nil, fmt.Errorf("layer with digest %s not found in VFS", digest.String())
 	}
+	hint, hasHint := vfs.crossMountHints[digest.String()]
+	_, mountOnly := vfs.mountOnly[digest.String()]
 
 	// Prefetch layer contents into memory ahead of the consumer so that a slow
 	// consumer (e.g. a network upload) does not stall the underlying blob
 	// source. This wraps the raw blob entry; any MountableLayer shim is applied
 	// on top so remote.Write can still detect it for cross-repo mounts.
 	//
-	// When layer uploads are forbidden, serve a layer that reports its metadata
-	// (so the manifest and cross-mount work) but fails if its bytes are read for
-	// upload -- there is nothing to prefetch, and a read means an upload we must
-	// not perform.
+	// When layer uploads are forbidden -- globally via forbid_layer_push, or for
+	// this blob because the deploy uploaded it to its cross-mount source itself --
+	// serve a layer that reports its metadata (so the manifest and cross-mount
+	// work) but fails if its bytes are read for upload: there is nothing to
+	// prefetch, and a read means an upload we must not perform.
 	var layer registryv1.Layer
-	if vfs.dm.Settings.ForbidLayerPush {
-		layer = noUploadLayer{entry}
+	if vfs.dm.Settings.ForbidLayerPush || mountOnly {
+		layer = noUploadLayer{blobEntry: entry, reason: uploadForbiddenReason(mountOnly, hint)}
 	} else {
 		layer = prefetch.NewLayer(entry)
 	}
 
-	if hint, found := vfs.crossMountHints[digest.String()]; found {
+	if hasHint {
 		reg, err := registryname.NewRegistry(hint.Registry, registryopts.NameOptions(registryname.WithDefaultRegistry(""))...)
 		if err != nil {
 			return nil, fmt.Errorf("parsing cross-mount registry %q: %w", hint.Registry, err)
@@ -1131,12 +1175,13 @@ func (b blobEntry) MediaType() (registrytypes.MediaType, error) {
 
 // noUploadLayer wraps a blob entry so that reading its bytes (Compressed /
 // Uncompressed) always fails, while its descriptor-derived metadata (Digest,
-// Size, MediaType) still works. It is used when Settings.ForbidLayerPush is set:
-// the manifest push can still mount the layer (or skip it when already present),
-// but an actual upload -- which reads Compressed -- fails loudly instead of
-// silently re-uploading a blob that was expected to be pushed at build time.
+// Size, MediaType) still works. The manifest push can still mount the layer (or
+// skip it when already present), but an actual upload -- which reads Compressed
+// -- fails loudly instead of silently uploading a blob that was expected to
+// already be in the registry. reason explains why the read is a failure.
 type noUploadLayer struct {
 	blobEntry
+	reason string
 }
 
 func (l noUploadLayer) Compressed() (io.ReadCloser, error) {
@@ -1148,7 +1193,22 @@ func (l noUploadLayer) Uncompressed() (io.ReadCloser, error) {
 }
 
 func (l noUploadLayer) uploadForbiddenError() error {
-	return fmt.Errorf("refusing to upload layer %s: layer uploads are forbidden (forbid_layer_push); the blob is expected to already be in the registry (e.g. pushed at build time and mounted server-side)", l.Descriptor.Digest)
+	return fmt.Errorf("refusing to upload layer %s: %s", l.Descriptor.Digest, l.reason)
+}
+
+// uploadForbiddenReason explains why a layer's bytes must not be uploaded. The
+// per-blob (mount-only) reason is the more specific one, so it wins when both
+// apply; it names the repository the deploy uploaded the blob to, which is where
+// the cross-mount should have come from.
+func uploadForbiddenReason(mountOnly bool, hint api.CrossMountSource) string {
+	switch {
+	case mountOnly && hint.Repository != "":
+		return fmt.Sprintf("it was uploaded to %q for cross-mounting, so being asked for its bytes means the registry refused to mount it from there;"+
+			" the registry may not support cross-repository blob mounts, or may not let this credential read that repository", hint.Repository)
+	case mountOnly:
+		return "it was uploaded elsewhere for cross-mounting, so being asked for its bytes means the registry refused to mount it from there"
+	}
+	return "layer uploads are forbidden (forbid_layer_push); the blob is expected to already be in the registry (e.g. pushed at build time and mounted server-side)"
 }
 
 type casReader interface {

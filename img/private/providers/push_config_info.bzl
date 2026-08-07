@@ -23,6 +23,7 @@ FIELDS = dict(
     signing = "struct(config_info, best_effort, targets) describing how to sign this push, or None.",
     blob_repository = "Resolved staging repository that image blobs are pushed to and cross-mounted from. At build time every blob (layers and config) is staged here; layers are cross-mounted into the image's real repository. Empty means blobs go to the image's own repository.",
     forbid_layer_push = "Bool: when True, `img deploy` refuses to upload layer blob bytes (layers must be cross-mounted or already present).",
+    deduplicated_push = "Bool: when True, `img deploy` pushes in phases -- check which manifests the registry already has, upload each blob that several repositories need to just one of them (the first alphabetically, or blob_repository when push at build time staged it there), then cross-mount it into the others. For registries that keep a separate blob store per repository name. Requires cross-repository blob mounting; see docs/registry-support.md.",
     push_at_build_time_mode = "Resolved push-at-build-time mode: 'disabled', 'best_effort', or 'enabled'.",
     push_at_build_time_content = "Resolved push-at-build-time content: 'blobs' or 'blobs_and_manifests'.",
     push_at_build_time_manifest_repository = "Resolved repository the build-time manifest push uploads manifest(s)/index and config to instead of the operation's own repository, or ''. Does not affect blob cross-mounting.",

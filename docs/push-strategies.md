@@ -498,6 +498,7 @@ exactly as before:
 | `push_at_build_time_blob_repository` | *(sentinel)* | `push_at_build_time_blob_repository` |
 | `push_at_build_time_manifest_repository` | *(sentinel)* | `push_at_build_time_manifest_repository` |
 | `forbid_layer_push` | `auto` | `forbid_layer_push` |
+| `deduplicated_push` | `auto` | `deduplicated_push` |
 | `push_at_build_time_exec_properties` | `{"requires-network": "1"}` | *(none — per-target only)* |
 
 `auto` (and the repository sentinel) means "use the global setting"; any other
@@ -530,6 +531,209 @@ time actually runs, setting `push_at_build_time_blob_repository` while
 in that target's deploy manifest — a later `bazel run` deploy will not try to
 mount blobs from a repository nothing was pushed to.
 
+
+## Deduplicated Push
+
+> **Requires a registry that supports cross-repository blob mounting.** The whole
+> point is to upload a shared blob once and mount it everywhere else, so on a
+> registry that refuses to mount, a push that opted in **fails loudly** instead of
+> silently uploading the blob into every repository. See the [registry support
+> matrix](registry-support.md) for what specific registries do, and
+> [Registry requirements](#registry-requirements) below for how to check yours.
+
+### The problem
+The OCI spec lets a registry keep a **separate blob store per repository name**: a
+blob uploaded to `/v2/team/service-a/blobs/` need not be visible from
+`/v2/team/service-b/blobs/`. Some registries do exactly that.
+
+go-containerregistry dedupes blob uploads per repository — each repository gets its
+own writer with its own "did I already upload this digest" bookkeeping. That is the
+right granularity for a registry with one shared blob store, where the second upload
+is skipped after a cheap `HEAD`. On a registry with per-repository storage it means
+that pushing K images that share their base layers to K *different* repository names
+uploads every shared layer K times:
+
+```
+base image layer   ┐
+shared layer 1     │ identical across every service
+...                │
+shared layer N     ┘
+layer for service X  ← the only layer that differs
+```
+
+### The strategy
+`--@rules_img//img/settings:deduplicated_push=enabled` makes `img deploy` push in
+phases instead of pushing each manifest independently:
+
+1. **Ask what is already there.** Every manifest the deploy intends to write is
+   `HEAD`ed in parallel (bounded by `--jobs`). A manifest the registry already holds
+   at the expected digest contributes nothing: a registry that has a manifest has the
+   blobs it references.
+2. **Find a mount source for each shared blob, in each registry.** A blob store and
+   a cross-mount both live inside one registry, so this is decided per (registry,
+   blob): for every layer of the still-missing manifests, among the repositories of
+   *that* registry, in order of preference:
+   1. **A repository the registry already serves a manifest from.** Step 1 just
+      confirmed that manifest, and a registry that serves a manifest holds the blobs
+      it references — so the blob is already there and **nothing is uploaded at
+      all**. When one service out of many changed, this covers every shared layer.
+   2. **A repository the build recorded the layer as coming from**, i.e. a shallow
+      base image's own repository.
+   3. **Otherwise one of the destinations itself** — the first alphabetically — which
+      becomes the blob's *home repository* in that registry. No configuration and no
+      extra repository: the home is somewhere the deploy was going to push anyway, so
+      it needs no credentials beyond the ones it already has.
+3. **Upload what has nowhere to come from.** Blobs that fell through to (iii) are
+   uploaded to their home repository — once, however many repositories need them.
+   Uploads are `HEAD`ed first, so re-running a deploy costs one request per blob
+   instead of a re-upload.
+4. **Mount.** The manifest push then cross-mounts each blob out of its source.
+   For a blob this deploy uploaded to its home, that mount is *strict*: the deploy
+   put it there, so being asked for the blob's bytes means the mount failed and the
+   push fails loudly instead of silently uploading into every repository. For (i)
+   and (ii) the mount rests on an inference rather than on something the deploy did,
+   so the ordinary byte-upload fallback stays in place — if the blob turns out to be
+   gone, uploading it is the right recovery.
+5. **Write manifests and tags** as usual.
+
+So a first push of `foo` and `bar` uploads a layer they share to `bar` (first
+alphabetically) and mounts it into `foo`. A later push where only `foo` changed
+uploads nothing for that layer at all: `bar`'s manifest is still there, so the layer
+is mounted straight out of it. Net effect on a registry with per-repository blob
+storage: at most one upload per (registry, blob) instead of one per (repository,
+blob).
+
+This is the upload-side counterpart to the [local blob cache](#local-blob-cache),
+which collapses the *downloads* of a layer pushed to several repositories into one.
+The two compose: a cross-mounted layer's bytes are never read at all, so the
+deduplicated push removes those repeated reads instead of leaving them for the cache
+to serve. Whichever one you turn off, the other still does its half.
+
+```bash
+# The default for every push target.
+common --@rules_img//img/settings:deduplicated_push=enabled
+```
+
+Each `image_push` and `image_push_spec` can override that default with its own
+`deduplicated_push` attribute (`auto` — the default — defers to the global flag):
+
+```python
+image_push(
+    name = "push_app",
+    image = ":app",
+    registry = "reg.example.com",
+    repository = "team/app",
+    deduplicated_push = "enabled",
+)
+```
+
+`img deploy --deduplicated-push=enabled|disabled` overrides both at run time.
+
+### Registry requirements
+The strategy rests on one request being answered the way the spec allows but does not
+require:
+
+```
+POST /v2/<repository>/blobs/uploads/?mount=<digest>&from=<other-repository>
+→ 201 Created
+```
+
+A registry that will not mount answers `202 Accepted` instead — "start uploading" —
+and go-containerregistry proceeds with the upload session it was handed, asking the
+layer for its bytes (on an outright error status it retries without the mount, which
+lands in the same place). For a blob **this deploy** uploaded to its home repository,
+those bytes are refused and the push fails, naming the repository the blob was
+uploaded to:
+
+```
+refusing to upload layer sha256:…: it was uploaded to "team/service-a" for
+cross-mounting, so being asked for its bytes means the registry refused to mount it
+from there; the registry may not support cross-repository blob mounts, or may not let
+this credential read that repository
+```
+
+That is deliberate. A silent fallback would upload every shared layer into every
+repository *after* having already uploaded it to the home repository — strictly worse
+than never enabling the strategy — and it would hide the fact that the setting is
+doing nothing. The two mount sources the deploy only *infers* (a repository whose
+manifest the registry already serves, and a recorded upstream repository) keep the
+ordinary byte-upload fallback, because there the blob may genuinely have been deleted
+and uploading it is the right recovery.
+
+Which registries mount is therefore the deciding question. See the [registry support
+matrix](registry-support.md) for what we know about specific ones, and its
+[probe recipe](registry-support.md#testing-a-registry-yourself) for checking yours
+with a handful of `curl` calls against throwaway repositories.
+
+A few more things worth knowing before enabling it:
+
+- **It only pays off where blob storage is per repository.** If a registry answers
+  `HEAD /v2/<other>/blobs/<digest>` with `200` for a blob uploaded under a different
+  name, the ordinary push already skips the second upload — enabling this changes
+  nothing except adding a manifest `HEAD` per destination.
+- **Mount sources need read access.** A registry checks that the caller may read the
+  `from` repository, and go-containerregistry asks its token service for that access
+  only when the source names the destination's own registry — which these sources
+  always do, so the pull scope is requested. A credential scoped to exactly one
+  repository per image still cannot mount between them.
+- **Mounts never cross registries.** A source is always a repository in the
+  destination's own registry, so the strategy never depends on cross-registry
+  mounting, which few registries implement. The `origin=<registry>` parameter
+  go-containerregistry adds alongside `from` names that same registry — the request
+  `crane copy` makes between two repositories of one registry. Docker Hub is
+  therefore not a special case: it mounts within itself like any other registry, and
+  the mount go-containerregistry refuses to send there
+  ([#1741](https://github.com/google/go-containerregistry/issues/1741)) is only the
+  one whose source names a *different* registry.
+
+### Mixing destinations
+Whether a blob can be cross-mounted is a property of the *destination*, so the
+setting is recorded per push operation and travels with it. One deploy can therefore
+push some images to a registry that cross-mounts blobs and others to a registry that
+does not:
+
+- The operations that opted in are planned **together**: a blob several of their
+  repositories need is uploaded once and cross-mounted into all the others, across
+  operations.
+- An operation that did not opt in is pushed exactly as it would be with the flag
+  off. It is never handed a layer it is expected to mount, and it never contributes a
+  repository for the others to mount from — so a registry without mount support
+  cannot fail a deploy that also targets one with it.
+
+A layer shared between the two groups is therefore uploaded twice: once for the
+opted-in group, and once by the operation that opted out.
+
+### What it does not touch
+- **A blob only one repository needs.** There is nothing to mount it into, so it is
+  left to the ordinary manifest push. A single-image `bazel run //:push` therefore
+  behaves exactly as it would with the flag off.
+- **Config blobs.** go-containerregistry uploads an image config from an in-memory
+  layer that cannot be cross-mounted, so each destination repository gets its own
+  copy. Configs are per-image and tiny, so there is nothing to deduplicate.
+- **Anything in another registry.** A blob several registries need is planned once
+  per registry, so the same layer can be mounted out of a repository one registry
+  already serves and uploaded-then-mounted in the next. What it never does is ask one
+  registry for a blob in another (see [above](#registry-requirements)), so a deploy
+  mirroring the same images to two registries pays one upload per registry rather than
+  one per repository.
+
+### Interaction with other settings
+- **`push_at_build_time_blob_repository`.** When push at build time staged every
+  blob into that repository, it is recorded in the deploy manifest and is used
+  instead of a destination repository as the home — after the two upload-free
+  sources above, which are cheaper still.
+- **`forbid_layer_push`.** The upload phase is skipped entirely: the blobs are
+  expected to be in place already. The existence check and the strict mounting still
+  apply.
+- **`--sink` turns it off.** A sink captures the operations locally, so there is no
+  registry to ask what it already has and no repository to cross-mount between. The
+  setting is ignored rather than rejected, so a `.bazelrc` that enables it does not
+  get in the way of dumping an image to a tarball — the same way `--sink` already
+  bypasses the push strategy and the build-time staging repository.
+- **Not compatible** with the `bes` push strategy (the syncer performs the push) or
+  the `cas_registry` strategy (blobs are committed to the CAS registry instead of
+  uploaded). Both are rejected up front, because both mean the deploy manifest asked
+  for two mutually exclusive things.
 
 ## Remote Cache Eviction
 

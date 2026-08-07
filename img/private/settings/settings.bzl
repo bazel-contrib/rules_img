@@ -13,6 +13,7 @@ def _push_settings_impl(ctx):
     cross_mount = ctx.attr._cross_mount[BuildSettingInfo].value
     blob_repository = ctx.attr._blob_repository[BuildSettingInfo].value
     forbid_layer_push = ctx.attr._forbid_layer_push[BuildSettingInfo].value == "enabled"
+    deduplicated_push = ctx.attr._deduplicated_push[BuildSettingInfo].value == "enabled"
     insecure = ctx.attr._insecure[BuildSettingInfo].value == "enabled"
 
     return [PushSettingsInfo(
@@ -25,6 +26,7 @@ def _push_settings_impl(ctx):
         cross_mount = cross_mount,
         blob_repository = blob_repository,
         forbid_layer_push = forbid_layer_push,
+        deduplicated_push = deduplicated_push,
         insecure = insecure,
     )]
 
@@ -65,6 +67,10 @@ push_settings = rule(
         ),
         "_forbid_layer_push": attr.label(
             default = Label("//img/settings:forbid_layer_push"),
+            providers = [BuildSettingInfo],
+        ),
+        "_deduplicated_push": attr.label(
+            default = Label("//img/settings:deduplicated_push"),
             providers = [BuildSettingInfo],
         ),
         "_insecure": attr.label(

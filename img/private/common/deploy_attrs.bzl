@@ -309,6 +309,34 @@ deploy that would re-upload them is caught instead of silently succeeding.
         default = "auto",
         values = ["auto", "disabled", "enabled"],
     ),
+    deduplicated_push = attr.string(
+        doc = """Whether `img deploy` uploads a blob several repositories need only once.
+
+When `enabled`, the deploy first asks the registry which manifests it already
+holds, then uploads each remaining layer that more than one destination repository
+needs to just one of them — the first alphabetically — and cross-mounts it into the
+others. Meant for registries that keep a separate blob store per repository name,
+where pushing several images that share their layers otherwise uploads every shared
+layer once per repository. See
+[deduplicated push](/docs/push-strategies.md#deduplicated-push).
+
+**Only works on a registry that supports cross-repository blob mounting.** A push
+that opted in fails loudly where mounting is refused, rather than silently uploading
+the blob into every repository. See the
+[registry support matrix](/docs/registry-support.md).
+
+- **`auto`** (default): defer to the global `--@rules_img//img/settings:deduplicated_push` flag.
+- **`enabled`**: deduplicate blob uploads.
+- **`disabled`**: push each manifest independently.
+
+The setting travels with this push operation, so a deploy that merges several of
+them (`multi_deploy`, or an image with several `push_specs`) can mix the two: the
+operations that opted in are planned together and cross-mount between each other,
+while the rest are pushed exactly as they would be with the setting off.
+""",
+        default = "auto",
+        values = ["auto", "disabled", "enabled"],
+    ),
     push_at_build_time_exec_properties = attr.string_dict(
         doc = """Execution properties for the `PushImage` build-time push actions.
 

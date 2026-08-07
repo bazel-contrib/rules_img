@@ -6,9 +6,11 @@ import (
 	"io"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/go-containerregistry/pkg/logs"
+	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/jedib0t/go-pretty/v6/progress"
 )
 
@@ -348,4 +350,54 @@ func NewIndeterminate(ctx context.Context, message string) *Indeterminate {
 	pw.AppendTracker(tracker)
 
 	return &Indeterminate{tracker: tracker}
+}
+
+// transferUpdateBuffer is the capacity of the channel handed to
+// remote.WithProgress. go-containerregistry sends an update per chunk written, so
+// the buffer keeps a burst of uploads from blocking on the drain goroutine.
+const transferUpdateBuffer = 256
+
+// TrackTransfers starts aggregate progress reporting for a batch of registry
+// transfers and returns the channel to hand to remote.WithProgress.
+//
+// doneVerb labels a finished transfer ("pushed", "staged"); label names the
+// aggregate bar while the batch runs ("pushing", "staging blobs"). Call finish
+// with the batch's error (nil on success) once every transfer has completed: it
+// closes the channel, drains it, and tears the reporting down. Calling it more
+// than once is a no-op, so it is safe to call it on an early-return path and from
+// a deferred call.
+//
+// Usage:
+//
+//	ctx, updates, finish := progress.TrackTransfers(ctx, "pushed", "pushing")
+//	pusher, err := remote.NewPusher(append(opts, remote.WithProgress(updates))...)
+//	if err != nil {
+//		finish(err)
+//		return err
+//	}
+//	defer func() { finish(retErr) }()
+func TrackTransfers(ctx context.Context, doneVerb, label string) (context.Context, chan v1.Update, func(error)) {
+	ctx, stop := InitProgress(ctx, doneVerb)
+	tracker := NewIndeterminate(ctx, label)
+
+	updates := make(chan v1.Update, transferUpdateBuffer)
+	var drained sync.WaitGroup
+	drained.Add(1)
+	go func() {
+		defer drained.Done()
+		for update := range updates {
+			tracker.SetTotal(update.Total)
+			tracker.SetComplete(update.Complete)
+		}
+	}()
+
+	var once sync.Once
+	return ctx, updates, func(err error) {
+		once.Do(func() {
+			close(updates)
+			drained.Wait()
+			tracker.Done(err)
+			stop()
+		})
+	}
 }

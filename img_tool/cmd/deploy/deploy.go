@@ -65,7 +65,7 @@ func DeployProcess(ctx context.Context, args []string) {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
-		if err := persistentWorker(jobs, sinkSpec); err != nil {
+		if err := persistentWorker(jobs, sinkSpec, extractFlag(processedArgs, "--deduplicated-push")); err != nil {
 			fmt.Fprintf(os.Stderr, "Error in persistent worker: %v\n", err)
 			os.Exit(1)
 		}
@@ -88,6 +88,7 @@ func DeployProcess(ctx context.Context, args []string) {
 	var defaultSignSetting string
 	var signForce bool
 	var signTargetsFlag string
+	var deduplicatedPush string
 
 	flagSet := flag.NewFlagSet("deploy", flag.ContinueOnError)
 	flagSet.Var(&requestFiles, "request-file", "Deploy manifest JSON request file (can be used multiple times)")
@@ -106,6 +107,7 @@ func DeployProcess(ctx context.Context, args []string) {
 	flagSet.StringVar(&defaultSignSetting, "default_sign_setting", "", "Default sign_setting for operations without one: a path to a config file, or sha256:<hex> referencing a discovered setting")
 	flagSet.BoolVar(&signForce, "sign_force", false, "Sign every push operation using the default sign_setting, even operations not configured to sign at build time")
 	flagSet.StringVar(&signTargetsFlag, "sign_targets", "", "Override which descriptors are signed: a comma-separated list of roots,child_manifests,referrers or 'all'")
+	flagSet.StringVar(&deduplicatedPush, "deduplicated-push", "", "Override the deploy manifest's deduplicated_push setting: 'enabled' checks which manifests the registry already has, uploads each blob several repositories need to just one of them, and cross-mounts it into the others; 'disabled' pushes each manifest independently. Requires a registry that supports cross-repository blob mounting: where mounting is refused, an opted-in push fails rather than uploading the blob into every repository. Empty (default) uses the deploy manifest's setting. Ignored when --sink is set.")
 
 	if err := flagSet.Parse(args); err != nil {
 		flagSet.Usage()
@@ -160,6 +162,7 @@ func DeployProcess(ctx context.Context, args []string) {
 		DefaultSignSetting:         defaultSignSetting,
 		SignForce:                  signForce,
 		SignTargets:                splitCommaList(signTargetsFlag),
+		DeduplicatedPush:           deduplicatedPush,
 	}
 
 	if err := DeployWithExtras(ctx, rawRequest, opts); err != nil {
@@ -217,6 +220,10 @@ type DeployOptions struct {
 	DefaultSignSetting string   // path or "sha256:<hex>" default setting
 	SignForce          bool     // sign all push ops using the default setting
 	SignTargets        []string // override sign-target selection (roots/child_manifests/referrers/all)
+
+	// DeduplicatedPush overrides the deploy manifest's deduplicated_push setting:
+	// "enabled", "disabled", or "" to inherit it.
+	DeduplicatedPush string
 }
 
 func DeployWithExtras(ctx context.Context, rawRequest []byte, opts DeployOptions) error {
@@ -228,6 +235,16 @@ func DeployWithExtras(ctx context.Context, rawRequest []byte, opts DeployOptions
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&req); err != nil {
 		return fmt.Errorf("unmarshalling deploy manifest file: %w", err)
+	}
+
+	// Resolve the push strategy before the VFS is built: the deduplicated strategy
+	// registers its own cross-mount sources (per still-missing manifest, after
+	// asking the registry) instead of the blanket ones below. It is decided per
+	// operation, so a deploy can mix destinations that cross-mount blobs with ones
+	// that do not.
+	dedupSelect, err := newDedupSelector(opts.DeduplicatedPush, opts.Sink != "")
+	if err != nil {
+		return err
 	}
 
 	// Configure optional registry gateways. When IMG_REGISTRY_*_GATEWAY is set,
@@ -279,29 +296,6 @@ func DeployWithExtras(ctx context.Context, rawRequest []byte, opts DeployOptions
 	for _, spec := range opts.Layers {
 		vfsBuilder = vfsBuilder.WithLayer(spec)
 	}
-	// Blob-staging repository: layer blobs are pushed to req.Settings.BlobRepository
-	// and cross-mounted from there when the manifests are pushed to their real
-	// repositories. Register the cross-mount sources before building the VFS so
-	// VFS.Layer wraps those blobs as remote.MountableLayer.
-	if req.Settings.BlobRepository != "" {
-		stagingOps, err := req.PushOperations()
-		if err != nil {
-			return err
-		}
-		for _, op := range stagingOps {
-			src := api.CrossMountSource{Repository: req.Settings.BlobRepository}
-			for _, manifest := range op.Manifests {
-				for _, layer := range manifest.LayerBlobs {
-					vfsBuilder = vfsBuilder.WithCrossMountSource(layer.Digest, src)
-				}
-			}
-		}
-	}
-	vfs, err := vfsBuilder.Build()
-	if err != nil {
-		return fmt.Errorf("building VFS: %w", err)
-	}
-
 	pushOperations, err := req.PushOperations()
 	if err != nil {
 		return err
@@ -313,6 +307,37 @@ func DeployWithExtras(ctx context.Context, rawRequest []byte, opts DeployOptions
 	registryTagOperations, err := req.RegistryTagOperations()
 	if err != nil {
 		return err
+	}
+
+	// Blob-staging repository: layer blobs are pushed to req.Settings.BlobRepository
+	// and cross-mounted from there when the manifests are pushed to their real
+	// repositories. Register the cross-mount sources before building the VFS so
+	// VFS.Layer wraps those blobs as remote.MountableLayer. The deduplicated strategy
+	// computes its own sources per manifest, once it knows which manifests the
+	// registry is missing, and those win over these hints -- but an operation that did
+	// not opt into it still needs its staging hint, so the two are separated per
+	// operation rather than per deploy.
+	//
+	// These hints name no registry, because they are keyed by digest alone and shared
+	// by every operation: naming one operation's registry would turn the mount into a
+	// cross-registry one for the rest. The cost is the one resolveBlobMount avoids by
+	// planning per registry -- go-containerregistry only requests read access to a
+	// mount source in the destination's own registry, so a registry that scopes
+	// credentials per repository cannot authorize these mounts. Fixing that here needs
+	// the same per-registry views the deduplicated push builds.
+	if req.Settings.BlobRepository != "" {
+		src := api.CrossMountSource{Repository: req.Settings.BlobRepository}
+		for _, op := range stagingPushOperations(pushOperations, dedupSelect) {
+			for _, manifest := range op.Manifests {
+				for _, layer := range manifest.LayerBlobs {
+					vfsBuilder = vfsBuilder.WithCrossMountSource(layer.Digest, src)
+				}
+			}
+		}
+	}
+	vfs, err := vfsBuilder.Build()
+	if err != nil {
+		return fmt.Errorf("building VFS: %w", err)
 	}
 
 	// When a --sink override is active, capture every operation into the local
@@ -362,19 +387,57 @@ func DeployWithExtras(ctx context.Context, rawRequest []byte, opts DeployOptions
 	// groupCtx is cancelled once g.Wait returns; keep the outer ctx for work after it (registry_tag ops).
 	g, groupCtx := errgroup.WithContext(ctx)
 
-	// When a blob-staging repository is configured, upload every layer blob to it
-	// first (synchronously) so that the manifest push below can cross-mount them
-	// from the staging repository instead of uploading their bytes to the real
-	// repository. Skipped when layer pushes are forbidden: the blobs are then
-	// expected to already be in the registry (e.g. pushed at build time).
-	if req.Settings.BlobRepository != "" && !req.Settings.ForbidLayerPush && len(pushOperations) > 0 {
-		if err := preUploadStagingBlobs(ctx, vfs, pushOperations, req.Settings.BlobRepository, opts.OverrideRegistry, opts.Jobs, pushTransport); err != nil {
+	// Blob staging happens synchronously, before the manifest push, so that the
+	// push can cross-mount the blobs instead of uploading their bytes to every real
+	// repository.
+	//
+	// dedupViews is how the operations that opted into the deduplicated push see the
+	// blobs: one view per destination registry, planned across *all* of them together,
+	// so a blob several repositories of one registry need is uploaded there once and
+	// cross-mounted into the rest. Operations that did not opt in keep the plain VFS
+	// -- handing them a mount-only layer would fail their push on a registry that does
+	// not cross-mount blobs -- and keep the build-time staging flow below, which is why
+	// the two are not exclusive: a deploy can mix them, and the operations that opted
+	// out must be pushed exactly as they would be without the strategy.
+	var dedupVFS *dedupViews
+	if dedupSelect.any(pushOperations, registryTagOperations) {
+		if err := validateDeduplicatedPush(req.Settings); err != nil {
+			return err
+		}
+		dedupVFS, err = prepareDedupPush(ctx, vfs, pushOperations, registryTagOperations, dedupOptions{
+			selector:           dedupSelect,
+			blobRepository:     req.Settings.BlobRepository,
+			overrideRegistry:   opts.OverrideRegistry,
+			overrideRepository: opts.OverrideRepository,
+			jobs:               opts.Jobs,
+			forbidUpload:       req.Settings.ForbidLayerPush,
+			pushTransport:      pushTransport,
+		})
+		if err != nil {
+			return fmt.Errorf("preparing deduplicated push: %w", err)
+		}
+	}
+	// Skipped when layer pushes are forbidden: the blobs are then expected to
+	// already be in the registry (e.g. pushed at build time).
+	if stagingOps := stagingPushOperations(pushOperations, dedupSelect); req.Settings.BlobRepository != "" && !req.Settings.ForbidLayerPush && len(stagingOps) > 0 {
+		if err := preUploadStagingBlobs(ctx, vfs, stagingOps, req.Settings.BlobRepository, opts.OverrideRegistry, opts.Jobs, pushTransport); err != nil {
 			return fmt.Errorf("pre-uploading blobs to staging repository %q: %w", req.Settings.BlobRepository, err)
 		}
+	}
+	// vfsForOperation serves an operation from the view of its destination registry
+	// when it opted in, and from the plain VFS otherwise.
+	vfsForOperation := func(registry string, base api.BaseCommandOperation) *deployvfs.VFS {
+		if view := dedupVFS.For(registry, base); view != nil {
+			return view
+		}
+		return vfs
 	}
 
 	if len(pushOperations) > 0 {
 		uploadBuilder := push.NewBuilder(vfs).
+			WithVFSForOperation(func(op api.IndexedPushDeployOperation) push.VFS {
+				return vfsForOperation(op.Registry, op.BaseCommandOperation)
+			}).
 			WithJobs(opts.Jobs).
 			WithRemoteOptions(registryopts.Default().WithTransport(pushTransport).Remote()...)
 		if haveBlobCacheCient {
@@ -455,7 +518,7 @@ func DeployWithExtras(ctx context.Context, rawRequest []byte, opts DeployOptions
 	}
 
 	if len(registryTagOperations) > 0 {
-		extraTagNames, err := applyRegistryTagOperations(ctx, vfs, pusher, registryTagOperations, req.Settings.PushStrategy, opts.OverrideRegistry, opts.OverrideRepository, opts.Jobs)
+		extraTagNames, err := applyRegistryTagOperations(ctx, vfsForOperation, pusher, registryTagOperations, req.Settings.PushStrategy, opts.OverrideRegistry, opts.OverrideRepository, opts.Jobs)
 		if err != nil {
 			return err
 		}
@@ -470,7 +533,7 @@ func DeployWithExtras(ctx context.Context, rawRequest []byte, opts DeployOptions
 // applyRegistryTagOperations writes the pre-expanded tags from registry_tag
 // ops onto manifests already pushed by a preceding push op. Under the `bes`
 // strategy the BES syncer is responsible for this, so we no-op.
-func applyRegistryTagOperations(ctx context.Context, vfs *deployvfs.VFS, pusher *remote.Pusher, ops []api.IndexedRegistryTagDeployOperation, strategy, overrideRegistry, overrideRepository string, jobs int) ([]string, error) {
+func applyRegistryTagOperations(ctx context.Context, vfsForOperation func(string, api.BaseCommandOperation) *deployvfs.VFS, pusher *remote.Pusher, ops []api.IndexedRegistryTagDeployOperation, strategy, overrideRegistry, overrideRepository string, jobs int) ([]string, error) {
 	if strategy == "bes" {
 		return nil, nil
 	}
@@ -497,7 +560,7 @@ func applyRegistryTagOperations(ctx context.Context, vfs *deployvfs.VFS, pusher 
 		if err != nil {
 			return nil, fmt.Errorf("parsing root digest for registry_tag on %s: %w", baseRef, err)
 		}
-		taggable, err := vfs.Taggable(rootHash)
+		taggable, err := vfsForOperation(op.Registry, op.BaseCommandOperation).Taggable(rootHash)
 		if err != nil {
 			return nil, fmt.Errorf("locating manifest %s for registry_tag on %s: %w", op.Root.Digest, baseRef, err)
 		}

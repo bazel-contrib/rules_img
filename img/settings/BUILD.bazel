@@ -401,6 +401,31 @@ string_flag(
     visibility = ["//visibility:public"],
 )
 
+# When "enabled", `img deploy` (image_push / multi_deploy) pushes in phases instead
+# of pushing each manifest independently: it asks the registry which manifests it
+# already holds, then uploads every layer that more than one repository needs to
+# just one of those repositories -- the first alphabetically -- and cross-mounts it
+# into the others from there. Meant for registries that keep a separate blob store
+# per repository name, where pushing K images that share their layers to K
+# repository names otherwise uploads every shared layer K times. Needs no
+# configuration: the blobs go to a repository the deploy pushes to anyway, so no
+# extra repository and no extra credentials are involved. When
+# push_at_build_time_blob_repository staged the blobs at build time, that repository
+# is used instead.
+#
+# Only works on a registry that supports cross-repository blob mounting: a push that
+# opted in fails loudly where mounting is refused, instead of silently uploading the
+# blob into every repository. See docs/registry-support.md.
+string_flag(
+    name = "deduplicated_push",
+    build_setting_default = "disabled",
+    values = [
+        "disabled",
+        "enabled",
+    ],
+    visibility = ["//visibility:public"],
+)
+
 # Path prefix for entries in the layer `mtree` output group. "./" makes every
 # entry an unambiguous full-path entry (recommended). "" emits bare tar paths;
 # in that mode directory entries are given a trailing "/" so they still contain

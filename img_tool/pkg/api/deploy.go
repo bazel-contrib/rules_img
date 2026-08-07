@@ -168,6 +168,20 @@ type BaseCommandOperation struct {
 
 	CrossMountHint *CrossMountSource `json:"cross_mount_hint,omitempty"` // repository from which layers can be cross-mounted
 
+	// DeduplicatedPush, when true, lets `img deploy` serve this operation's layers
+	// by cross-mounting them: it checks which manifests the registry already holds,
+	// uploads each layer that several of the deduplicating operations' repositories
+	// need to just one of them, and cross-mounts it into the others. On a registry
+	// that keeps a separate blob store per repository name this replaces one upload
+	// per (repository, blob) with one upload per (registry, blob).
+	//
+	// It is per operation rather than per deploy because it is an assumption about
+	// the destination: one deploy may push to a registry that cross-mounts blobs and
+	// to one that does not. An operation that leaves this false is pushed exactly as
+	// it would be without the strategy, and never has a layer served to it as a
+	// mount.
+	DeduplicatedPush bool `json:"deduplicated_push,omitempty"`
+
 	PullInfo
 }
 

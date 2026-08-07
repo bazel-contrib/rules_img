@@ -232,8 +232,8 @@ def resolve_push_at_build_time(ctx):
     attribute either takes an explicit per-target value or defers to its global
     flag:
 
-    - `push_at_build_time` / `push_at_build_time_content` / `forbid_layer_push`:
-      "auto" defers to the global setting.
+    - `push_at_build_time` / `push_at_build_time_content` / `forbid_layer_push` /
+      `deduplicated_push`: "auto" defers to the global setting.
     - `push_at_build_time_blob_repository` / `push_at_build_time_manifest_repository`:
       the USE_GLOBAL_SETTING sentinel defers to the global setting; any other
       string (including "") is used verbatim.
@@ -246,8 +246,8 @@ def resolve_push_at_build_time(ctx):
 
     Returns:
         A struct with fields: mode, content, blob_repository, manifest_repository,
-        forbid_layer_push (bool), exec_properties (dict), gateway, push_gateway,
-        pull_gateway.
+        forbid_layer_push (bool), deduplicated_push (bool), exec_properties (dict),
+        gateway, push_gateway, pull_gateway.
     """
     global_settings = ctx.attr._push_at_build_time_settings[PushAtBuildTimeSettingsInfo]
     push_settings = ctx.attr._push_settings[PushSettingsInfo]
@@ -272,12 +272,17 @@ def resolve_push_at_build_time(ctx):
     if forbid_layer_push == "auto":
         forbid_layer_push = "enabled" if push_settings.forbid_layer_push else "disabled"
 
+    deduplicated_push = ctx.attr.deduplicated_push
+    if deduplicated_push == "auto":
+        deduplicated_push = "enabled" if push_settings.deduplicated_push else "disabled"
+
     return struct(
         mode = mode,
         content = content,
         blob_repository = blob_repository,
         manifest_repository = manifest_repository,
         forbid_layer_push = forbid_layer_push == "enabled",
+        deduplicated_push = deduplicated_push == "enabled",
         exec_properties = ctx.attr.push_at_build_time_exec_properties,
         gateway = global_settings.gateway,
         push_gateway = global_settings.push_gateway,

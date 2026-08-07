@@ -157,6 +157,9 @@ func MergeDeployManifests(ctx context.Context, inputPaths []string, outputPath s
 	// silently pick one. ForbidLayerPush is OR-combined: a bool cannot distinguish
 	// "explicitly off" from "unset", and honoring any operation's guard is the safe
 	// choice.
+	//
+	// deduplicated_push needs no merging: it is an assumption about one destination,
+	// so it lives on each operation and travels with it.
 	var blobRepository string
 	var forbidLayerPush bool
 	var defaultSignSetting *api.Descriptor
