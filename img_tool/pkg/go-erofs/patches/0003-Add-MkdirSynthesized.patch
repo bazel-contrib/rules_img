@@ -1,0 +1,194 @@
+From 39fcfa1a4185e5289ea7c0638aa5586d41908e48 Mon Sep 17 00:00:00 2001
+From: direntry <312071520+direntry@users.noreply.github.com>
+Date: Sun, 2 Aug 2026 13:01:33 +0100
+Subject: [PATCH 3/3] Add MkdirSynthesized
+
+A caller may need a directory to exist without describing it -- to hang an
+extended attribute on, say. Mkdir is the wrong tool: it records the
+directory as described, so it escapes the synthetic-directory hook and
+SyntheticDirs never mentions it, leaving its permissions and ownership a
+silent guess.
+
+MkdirSynthesized creates it the way a missing parent is created, so the
+hook decides its attributes and the report names it. An explicit Mkdir
+afterwards still takes over.
+
+Signed-off-by: direntry <312071520+direntry@users.noreply.github.com>
+---
+ mkfs.go         | 71 ++++++++++++++++++++++++++++++++++++++-----------
+ prepare_test.go | 71 +++++++++++++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 126 insertions(+), 16 deletions(-)
+
+diff --git a/mkfs.go b/mkfs.go
+index c96b30b..92f7879 100644
+--- a/mkfs.go
++++ b/mkfs.go
+@@ -342,6 +342,33 @@ func (fsys *Writer) AddFile(name string, size int64, r io.Reader) error {
+ 	return nil
+ }
+ 
++// MkdirSynthesized creates a directory the caller does not describe, giving it
++// the attributes [WithSyntheticDirMetadata] chooses (or the default 0755
++// root-owned) and reporting it from [Writer.SyntheticDirs] — exactly as if it
++// had been invented to hold an entry beneath it.
++//
++// It is for a caller that needs a directory to exist without claiming to know
++// what it should look like: to hang an extended attribute on, say. An entry that
++// already exists at name is left untouched.
++func (fsys *Writer) MkdirSynthesized(name string) error {
++	if fsys.wErr != nil {
++		return fsys.wErr
++	}
++	name = cleanPath(name)
++	if name == "/" {
++		return nil
++	}
++	if _, ok := fsys.byPath[name]; ok {
++		return nil
++	}
++	if err := fsys.checkMutable(); err != nil {
++		return err
++	}
++	fsys.ensureParent(name)
++	fsys.addChild(fsys.synthesizedDir(name, fsys.byPath[path.Dir(name)]))
++	return nil
++}
++
+ // Mkdir creates a directory. Only permission bits from perm are used,
+ // including setuid, setgid and sticky as os.Mkdir does; type bits are forced
+ // to directory. Mkdir("/", perm) sets root permissions.
+@@ -1580,27 +1607,39 @@ func (fsys *Writer) ensureParent(name string) {
+ 	}
+ 	// Create in top-down order.
+ 	for i := len(missing) - 1; i >= 0; i-- {
+-		d := missing[i]
+-		e := &fsEntry{
+-			path:        d,
+-			mode:        disk.StatTypeDir | 0o755,
+-			synthesized: true,
+-		}
+-		if fsys.syntheticDirMeta != nil {
+-			if meta, ok := fsys.syntheticDirMeta(d, ancestorMetadata(ancestor)); ok {
+-				e.mode = disk.StatTypeDir | (meta.Mode & 0o7777)
+-				e.uid = meta.UID
+-				e.gid = meta.GID
+-				e.mtime = meta.Mtime
+-				e.mtimeNs = meta.MtimeNs
+-				e.xattrs = maps.Clone(meta.Xattrs)
+-			}
+-		}
++		e := fsys.synthesizedDir(missing[i], ancestor)
+ 		fsys.addChild(e)
+ 		ancestor = e
+ 	}
+ }
+ 
++// synthesizedDir builds a directory entry the caller never described, giving it
++// the attributes the synthetic-directory hook chooses, or the default 0755
++// root-owned ones.
++func (fsys *Writer) synthesizedDir(p string, ancestor *fsEntry) *fsEntry {
++	e := &fsEntry{
++		path:        p,
++		mode:        disk.StatTypeDir | 0o755,
++		synthesized: true,
++	}
++	if fsys.syntheticDirMeta == nil {
++		return e
++	}
++	from := fsys.root
++	if ancestor != nil {
++		from = ancestor
++	}
++	if meta, ok := fsys.syntheticDirMeta(p, ancestorMetadata(from)); ok {
++		e.mode = disk.StatTypeDir | (meta.Mode & 0o7777)
++		e.uid = meta.UID
++		e.gid = meta.GID
++		e.mtime = meta.Mtime
++		e.mtimeNs = meta.MtimeNs
++		e.xattrs = maps.Clone(meta.Xattrs)
++	}
++	return e
++}
++
+ // ancestorMetadata describes an existing directory for the synthetic-directory
+ // hook, mirroring what mkfs.erofs inherits from the nearest ancestor.
+ func ancestorMetadata(e *fsEntry) SyntheticDirMetadata {
+diff --git a/prepare_test.go b/prepare_test.go
+index 50c812f..3858aa7 100644
+--- a/prepare_test.go
++++ b/prepare_test.go
+@@ -738,3 +738,74 @@ func (r *countingReader) Close() error {
+ 	r.closed = true
+ 	return nil
+ }
++
++// TestMkdirSynthesized checks that a directory the caller needs but does not
++// describe gets the hook's attributes and is reported as synthesized, while an
++// explicit description afterwards takes over.
++func TestMkdirSynthesized(t *testing.T) {
++	fsys := erofs.NewWriter(
++		erofs.WithBuildTime(0, 0),
++		erofs.WithSyntheticDirMetadata(func(_ string, ancestor erofs.SyntheticDirMetadata) (erofs.SyntheticDirMetadata, bool) {
++			ancestor.Mode = 0o755
++			return ancestor, true
++		}),
++	)
++	if err := fsys.Mkdir("/described", 0o700); err != nil {
++		t.Fatal(err)
++	}
++	if err := fsys.Chown("/described", 42, 42); err != nil {
++		t.Fatal(err)
++	}
++	// Needed to hang something on, with no idea what it should look like.
++	if err := fsys.MkdirSynthesized("/described/inner"); err != nil {
++		t.Fatal(err)
++	}
++	if err := fsys.Setxattr("/described/inner", "user.marker", "y"); err != nil {
++		t.Fatal(err)
++	}
++	// An existing entry is left alone.
++	if err := fsys.MkdirSynthesized("/described"); err != nil {
++		t.Fatal(err)
++	}
++
++	if want := []string{"/described/inner"}; !equalStrings(fsys.SyntheticDirs(), want) {
++		t.Errorf("SyntheticDirs() = %v, want %v", fsys.SyntheticDirs(), want)
++	}
++
++	_, image := prepareAndWrite(t, fsys)
++	efs, err := erofs.Open(bytes.NewReader(image))
++	if err != nil {
++		t.Fatal(err)
++	}
++	inner := erofstest.Stat(t, efs, "described/inner")
++	if inner.UID != 42 || inner.GID != 42 || inner.Mode.Perm() != 0o755 {
++		t.Errorf("/described/inner = %v %d:%d, want 0755 42:42 (inherited)", inner.Mode.Perm(), inner.UID, inner.GID)
++	}
++	erofstest.CheckXattrs(t, efs, "described/inner", map[string]string{"user.marker": "y"})
++	if described := erofstest.Stat(t, efs, "described"); described.Mode.Perm() != 0o700 {
++		t.Errorf("/described mode %v, want 0700", described.Mode.Perm())
++	}
++}
++
++// TestMkdirSynthesizedThenDescribed checks that describing a directory after it
++// was synthesized takes it out of the report.
++func TestMkdirSynthesizedThenDescribed(t *testing.T) {
++	fsys := erofs.NewWriter(erofs.WithBuildTime(0, 0))
++	if err := fsys.MkdirSynthesized("/d"); err != nil {
++		t.Fatal(err)
++	}
++	if err := fsys.Mkdir("/d", 0o711); err != nil {
++		t.Fatal(err)
++	}
++	if got := fsys.SyntheticDirs(); len(got) != 0 {
++		t.Errorf("SyntheticDirs() = %v, want none", got)
++	}
++	_, image := prepareAndWrite(t, fsys)
++	efs, err := erofs.Open(bytes.NewReader(image))
++	if err != nil {
++		t.Fatal(err)
++	}
++	if st := erofstest.Stat(t, efs, "d"); st.Mode.Perm() != 0o711 {
++		t.Errorf("/d mode %v, want 0711", st.Mode.Perm())
++	}
++}

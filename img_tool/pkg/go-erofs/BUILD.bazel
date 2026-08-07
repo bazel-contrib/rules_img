@@ -1,0 +1,47 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "go-erofs",
+    srcs = [
+        "block.go",
+        "erofs.go",
+        "format.go",
+        "layout.go",
+        "mkfs.go",
+        "mkfs_darwin.go",
+        "mkfs_image.go",
+        "mkfs_other.go",
+        "mkfs_unix.go",
+        "prepare.go",
+        "writer.go",
+        "xattr.go",
+    ],
+    importpath = "github.com/bazel-contrib/rules_img/img_tool/pkg/go-erofs",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/go-erofs/internal/builder",
+        "//pkg/go-erofs/internal/disk",
+    ],
+)
+
+go_test(
+    name = "go-erofs_test",
+    srcs = [
+        "bench_test.go",
+        "chunk_xattr_test.go",
+        "device_table_test.go",
+        "erofs_fuzz_test.go",
+        "erofs_test.go",
+        "example_test.go",
+        "mkfs_fuzz_test.go",
+        "mkfs_test.go",
+        "prepare_test.go",
+        "testbuf_test.go",
+    ],
+    deps = [
+        "//pkg/go-erofs",
+        "//pkg/go-erofs/internal/builder",
+        "//pkg/go-erofs/internal/disk",
+        "//pkg/go-erofs/internal/erofstest",
+    ],
+)

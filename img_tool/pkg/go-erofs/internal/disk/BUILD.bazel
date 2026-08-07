@@ -1,0 +1,11 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "disk",
+    srcs = [
+        "ftypes.go",
+        "types.go",
+    ],
+    importpath = "github.com/bazel-contrib/rules_img/img_tool/pkg/go-erofs/internal/disk",
+    visibility = ["//pkg/go-erofs:__subpackages__"],
+)
