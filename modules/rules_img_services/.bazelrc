@@ -7,6 +7,7 @@ import %workspace%/.bazelrc.common
 common --@rules_img//img/settings:destination_registry=ghcr.io
 common --@rules_img//img/settings:compress=zstd
 common --@rules_img//img/settings:compression_level=4
+common --@rules_img//img/settings:stamp_created=enabled
 common --@rules_img//img/settings:additional_image_labels_file=//services:image_labels
 common --@rules_go//go/config:pure
 
