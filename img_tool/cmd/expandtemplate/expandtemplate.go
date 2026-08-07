@@ -11,10 +11,21 @@ import (
 	"maps"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"text/template"
+	"time"
 
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/kvfile"
+)
+
+const (
+	// buildTimestampKey is the volatile workspace status key Bazel writes for
+	// every build: the build time in seconds since the Unix epoch.
+	buildTimestampKey = "BUILD_TIMESTAMP"
+	// buildTimestampRFC3339Key is the derived template variable holding
+	// buildTimestampKey formatted as a UTC RFC 3339 timestamp.
+	buildTimestampRFC3339Key = "BUILD_TIMESTAMP_RFC3339"
 )
 
 // stringOrStrings is a JSON type that unmarshals from either a single string or an array of strings.
@@ -159,6 +170,9 @@ func expandTemplates(inputPath, outputPath string, stampFiles []string, jsonVars
 	// Add build settings to template data
 	maps.Copy(buildSettings, request.BuildSettings)
 
+	// Derive BUILD_TIMESTAMP_RFC3339 from the (volatile) BUILD_TIMESTAMP stamp value.
+	deriveBuildTimestampRFC3339(buildSettings)
+
 	templateData := buildSettings.AsTemplateData()
 
 	// Process JSON variables into a separate map with case-insensitive keys
@@ -285,6 +299,7 @@ func expandTemplate(tmplStr string, data map[string]any) (string, error) {
 		"hassuffix":  strings.HasSuffix,
 		"trimprefix": strings.TrimPrefix,
 		"trimsuffix": strings.TrimSuffix,
+		"rfc3339":    unixToRFC3339,
 	}
 
 	tmpl, err := template.New("expand").Funcs(funcMap).Parse(tmplStr)
@@ -410,6 +425,59 @@ func appendKV(kvArray any, key string, suffix string) string {
 func prependKV(kvArray any, key string, prefix string) string {
 	value := getKVFromArray(kvArray, key)
 	return prefix + value
+}
+
+// unixToRFC3339 converts a unix timestamp (seconds since the epoch) to a UTC
+// RFC 3339 timestamp. The value may be a string or a number, as stamp values
+// are strings while build settings may be integers. An empty value converts to
+// the empty string, so that a template referencing an unset stamp variable
+// stays empty instead of failing the build.
+func unixToRFC3339(value any) (string, error) {
+	var seconds int64
+	switch v := value.(type) {
+	case nil:
+		return "", nil
+	case string:
+		trimmed := strings.TrimSpace(v)
+		if trimmed == "" {
+			return "", nil
+		}
+		parsed, err := strconv.ParseInt(trimmed, 10, 64)
+		if err != nil {
+			return "", fmt.Errorf("parsing %q as a unix timestamp: %w", v, err)
+		}
+		seconds = parsed
+	case int:
+		seconds = int64(v)
+	case int64:
+		seconds = v
+	case float64:
+		seconds = int64(v)
+	default:
+		return "", fmt.Errorf("cannot convert %v of type %T to a unix timestamp", value, value)
+	}
+	return time.Unix(seconds, 0).UTC().Format(time.RFC3339), nil
+}
+
+// deriveBuildTimestampRFC3339 defines the BUILD_TIMESTAMP_RFC3339 template
+// variable from Bazel's volatile BUILD_TIMESTAMP stamp value.
+//
+// The variable is always defined (as the empty string when no usable
+// BUILD_TIMESTAMP is available, e.g. when stamping is inactive), so that
+// templates referencing it render empty instead of "<no value>". An explicitly
+// provided BUILD_TIMESTAMP_RFC3339 stamp value or build setting wins.
+func deriveBuildTimestampRFC3339(settings buildSettings) {
+	if _, ok := settings[buildTimestampRFC3339Key]; ok {
+		return
+	}
+	// A malformed BUILD_TIMESTAMP is ignored rather than fatal: the derivation
+	// runs for every template expansion, including ones that never reference the
+	// timestamp. Use the rfc3339 template function for a hard error instead.
+	formatted, err := unixToRFC3339(settings[buildTimestampKey].value)
+	if err != nil {
+		formatted = ""
+	}
+	settings[buildTimestampRFC3339Key] = buildSetting{value: formatted}
 }
 
 // readStampFile reads a Bazel stamp file and adds key-value pairs to the data map

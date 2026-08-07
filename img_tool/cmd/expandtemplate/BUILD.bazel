@@ -1,4 +1,4 @@
-load("@rules_go//go:def.bzl", "go_library")
+load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "expandtemplate",
@@ -6,4 +6,10 @@ go_library(
     importpath = "github.com/bazel-contrib/rules_img/img_tool/cmd/expandtemplate",
     visibility = ["//cmd:__subpackages__"],
     deps = ["//pkg/kvfile"],
+)
+
+go_test(
+    name = "expandtemplate_test",
+    srcs = ["expandtemplate_test.go"],
+    embed = [":expandtemplate"],
 )

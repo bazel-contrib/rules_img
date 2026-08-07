@@ -133,6 +133,91 @@ build --workspace_status_command=./workspace_status.sh
 | `"force"` | Always stamp if templates contain `{{}}` placeholders, regardless of `--stamp` |
 | `"disabled"` | Never use stamp values |
 
+### Derived Stamp Variables
+
+Besides the keys emitted by the workspace status script, rules_img defines one derived
+variable:
+
+| Variable | Value |
+|----------|-------|
+| `BUILD_TIMESTAMP_RFC3339` | Bazel's `BUILD_TIMESTAMP` (unix seconds), formatted as a UTC RFC 3339 timestamp (e.g. `2025-06-15T15:06:40Z`) |
+
+`BUILD_TIMESTAMP` is written by Bazel for every build, so no workspace status script is
+required for this. The variable is always defined; it is the empty string when stamping is
+inactive, so `{{.BUILD_TIMESTAMP_RFC3339}}` never expands to `<no value>`:
+
+```starlark
+image_manifest(
+    name = "my_app",
+    layers = [":app_layer"],
+    annotations = {
+        "org.opencontainers.image.created": "{{.BUILD_TIMESTAMP_RFC3339}}",
+    },
+)
+```
+
+To convert any other unix timestamp, use the [`rfc3339`](#rfc3339) function.
+
+### Stamping the Image Config Creation Time
+
+The `created` field of the OCI image config is a trade-off between looking correct and
+building reproducibly, so rules_img makes it opt-in.
+
+**Default: no creation time.** rules_img leaves `created` unset. Tools that read the config
+render the missing value as the Unix epoch, so `docker inspect` reports
+`1970-01-01T00:00:00Z` and `docker images` shows an image that is decades old. That is
+confusing, but it is what keeps builds reproducible: the config blob depends only on the
+image's actual content, so the same inputs always produce the same config, the same manifest,
+and the same image digest. Nothing has to be re-uploaded when you push an image that has not
+changed, and remote cache hits stay valid.
+
+**Opt-in: stamp the build time.** `stamp_created = "enabled"` sets `created` to Bazel's build
+time, which is the shorthand for `created_timestamp = "{{.BUILD_TIMESTAMP_RFC3339}}"`:
+
+```starlark
+# Shorthand: created = Bazel's build time
+image_manifest(
+    name = "my_app",
+    layers = [":app_layer"],
+    stamp_created = "enabled",
+)
+
+# Equivalent, and open to any template expression
+image_manifest(
+    name = "my_app_explicit",
+    layers = [":app_layer"],
+    created_timestamp = "{{.BUILD_TIMESTAMP_RFC3339}}",
+)
+```
+
+Both require stamping to be active (Bazel's `--stamp`, or `stamp = "force"`); otherwise the
+value expands to the empty string and the `created` field stays unset. To opt in for a whole
+repository instead of per target, set the global flag in `.bazelrc`:
+
+```bash
+build --@rules_img//img/settings:stamp_created=enabled
+```
+
+Know what you are buying:
+
+- **The timestamp is best-effort, not exact.** `BUILD_TIMESTAMP` is a volatile workspace
+  status value, which Bazel deliberately keeps out of action cache keys. A cached config
+  therefore keeps the timestamp of the build that produced it, and only refreshes when the
+  action re-executes for some other reason. The `created` value can lag behind the build that
+  actually shipped the image.
+- **Builds stop being reproducible.** Whenever the action does re-execute, the config blob
+  changes, which changes the config digest, the manifest, and the image digest -- even though
+  no layer changed.
+- **Every changed build costs more work.** A new config and manifest have to be uploaded on
+  each push, downstream indexes, signatures, and attestations change with the digest, and any
+  consumer keyed on the image digest sees a new image. (Layer blobs are content-addressed and
+  unchanged, so they are still deduplicated by the registry.)
+
+For a timestamp from another source (a release date, `SOURCE_DATE_EPOCH`, a `STABLE_` stamp
+key), use `created_timestamp` with the appropriate template, or the `created` attribute to
+read an RFC 3339 timestamp from a file. A `STABLE_` value is part of the cache key, so it is
+accurate whenever it changes -- at the price of rebuilding the image when it does.
+
 ### Troubleshooting Stamping
 
 **Stamp variables are empty or not replaced:**
@@ -144,6 +229,8 @@ build --workspace_status_command=./workspace_status.sh
 **Build not reproducible:**
 - Set `--nostamp` and use the default `auto` setting for rules_img stamping
 - Use `stamp = "disabled"` if you never want to include stamping information
+- Leave `stamp_created` and `created_timestamp` unset (the default), so the image config
+  carries no `created` timestamp
 - Only enable stamping for release builds using configs
 
 **Testing stamp values:**
@@ -403,3 +490,24 @@ Remove a prefix or suffix from a string.
 # Remove -dev suffix
 {{trimsuffix .tag "-dev"}}
 ```
+
+### Timestamp Functions
+
+#### `rfc3339`
+
+Converts a unix timestamp (seconds since the epoch) to a UTC RFC 3339 timestamp.
+
+**Syntax**: `rfc3339 <unix timestamp>`
+
+```starlark
+annotations = {
+    # A stamp value holding unix seconds, as an RFC 3339 timestamp
+    "org.opencontainers.image.created": """{{rfc3339 .STABLE_RELEASE_TIMESTAMP}}""",
+}
+```
+
+**Example**: `1750000000` returns `2025-06-15T15:06:40Z`.
+
+An empty or missing value returns the empty string; a value that is not a unix timestamp
+fails the build. `{{.BUILD_TIMESTAMP_RFC3339}}` is the pre-defined equivalent of
+`{{rfc3339 .BUILD_TIMESTAMP}}`.

@@ -44,6 +44,7 @@ image_manifest(
     annotations = {
         "org.opencontainers.image.title": "Go Application with Template Stamping",
         "org.opencontainers.image.source": "{{.repo}}",
+        "org.opencontainers.image.created": "{{.BUILD_TIMESTAMP_RFC3339}}",
         "build.version": "{{.tag}}",
     },
     base = ":go_image",
@@ -65,6 +66,7 @@ image_manifest(
         "base.manifest.mediaType": "{{.base.manifest.mediatype}}",
         "org.opencontainers.image.version": "{{.tag}}",
         "build.timestamp": "{{.BUILD_TIMESTAMP}}",
+        "build.time": "{{rfc3339 .BUILD_TIMESTAMP}}",
         "build.year": "{{.copyright_year}}",
         "production": "{{.is_production}}",
     },
@@ -72,6 +74,9 @@ image_manifest(
         ":go_layer",
     ],
     stamp = "force",
+    # Stamp the image config's `created` field with Bazel's build time. This
+    # makes the image non-reproducible on purpose; see docs/templating.md.
+    stamp_created = "enabled",
 )
 
 image_index(
