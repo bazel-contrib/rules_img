@@ -204,6 +204,19 @@ bazel run //your:push_target
 
 The registry can use multiple blob backends, including a remote cache (`reapi`, default), another container registry (`upstream`), and an S3 bucket (`s3`). Those backends are experimental.
 
+### Bounding what the registry keeps
+
+The registry keeps every manifest it is pushed until the process exits. `--ttl` bounds
+that by garbage collecting manifests and blobs by tracing references, so nothing a tag
+or an unexpired index still names is ever collected.
+
+```bash
+registry --blob-store reapi --reapi-endpoint grpc://your-cas-server:9092 --ttl 6h
+```
+
+See [Garbage collection](../img_tool/pkg/registry/garbage-collection.md) for every
+retention flag, what the rules actually are, and what happens to a collected blob.
+
 ## BES Push
 
 ### Overview

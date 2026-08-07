@@ -9,6 +9,14 @@ We vendor this locally because we require changes that are not yet merged upstre
 - **Export `RedirectError`** — allows blob handlers to signal redirects to external storage (S3, upstream registries).
 - **Export `ErrNotFound`** — allows blob handlers to signal a blob is missing so the registry can try fallback stores.
 - **Add callbacks on PUT and DELETE** — `WithManifestPutCallback`, `WithManifestDeleteCallback`, `WithBlobCreatedCallback`, `WithBlobDeletedCallback` options that notify listeners when manifests/blobs are created or removed.
+- **Split out the manifest store** — `Store` (see [`store.go`](store.go)) replaces the
+  `map[string]map[string]manifest` upstream keeps manifests in, keyed by digest with
+  tags as pointers rather than second copies. `WithStore` swaps in another
+  implementation.
+- **Add garbage collection** — `Collector` (see [`collector.go`](collector.go)) evicts
+  what the registry no longer needs, tracing references so that nothing reachable from
+  a tag or a live index is collected. Off unless `WithCollector` is passed. See
+  [Garbage collection](garbage-collection.md).
 
 These changes are tracked in https://github.com/bazel-contrib/rules_img/issues/282.
 

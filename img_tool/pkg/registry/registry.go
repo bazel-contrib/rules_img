@@ -24,6 +24,7 @@
 package registry
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"math/rand"
@@ -39,6 +40,10 @@ type registry struct {
 	manifests        manifests
 	referrersEnabled bool
 	warnings         map[float64]string
+
+	store       Store
+	collector   *Collector
+	blobPruning bool
 }
 
 // https://docs.docker.com/registry/spec/api/#api-version-check
@@ -99,13 +104,35 @@ func New(opts ...Option) http.Handler {
 			uploads:     map[string][]byte{},
 			log:         log.New(os.Stderr, "", log.LstdFlags),
 		},
-		manifests: manifests{
-			manifests: map[string]map[string]manifest{},
-			log:       log.New(os.Stderr, "", log.LstdFlags),
-		},
+		manifests:   manifests{log: log.New(os.Stderr, "", log.LstdFlags)},
+		blobPruning: true,
 	}
 	for _, o := range opts {
 		o(r)
+	}
+
+	switch {
+	case r.store == nil && r.collector == nil:
+		r.store = NewMemStore()
+	case r.store == nil:
+		r.store = r.collector.Store()
+	case r.collector != nil && r.collector.Store() != r.store:
+		panic("registry: WithCollector was given a different Store than WithStore")
+	}
+	r.manifests.store = r.store
+	r.manifests.collector = r.collector
+	r.blobs.collector = r.collector
+	if r.blobPruning {
+		if deleter, ok := r.blobs.blobHandler.(BlobDeleteHandler); ok {
+			// A blob nothing references any more is the registry's to reclaim,
+			// but only where the handler allows deleting: storage shared with
+			// something else -- Bazel's CAS, say -- must be left alone.
+			r.collector.OnBlobCollected(func(repo string, digest v1.Hash) {
+				if err := deleter.Delete(context.Background(), repo, digest); err != nil {
+					r.log.Printf("collecting blob %s: %v", digest, err)
+				}
+			})
+		}
 	}
 	return http.HandlerFunc(r.root)
 }
@@ -166,5 +193,32 @@ func WithManifestPutCallback(cb func(repo, target, contentType string, blob []by
 func WithManifestDeleteCallback(cb func(repo, target, contentType string, blob []byte) error) Option {
 	return func(r *registry) {
 		r.manifests.deleteCallback = cb
+	}
+}
+
+// WithStore sets the store holding manifests and tags. It defaults to
+// NewMemStore, which keeps them for the lifetime of the process.
+func WithStore(store Store) Option {
+	return func(r *registry) {
+		r.store = store
+	}
+}
+
+// WithCollector enables eviction. The Collector must have been created over the
+// same Store the registry uses; passing only WithCollector adopts its store.
+// Without a Collector nothing is ever evicted and the registry keeps no
+// bookkeeping for it at all.
+func WithCollector(collector *Collector) Option {
+	return func(r *registry) {
+		r.collector = collector
+	}
+}
+
+// WithBlobPruning controls whether collecting a blob also deletes its contents,
+// for blob handlers that support deletion. It is on by default. Turn it off for
+// a handler whose storage is shared with something outside this registry.
+func WithBlobPruning(enabled bool) Option {
+	return func(r *registry) {
+		r.blobPruning = enabled
 	}
 }

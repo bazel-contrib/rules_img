@@ -1,5 +1,5 @@
 load("@bazel_skylib//rules:build_test.bzl", "build_test")
-load("@rules_go//go:def.bzl", "go_binary", "go_library")
+load("@rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
 
 go_library(
     name = "registry_lib",
@@ -30,6 +30,12 @@ go_binary(
     embed = [":registry_lib"],
     pure = "on",
     visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "registry_test",
+    srcs = ["flagtypes_test.go"],
+    embed = [":registry_lib"],
 )
 
 build_test(
