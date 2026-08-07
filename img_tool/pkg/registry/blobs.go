@@ -170,6 +170,7 @@ type blobs struct {
 	uploads         map[string][]byte
 	createdCallback func(repo string, digest v1.Hash)
 	deletedCallback func(repo string, digest v1.Hash)
+	collector       *Collector
 	lock            sync.Mutex
 	log             *log.Logger
 }
@@ -242,6 +243,7 @@ func (b *blobs) handle(resp http.ResponseWriter, req *http.Request) *regError {
 		resp.Header().Set("Content-Length", fmt.Sprint(size))
 		resp.Header().Set("Docker-Content-Digest", h.String())
 		resp.WriteHeader(http.StatusOK)
+		b.collector.TouchBlob(repo, h, size)
 		return nil
 
 	case http.MethodGet:
@@ -347,6 +349,7 @@ func (b *blobs) handle(resp http.ResponseWriter, req *http.Request) *regError {
 			resp.WriteHeader(http.StatusOK)
 		}
 
+		b.collector.TouchBlob(repo, h, size)
 		io.Copy(resp, r)
 		return nil
 
@@ -388,6 +391,7 @@ func (b *blobs) handle(resp http.ResponseWriter, req *http.Request) *regError {
 			if b.createdCallback != nil {
 				b.createdCallback(repo, h)
 			}
+			b.collector.TouchBlob(repo, h, req.ContentLength)
 			resp.Header().Set("Docker-Content-Digest", h.String())
 			resp.WriteHeader(http.StatusCreated)
 			return nil
@@ -516,6 +520,7 @@ func (b *blobs) handle(resp http.ResponseWriter, req *http.Request) *regError {
 		if b.createdCallback != nil {
 			b.createdCallback(repo, h)
 		}
+		b.collector.TouchBlob(repo, h, size)
 		resp.Header().Set("Docker-Content-Digest", h.String())
 		resp.WriteHeader(http.StatusCreated)
 		return nil
@@ -537,6 +542,7 @@ func (b *blobs) handle(resp http.ResponseWriter, req *http.Request) *regError {
 		if err := bdh.Delete(req.Context(), repo, h); err != nil {
 			return regErrInternal(err)
 		}
+		b.collector.ForgetBlob(h)
 		if b.deletedCallback != nil {
 			b.deletedCallback(repo, h)
 		}

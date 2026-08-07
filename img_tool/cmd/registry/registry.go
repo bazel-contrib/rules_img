@@ -40,6 +40,8 @@ func Run(ctx context.Context, args []string) {
 	var s3Region string
 	var s3profile string
 	var credentialHelperPath string
+	var manifestTTL time.Duration
+	var tagTTLFlag optionalDuration
 
 	flagSet := flag.NewFlagSet("registry", flag.ExitOnError)
 	flagSet.Usage = func() {
@@ -49,6 +51,7 @@ func Run(ctx context.Context, args []string) {
 		examples := []string{
 			"registry --address 0.0.0.0 --port 8080",
 			"registry --blob-store s3 --blob-store reapi",
+			"registry --blob-store reapi --ttl 6h --tag-ttl 168h",
 		}
 		fmt.Fprintf(flagSet.Output(), "\nExamples:\n")
 		for _, example := range examples {
@@ -68,9 +71,19 @@ func Run(ctx context.Context, args []string) {
 	flagSet.StringVar(&s3Region, "s3-region", "", "S3 region to use for the S3 blob store (optional, defaults to auto detect)")
 	flagSet.StringVar(&s3profile, "s3-profile", "", "AWS profile to use for the S3 blob store (optional, defaults to default profile)")
 	flagSet.StringVar(&credentialHelperPath, "credential-helper", "", "Path to credential helper binary (optional, defaults to no helper)")
+	flagSet.DurationVar(&manifestTTL, "ttl", 0, "How long a manifest or blob is kept after it was last pushed or pulled. Anything a tag or an unexpired index still references is kept regardless of its own age. 0 keeps everything until the process exits.")
+	flagSet.Var(&tagTTLFlag, "tag-ttl", "How long a tag is kept after it was last pushed or read. Defaults to --ttl, since a tag keeps everything it references alive. Set 0 to keep tags -- and their images -- forever.")
 
 	if err := flagSet.Parse(args[1:]); err != nil {
 		fmt.Fprint(os.Stderr, err.Error())
+		flagSet.Usage()
+		os.Exit(1)
+	}
+	// A tag keeps everything it references alive, so bounding manifests without
+	// bounding tags would bound nothing for a client that always pushes one.
+	tagTTL := tagTTLFlag.orElse(manifestTTL)
+	if manifestTTL < 0 || tagTTL < 0 {
+		fmt.Fprintln(os.Stderr, "Error: --ttl and --tag-ttl must be non-negative")
 		flagSet.Usage()
 		os.Exit(1)
 	}
@@ -149,7 +162,7 @@ func Run(ctx context.Context, args []string) {
 	}
 	var blobWriter combined.Writer
 	if wantREAPI {
-		var reapiUpstream combined.Handler = combined.NewCombinedBlobStore(blobSizeCache, nil /* writer */, nonREAPIStores...).(combined.Handler)
+		var reapiUpstream combined.Handler = combined.NewCombinedBlobStore(blobSizeCache, nil /* writer */, combined.ReadOnlyMembers(nonREAPIStores...)...).(combined.Handler)
 		reapiStore, err := reapi.New(reapiUpstream, grpcClientConn, blobSizeCache)
 		if err != nil {
 			log.Fatalf("Failed to create REAPI blob store: %v", err)
@@ -183,8 +196,24 @@ func Run(ctx context.Context, args []string) {
 	}
 	porti := listener.Addr().(*net.TCPAddr).Port
 
-	combinedStore := combined.NewCombinedBlobStore(blobSizeCache, blobWriter, stores...)
+	combinedStore := combined.NewCombinedBlobStore(blobSizeCache, blobWriter, combined.ReadOnlyMembers(stores...)...)
 	callbacker := combined.NewBlobSizeCacheCallback(blobSizeCache, combinedStore.(combined.Handler))
+
+	// The collector decides what the registry may forget.
+	store := registry.NewMemStore()
+	var collector *registry.Collector
+	if manifestTTL > 0 || tagTTL > 0 {
+		collector = registry.NewCollector(store, registry.CollectorConfig{
+			TTL:    manifestTTL,
+			TagTTL: tagTTL,
+		})
+		// A blob's size outlives nothing: once no manifest names the blob any
+		// more, the size we learned from that manifest is just stale metadata.
+		collector.OnBlobCollected(func(_ string, digest registryv1.Hash) {
+			blobSizeCache.Delete(digest)
+		})
+	}
+
 	protos := &http.Protocols{}
 	protos.SetHTTP1(true)
 	protos.SetHTTP2(false)
@@ -192,6 +221,8 @@ func Run(ctx context.Context, args []string) {
 	server := &http.Server{
 		Handler: registry.New(
 			registry.WithBlobHandler(combinedStore),
+			registry.WithStore(store),
+			registry.WithCollector(collector),
 			registry.WithManifestPutCallback(callbacker.ManifestPutCallback),
 		),
 		IdleTimeout:       30 * time.Minute,

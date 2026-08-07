@@ -15,6 +15,13 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/types"
 )
 
+// BlobSizeCache remembers how large a blob is, so the registry can address it
+// in a content-addressed store without asking an upstream how big it is first.
+//
+// Entries do not expire on their own. Their lifetime is the registry
+// collector's: a blob a live manifest still names keeps its size, and a blob
+// nothing names any more loses it, via a collected-blob callback. That is what
+// keeps this cache from disagreeing with the manifests it was filled from.
 type BlobSizeCache struct {
 	cache map[string]int64
 	mux   sync.RWMutex
@@ -37,6 +44,14 @@ func (b *BlobSizeCache) Set(hash registryv1.Hash, size int64) {
 	b.mux.Lock()
 	defer b.mux.Unlock()
 	b.cache[hash.String()] = size
+}
+
+// Delete forgets a blob's size. Callers wire it to a registry collector so a
+// blob's metadata goes when the blob does.
+func (b *BlobSizeCache) Delete(hash registryv1.Hash) {
+	b.mux.Lock()
+	defer b.mux.Unlock()
+	delete(b.cache, hash.String())
 }
 
 type BlobSizeCacheCallback struct {

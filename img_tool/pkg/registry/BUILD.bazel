@@ -1,18 +1,34 @@
-load("@rules_go//go:def.bzl", "go_library")
+load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "registry",
     srcs = [
         "blobs.go",
         "blobs_disk.go",
+        "collector.go",
         "error.go",
         "manifest.go",
         "registry.go",
+        "store.go",
     ],
     importpath = "github.com/bazel-contrib/rules_img/img_tool/pkg/registry",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/registry/internal/verify",
+        "@com_github_google_go_containerregistry//pkg/v1:pkg",
+        "@com_github_google_go_containerregistry//pkg/v1/types",
+    ],
+)
+
+go_test(
+    name = "registry_test",
+    srcs = [
+        "collector_test.go",
+        "registry_gc_test.go",
+        "store_test.go",
+    ],
+    embed = [":registry"],
+    deps = [
         "@com_github_google_go_containerregistry//pkg/v1:pkg",
         "@com_github_google_go_containerregistry//pkg/v1/types",
     ],
