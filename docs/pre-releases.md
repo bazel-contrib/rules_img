@@ -60,15 +60,15 @@ be replaced if the build that produced it is re-run.
    platform and pushes it to `ghcr.io` as an ORAS artifact: one layer per
    platform, plus a `prebuilt_lockfile.json` layer naming those layers by digest
    (`//services/img` in `modules/rules_img_services`).
-2. The `publish-dev-registry` job then fetches that lockfile back out of the
-   artifact with the ORAS CLI — the tag names an index holding both the container
-   images and the artifact, so it descends into the manifest whose `artifactType`
-   matches before looking for the layer — and builds the module's source archive
-   with
-   `--//img/private/release:prebuilt_lockfile_override=//:prebuilt_lockfile.json`
-   — the empty lockfile the source tree carries, so the archive is *not* specific
-   to the commit.
-3. `@rules_img_internal_tools//release/devregistry` stores the archive, layers the
+2. The `publish-dev-registry` job fetches that lockfile back out of the artifact
+   with the ORAS CLI. The tag names an index holding both the container images and
+   the artifact, so it descends into the manifest whose `artifactType` matches
+   before looking for the layer.
+3. It builds the module's source archive with
+   `--//img/private/release:prebuilt_lockfile_override=//:prebuilt_lockfile.json`,
+   the empty lockfile the source tree carries, so the archive is not specific to
+   the commit.
+4. `@rules_img_internal_tools//release/devregistry` stores the archive, layers the
    real lockfile on top of it as the version's overlay, and merges the module
    metadata, all into a checkout of the `pages` branch, which the job commits.
 
@@ -85,8 +85,8 @@ modules/rules_img/<version>/patches/                sets the version in the arch
 assets/sha256/<digest>/file.tar.gz                  the module source, addressed by content
 ```
 
-Archives are stored by content, and the one thing that differs between two
-commits with identical sources — the lockfile, which names blobs by digest — is
+Archives are stored by content. The one thing that differs between two commits
+with identical sources is the lockfile, which names blobs by digest, and that is
 published as an [overlay](https://bazel.build/external/registry) rather than
 packaged into the archive. So a commit that does not touch the module's sources
 adds a few kilobytes of metadata and reuses the archive that is already there,
