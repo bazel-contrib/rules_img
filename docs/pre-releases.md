@@ -82,7 +82,7 @@ modules/rules_img/<version>/MODULE.bazel            what Bazel resolves against
 modules/rules_img/<version>/source.json             archive URL, integrity, overlay, patches
 modules/rules_img/<version>/overlay/                the prebuilt lockfile for this commit
 modules/rules_img/<version>/patches/                sets the version in the archive's MODULE.bazel
-assets/sha256/<digest>/file                         the module source, addressed by content
+assets/sha256/<digest>/file.tar.gz                  the module source, addressed by content
 ```
 
 Archives are stored by content, and the one thing that differs between two
@@ -90,8 +90,13 @@ commits with identical sources — the lockfile, which names blobs by digest —
 published as an [overlay](https://bazel.build/external/registry) rather than
 packaged into the archive. So a commit that does not touch the module's sources
 adds a few kilobytes of metadata and reuses the archive that is already there,
-instead of another copy of it. (Since the stored file is named after its digest
-and has no extension, `source.json` states `archive_type` for Bazel.)
+instead of another copy of it.
+
+The stored file keeps its `.tar.gz` extension even though it is addressed by
+digest: GitHub Pages serves a file it cannot type as `application/octet-stream`
+and gzips *that* on the wire, so the bytes arriving would no longer match the
+checksum. Named with its extension it is served as `application/gzip` and passed
+through untouched.
 
 Only module source is stored here; the tool binaries live in the container
 registry, and are not copied into the assets.
