@@ -36,6 +36,11 @@ type deployWorkerHandler struct {
 	// remote cache is configured or the cache is disabled.
 	blobCache *cas.CachingReader
 
+	// deduplicatedPush is the process-wide --deduplicated-push override ("",
+	// "enabled" or "disabled"). Empty lets each work request's deploy manifest
+	// decide, and a work request may override it in turn.
+	deduplicatedPush string
+
 	// globalSink, when set, redirects every request's operations into a shared
 	// local sink (distribution/oci) instead of a registry. It is not
 	// concurrency-safe, so access is serialized by sinkMu.
@@ -43,7 +48,11 @@ type deployWorkerHandler struct {
 	sinkMu     sync.Mutex
 }
 
-func newDeployWorkerHandler(jobs int, sinkSpec string) (*deployWorkerHandler, error) {
+func newDeployWorkerHandler(jobs int, sinkSpec, deduplicatedPush string) (*deployWorkerHandler, error) {
+	if err := validateDeduplicatedPushOverride(deduplicatedPush); err != nil {
+		return nil, err
+	}
+
 	// --jobs is the ceiling on requests in flight to the destination registry.
 	// The worker handles several work requests at once, all sharing the pusher
 	// and transport built here, so the limit is process-wide by construction.
@@ -71,7 +80,13 @@ func newDeployWorkerHandler(jobs int, sinkSpec string) (*deployWorkerHandler, er
 		fmt.Fprintf(os.Stderr, "warning: failed to configure VFS from environment: %v\n", err)
 	}
 
-	h := &deployWorkerHandler{jobs: jobs, baseBuilder: baseBuilder, pushTransport: pushTransport, blobCache: blobCache}
+	h := &deployWorkerHandler{
+		jobs:             jobs,
+		baseBuilder:      baseBuilder,
+		pushTransport:    pushTransport,
+		blobCache:        blobCache,
+		deduplicatedPush: deduplicatedPush,
+	}
 
 	if sinkSpec != "" {
 		// A global distribution/oci sink redirects every request; no pusher is
@@ -138,6 +153,18 @@ func (h *deployWorkerHandler) processRequest(ctx context.Context, req persistent
 		return "", fmt.Errorf("unmarshalling deploy manifest: %w", err)
 	}
 
+	// Resolve the push strategy. The work request's --deduplicated-push wins over
+	// the one img deploy was started with (more specific beats less specific, as
+	// for --registry/--repository), and both override each operation's own setting.
+	deduplicatedPushOverride := opts.deduplicatedPush
+	if deduplicatedPushOverride == "" {
+		deduplicatedPushOverride = h.deduplicatedPush
+	}
+	dedupSelect, err := newDedupSelector(deduplicatedPushOverride, opts.sink != "" || h.globalSink != nil)
+	if err != nil {
+		return "", err
+	}
+
 	vfsBuilder := h.baseBuilder.Clone().WithDeployManifest(dm).WithContext(ctx)
 	for _, layoutPath := range opts.ociLayouts {
 		vfsBuilder = vfsBuilder.WithOCILayout(layoutPath)
@@ -171,8 +198,41 @@ func (h *deployWorkerHandler) processRequest(ctx context.Context, req persistent
 	if err != nil {
 		return "", err
 	}
+	registryTagOps, err := dm.RegistryTagOperations()
+	if err != nil {
+		return "", err
+	}
+
+	// dedupVFS is how the operations that opted into the deduplicated push see the
+	// blobs: one view per destination registry, planned across all of them together.
+	// Operations that did not opt in keep the plain VFS (see DeployWithExtras).
+	var dedupVFS *dedupViews
+	if dedupSelect.any(pushOps, registryTagOps) {
+		if err := validateDeduplicatedPush(dm.Settings); err != nil {
+			return "", err
+		}
+		dedupVFS, err = prepareDedupPush(ctx, vfs, pushOps, registryTagOps, dedupOptions{
+			selector:           dedupSelect,
+			blobRepository:     dm.Settings.BlobRepository,
+			overrideRegistry:   opts.overrideRegistry,
+			overrideRepository: opts.overrideRepository,
+			jobs:               h.jobs,
+			forbidUpload:       dm.Settings.ForbidLayerPush,
+			pushTransport:      h.pushTransport,
+		})
+		if err != nil {
+			return "", fmt.Errorf("preparing deduplicated push: %w", err)
+		}
+	}
+	vfsForOperation := func(registry string, base api.BaseCommandOperation) *deployvfs.VFS {
+		if view := dedupVFS.For(registry, base); view != nil {
+			return view
+		}
+		return vfs
+	}
+
 	if len(pushOps) > 0 {
-		tags, err := h.pushOps(ctx, vfs, pushOps, dm.Settings.PushStrategy, opts)
+		tags, err := h.pushOps(ctx, vfs, vfsForOperation, pushOps, dm.Settings.PushStrategy, opts)
 		if err != nil {
 			return "", fmt.Errorf("push: %w", err)
 		}
@@ -182,12 +242,8 @@ func (h *deployWorkerHandler) processRequest(ctx context.Context, req persistent
 		}
 	}
 
-	registryTagOps, err := dm.RegistryTagOperations()
-	if err != nil {
-		return "", err
-	}
 	if len(registryTagOps) > 0 {
-		tags, err := h.registryTagOps(ctx, vfs, registryTagOps, dm.Settings.PushStrategy, opts)
+		tags, err := h.registryTagOps(ctx, vfsForOperation, registryTagOps, dm.Settings.PushStrategy, opts)
 		if err != nil {
 			return "", fmt.Errorf("registry_tag: %w", err)
 		}
@@ -324,8 +380,13 @@ func refsOutput(refs []string) string {
 	return output.String()
 }
 
-func (h *deployWorkerHandler) pushOps(ctx context.Context, vfs *deployvfs.VFS, ops []api.IndexedPushDeployOperation, strategy string, opts *workerOpts) ([]string, error) {
+// pushOps pushes the operations, serving each one's blobs from vfsForOperation. vfs
+// is the plain view, used for anything not tied to a single operation.
+func (h *deployWorkerHandler) pushOps(ctx context.Context, vfs *deployvfs.VFS, vfsForOperation func(string, api.BaseCommandOperation) *deployvfs.VFS, ops []api.IndexedPushDeployOperation, strategy string, opts *workerOpts) ([]string, error) {
 	uploadBuilder := push.NewBuilder(vfs).
+		WithVFSForOperation(func(op api.IndexedPushDeployOperation) push.VFS {
+			return vfsForOperation(op.Registry, op.BaseCommandOperation)
+		}).
 		WithPusher(h.pusher).
 		WithJobs(h.jobs).
 		WithRemoteOptions(registryopts.Default().WithTransport(h.pushTransport).Remote()...)
@@ -338,7 +399,7 @@ func (h *deployWorkerHandler) pushOps(ctx context.Context, vfs *deployvfs.VFS, o
 	return uploadBuilder.Build().PushAll(ctx, ops, strategy)
 }
 
-func (h *deployWorkerHandler) registryTagOps(ctx context.Context, vfs *deployvfs.VFS, ops []api.IndexedRegistryTagDeployOperation, strategy string, opts *workerOpts) ([]string, error) {
+func (h *deployWorkerHandler) registryTagOps(ctx context.Context, vfsForOperation func(string, api.BaseCommandOperation) *deployvfs.VFS, ops []api.IndexedRegistryTagDeployOperation, strategy string, opts *workerOpts) ([]string, error) {
 	if strategy == "bes" {
 		return nil, nil
 	}
@@ -368,7 +429,7 @@ func (h *deployWorkerHandler) registryTagOps(ctx context.Context, vfs *deployvfs
 		if err != nil {
 			return nil, fmt.Errorf("parsing root digest for registry_tag: %w", err)
 		}
-		taggable, err := vfs.Taggable(rootHash)
+		taggable, err := vfsForOperation(op.Registry, op.BaseCommandOperation).Taggable(rootHash)
 		if err != nil {
 			return nil, fmt.Errorf("locating manifest %s for registry_tag: %w", op.Root.Digest, err)
 		}
@@ -410,6 +471,7 @@ type workerOpts struct {
 	overrideRepository string
 	platforms          []string
 	sink               string
+	deduplicatedPush   string // "", "enabled" or "disabled"
 }
 
 func parseWorkerArgs(args []string) (*workerOpts, error) {
@@ -502,6 +564,18 @@ func parseWorkerArgs(args []string) (*workerOpts, error) {
 				return nil, fmt.Errorf("--sink %q may only be set on the img deploy command line, not in a work request", value)
 			}
 			opts.sink = value
+		case key == "--deduplicated-push":
+			if !hasValue {
+				if i+1 >= len(args) {
+					return nil, fmt.Errorf("--deduplicated-push requires a value")
+				}
+				i++
+				value = args[i]
+			}
+			if err := validateDeduplicatedPushOverride(value); err != nil {
+				return nil, err
+			}
+			opts.deduplicatedPush = value
 		case key == "--insecure":
 			// The worker builds its transports and pusher once, at startup, so
 			// insecure mode cannot be turned on per work request. Reject it
@@ -519,8 +593,8 @@ func parseWorkerArgs(args []string) (*workerOpts, error) {
 	return opts, nil
 }
 
-func persistentWorker(jobs int, sinkSpec string) error {
-	handler, err := newDeployWorkerHandler(jobs, sinkSpec)
+func persistentWorker(jobs int, sinkSpec, deduplicatedPush string) error {
+	handler, err := newDeployWorkerHandler(jobs, sinkSpec, deduplicatedPush)
 	if err != nil {
 		return err
 	}

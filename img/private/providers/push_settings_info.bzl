@@ -14,6 +14,7 @@ FIELDS = dict(
     cross_mount = "Cross-mount configuration. Either 'same_registry', 'cross_registry' or 'disabled'.",
     blob_repository = "When non-empty, the staging repository that image blobs are pushed to and cross-mounted from when pushing manifests. At build time every blob (layers and config) is staged here; layers are cross-mounted into the image's real repository. Empty means blobs go to the image's own repository.",
     forbid_layer_push = "Bool: when True, `img deploy` refuses to upload layer blob bytes (layers must be cross-mounted or already present).",
+    deduplicated_push = "Bool: when True, `img deploy` pushes in phases -- check which manifests the registry already has, upload each blob that several repositories need to just one of them (the first alphabetically, or blob_repository when push at build time staged it there), then cross-mount it into the others. For registries that keep a separate blob store per repository name. Requires cross-repository blob mounting; see docs/registry-support.md.",
     insecure = "Bool: when True, registries are addressed over plain HTTP and untrusted TLS certificates are accepted (like crane's --insecure). Maps to the IMG_INSECURE env var of the img tool.",
 )
 

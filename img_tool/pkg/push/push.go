@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"slices"
 	"sort"
-	"sync"
 
 	"golang.org/x/sync/errgroup"
 
@@ -24,7 +23,8 @@ import (
 
 type builder struct {
 	blobcacheClient    blobcache.BlobsClient
-	vfs                vfs
+	vfs                VFS
+	vfsForOperation    func(api.IndexedPushDeployOperation) VFS
 	pusher             *remote.Pusher
 	overrideRegistry   string
 	overrideRepository string
@@ -33,12 +33,25 @@ type builder struct {
 	jobs               int
 }
 
-func NewBuilder(vfs vfs) *builder {
+func NewBuilder(vfs VFS) *builder {
 	return &builder{vfs: vfs, jobs: registryopts.DefaultJobs}
 }
 
 func (b *builder) WithBlobcacheClient(client blobcache.BlobsClient) *builder {
 	b.blobcacheClient = client
+	return b
+}
+
+// WithVFSForOperation installs a resolver that picks the VFS an operation's blobs
+// are served from, overriding the one passed to NewBuilder for that operation.
+//
+// It exists for the deduplicated push, which serves the layers of the operations
+// that opted in as mount-only layers and the rest as ordinary uploadable ones. That
+// distinction is per operation, so it cannot be expressed by a single VFS -- and it
+// must not leak: handing a mount-only layer to an operation that did not opt in
+// would fail its push on any registry that does not cross-mount blobs.
+func (b *builder) WithVFSForOperation(resolve func(api.IndexedPushDeployOperation) VFS) *builder {
+	b.vfsForOperation = resolve
 	return b
 }
 
@@ -78,6 +91,7 @@ func (b *builder) Build() *uploader {
 	return &uploader{
 		blobcacheClient:    b.blobcacheClient,
 		vfs:                b.vfs,
+		vfsForOperation:    b.vfsForOperation,
 		pusher:             b.pusher,
 		overrideRegistry:   b.overrideRegistry,
 		overrideRepository: b.overrideRepository,
@@ -89,7 +103,8 @@ func (b *builder) Build() *uploader {
 
 type uploader struct {
 	blobcacheClient    blobcache.BlobsClient
-	vfs                vfs
+	vfs                VFS
+	vfsForOperation    func(api.IndexedPushDeployOperation) VFS
 	pusher             *remote.Pusher
 	overrideRegistry   string
 	overrideRepository string
@@ -123,7 +138,7 @@ func (u *uploader) PushAll(ctx context.Context, ops []api.IndexedPushDeployOpera
 		if err != nil {
 			return nil, err
 		}
-		taggable, err := u.vfs.Taggable(digest)
+		taggable, err := u.vfsFor(op).Taggable(digest)
 		if err != nil {
 			return nil, err
 		}
@@ -135,34 +150,17 @@ func (u *uploader) PushAll(ctx context.Context, ops []api.IndexedPushDeployOpera
 
 	pusher := u.pusher
 	if pusher == nil {
-		ctx, stopProgress := progress.InitProgress(ctx, "pushed")
-		prog := progress.NewIndeterminate(ctx, "pushing")
-
-		progCh := make(chan registryv1.Update, 256)
-		var drainWg sync.WaitGroup
-		drainWg.Add(1)
-		go func() {
-			defer drainWg.Done()
-			for update := range progCh {
-				prog.SetTotal(update.Total)
-				prog.SetComplete(update.Complete)
-			}
-		}()
+		// The progress context is only needed by TrackTransfers itself; progress is
+		// fed by the update channel below, not through the context, so the push's
+		// own context is left alone.
+		_, progCh, finishProgress := progress.TrackTransfers(ctx, "pushed", "pushing")
 		var err error
 		pusher, err = remote.NewPusher(append(u.remoteOptions, remote.WithJobs(u.jobs), remote.WithProgress(progCh))...)
 		if err != nil {
-			close(progCh)
-			drainWg.Wait()
-			prog.Done(err)
-			stopProgress()
+			finishProgress(err)
 			return nil, fmt.Errorf("creating pusher: %w", err)
 		}
-		defer func() {
-			close(progCh)
-			drainWg.Wait()
-			prog.Done(retErr)
-			stopProgress()
-		}()
+		defer func() { finishProgress(retErr) }()
 	}
 
 	g, ctx := errgroup.WithContext(ctx)
@@ -180,6 +178,18 @@ func (u *uploader) PushAll(ctx context.Context, ops []api.IndexedPushDeployOpera
 	}
 
 	return allTags, nil
+}
+
+// vfsFor returns the VFS an operation's blobs are served from: the per-operation
+// one when a resolver is installed (see WithVFSForOperation), else the uploader's.
+func (u *uploader) vfsFor(op api.IndexedPushDeployOperation) VFS {
+	if u.vfsForOperation == nil {
+		return u.vfs
+	}
+	if resolved := u.vfsForOperation(op); resolved != nil {
+		return resolved
+	}
+	return u.vfs
 }
 
 // tags returns the list of tags to push for the given operation, applying any overrides and extra tags.
@@ -261,7 +271,9 @@ func (u *uploader) casRegistryPreHook(ctx context.Context, ops []api.IndexedPush
 	return nil
 }
 
-type vfs interface {
+// VFS is what the uploader needs of a blob source: the taggable graph rooted at a
+// manifest digest, and the digests and sizes of the blobs it references.
+type VFS interface {
 	Taggable(digest registryv1.Hash) (remote.Taggable, error)
 	Digests() ([]registryv1.Hash, error)
 	SizeOf(digest registryv1.Hash) (int64, error)

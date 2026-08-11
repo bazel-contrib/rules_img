@@ -3,7 +3,7 @@ module github.com/bazel-contrib/rules_img_signer_cosign
 go 1.26.5
 
 require (
-	github.com/google/go-containerregistry v0.21.7
+	github.com/google/go-containerregistry v0.21.9
 	github.com/sigstore/protobuf-specs v0.5.1
 	github.com/sigstore/sigstore v1.10.8
 	github.com/sigstore/sigstore-go v1.3.0

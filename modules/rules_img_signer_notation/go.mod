@@ -3,7 +3,7 @@ module github.com/bazel-contrib/rules_img_signer_notation
 go 1.26.5
 
 require (
-	github.com/google/go-containerregistry v0.21.7
+	github.com/google/go-containerregistry v0.21.9
 	github.com/notaryproject/notation-core-go v1.3.0
 	github.com/notaryproject/tspclient-go v1.0.0
 	github.com/opencontainers/go-digest v1.0.0

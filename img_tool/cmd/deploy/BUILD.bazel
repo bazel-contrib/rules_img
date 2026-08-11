@@ -3,6 +3,7 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "deploy",
     srcs = [
+        "dedup_push.go",
         "deploy.go",
         "persistentworker.go",
         "sign.go",
@@ -29,6 +30,7 @@ go_library(
         "@com_github_google_go_containerregistry//pkg/name",
         "@com_github_google_go_containerregistry//pkg/v1:pkg",
         "@com_github_google_go_containerregistry//pkg/v1/remote",
+        "@com_github_google_go_containerregistry//pkg/v1/remote/transport",
         "@com_github_google_go_containerregistry//pkg/v1/types",
         "@org_golang_x_sync//errgroup",
         "@rules_go//go/runfiles",
@@ -39,6 +41,9 @@ go_test(
     name = "deploy_test",
     srcs = [
         "casblobcache_test.go",
+        "dedup_cascache_test.go",
+        "dedup_push_test.go",
+        "dedup_registry_test.go",
         "progress_test.go",
         "sign_sink_test.go",
         "sink_test.go",
@@ -51,6 +56,8 @@ go_test(
         "//pkg/deployvfs",
         "//pkg/ocilayout",
         "//pkg/progress",
+        "//pkg/push",
+        "//pkg/registryopts",
         "@com_github_google_go_containerregistry//pkg/v1:pkg",
         "@com_github_google_go_containerregistry//pkg/v1/empty",
         "@com_github_google_go_containerregistry//pkg/v1/mutate",

@@ -20,6 +20,7 @@ Supports both **Bzlmod** and **WORKSPACE** setups. For WORKSPACE setup instructi
 - ⚡ **eStargz / SOCI Support** - Lazy pulling optimization for faster container starts (eStargz or [SOCI](docs/soci.md))
 - 🗜️ **Cache-efficient layers** - Skip storing layer tarballs in the Bazel remote cache. Layer rules emit a compact [stream representation](docs/compact-stream.md) instead, and the full layer tar is reconstructed on demand only at push/load time
 - 🪶 **Smaller layers** - Deduplicates files using hardlinks
+- ♻️ **Deduplicated transfers** - A blob several images share is downloaded from Bazel's remote cache once, and uploaded to a registry once (see [deduplicated push](docs/push-strategies.md#deduplicated-push), on registries that support blob mounting)
 - 🎯 **Shallow Base Images** - Avoid downloading layers from huge base images like CUDA
 - 🧱 **Bespoke Base Images** - Build your own base from scratch: directory skeleton, users, CA trust stores and shared libraries (see [base images](docs/base-images.md))
 - 🏢 **Enterprise Ready** - Remote Build Execution and Content Addressable Storage integration
@@ -173,6 +174,24 @@ common --@rules_img//img/settings:push_at_build_time_manifest_repository=staging
 # but an actual upload fails loudly. Use when layer blobs are pushed at build time
 # so a deploy that would re-upload them is caught instead of silently succeeding.
 common --@rules_img//img/settings:forbid_layer_push=enabled
+
+# Push in phases so a blob shared by several images is uploaded only once.
+# `img deploy` asks the registry which manifests it already holds -- a manifest it
+# serves proves its blobs are in that repository, so they are cross-mounted from
+# there for free -- and uploads what is left to just one of the destination
+# repositories (the first alphabetically), cross-mounting it into the others. Meant
+# for registries that keep a separate blob store per repository name, where pushing
+# K images that share their layers to K repository names otherwise uploads every
+# shared layer K times. The upload-side counterpart to the local blob cache, which
+# collapses the repeated *downloads* of such a layer. Needs no further
+# configuration: the blobs go to a repository the deploy pushes to anyway.
+#
+# ONLY WORKS ON REGISTRIES THAT SUPPORT CROSS-REPOSITORY BLOB MOUNTING: the whole
+# point is to upload a blob once and mount it everywhere else, so a push that opted
+# in fails loudly on a registry that refuses to mount, instead of silently uploading
+# the blob into every repository. See docs/registry-support.md for what specific
+# registries do, and docs/push-strategies.md#deduplicated-push.
+common --@rules_img//img/settings:deduplicated_push=enabled
 
 # Optional OCI distribution gateway endpoints. When set, registry requests made by
 # build actions (lazy layer downloads and build-time uploads) are routed through
@@ -598,6 +617,7 @@ linux/arm64).
 - [Platforms Guide](docs/platforms.md) - Working with Bazel platforms, architecture variants, and multi-platform builds
 - [Image Signing Guide](docs/image-signing.md) - Sign pushed images with pluggable signer plugins (Notation, cosign, or your own)
 - [Push Strategies](docs/push-strategies.md) - Push strategies and [push at build time](docs/push-strategies.md#push-at-build-time)
+- [Registry Support Matrix](docs/registry-support.md) - Which registries mount blobs across repositories, serve OCI 1.1 referrers, or share blobs on their own — and which features need what
 - [Authenticating Build Actions](docs/authenticating-build-actions.md) - Registry credentials for build-time pull/push, and the OCI distribution gateway
 - [Insecure (Plain-HTTP) Registries](docs/insecure-registries.md) - Push to a local development registry that speaks HTTP or has an untrusted certificate
 - [Compact Stream Representation](docs/compact-stream.md) - On-disk format behind the experimental cache-efficient layers (`experimental_compact_layers`)
