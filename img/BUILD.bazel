@@ -135,7 +135,10 @@ bzl_library(
     name = "repositories",
     srcs = ["repositories.bzl"],
     visibility = ["//visibility:public"],
-    deps = ["//img/private/prebuilt"],
+    deps = [
+        "//img/private/prebuilt",
+        "//img/private/prebuilt:lockfile",
+    ],
 )
 
 bzl_library(

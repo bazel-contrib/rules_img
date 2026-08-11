@@ -1,5 +1,6 @@
 """Repository rules for fetching external tools in WORKSPACE mode"""
 
+load("//img/private/prebuilt:lockfile.bzl", "fetch_tool")
 load("//img/private/prebuilt:prebuilt.bzl", "prebuilt_collection_hub_repo")
 
 def _img_prebuilt_tool_from_lockfile_impl(rctx):
@@ -17,25 +18,7 @@ def _img_prebuilt_tool_from_lockfile_impl(rctx):
     if not target_tool:
         fail("No tool found in lockfile for platform %s_%s" % (rctx.attr.os, rctx.attr.cpu))
 
-    # Download the tool using the same logic as prebuilt_img_tool_repo
-    extension = "exe" if target_tool["os"] == "windows" else ""
-    dot = "." if len(extension) > 0 else ""
-    url_templates = target_tool.get("url_templates", ["https://github.com/bazel-contrib/rules_img/releases/download/{version}/img_{os}_{cpu}{dot}{extension}"])
-
-    urls = [template.format(
-        version = target_tool["version"],
-        os = target_tool["os"],
-        cpu = target_tool["cpu"],
-        dot = dot,
-        extension = extension,
-    ) for template in url_templates]
-
-    rctx.download(
-        urls,
-        output = "img.exe",
-        executable = True,
-        integrity = target_tool["integrity"],
-    )
+    fetch_tool(rctx, target_tool, output = "img.exe")
 
     rctx.file(
         "BUILD.bazel",

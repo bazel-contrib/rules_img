@@ -6,6 +6,7 @@ as Bazel toolchains.
 """
 
 load("//img/private/platforms:platforms.bzl", "platform_for_goos_and_goarch", "platform_for_repository_os", "select_for_goos_and_goarch_dict")
+load(":lockfile.bzl", "LOCKFILE_ATTRS", "fetch_tool")
 
 def _prebuilt_toolchain_definition_for_platform(platform_name, tool_target):
     platform = platform_for_goos_and_goarch(platform_name)
@@ -108,44 +109,24 @@ prebuilt_collection_hub_repo = repository_rule(
 )
 
 def _prebuilt_img_tool_repo_impl(rctx):
-    extension = "exe" if rctx.attr.os == "windows" else ""
-    dot = "." if len(extension) > 0 else ""
-    urls = [template.format(
-        version = rctx.attr.version,
-        os = rctx.attr.os,
-        cpu = rctx.attr.cpu,
-        dot = dot,
-        extension = extension,
-    ) for template in rctx.attr.url_templates]
-    rctx.download(
-        urls,
+    fetch_tool(
+        rctx,
+        {field: getattr(rctx.attr, field) for field in LOCKFILE_ATTRS},
         output = "img.exe",
-        executable = True,
-        integrity = rctx.attr.integrity,
     )
     rctx.file(
         "BUILD.bazel",
         content = """exports_files(["img.exe"])""",
     )
 
-_prebuilt_attrs = {
-    "version": attr.string(mandatory = True),
-    "integrity": attr.string(mandatory = True),
-    "os": attr.string(values = ["darwin", "linux", "windows"]),
-    "cpu": attr.string(values = ["amd64", "arm64", "s390x"]),
-    "url_templates": attr.string_list(
-        default = ["https://github.com/bazel-contrib/rules_img/releases/download/{version}/img_{os}_{cpu}{dot}{extension}"],
-    ),
-}
-
 prebuilt_img_tool_repo = repository_rule(
     implementation = _prebuilt_img_tool_repo_impl,
-    attrs = _prebuilt_attrs,
+    attrs = LOCKFILE_ATTRS,
 )
 
 _prebuilt_tool_collection = tag_class(attrs = {"name": attr.string(), "override": attr.bool(default = False)})
 _prebuilt_tool_from_file = tag_class(attrs = {"collection": attr.string(), "file": attr.label()})
-_prebuilt_tool_download = tag_class(attrs = {"collection": attr.string()} | _prebuilt_attrs)
+_prebuilt_tool_download = tag_class(attrs = {"collection": attr.string()} | LOCKFILE_ATTRS)
 _host_tool = tag_class(attrs = {"binary": attr.label()})
 _source_built = tag_class(attrs = {"collection": attr.string(), "target": attr.label()})
 
@@ -169,7 +150,10 @@ def _prebuilt_img_tool_collection_for_module(ctx, mod):
             collections[from_file.collection]["tools"][(tool["os"], tool["cpu"])] = "%s_%s_%s" % (from_file.collection, tool["os"], tool["cpu"])
     for download in mod.tags.download:
         name = "%s_%s_%s" % (download.collection, download.os, download.cpu)
-        requested_tools[name] = {member: getattr(download, member) for member in dir(download)}
+
+        # `collection` names the hub repo rather than the tool, so it is not one
+        # of the fields the tool repository rule takes.
+        requested_tools[name] = {field: getattr(download, field) for field in LOCKFILE_ATTRS}
         collections[download.collection]["tools"][(download.os, download.cpu)] = "%s_%s_%s" % (download.collection, download.os, download.cpu)
     host_tool = None
     if len(mod.tags.host_tool) > 1:
