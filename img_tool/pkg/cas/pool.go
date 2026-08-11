@@ -4,6 +4,8 @@ import (
 	"context"
 	"io"
 	"sync/atomic"
+
+	"google.golang.org/grpc/codes"
 )
 
 // BlobSource is the CAS read surface: the subset of *CAS a Pool distributes
@@ -41,9 +43,15 @@ type Pool struct {
 // Each member should be backed by its own gRPC connection for pooling to have
 // any effect. NewPool panics if members is empty; a single-member pool is
 // valid and behaves like the member itself.
+//
+// Pooling also gives retries somewhere to go: the members become each other's
+// peers, so an attempt that failed on one connection is retried on the next
+// (cf. Bazel taking a channel from its pool per attempt).
 func NewPool(members []*CAS) *Pool {
 	sources := make([]BlobSource, len(members))
 	for i, m := range members {
+		m.peers = members
+		m.peerIndex = i
 		sources[i] = m
 	}
 	return newPool(sources)
@@ -75,4 +83,22 @@ func (p *Pool) ReadBlob(ctx context.Context, digest Digest) ([]byte, error) {
 
 func (p *Pool) ReaderForBlob(ctx context.Context, digest Digest) (io.ReadCloser, error) {
 	return p.pick().ReaderForBlob(ctx, digest)
+}
+
+// RetryStats reports what the retry loops of every member did.
+func (p *Pool) RetryStats() RetryStats {
+	total := RetryStats{ByCode: make(map[codes.Code]uint64)}
+	for _, member := range p.members {
+		reporter, ok := member.(interface{ RetryStats() RetryStats })
+		if !ok {
+			continue
+		}
+		stats := reporter.RetryStats()
+		total.Retries += stats.Retries
+		total.GaveUp += stats.GaveUp
+		for code, n := range stats.ByCode {
+			total.ByCode[code] += n
+		}
+	}
+	return total
 }
