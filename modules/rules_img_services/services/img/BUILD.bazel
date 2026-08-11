@@ -2,11 +2,13 @@ load("@rules_img//img:image.bzl", "image_index", "image_manifest")
 load("@rules_img//img:layer.bzl", "image_layer")
 load("@rules_img//img:multi_deploy.bzl", "multi_deploy")
 load("@rules_img//img:oras.bzl", "oras_file_layer")
+load("@rules_img_internal_tools//release:oci_lockfile.bzl", "oci_prebuilt_lockfile")
 load(":release_binaries.bzl", "release_asset_name", "release_binaries")
 
 _ORAS_DESCRIPTION = """\
 The img command line tool, as an ORAS artifact: one layer per release platform,
-each titled after the matching GitHub release asset.
+each titled after the matching GitHub release asset, plus the prebuilt lockfile
+that points a rules_img prerelease at those layers.
 """
 
 _CONTAINER_DESCRIPTION = """\
@@ -16,6 +18,21 @@ The img command line tool, as a container image.
 _DOCUMENTATION = "https://github.com/bazel-contrib/rules_img"
 
 _BASENAME = "img"
+
+# Where this artifact ends up, spelled out for the prebuilt lockfile: it records
+# the blobs' location, and a lockfile whose location is wrong is a lockfile that
+# resolves for nobody. Keep in sync with --@rules_img//img/settings:destination_registry
+# and with the repository template of //services:push_spec, which expands
+# {{.image_target_name}} to this package's image target.
+_REGISTRY = "ghcr.io"
+
+_REPOSITORY = "bazel-contrib/rules_img/img"
+
+# ghcr.io's WWW-Authenticate challenge for GET /v2/. Recorded so a consumer of
+# the lockfile can go straight to the token exchange.
+_AUTH_REALM = "https://ghcr.io/token"
+
+_AUTH_SERVICE = "ghcr.io"
 
 image_index(
     name = "img",
@@ -63,6 +80,24 @@ release_binaries(
     for platform in _PLATFORMS
 ]
 
+# The lockfile that a rules_img prerelease ships as its prebuilt_lockfile.json:
+# one entry per platform, each naming the blob of that platform's layer above.
+oci_prebuilt_lockfile(
+    name = "prebuilt_lockfile",
+    auth_realm = _AUTH_REALM,
+    auth_service = _AUTH_SERVICE,
+    layers = {":layer_%s" % platform: platform for platform in _PLATFORMS},
+    registry = _REGISTRY,
+    repository = _REPOSITORY,
+)
+
+oras_file_layer(
+    name = "layer_prebuilt_lockfile",
+    src = ":prebuilt_lockfile",
+    media_type = "application/json",
+    title = "prebuilt_lockfile.json",
+)
+
 image_manifest(
     name = "oras_manifest",
     annotations = {
@@ -73,7 +108,7 @@ image_manifest(
     annotations_file = "//services:image_annotations",
     artifact_type = "application/vnd.rules_img.tools.v1",
     config_media_type = "application/vnd.oci.empty.v1+json",
-    layers = [":layer_%s" % platform for platform in _PLATFORMS],
+    layers = [":layer_%s" % platform for platform in _PLATFORMS] + [":layer_prebuilt_lockfile"],
 )
 
 [

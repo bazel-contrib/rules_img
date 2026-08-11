@@ -1,0 +1,11 @@
+{
+  "module": "rules_img",
+  "registry_url": "https://bazel-contrib.github.io/rules_img",
+  "pages_branch": "pages",
+  "metadata_template": "../.bcr/metadata.template.json",
+  "artifact": {
+    "registry": "ghcr.io",
+    "repository": "bazel-contrib/rules_img/img",
+    "lockfile_title": "prebuilt_lockfile.json"
+  }
+}
