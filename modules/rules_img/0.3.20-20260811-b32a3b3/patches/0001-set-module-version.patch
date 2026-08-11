@@ -1,0 +1,10 @@
+--- a/MODULE.bazel
++++ b/MODULE.bazel
+@@ -1,6 +1,6 @@
+ module(
+     name = "rules_img",
+-    version = "0.3.19",
++    version = "0.3.20-20260811-b32a3b3",
+ )
+ 
+ bazel_dep(name = "bazel_features", version = "1.47.0")
