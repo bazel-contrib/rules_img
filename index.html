@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>rules_img pre-release registry</title>
+<style>
+:root { color-scheme: light dark; }
+body { font-family: system-ui, -apple-system, sans-serif; max-width: 46rem; margin: 3rem auto; padding: 0 1.25rem; line-height: 1.6; }
+h1 { border-bottom: 1px solid color-mix(in srgb, currentColor 25%, transparent); padding-bottom: .4rem; }
+h2 { margin-top: 2.5rem; }
+pre { background: color-mix(in srgb, currentColor 8%, transparent); padding: .9rem 1rem; border-radius: .4rem; overflow-x: auto; }
+code { background: color-mix(in srgb, currentColor 8%, transparent); padding: .1rem .3rem; border-radius: .2rem; }
+pre code { background: none; padding: 0; }
+table { border-collapse: collapse; width: 100%; }
+th, td { text-align: left; padding: .4rem .6rem .4rem 0; border-bottom: 1px solid color-mix(in srgb, currentColor 15%, transparent); }
+td.version { font-family: ui-monospace, monospace; font-size: .9rem; }
+.note { font-size: .9rem; opacity: .8; }
+</style>
+</head>
+<body>
+<h1>rules_img pre-release registry</h1>
+
+<p>A Bazel registry serving one <code>rules_img</code> version per commit to the
+main branch, so a change can be tried out before it is released.
+Sources: <a href="https://github.com/bazel-contrib/rules_img">https://github.com/bazel-contrib/rules_img</a>.</p>
+
+<h2>Using it</h2>
+<p>Add the registry, keeping the Bazel Central Registry as the fallback for
+everything else:</p>
+<pre><code>common --registry=https://bazel-contrib.github.io/rules_img --registry=https://bcr.bazel.build</code></pre>
+<p>Then depend on a version from the table below:</p>
+<pre><code>bazel_dep(name = "rules_img", version = "0.3.20-20260811-39082ed")</code></pre>
+
+<h2 id="versions">Versions</h2>
+<table>
+<tr><th>Version</th><th>Built</th><th>Commit</th></tr>
+<tr>
+<td class="version">0.3.20-20260811-39082ed</td>
+<td>2026-08-11</td>
+<td><a href="https://github.com/bazel-contrib/rules_img/commit/39082ed"><code>39082ed</code></a></td>
+</tr>
+</table>
+
+<h2>What you get</h2>
+<p class="note">Each version is the module source as of one commit, carrying a
+prebuilt lockfile that fetches the <code>img</code> tool from
+<code>ghcr.io/bazel-contrib/rules_img/img</code> as an OCI blob, so no tool is built from source.
+Versions are pre-releases of the next patch version: they resolve above the last
+release and below the next one. Nothing here is a supported release -- a version
+may be rewritten by a re-run of the build that produced it, and no version is
+ever removed.</p>
+</body>
+</html>
