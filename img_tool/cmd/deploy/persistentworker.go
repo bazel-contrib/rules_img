@@ -16,7 +16,6 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/api"
-	"github.com/bazel-contrib/rules_img/img_tool/pkg/cas"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/deployvfs"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/gateway"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/load"
@@ -31,10 +30,11 @@ type deployWorkerHandler struct {
 	baseBuilder   *deployvfs.Builder
 	pushTransport http.RoundTripper
 
-	// blobCache caches blobs read from the remote CAS for the lifetime of the
-	// worker, so requests that share a blob only fetch it once. It is nil when no
-	// remote cache is configured or the cache is disabled.
-	blobCache *cas.CachingReader
+	// casBlobs is the connection pool to the remote CAS and the blob cache in
+	// front of it, which lives for the lifetime of the worker so requests that
+	// share a blob only fetch it once. It is nil when no remote cache is
+	// configured.
+	casBlobs *casSources
 
 	// deduplicatedPush is the process-wide --deduplicated-push override ("",
 	// "enabled" or "disabled"). Empty lets each work request's deploy manifest
@@ -75,7 +75,7 @@ func newDeployWorkerHandler(jobs int, sinkSpec, deduplicatedPush string) (*deplo
 	// We set needsCAS to true unconditionally.
 	// The reason is that we just cannot know in advance whether a future work request
 	// wants to connect to the remote cache or not.
-	baseBuilder, blobCache, err := configureBuilderFromEnv(baseBuilder, true /* needsCAS */, jobs)
+	baseBuilder, casBlobs, err := configureBuilderFromEnv(baseBuilder, true /* needsCAS */, jobs)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "warning: failed to configure VFS from environment: %v\n", err)
 	}
@@ -84,7 +84,7 @@ func newDeployWorkerHandler(jobs int, sinkSpec, deduplicatedPush string) (*deplo
 		jobs:             jobs,
 		baseBuilder:      baseBuilder,
 		pushTransport:    pushTransport,
-		blobCache:        blobCache,
+		casBlobs:         casBlobs,
 		deduplicatedPush: deduplicatedPush,
 	}
 
@@ -115,10 +115,7 @@ func newDeployWorkerHandler(jobs int, sinkSpec, deduplicatedPush string) (*deplo
 // Close releases resources held for the lifetime of the worker. Blobs already
 // cached on disk are kept for the next run.
 func (h *deployWorkerHandler) Close() error {
-	if h.blobCache == nil {
-		return nil
-	}
-	return h.blobCache.Close()
+	return h.casBlobs.Close()
 }
 
 func (h *deployWorkerHandler) HandleRequest(ctx context.Context, req persistentworker.WorkRequest) persistentworker.WorkResponse {

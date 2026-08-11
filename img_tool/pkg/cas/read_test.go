@@ -13,6 +13,8 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
+
+	remoteexecution_proto "github.com/bazel-contrib/rules_img/img_tool/pkg/proto/remote-apis/build/bazel/remote/execution/v2"
 )
 
 // fakeByteStreamClient serves a fixed blob over the ByteStream Read RPC and can
@@ -103,15 +105,30 @@ func testBlob(n int) []byte {
 	return b
 }
 
-func shrinkBackoff(t *testing.T) {
-	t.Helper()
-	prevBase, prevMax := byteStreamBaseBackoff, byteStreamMaxBackoff
-	byteStreamBaseBackoff = time.Millisecond
-	byteStreamMaxBackoff = time.Millisecond
-	t.Cleanup(func() {
-		byteStreamBaseBackoff = prevBase
-		byteStreamMaxBackoff = prevMax
-	})
+// testRetryPolicy is the default policy with the waits shrunk so tests don't
+// sleep, and without the idle watchdog (fakes answer instantly).
+func testRetryPolicy() RetryPolicy {
+	policy := DefaultRetryPolicy()
+	policy.BaseDelay = time.Millisecond
+	policy.MaxDelay = time.Millisecond
+	policy.IdleTimeout = 0
+	return policy
+}
+
+// maxRetries is how many retries testRetryPolicy allows after the first attempt.
+func maxRetries() int { return testRetryPolicy().MaxAttempts - 1 }
+
+// testCAS is a CAS client wired to fakes, with a fast retry policy.
+func testCAS(byteStreamClient bytestream_proto.ByteStreamClient, casClient remoteexecution_proto.ContentAddressableStorageClient) *CAS {
+	return &CAS{
+		byteStreamClient: byteStreamClient,
+		casClient:        casClient,
+		capabilities: capabilities{
+			DigestFunctionSHA256:   true,
+			MaxBatchTotalSizeBytes: 2 * 1024 * 1024,
+		},
+		retry: newRetryConfig(testRetryPolicy()),
+	}
 }
 
 // rstErr mimics the error surfaced when the server sends RST_STREAM NO_ERROR.
@@ -120,7 +137,6 @@ func rstErr() error {
 }
 
 func TestStreamReadReconnectResumesAfterRST(t *testing.T) {
-	shrinkBackoff(t)
 	blob := testBlob(1000)
 	fake := &fakeByteStreamClient{
 		blob:      blob,
@@ -130,7 +146,7 @@ func TestStreamReadReconnectResumesAfterRST(t *testing.T) {
 		failAfterBytes: []int{100, 250},
 		failErr:        rstErr(),
 	}
-	c := &CAS{byteStreamClient: fake}
+	c := testCAS(fake, nil)
 
 	rc, err := c.streamReadOne(context.Background(), SHA256(make([]byte, 32), int64(len(blob))))
 	if err != nil {
@@ -154,18 +170,17 @@ func TestStreamReadReconnectResumesAfterRST(t *testing.T) {
 }
 
 func TestStreamReadGivesUpAfterMaxReconnects(t *testing.T) {
-	shrinkBackoff(t)
 	blob := testBlob(1000)
 	// Every connection RSTs immediately without delivering any bytes, so the
 	// consecutive-failure counter is never reset.
-	failPlan := make([]int, maxByteStreamReconnects+2)
+	failPlan := make([]int, maxRetries()+2)
 	fake := &fakeByteStreamClient{
 		blob:           blob,
 		chunkSize:      64,
 		failAfterBytes: failPlan, // all zeros => fail before any data
 		failErr:        rstErr(),
 	}
-	c := &CAS{byteStreamClient: fake}
+	c := testCAS(fake, nil)
 
 	rc, err := c.streamReadOne(context.Background(), SHA256(make([]byte, 32), int64(len(blob))))
 	if err != nil {
@@ -177,15 +192,14 @@ func TestStreamReadGivesUpAfterMaxReconnects(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an error after exhausting reconnects, got nil")
 	}
-	// initial connection + maxByteStreamReconnects retries
-	wantConns := 1 + maxByteStreamReconnects
+	// initial connection + maxRetries() retries
+	wantConns := 1 + maxRetries()
 	if fake.conns != wantConns {
 		t.Fatalf("connections = %d, want %d", fake.conns, wantConns)
 	}
 }
 
 func TestStreamReadDoesNotRetryNonTransient(t *testing.T) {
-	shrinkBackoff(t)
 	blob := testBlob(1000)
 	fake := &fakeByteStreamClient{
 		blob:           blob,
@@ -193,7 +207,7 @@ func TestStreamReadDoesNotRetryNonTransient(t *testing.T) {
 		failAfterBytes: []int{100},
 		failErr:        status.Error(codes.NotFound, "blob not found"),
 	}
-	c := &CAS{byteStreamClient: fake}
+	c := testCAS(fake, nil)
 
 	rc, err := c.streamReadOne(context.Background(), SHA256(make([]byte, 32), int64(len(blob))))
 	if err != nil {
@@ -215,7 +229,6 @@ func TestStreamReadDoesNotRetryNonTransient(t *testing.T) {
 }
 
 func TestStreamReadDoesNotRetryOnCallerCancel(t *testing.T) {
-	shrinkBackoff(t)
 	blob := testBlob(1000)
 	ctx, cancel := context.WithCancel(context.Background())
 	fake := &fakeByteStreamClient{
@@ -226,7 +239,7 @@ func TestStreamReadDoesNotRetryOnCallerCancel(t *testing.T) {
 		failAfterBytes: []int{100},
 		failErr:        rstErr(),
 	}
-	c := &CAS{byteStreamClient: fake}
+	c := testCAS(fake, nil)
 
 	rc, err := c.streamReadOne(ctx, SHA256(make([]byte, 32), int64(len(blob))))
 	if err != nil {

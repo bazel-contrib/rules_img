@@ -280,13 +280,11 @@ func DeployWithExtras(ctx context.Context, rawRequest []byte, opts DeployOptions
 			break
 		}
 	}
-	vfsBuilder, blobCache, err := configureBuilderFromEnv(vfsBuilder, hasLazyStrategy, opts.Jobs)
+	vfsBuilder, casBlobs, err := configureBuilderFromEnv(vfsBuilder, hasLazyStrategy, opts.Jobs)
 	if err != nil {
 		return err
 	}
-	if blobCache != nil {
-		defer blobCache.Close()
-	}
+	defer casBlobs.Close()
 	if opts.RunfilesRootSymlinksPrefix != "" {
 		vfsBuilder = vfsBuilder.WithRunfilesRootSymlinksPrefix(opts.RunfilesRootSymlinksPrefix)
 	}
@@ -345,7 +343,7 @@ func DeployWithExtras(ctx context.Context, rawRequest []byte, opts DeployOptions
 	// performs no registry/daemon network I/O for the destination (source blobs
 	// are still resolved from the VFS as usual).
 	if opts.Sink != "" {
-		return deployToSink(ctx, opts.Sink, vfs, blobCache, pushOperations, loadOperations, registryTagOperations, req.Settings, opts)
+		return deployToSink(ctx, opts.Sink, vfs, casBlobs, pushOperations, loadOperations, registryTagOperations, req.Settings, opts)
 	}
 
 	if len(pushOperations) == 0 && len(loadOperations) == 0 && len(registryTagOperations) == 0 {
@@ -490,7 +488,7 @@ func DeployWithExtras(ctx context.Context, rawRequest []byte, opts DeployOptions
 		return fmt.Errorf("deploying images: %w", err)
 	}
 
-	printBlobStats(vfs, blobCache)
+	printBlobStats(vfs, casBlobs)
 
 	// Print all pushed tags to stdout, one per line.
 	for _, tag := range pushedTags {
@@ -657,15 +655,25 @@ func preUploadStagingBlobs(ctx context.Context, vfs *deployvfs.VFS, ops []api.In
 	return g.Wait()
 }
 
-// printBlobStats reports where the deployed blobs came from, and how the local
-// CAS blob cache did, on stderr.
-func printBlobStats(vfs *deployvfs.VFS, blobCache *cas.CachingReader) {
+// printBlobStats reports where the deployed blobs came from, and how the remote
+// cache did, on stderr.
+func printBlobStats(vfs *deployvfs.VFS, casBlobs *casSources) {
 	stats := vfs.Stats()
 	fmt.Fprintf(os.Stderr, "    blob transfers: %d from disk, %d from disk cache, %d from container registry, %d from remote cache, %d from compact stream\n", stats.BlobsFromLocalDisk.Load(), stats.BlobsFromDiskCache.Load(), stats.BlobsFromRegistry.Load(), stats.BlobsFromRemoteCache.Load(), stats.BlobsFromCompactStream.Load())
-	if blobCache == nil {
+	if casBlobs == nil {
 		return
 	}
-	cacheStats := blobCache.Stats()
+	if casBlobs.pool != nil {
+		// Transient remote cache failures are retried; say so, because a deploy
+		// that took a suspiciously long time is usually explained here.
+		if retries := casBlobs.pool.RetryStats(); !retries.Empty() {
+			fmt.Fprintf(os.Stderr, "    remote cache requests: %s\n", retries)
+		}
+	}
+	if casBlobs.cache == nil {
+		return
+	}
+	cacheStats := casBlobs.cache.Stats()
 	if cacheStats.Hits == 0 && cacheStats.Fetches == 0 && cacheStats.Fallbacks == 0 {
 		return
 	}
@@ -737,10 +745,10 @@ func credentialHelperInstance() credential.Helper {
 // configureBuilderFromEnv points the VFS builder at the blob sources described
 // by the environment: the Bazel disk cache and, when needed, the remote CAS.
 //
-// CAS reads go through a local blob cache (see casBlobCacheFromEnv), which is
-// returned so the caller can report its statistics and close it. It is nil when
-// no CAS is configured or the cache is disabled.
-func configureBuilderFromEnv(builder *deployvfs.Builder, needsCAS bool, jobs int) (*deployvfs.Builder, *cas.CachingReader, error) {
+// CAS reads go through a local blob cache (see casBlobCacheFromEnv). Both it and
+// the connection pool behind it are returned so the caller can report their
+// statistics and close them; the result is nil when no CAS is configured.
+func configureBuilderFromEnv(builder *deployvfs.Builder, needsCAS bool, jobs int) (*deployvfs.Builder, *casSources, error) {
 	diskCachePath := os.Getenv("IMG_DISK_CACHE")
 	if diskCachePath != "" {
 		builder = builder.WithDiskCache(diskCachePath)
@@ -779,12 +787,29 @@ func configureBuilderFromEnv(builder *deployvfs.Builder, needsCAS bool, jobs int
 	if err != nil {
 		// Caching is an optimization: read straight from the remote cache instead.
 		fmt.Fprintf(os.Stderr, "WARNING: not caching remote cache blobs locally: %v\n", err)
-		return builder.WithCASReader(pool), nil, nil
+		return builder.WithCASReader(pool), &casSources{pool: pool}, nil
 	}
 	if blobCache == nil {
-		return builder.WithCASReader(pool), nil, nil
+		return builder.WithCASReader(pool), &casSources{pool: pool}, nil
 	}
-	return builder.WithCASReader(blobCache), blobCache, nil
+	return builder.WithCASReader(blobCache), &casSources{pool: pool, cache: blobCache}, nil
+}
+
+// casSources is what the remote cache configuration produced: the pool of
+// connections to it, and the local blob cache in front of them (nil when
+// caching is off).
+type casSources struct {
+	pool  *cas.Pool
+	cache *cas.CachingReader
+}
+
+// Close releases the local blob cache. It is safe to call on a nil *casSources,
+// which is what a deploy without a remote cache gets.
+func (s *casSources) Close() error {
+	if s == nil || s.cache == nil {
+		return nil
+	}
+	return s.cache.Close()
 }
 
 // Environment variables configuring the local cache of blobs read from the
@@ -996,7 +1021,7 @@ func applyProgressMode(value string, isPersistentWorker bool) error {
 // deployToSink builds the requested sink, routes every operation into it, and
 // prints the resulting image references. It performs no registry/daemon network
 // I/O for the destination.
-func deployToSink(ctx context.Context, spec string, vfs *deployvfs.VFS, blobCache *cas.CachingReader, pushOps []api.IndexedPushDeployOperation, loadOps []api.IndexedLoadDeployOperation, tagOps []api.IndexedRegistryTagDeployOperation, settings api.DeploySettings, opts DeployOptions) error {
+func deployToSink(ctx context.Context, spec string, vfs *deployvfs.VFS, casBlobs *casSources, pushOps []api.IndexedPushDeployOperation, loadOps []api.IndexedLoadDeployOperation, tagOps []api.IndexedRegistryTagDeployOperation, settings api.DeploySettings, opts DeployOptions) error {
 	kind, path, err := parseSink(spec)
 	if err != nil {
 		return err
@@ -1031,7 +1056,7 @@ func deployToSink(ctx context.Context, spec string, vfs *deployvfs.VFS, blobCach
 	if err := s.Close(); err != nil {
 		return fmt.Errorf("finalizing sink: %w", err)
 	}
-	printBlobStats(vfs, blobCache)
+	printBlobStats(vfs, casBlobs)
 	for _, ref := range refs {
 		fmt.Println(ref)
 	}

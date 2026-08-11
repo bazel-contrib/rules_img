@@ -51,12 +51,35 @@ func Client(uri string, helper credhelper.Helper, opts ...grpc.DialOption) (*grp
 
 	opts = append(opts, grpcheaderinterceptor.DialOptions(helper)...)
 
-	// Keep HTTP/2 streams alive during backpressure pauses (e.g. slow compressors
-	// stalling a ByteStream read), which otherwise cause the server to send
-	// RST_STREAM NO_ERROR and tear down the stream mid-transfer.
+	// Keepalive, so a peer that goes away during a long transfer is noticed rather
+	// than leaving a read blocked forever: with a stream in flight and no data
+	// arriving for Time, the client pings, and closes the connection if the ping
+	// is not acked within Timeout. pkg/cas then resumes the read from the offset
+	// it reached. Any data the server sends resets the timer, so this only fires
+	// while a transfer is genuinely stalled.
+	//
+	// Time must not go below the 5 minutes gRPC servers enforce by default
+	// (keepalive.EnforcementPolicy.MinTime, grpc-go's
+	// defaultKeepalivePolicyMinTime). A server counts every ping that arrives
+	// sooner as a strike and, after three, sends
+	// GOAWAY(ENHANCE_YOUR_CALM, "too_many_pings") — killing the whole connection
+	// and failing every stream on it, which is far worse than the single
+	// RST_STREAM the keepalive was added to avoid. A server only clears the
+	// strike counter when it sends data, so a stalled transfer is exactly when a
+	// too-frequent ping trips it.
+	//
+	// Timeout does double duty: on Linux grpc-go also applies it as
+	// TCP_USER_TIMEOUT, so it bounds how long *any* unacknowledged write may go
+	// before the kernel drops the connection, not just an unacked keepalive ping.
+	// 20 seconds matches Bazel's default and leaves room for a slow link; a
+	// tighter value kills healthy connections on a congested one.
+	//
+	// PermitWithoutStream stays at its default of false: a connection with no RPCs
+	// in flight is not worth pinging, and a server treats pings without an active
+	// stream far more harshly still.
 	opts = append(opts, grpc.WithKeepaliveParams(keepalive.ClientParameters{
-		Time:    30 * time.Second,
-		Timeout: 10 * time.Second,
+		Time:    5 * time.Minute,
+		Timeout: 20 * time.Second,
 	}))
 
 	return grpc.NewClient(target, opts...)
