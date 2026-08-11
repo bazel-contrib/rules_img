@@ -259,7 +259,9 @@ func TestPublish(t *testing.T) {
 		t.Errorf("source.json integrity = %q, but the asset hashes to %q", source.Integrity, got)
 	}
 	digest := sha256.Sum256(asset)
-	if want := "sha256/" + hex.EncodeToString(digest[:]) + "/file"; assetURL != want {
+	// The extension is load bearing: a static site host that cannot type the file
+	// compresses it on the wire, and the bytes stop matching the checksum.
+	if want := "sha256/" + hex.EncodeToString(digest[:]) + "/file.tar.gz"; assetURL != want {
 		t.Errorf("archive stored at %q, want the content addressed %q", assetURL, want)
 	}
 	if source.ArchiveType != "tar.gz" {
@@ -481,7 +483,7 @@ func TestPublishStoresArchivesByContent(t *testing.T) {
 		if err := json.Unmarshal(content, &source); err != nil {
 			t.Fatal(err)
 		}
-		if !strings.HasSuffix(source.URL, "/file") {
+		if !strings.HasSuffix(source.URL, "/file.tar.gz") {
 			t.Errorf("%s: url = %q, want a content addressed path", version, source.URL)
 		}
 		urls[version] = source.URL

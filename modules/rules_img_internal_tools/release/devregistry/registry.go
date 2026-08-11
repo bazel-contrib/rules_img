@@ -27,11 +27,17 @@ const (
 	// drop paths it considers special.
 	noJekyll = ".nojekyll"
 
-	// Assets are content addressed, under assets/sha256/<digest>/<assetFileName>.
-	// The name carries no version or extension, so source.json states the archive
-	// type instead of leaving Bazel to infer it from the URL.
+	// Assets are content addressed, under
+	// assets/sha256/<digest>/<assetFileStem>.<archive type>.
+	//
+	// The extension is not decoration: GitHub Pages serves a file it cannot type
+	// as application/octet-stream and gzips *that* on the wire for any client
+	// offering gzip -- which is every Bazel -- so the bytes arriving are a gzip of
+	// the archive and no longer match the checksum the registry recorded. Named
+	// with its extension, the same file is served as application/gzip and passed
+	// through untouched.
 	assetsDir     = "assets"
-	assetFileName = "file"
+	assetFileStem = "file"
 	overlayDir    = "overlay"
 )
 
@@ -91,14 +97,14 @@ func sriOf(content []byte) string {
 	return "sha256-" + base64.StdEncoding.EncodeToString(digest[:])
 }
 
-// storeAsset adds a file to the registry's content addressed assets, and returns
-// where it landed relative to the registry root, its Subresource Integrity, and
-// whether it was already there.
+// storeAsset adds a file to the registry's content addressed assets under
+// fileName, and returns where it landed relative to the registry root, its
+// Subresource Integrity, and whether it was already there.
 //
 // Addressing assets by content rather than by version is what keeps the registry
 // from growing a copy of the same archive per commit: only commits that change
 // the module's sources produce an archive that is not already stored.
-func (w *registryWriter) storeAsset(srcPath string) (relPath, integrity string, reused bool, err error) {
+func (w *registryWriter) storeAsset(srcPath, fileName string) (relPath, integrity string, reused bool, err error) {
 	source, err := os.Open(srcPath)
 	if err != nil {
 		return "", "", false, err
@@ -110,7 +116,7 @@ func (w *registryWriter) storeAsset(srcPath string) (relPath, integrity string, 
 		return "", "", false, err
 	}
 	digest := hash.Sum(nil)
-	relPath = filepath.Join(assetsDir, "sha256", hex.EncodeToString(digest), assetFileName)
+	relPath = filepath.Join(assetsDir, "sha256", hex.EncodeToString(digest), fileName)
 	integrity = "sha256-" + base64.StdEncoding.EncodeToString(digest)
 	if w.exists(relPath) {
 		return relPath, integrity, true, nil

@@ -142,7 +142,9 @@ func publish(cfg *Config, writer *registryWriter, publishVersion, archivePath, l
 		return fmt.Errorf("writing overlay %s: %w", lockfileName, err)
 	}
 
-	assetPath, integrity, reused, err := writer.storeAsset(archivePath)
+	// Stored under its extension, so that a static site host serves it as an
+	// archive rather than as something it feels free to compress on the wire.
+	assetPath, integrity, reused, err := writer.storeAsset(archivePath, assetFileStem+"."+archiveType)
 	if err != nil {
 		return fmt.Errorf("storing source archive: %w", err)
 	}
