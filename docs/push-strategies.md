@@ -112,15 +112,60 @@ bazel run //your:push_target
 ```
 
 When `IMG_DISK_CACHE` is set, rules_img reads blobs directly from the local Bazel
-disk cache before falling back to the remote CAS. This can speed up pushes on
+disk cache before falling back to the remote CAS, and blobs it fetches from the
+remote CAS are written back into that directory (see
+[Local blob cache](#local-blob-cache) below). This can speed up pushes on
 developer machines that have a warm disk cache.
 
-> **Note:** In most setups this has little practical effect:
+> **Note:** As an additional *source*, this has little effect in most setups:
 > - With **Build without the Bytes** (BwoB) enabled, Bazel does not download action
 >   outputs to the disk cache, so the cache will be mostly empty for recently-built
->   layers.
+>   layers. Blobs that rules_img itself fetched are there, though.
 > - If you are **not using lazy push** (for example, with the eager strategy), all
 >   blobs are already materialized as runfiles and the disk cache is never consulted.
+
+### Local blob cache
+
+Every blob `img deploy` reads from the remote CAS goes through a local cache. It
+does two things:
+
+- **Deduplicates reads.** Concurrent readers of one blob — the same layer pushed to
+  several registries, or a compact layer's input file referenced by several layers —
+  share a single download. A reader that arrives while a download is in flight
+  streams the bytes as they arrive instead of starting a second one.
+- **Keeps blobs on disk**, in Bazel's disk cache layout (`cas/<xx>/<digest>`), so a
+  later push — including a later `bazel run`, and Bazel itself when the directory is
+  its disk cache — reads them locally instead of from the remote CAS.
+
+By default the cache lives in a `rules_img` directory inside the user cache
+directory (`$XDG_CACHE_HOME` or `~/.cache` on Linux, `~/Library/Caches` on macOS,
+`%LocalAppData%` on Windows) and is capped at 10 GiB, evicting the least recently
+used blobs beyond that. Setting `IMG_DISK_CACHE` moves it into Bazel's disk cache,
+which shares the blobs with Bazel.
+
+Local caching never changes the outcome of a deploy: if the directory cannot be
+written, fills up, or is unavailable, the affected read falls back to streaming
+straight from the remote CAS.
+
+| Variable | Effect |
+|----------|--------|
+| `IMG_CAS_CACHE` | Set to `0`, `false`, `off` or `no` to disable local caching (and read deduplication) entirely |
+| `IMG_CAS_CACHE_DIR` | Cache directory, overriding both the default and `IMG_DISK_CACHE` |
+| `IMG_CAS_CACHE_MAX_SIZE` | Maximum cached bytes, e.g. `20GiB`. `0` means unlimited |
+| `IMG_CAS_CACHE_BUFFER_SIZE` | How much of a blob is written to disk before readers can consume it (default `1MiB`) |
+
+A size limit means rules_img manages that directory: it indexes what is already
+there on startup and prunes it. A directory you name — your own, or Bazel's disk
+cache — has no limit by default, so rules_img only ever adds to it and leaves
+pruning to Bazel's own disk cache garbage collection. It does evict blobs it wrote
+itself if the file system runs out of space.
+
+`img deploy` reports what the cache did after each deploy:
+
+```
+    blob transfers: 3 from disk, 0 from disk cache, 0 from container registry, 5 from remote cache, 0 from compact stream
+    remote cache blobs: 2 from local cache (48.1 MiB), 3 fetched (210.4 MiB), 1 deduplicated, 0 evicted
+```
 
 ## CAS Registry Push
 
@@ -528,8 +573,8 @@ changing it on the Bazel side breaks the mapping.
 
 The same requirement applies to the other blob sources that are addressed by
 digest:
-- the local Bazel disk cache (`IMG_DISK_CACHE`), which is looked up as
-  `cas/<sha256>`, and
+- the [local blob cache](#local-blob-cache) and the local Bazel disk cache
+  (`IMG_DISK_CACHE`), which are looked up as `cas/<sha256>`, and
 - the CAS references inside [compact layers](compact-stream.md): during a lazy
   push the layer's input files are fetched from the disk / remote cache by their
   content digest.

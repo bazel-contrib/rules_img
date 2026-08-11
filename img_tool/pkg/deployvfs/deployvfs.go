@@ -1048,7 +1048,7 @@ func (b *Builder) blobFromDiskCache(desc api.Descriptor) (blobEntry, error) {
 // Layout: {cacheDir}/cas/{first2hex}/{fullhex}
 func diskCacheBlobPath(cacheDir string, digest string) string {
 	_, hex, _ := strings.Cut(digest, ":")
-	return filepath.Join(cacheDir, "cas", hex[:2], hex)
+	return cas.DiskCacheBlobPath(cacheDir, hex)
 }
 
 // blobFromOCILayouts tries to find a blob in any of the configured OCI layout directories.

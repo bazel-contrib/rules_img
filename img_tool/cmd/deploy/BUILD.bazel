@@ -38,6 +38,7 @@ go_library(
 go_test(
     name = "deploy_test",
     srcs = [
+        "casblobcache_test.go",
         "progress_test.go",
         "sign_sink_test.go",
         "sink_test.go",
@@ -46,6 +47,7 @@ go_test(
     embed = [":deploy"],
     deps = [
         "//pkg/api",
+        "//pkg/cas",
         "//pkg/deployvfs",
         "//pkg/ocilayout",
         "//pkg/progress",

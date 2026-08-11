@@ -3,6 +3,8 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "cas",
     srcs = [
+        "cache.go",
+        "cachestore.go",
         "error.go",
         "pool.go",
         "read.go",
@@ -24,6 +26,8 @@ go_test(
     name = "cas_test",
     size = "small",
     srcs = [
+        "cache_test.go",
+        "cachestore_test.go",
         "pool_test.go",
         "read_test.go",
     ],

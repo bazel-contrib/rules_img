@@ -7,7 +7,7 @@
 // goroutine which eagerly pulls data from the underlying reader into a bounded
 // ring buffer. A consumer that reads more slowly than the underlying source can
 // deliver (for example because it is bottlenecked on a network upload) therefore
-// does not stall the source: up to the configured prefetch size (by default 64
+// does not stall the source: up to the configured prefetch size (by default 1
 // MiB) is kept ready in memory ahead of the consumer's read position.
 package prefetch
 
@@ -20,7 +20,7 @@ import (
 
 // DefaultSize is the default maximum number of bytes to read ahead of the
 // consumer.
-const DefaultSize = 64 << 20 // 64 MiB
+const DefaultSize = 1 << 20 // 1 MiB
 
 // Option configures a prefetching layer.
 type Option func(*layer)
