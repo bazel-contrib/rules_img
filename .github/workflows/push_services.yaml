@@ -20,8 +20,32 @@ jobs:
       contents: read
       packages: write
       id-token: write
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
     - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+    - name: Compute version
+      id: version
+      shell: bash
+      run: |
+        if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+          # A release publishes under its own tag, and moves 'latest'.
+          version="${GITHUB_REF_NAME#v}"
+          tags="--tag=${version} --tag=latest"
+        else
+          # A commit to main publishes a pre-release of the *next* patch version.
+          # Bazel resolves a module to the highest version anything in the graph
+          # asks for, and a pre-release sorts below the release it belongs to, so
+          # a pre-release of the version that is already released would lose
+          # against it and never be built.
+          released=$(sed -n 's/.*version = "\([^"]*\)".*/\1/p' MODULE.bazel | head -1)
+          next=$(awk -F. -v OFS=. '{$3 = $3 + 1; print}' <<<"${released}")
+          version="${next}-$(git log -1 --format=%cd --date=format:%Y%m%d)-${GITHUB_SHA:0:7}"
+          tags="--tag=${version}"
+        fi
+        echo "version=${version}" >> "${GITHUB_OUTPUT}"
+        echo "tags=${tags}" >> "${GITHUB_OUTPUT}"
+        echo "publishing ${version}"
     - name: Login to GHCR
       uses: docker/login-action@v3
       with:
@@ -46,18 +70,9 @@ jobs:
     - name: Push images to ghcr.io
       working-directory: modules/rules_img_services
       shell: bash
+      env:
+        TAGS: ${{ steps.version.outputs.tags }}
       run: |
-        if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
-          # Version tag: strip leading 'v', also push as 'latest'
-          VERSION_TAG="${GITHUB_REF_NAME#v}"
-          TAGS="--tag=${VERSION_TAG} --tag=latest"
-        else
-          # Push to main or manual run: pseudoversion
-          VERSION=$(sed -n 's/.*version = "\([^"]*\)".*/\1/p' ../../MODULE.bazel | head -1)
-          DATE=$(git log -1 --format=%cd --date=format:%Y%m%d)
-          SHORT_SHA="${GITHUB_SHA:0:7}"
-          TAGS="--tag=${VERSION}-${DATE}-${SHORT_SHA}"
-        fi
         OIDC_TOKEN_JSON="$(curl -sSf \
           -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
           "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sigstore")"
@@ -65,3 +80,101 @@ jobs:
         export SIGSTORE_ID_TOKEN
         # shellcheck disable=SC2086
         bazelisk run --config=cosign --stamp //:push -- ${TAGS}
+
+  publish-dev-registry:
+    # Every commit to main becomes a version of the rules_img module in a Bazel
+    # registry served from a branch of this repository, so a change can be tried
+    # out before it is released. The module source published here carries the
+    # prebuilt lockfile from the ORAS artifact the job above pushed, so a
+    # consumer fetches the img tool from the registry instead of building it.
+    needs: push-ghcr
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    env:
+      CONFIG: .github/dev-registry.json
+      VERSION: ${{ needs.push-ghcr.outputs.version }}
+    steps:
+    - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+    - uses: oras-project/setup-oras@1d808f7d7f6995cc68b7bf507bfe5c5446e1dc9d # v2.0.1
+    - name: Generate BuildBuddy bazelrc
+      uses: ./.github/actions/generate-buildbuddy-bazelrc
+      with:
+        template-path: .github/workflows/.bazelrc.buildbuddy
+        output-path: buildbuddy.bazelrc
+        api-key: ${{ secrets.BUILDBUDDY_API_KEY }}
+    - name: Setup Bazel
+      uses: bazel-contrib/setup-bazel@c5acdfb288317d0b5c0bbd7a396a3dc868bb0f86 # 0.19.0
+      with:
+        bazelisk-cache: true
+        repository-cache: true
+        bazelrc: import %workspace%/buildbuddy.bazelrc
+    - name: Fetch the prebuilt lockfile from the artifact
+      shell: bash
+      run: |
+        artifact="$(jq -r '.artifact.registry + "/" + .artifact.repository' "${CONFIG}")"
+        title="$(jq -r '.artifact.lockfile_title // "prebuilt_lockfile.json"' "${CONFIG}")"
+        digest="$(oras manifest fetch "${artifact}:${VERSION}" \
+          | jq -er --arg title "${title}" \
+            '.layers[] | select(.annotations["org.opencontainers.image.title"] == $title) | .digest')"
+        mkdir -p prerelease
+        oras blob fetch "${artifact}@${digest}" --output prerelease/prebuilt_lockfile.json
+        jq . prerelease/prebuilt_lockfile.json
+    - name: Build the module source archive
+      # With the empty lockfile the source tree carries: the real one is published
+      # as the version's overlay instead, which keeps the archive identical for
+      # every commit that leaves the module's sources alone, and so keeps the
+      # registry from storing a copy of it per commit.
+      run: |
+        bazelisk build \
+          --//img/private/release:prebuilt_lockfile_override=//:prebuilt_lockfile.json \
+          //img/private/release:src_tar
+    - name: Check out the registry branch
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        branch="$(jq -r .pages_branch "${CONFIG}")"
+        git init -q pages
+        git -C pages remote add origin \
+          "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+        if git -C pages fetch -q --depth=1 origin "${branch}"; then
+          git -C pages checkout -q -b "${branch}" FETCH_HEAD
+        else
+          echo "branch ${branch} does not exist yet; starting it"
+          git -C pages switch -q --orphan "${branch}"
+        fi
+    - name: Publish the version
+      shell: bash
+      run: |
+        bazelisk run @rules_img_internal_tools//release/devregistry -- \
+          --config="${PWD}/${CONFIG}" \
+          --version="${VERSION}" \
+          --archive="${PWD}/bazel-bin/img/private/release/rules_img.tar.gz" \
+          --lockfile="${PWD}/prerelease/prebuilt_lockfile.json" \
+          --output="${PWD}/pages"
+    - name: Push the registry branch
+      shell: bash
+      run: |
+        branch="$(jq -r .pages_branch "${CONFIG}")"
+        cd pages
+        git add -A
+        if git diff --cached --quiet; then
+          echo "registry is unchanged"
+          exit 0
+        fi
+        git \
+          -c user.name='github-actions[bot]' \
+          -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+          commit -q -m "publish ${GITHUB_REPOSITORY##*/} ${VERSION}" \
+          -m "Built from ${GITHUB_SHA}."
+        # Concurrent runs on main are serialized by this workflow's concurrency
+        # group, but a manual run of another ref can still land in between.
+        git push -q origin "${branch}" || {
+          git fetch -q origin "${branch}"
+          git rebase -q "origin/${branch}"
+          git push -q origin "${branch}"
+        }
+        echo "published ${VERSION} to ${branch}"
+

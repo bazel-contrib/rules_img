@@ -22,5 +22,10 @@ prebuilt_lockfile.json
 tools/bazel
 e2e/*/tools/bazel
 
+# Where the pre-release workflow drops the lockfile it fetched from the registry
+# so the release build can package it, and the registry checkout it publishes to.
+/prerelease/
+/pages/
+
 # local reference clones (not committed)
 .reference/

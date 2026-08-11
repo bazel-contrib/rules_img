@@ -86,14 +86,25 @@ def _release_files(ctx):
         distdir_contents[filename_basename] = executable
         output_group_info["%s_files" % platform] = depset([executable])
         lockfile_args.add("--tool", "%s=%s" % (platform, executable.path))
-    lockfile = ctx.actions.declare_file("%s_lockfile.json" % ctx.attr.name)
-    lockfile_args.add(lockfile)
-    ctx.actions.run(
-        outputs = [lockfile],
-        inputs = [ctx.split_attr.executable[p][DefaultInfo].files_to_run.executable for p in PLATFORM_NAMES],
-        executable = ctx.executable.lockfile_generator,
-        arguments = [lockfile_args],
-    )
+    override = ctx.files.lockfile_override
+    if len(override) > 1:
+        fail("{}: lockfile_override must provide at most one file, but {} provides {}".format(
+            ctx.label,
+            ctx.attr.lockfile_override.label,
+            len(override),
+        ))
+    lockfile = override[0] if len(override) == 1 else None
+    if lockfile == None:
+        # No externally produced lockfile: hash the binaries built above into one.
+        # The arguments naming them were collected in the loop.
+        lockfile = ctx.actions.declare_file("%s_lockfile.json" % ctx.attr.name)
+        lockfile_args.add(lockfile)
+        ctx.actions.run(
+            outputs = [lockfile],
+            inputs = [ctx.split_attr.executable[p][DefaultInfo].files_to_run.executable for p in PLATFORM_NAMES],
+            executable = ctx.executable.lockfile_generator,
+            arguments = [lockfile_args],
+        )
     output_group_info["lockfile"] = depset([lockfile])
 
     # Build the override map for source files
@@ -131,6 +142,13 @@ release_files = rule(
             executable = True,
             default = Label("@rules_img_internal_tools//release/lockfile"),
             cfg = "exec",
+        ),
+        "lockfile_override": attr.label(
+            allow_files = True,
+            default = Label("//img/private/release:prebuilt_lockfile_override"),
+            doc = "A lockfile produced outside this build, packaged instead of the generated one. " +
+                  "Set through the //img/private/release:prebuilt_lockfile_override flag; when it " +
+                  "provides no file (the default), the lockfile is generated from the binaries built here.",
         ),
         "lockfile_name": attr.string(
             mandatory = True,

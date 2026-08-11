@@ -19,6 +19,24 @@ pkg_tar(
     tags = ["manual"],
 )
 
+# Points at a prebuilt lockfile produced outside this build, to be packaged
+# instead of the one release_files generates from the binaries it builds.
+#
+# A prerelease uses this: its binaries are published as the layers of an ORAS
+# artifact by a separate workflow, so their digests -- and therefore the lockfile
+# naming them -- only exist after that workflow has pushed them.
+label_flag(
+    name = "prebuilt_lockfile_override",
+    build_setting_default = ":no_prebuilt_lockfile_override",
+    visibility = ["//visibility:public"],
+)
+
+# The "unset" default for :prebuilt_lockfile_override. Provides no file at all,
+# which is how release_files tells that no override was requested.
+filegroup(
+    name = "no_prebuilt_lockfile_override",
+)
+
 release_files(
     name = "prebuilt_toolchain",
     executable = "@rules_img_tool//cmd/img",

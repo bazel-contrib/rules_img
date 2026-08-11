@@ -601,6 +601,7 @@ linux/arm64).
 - [Authenticating Build Actions](docs/authenticating-build-actions.md) - Registry credentials for build-time pull/push, and the OCI distribution gateway
 - [Insecure (Plain-HTTP) Registries](docs/insecure-registries.md) - Push to a local development registry that speaks HTTP or has an untrusted certificate
 - [Compact Stream Representation](docs/compact-stream.md) - On-disk format behind the experimental cache-efficient layers (`experimental_compact_layers`)
+- [Pre-release Versions](docs/pre-releases.md) - Depend on a commit of rules_img before it is released, from the pre-release registry
 - [Migration Guide from rules_oci](docs/migration-from-rules_oci.md)
 
 ## Key Differences Explained

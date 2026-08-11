@@ -1,0 +1,34 @@
+load("@rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
+
+# gazelle:exclude_from_release
+
+go_library(
+    name = "devregistry_lib",
+    srcs = [
+        "archive.go",
+        "config.go",
+        "devregistry.go",
+        "index.go",
+        "patch.go",
+        "registry.go",
+        "version.go",
+    ],
+    importpath = "github.com/bazel-contrib/rules_img/modules/rules_img_internal_tools/release/devregistry",
+    visibility = ["//visibility:private"],
+    deps = ["@com_github_bazelbuild_buildtools//build"],
+)
+
+go_binary(
+    name = "devregistry",
+    embed = [":devregistry_lib"],
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "devregistry_test",
+    srcs = [
+        "devregistry_test.go",
+        "patch_test.go",
+    ],
+    embed = [":devregistry_lib"],
+)
