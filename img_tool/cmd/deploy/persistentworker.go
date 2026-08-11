@@ -16,6 +16,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/api"
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/cas"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/deployvfs"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/gateway"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/load"
@@ -29,6 +30,11 @@ type deployWorkerHandler struct {
 	jobs          int
 	baseBuilder   *deployvfs.Builder
 	pushTransport http.RoundTripper
+
+	// blobCache caches blobs read from the remote CAS for the lifetime of the
+	// worker, so requests that share a blob only fetch it once. It is nil when no
+	// remote cache is configured or the cache is disabled.
+	blobCache *cas.CachingReader
 
 	// globalSink, when set, redirects every request's operations into a shared
 	// local sink (distribution/oci) instead of a registry. It is not
@@ -60,12 +66,12 @@ func newDeployWorkerHandler(jobs int, sinkSpec string) (*deployWorkerHandler, er
 	// We set needsCAS to true unconditionally.
 	// The reason is that we just cannot know in advance whether a future work request
 	// wants to connect to the remote cache or not.
-	baseBuilder, err = configureBuilderFromEnv(baseBuilder, true /* needsCAS */, jobs)
+	baseBuilder, blobCache, err := configureBuilderFromEnv(baseBuilder, true /* needsCAS */, jobs)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "warning: failed to configure VFS from environment: %v\n", err)
 	}
 
-	h := &deployWorkerHandler{jobs: jobs, baseBuilder: baseBuilder, pushTransport: pushTransport}
+	h := &deployWorkerHandler{jobs: jobs, baseBuilder: baseBuilder, pushTransport: pushTransport, blobCache: blobCache}
 
 	if sinkSpec != "" {
 		// A global distribution/oci sink redirects every request; no pusher is
@@ -89,6 +95,15 @@ func newDeployWorkerHandler(jobs int, sinkSpec string) (*deployWorkerHandler, er
 	}
 	h.pusher = p
 	return h, nil
+}
+
+// Close releases resources held for the lifetime of the worker. Blobs already
+// cached on disk are kept for the next run.
+func (h *deployWorkerHandler) Close() error {
+	if h.blobCache == nil {
+		return nil
+	}
+	return h.blobCache.Close()
 }
 
 func (h *deployWorkerHandler) HandleRequest(ctx context.Context, req persistentworker.WorkRequest) persistentworker.WorkResponse {
@@ -509,6 +524,7 @@ func persistentWorker(jobs int, sinkSpec string) error {
 	if err != nil {
 		return err
 	}
+	defer handler.Close()
 	worker := persistentworker.NewWorker(handler)
 	return worker.Run()
 }

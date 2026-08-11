@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-// fakeSource is a blobSource that records how many calls it handled.
+// fakeSource is a BlobSource that records how many calls it handled.
 type fakeSource struct {
 	id int
 
@@ -40,7 +40,7 @@ func (f *fakeSource) record() {
 
 func TestPoolPickRoundRobin(t *testing.T) {
 	a, b, c := &fakeSource{id: 0}, &fakeSource{id: 1}, &fakeSource{id: 2}
-	p := newPool([]blobSource{a, b, c})
+	p := newPool([]BlobSource{a, b, c})
 
 	var got []int
 	for range 7 {
@@ -54,7 +54,7 @@ func TestPoolPickRoundRobin(t *testing.T) {
 
 func TestPoolDistributesPublicMethods(t *testing.T) {
 	members := []*fakeSource{{}, {}, {}}
-	sources := make([]blobSource, len(members))
+	sources := make([]BlobSource, len(members))
 	for i, m := range members {
 		sources[i] = m
 	}
@@ -86,7 +86,7 @@ func TestPoolDistributesPublicMethods(t *testing.T) {
 
 func TestPoolSingleMember(t *testing.T) {
 	only := &fakeSource{}
-	p := newPool([]blobSource{only})
+	p := newPool([]BlobSource{only})
 
 	ctx := context.Background()
 	for range 5 {

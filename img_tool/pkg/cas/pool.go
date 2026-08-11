@@ -6,13 +6,19 @@ import (
 	"sync/atomic"
 )
 
-// blobSource is the subset of *CAS a Pool distributes reads across. It exists
-// so the pool's round-robin logic can be unit-tested with fakes.
-type blobSource interface {
+// BlobSource is the CAS read surface: the subset of *CAS a Pool distributes
+// reads across, and the upstream a CachingReader wraps. Exposing it as an
+// interface also lets both be unit-tested with fakes.
+type BlobSource interface {
 	FindMissingBlobs(ctx context.Context, digests []Digest) ([]Digest, error)
 	ReadBlob(ctx context.Context, digest Digest) ([]byte, error)
 	ReaderForBlob(ctx context.Context, digest Digest) (io.ReadCloser, error)
 }
+
+var (
+	_ BlobSource = (*CAS)(nil)
+	_ BlobSource = (*Pool)(nil)
+)
 
 // Pool spreads CAS reads across several independent gRPC connections.
 //
@@ -27,7 +33,7 @@ type blobSource interface {
 // A Pool exposes the same read surface as *CAS (FindMissingBlobs, ReadBlob,
 // ReaderForBlob) and is safe for concurrent use.
 type Pool struct {
-	members []blobSource
+	members []BlobSource
 	next    atomic.Uint64
 }
 
@@ -36,14 +42,14 @@ type Pool struct {
 // any effect. NewPool panics if members is empty; a single-member pool is
 // valid and behaves like the member itself.
 func NewPool(members []*CAS) *Pool {
-	sources := make([]blobSource, len(members))
+	sources := make([]BlobSource, len(members))
 	for i, m := range members {
 		sources[i] = m
 	}
 	return newPool(sources)
 }
 
-func newPool(members []blobSource) *Pool {
+func newPool(members []BlobSource) *Pool {
 	if len(members) == 0 {
 		panic("cas.NewPool: at least one member is required")
 	}
@@ -51,7 +57,7 @@ func newPool(members []blobSource) *Pool {
 }
 
 // pick returns the next member in round-robin order.
-func (p *Pool) pick() blobSource {
+func (p *Pool) pick() BlobSource {
 	if len(p.members) == 1 {
 		return p.members[0]
 	}

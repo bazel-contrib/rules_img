@@ -263,9 +263,12 @@ func DeployWithExtras(ctx context.Context, rawRequest []byte, opts DeployOptions
 			break
 		}
 	}
-	vfsBuilder, err = configureBuilderFromEnv(vfsBuilder, hasLazyStrategy, opts.Jobs)
+	vfsBuilder, blobCache, err := configureBuilderFromEnv(vfsBuilder, hasLazyStrategy, opts.Jobs)
 	if err != nil {
 		return err
+	}
+	if blobCache != nil {
+		defer blobCache.Close()
 	}
 	if opts.RunfilesRootSymlinksPrefix != "" {
 		vfsBuilder = vfsBuilder.WithRunfilesRootSymlinksPrefix(opts.RunfilesRootSymlinksPrefix)
@@ -317,7 +320,7 @@ func DeployWithExtras(ctx context.Context, rawRequest []byte, opts DeployOptions
 	// performs no registry/daemon network I/O for the destination (source blobs
 	// are still resolved from the VFS as usual).
 	if opts.Sink != "" {
-		return deployToSink(ctx, opts.Sink, vfs, pushOperations, loadOperations, registryTagOperations, req.Settings, opts)
+		return deployToSink(ctx, opts.Sink, vfs, blobCache, pushOperations, loadOperations, registryTagOperations, req.Settings, opts)
 	}
 
 	if len(pushOperations) == 0 && len(loadOperations) == 0 && len(registryTagOperations) == 0 {
@@ -424,9 +427,7 @@ func DeployWithExtras(ctx context.Context, rawRequest []byte, opts DeployOptions
 		return fmt.Errorf("deploying images: %w", err)
 	}
 
-	// Print VFS statistics to stderr
-	stats := vfs.Stats()
-	fmt.Fprintf(os.Stderr, "    blob transfers: %d from disk, %d from disk cache, %d from container registry, %d from remote cache, %d from compact stream\n", stats.BlobsFromLocalDisk.Load(), stats.BlobsFromDiskCache.Load(), stats.BlobsFromRegistry.Load(), stats.BlobsFromRemoteCache.Load(), stats.BlobsFromCompactStream.Load())
+	printBlobStats(vfs, blobCache)
 
 	// Print all pushed tags to stdout, one per line.
 	for _, tag := range pushedTags {
@@ -593,6 +594,43 @@ func preUploadStagingBlobs(ctx context.Context, vfs *deployvfs.VFS, ops []api.In
 	return g.Wait()
 }
 
+// printBlobStats reports where the deployed blobs came from, and how the local
+// CAS blob cache did, on stderr.
+func printBlobStats(vfs *deployvfs.VFS, blobCache *cas.CachingReader) {
+	stats := vfs.Stats()
+	fmt.Fprintf(os.Stderr, "    blob transfers: %d from disk, %d from disk cache, %d from container registry, %d from remote cache, %d from compact stream\n", stats.BlobsFromLocalDisk.Load(), stats.BlobsFromDiskCache.Load(), stats.BlobsFromRegistry.Load(), stats.BlobsFromRemoteCache.Load(), stats.BlobsFromCompactStream.Load())
+	if blobCache == nil {
+		return
+	}
+	cacheStats := blobCache.Stats()
+	if cacheStats.Hits == 0 && cacheStats.Fetches == 0 && cacheStats.Fallbacks == 0 {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "    remote cache blobs: %d from local cache (%s), %d fetched (%s), %d deduplicated, %d evicted\n",
+		cacheStats.Hits, humanizeBytes(cacheStats.BytesFromCache),
+		cacheStats.Fetches, humanizeBytes(cacheStats.BytesFetched),
+		cacheStats.Deduped, cacheStats.Evicted)
+	if cacheStats.DiskDisabled {
+		fmt.Fprintf(os.Stderr, "    remote cache blobs: local caching was disabled (see the warning above)\n")
+	}
+}
+
+// humanizeBytes renders a byte count with a binary unit.
+func humanizeBytes(n int64) string {
+	const unit = 1024
+	if n < unit {
+		return fmt.Sprintf("%d B", n)
+	}
+	value := float64(n)
+	for _, suffix := range []string{"KiB", "MiB", "GiB", "TiB"} {
+		value /= unit
+		if value < unit {
+			return fmt.Sprintf("%.1f %s", value, suffix)
+		}
+	}
+	return fmt.Sprintf("%.1f PiB", value/unit)
+}
+
 // stringSliceFlag implements flag.Value for collecting multiple string values
 type stringSliceFlag []string
 
@@ -633,39 +671,170 @@ func credentialHelperInstance() credential.Helper {
 	return credential.NopHelper()
 }
 
-func configureBuilderFromEnv(builder *deployvfs.Builder, needsCAS bool, jobs int) (*deployvfs.Builder, error) {
+// configureBuilderFromEnv points the VFS builder at the blob sources described
+// by the environment: the Bazel disk cache and, when needed, the remote CAS.
+//
+// CAS reads go through a local blob cache (see casBlobCacheFromEnv), which is
+// returned so the caller can report its statistics and close it. It is nil when
+// no CAS is configured or the cache is disabled.
+func configureBuilderFromEnv(builder *deployvfs.Builder, needsCAS bool, jobs int) (*deployvfs.Builder, *cas.CachingReader, error) {
 	diskCachePath := os.Getenv("IMG_DISK_CACHE")
 	if diskCachePath != "" {
 		builder = builder.WithDiskCache(diskCachePath)
 	}
 
-	if needsCAS {
-		reapiEndpoint := os.Getenv("IMG_REAPI_ENDPOINT")
-		if reapiEndpoint != "" {
-			reapiInstanceName := os.Getenv("IMG_REAPI_INSTANCE_NAME")
-			credHelper := credentialHelperInstance()
-			// A single gRPC connection multiplexes all CAS reads onto one TCP
-			// connection, which bottlenecks bulk downloads on high-latency
-			// links. Optionally open a pool of connections and round-robin
-			// reads across them (cf. Bazel's --remote_max_connections).
-			numConns := reapiMaxConnections(jobs)
-			members := make([]*cas.CAS, 0, numConns)
-			for range numConns {
-				grpcConn, err := protohelper.Client(reapiEndpoint, credHelper)
-				if err != nil {
-					return nil, fmt.Errorf("creating gRPC client for REAPI: %w", err)
-				}
-				member, err := cas.New(grpcConn, cas.WithInstanceName(reapiInstanceName))
-				if err != nil {
-					return nil, fmt.Errorf("creating CAS client: %w", err)
-				}
-				members = append(members, member)
-			}
-			builder = builder.WithCASReader(cas.NewPool(members))
-		}
+	if !needsCAS {
+		return builder, nil, nil
+	}
+	reapiEndpoint := os.Getenv("IMG_REAPI_ENDPOINT")
+	if reapiEndpoint == "" {
+		return builder, nil, nil
 	}
 
-	return builder, nil
+	reapiInstanceName := os.Getenv("IMG_REAPI_INSTANCE_NAME")
+	credHelper := credentialHelperInstance()
+	// A single gRPC connection multiplexes all CAS reads onto one TCP
+	// connection, which bottlenecks bulk downloads on high-latency
+	// links. Optionally open a pool of connections and round-robin
+	// reads across them (cf. Bazel's --remote_max_connections).
+	numConns := reapiMaxConnections(jobs)
+	members := make([]*cas.CAS, 0, numConns)
+	for range numConns {
+		grpcConn, err := protohelper.Client(reapiEndpoint, credHelper)
+		if err != nil {
+			return nil, nil, fmt.Errorf("creating gRPC client for REAPI: %w", err)
+		}
+		member, err := cas.New(grpcConn, cas.WithInstanceName(reapiInstanceName))
+		if err != nil {
+			return nil, nil, fmt.Errorf("creating CAS client: %w", err)
+		}
+		members = append(members, member)
+	}
+	pool := cas.NewPool(members)
+
+	blobCache, err := casBlobCacheFromEnv(pool)
+	if err != nil {
+		// Caching is an optimization: read straight from the remote cache instead.
+		fmt.Fprintf(os.Stderr, "WARNING: not caching remote cache blobs locally: %v\n", err)
+		return builder.WithCASReader(pool), nil, nil
+	}
+	if blobCache == nil {
+		return builder.WithCASReader(pool), nil, nil
+	}
+	return builder.WithCASReader(blobCache), blobCache, nil
+}
+
+// Environment variables configuring the local cache of blobs read from the
+// remote CAS.
+const (
+	// envCASCache turns the local blob cache off when set to 0/false/off/no.
+	envCASCache = "IMG_CAS_CACHE"
+	// envCASCacheDir overrides the cache directory. Defaults to IMG_DISK_CACHE
+	// (sharing Bazel's disk cache) and, failing that, to a directory under the
+	// user's cache directory.
+	envCASCacheDir = "IMG_CAS_CACHE_DIR"
+	// envCASCacheMaxSize limits the cached bytes, evicting the least recently
+	// used blobs beyond that. Accepts a plain byte count or a KiB/MiB/GiB suffix.
+	envCASCacheMaxSize = "IMG_CAS_CACHE_MAX_SIZE"
+	// envCASCacheBufferSize is how much of a blob is written to disk before
+	// readers can consume it.
+	envCASCacheBufferSize = "IMG_CAS_CACHE_BUFFER_SIZE"
+)
+
+// casCacheConfig is how the local cache of remote-CAS blobs is configured.
+type casCacheConfig struct {
+	enabled    bool
+	dir        string // empty: let the cache pick its default directory
+	maxSize    int64  // 0: unlimited
+	bufferSize int
+}
+
+// casCacheConfigFromEnv reads the local blob cache configuration from the
+// environment.
+func casCacheConfigFromEnv() casCacheConfig {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(envCASCache))) {
+	case "0", "false", "off", "no":
+		return casCacheConfig{}
+	}
+	config := casCacheConfig{enabled: true, bufferSize: cas.DefaultCacheBufferSize}
+
+	// A directory the user names -- their own, or Bazel's disk cache -- is theirs
+	// to manage, so it stays unlimited unless they ask for a limit. The default
+	// directory has nobody else looking after it and gets one.
+	config.dir = os.Getenv(envCASCacheDir)
+	if config.dir == "" {
+		config.dir = os.Getenv("IMG_DISK_CACHE")
+	}
+	if config.dir == "" {
+		config.maxSize = cas.DefaultCacheMaxSize
+	}
+	if size, ok := byteSizeFromEnv(envCASCacheMaxSize, config.maxSize); ok {
+		config.maxSize = size
+	}
+	if size, ok := byteSizeFromEnv(envCASCacheBufferSize, int64(config.bufferSize)); ok {
+		config.bufferSize = int(size)
+	}
+	return config
+}
+
+// casBlobCacheFromEnv wraps upstream in a local blob cache, which deduplicates
+// concurrent reads of one blob and keeps what it fetched on disk for later runs.
+// It returns nil if the cache is disabled.
+func casBlobCacheFromEnv(upstream cas.BlobSource) (*cas.CachingReader, error) {
+	config := casCacheConfigFromEnv()
+	if !config.enabled {
+		return nil, nil
+	}
+	return cas.NewCachingReader(upstream,
+		cas.WithCacheDir(config.dir),
+		cas.WithCacheMaxSize(config.maxSize),
+		cas.WithCacheBufferSize(config.bufferSize),
+	)
+}
+
+// byteSizeFromEnv reads a byte count from an environment variable, warning and
+// falling back to fallback if it cannot be parsed.
+func byteSizeFromEnv(name string, fallback int64) (int64, bool) {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return 0, false
+	}
+	size, err := parseByteSize(raw)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "WARNING: ignoring invalid %s=%q: %v, using %d\n", name, raw, err, fallback)
+		return 0, false
+	}
+	return size, true
+}
+
+// parseByteSize parses a byte count, optionally with a binary unit suffix
+// (K/KB/KiB, M/MB/MiB, G/GB/GiB, T/TB/TiB, case-insensitive). Suffixes are
+// powers of 1024 either way, as everywhere else in Bazel's ecosystem.
+func parseByteSize(raw string) (int64, error) {
+	digits := strings.TrimRight(raw, "kKmMgGtTiIbB \t")
+	unit := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(raw, digits)))
+	value, err := strconv.ParseFloat(strings.TrimSpace(digits), 64)
+	if err != nil {
+		return 0, fmt.Errorf("not a byte count")
+	}
+	multiplier := int64(1)
+	switch unit {
+	case "", "b":
+	case "k", "kb", "kib":
+		multiplier = 1 << 10
+	case "m", "mb", "mib":
+		multiplier = 1 << 20
+	case "g", "gb", "gib":
+		multiplier = 1 << 30
+	case "t", "tb", "tib":
+		multiplier = 1 << 40
+	default:
+		return 0, fmt.Errorf("unknown unit %q", unit)
+	}
+	if value < 0 {
+		return 0, fmt.Errorf("negative size")
+	}
+	return int64(value * float64(multiplier)), nil
 }
 
 // reapiMaxConnections returns the size of the gRPC connection pool used to read
@@ -764,7 +933,7 @@ func applyProgressMode(value string, isPersistentWorker bool) error {
 // deployToSink builds the requested sink, routes every operation into it, and
 // prints the resulting image references. It performs no registry/daemon network
 // I/O for the destination.
-func deployToSink(ctx context.Context, spec string, vfs *deployvfs.VFS, pushOps []api.IndexedPushDeployOperation, loadOps []api.IndexedLoadDeployOperation, tagOps []api.IndexedRegistryTagDeployOperation, settings api.DeploySettings, opts DeployOptions) error {
+func deployToSink(ctx context.Context, spec string, vfs *deployvfs.VFS, blobCache *cas.CachingReader, pushOps []api.IndexedPushDeployOperation, loadOps []api.IndexedLoadDeployOperation, tagOps []api.IndexedRegistryTagDeployOperation, settings api.DeploySettings, opts DeployOptions) error {
 	kind, path, err := parseSink(spec)
 	if err != nil {
 		return err
@@ -799,8 +968,7 @@ func deployToSink(ctx context.Context, spec string, vfs *deployvfs.VFS, pushOps 
 	if err := s.Close(); err != nil {
 		return fmt.Errorf("finalizing sink: %w", err)
 	}
-	stats := vfs.Stats()
-	fmt.Fprintf(os.Stderr, "    blob transfers: %d from disk, %d from disk cache, %d from container registry, %d from remote cache, %d from compact stream\n", stats.BlobsFromLocalDisk.Load(), stats.BlobsFromDiskCache.Load(), stats.BlobsFromRegistry.Load(), stats.BlobsFromRemoteCache.Load(), stats.BlobsFromCompactStream.Load())
+	printBlobStats(vfs, blobCache)
 	for _, ref := range refs {
 		fmt.Println(ref)
 	}
