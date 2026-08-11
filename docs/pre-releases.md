@@ -61,7 +61,10 @@ be replaced if the build that produced it is re-run.
    platform, plus a `prebuilt_lockfile.json` layer naming those layers by digest
    (`//services/img` in `modules/rules_img_services`).
 2. The `publish-dev-registry` job then fetches that lockfile back out of the
-   artifact with the ORAS CLI, and builds the module's source archive with
+   artifact with the ORAS CLI — the tag names an index holding both the container
+   images and the artifact, so it descends into the manifest whose `artifactType`
+   matches before looking for the layer — and builds the module's source archive
+   with
    `--//img/private/release:prebuilt_lockfile_override=//:prebuilt_lockfile.json`
    — the empty lockfile the source tree carries, so the archive is *not* specific
    to the commit.
@@ -105,6 +108,7 @@ The pipeline is driven by `.github/dev-registry.json`:
 | `asset_base_url` | Optional. Where the source archives are served from; defaults to `<registry_url>/assets`. |
 | `metadata_template` | Optional. BCR-style `metadata.json` seeding a module's homepage and maintainers on first publish. Relative to this file. |
 | `artifact.registry`, `artifact.repository` | The ORAS artifact holding the tool binaries. Must agree with what the push job publishes and with the `registry`/`repository` recorded in the lockfile -- the publisher refuses to publish a lockfile that points somewhere else. |
+| `artifact.artifact_type` | `artifactType` of the artifact manifest. The tag it is pushed under names an index that also holds the container images, so this is how the workflow picks the artifact out of it. |
 | `artifact.lockfile_title` | Layer title of the lockfile inside the artifact, and the path it is overlaid at in the module. Defaults to `prebuilt_lockfile.json`. |
 
 Serving the branch is a one-time repository setting: enable GitHub Pages for the

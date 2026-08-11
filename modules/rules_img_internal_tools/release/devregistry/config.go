@@ -37,8 +37,12 @@ type Config struct {
 // Artifact is the location of the ORAS artifact holding the tool binaries and
 // the lockfile that names them.
 type Artifact struct {
-	Registry      string `json:"registry"`
-	Repository    string `json:"repository"`
+	Registry   string `json:"registry"`
+	Repository string `json:"repository"`
+	// ArtifactType identifies the artifact manifest among the images published
+	// under the same tag. Only the workflow needs it, to find the artifact inside
+	// the index before pulling the lockfile out of it.
+	ArtifactType  string `json:"artifact_type,omitempty"`
 	LockfileTitle string `json:"lockfile_title,omitempty"`
 }
 

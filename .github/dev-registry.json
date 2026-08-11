@@ -6,6 +6,7 @@
   "artifact": {
     "registry": "ghcr.io",
     "repository": "bazel-contrib/rules_img/img",
+    "artifact_type": "application/vnd.rules_img.tools.v1",
     "lockfile_title": "prebuilt_lockfile.json"
   }
 }

@@ -102,22 +102,45 @@ jobs:
       uses: ./.github/actions/generate-buildbuddy-bazelrc
       with:
         template-path: .github/workflows/.bazelrc.buildbuddy
-        output-path: buildbuddy.bazelrc
+        output-path: .github/workflows/.bazelrc.buildbuddy.generated
         api-key: ${{ secrets.BUILDBUDDY_API_KEY }}
     - name: Setup Bazel
       uses: bazel-contrib/setup-bazel@c5acdfb288317d0b5c0bbd7a396a3dc868bb0f86 # 0.19.0
       with:
         bazelisk-cache: true
         repository-cache: true
-        bazelrc: import %workspace%/buildbuddy.bazelrc
+        bazelrc: |
+          import %workspace%/.github/workflows/ci.bazelrc
+          import %workspace%/.github/workflows/.bazelrc.buildbuddy.generated
     - name: Fetch the prebuilt lockfile from the artifact
       shell: bash
       run: |
         artifact="$(jq -r '.artifact.registry + "/" + .artifact.repository' "${CONFIG}")"
+        artifact_type="$(jq -r '.artifact.artifact_type' "${CONFIG}")"
         title="$(jq -r '.artifact.lockfile_title // "prebuilt_lockfile.json"' "${CONFIG}")"
-        digest="$(oras manifest fetch "${artifact}:${VERSION}" \
-          | jq -er --arg title "${title}" \
-            '.layers[] | select(.annotations["org.opencontainers.image.title"] == $title) | .digest')"
+
+        # The tag names an index: the container images and the ORAS artifact are
+        # pushed together, so the layers are one level down.
+        manifest="$(oras manifest fetch "${artifact}:${VERSION}")"
+        if jq -e 'has("manifests")' >/dev/null <<<"${manifest}"; then
+          child="$(jq -r --arg type "${artifact_type}" \
+            '[.manifests[] | select(.artifactType == $type) | .digest] | first // empty' <<<"${manifest}")"
+          if [[ -z "${child}" ]]; then
+            echo "::error::${artifact}:${VERSION} is an index with no ${artifact_type} manifest in it"
+            jq . <<<"${manifest}" >&2
+            exit 1
+          fi
+          manifest="$(oras manifest fetch "${artifact}@${child}")"
+        fi
+
+        digest="$(jq -r --arg title "${title}" \
+          '[.layers[] | select(.annotations["org.opencontainers.image.title"] == $title) | .digest] | first // empty' <<<"${manifest}")"
+        if [[ -z "${digest}" ]]; then
+          echo "::error::${artifact}:${VERSION} has no layer titled ${title}"
+          jq . <<<"${manifest}" >&2
+          exit 1
+        fi
+
         mkdir -p prerelease
         oras blob fetch "${artifact}@${digest}" --output prerelease/prebuilt_lockfile.json
         jq . prerelease/prebuilt_lockfile.json
@@ -167,6 +190,7 @@ jobs:
         git \
           -c user.name='github-actions[bot]' \
           -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+          -c commit.gpgsign=false \
           commit -q -m "publish ${GITHUB_REPOSITORY##*/} ${VERSION}" \
           -m "Built from ${GITHUB_SHA}."
         # Concurrent runs on main are serialized by this workflow's concurrency
