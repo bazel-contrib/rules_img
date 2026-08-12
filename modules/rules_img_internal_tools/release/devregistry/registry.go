@@ -9,7 +9,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 )
 
@@ -146,6 +145,11 @@ func (w *registryWriter) storeAsset(srcPath, fileName string) (relPath, integrit
 // mergeMetadata adds a version to a module's metadata.json and returns every
 // version the file now lists, newest first.
 //
+// Versions are append-only in publish order (oldest first in the file). Sorting
+// by version string would put same-day builds in hash order rather than the
+// order they hit main; the landing page instead lists the reverse, with the
+// most recently published version marked latest.
+//
 // The file is merged rather than rewritten: it carries the module's homepage and
 // maintainers (seeded from a template the first time), it accumulates every
 // version ever published, and a maintainer may have yanked one. Fields this tool
@@ -185,7 +189,6 @@ func (w *registryWriter) mergeMetadata(module, publish string, template []byte) 
 	if !published[publish] {
 		versions = append(versions, publish)
 	}
-	sortVersions(versions)
 
 	metadata["versions"] = versions
 	if _, ok := metadata["yanked_versions"]; !ok {
@@ -198,26 +201,6 @@ func (w *registryWriter) mergeMetadata(module, publish string, template []byte) 
 	newestFirst := append([]string{}, versions...)
 	reverse(newestFirst)
 	return newestFirst, nil
-}
-
-// sortVersions orders versions oldest first, the way a BCR metadata.json lists
-// them. Unparseable versions keep their relative order at the end, so a
-// hand-edited file is never reordered into something surprising.
-func sortVersions(versions []string) {
-	parsed := make(map[string]version, len(versions))
-	for _, raw := range versions {
-		if value, err := parseVersion(raw); err == nil {
-			parsed[raw] = value
-		}
-	}
-	sort.SliceStable(versions, func(i, j int) bool {
-		left, leftOK := parsed[versions[i]]
-		right, rightOK := parsed[versions[j]]
-		if !leftOK || !rightOK {
-			return false
-		}
-		return compareVersions(left, right) < 0
-	})
 }
 
 func reverse(values []string) {
