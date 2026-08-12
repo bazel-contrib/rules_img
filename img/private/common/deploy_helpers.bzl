@@ -233,10 +233,11 @@ def resolve_push_at_build_time(ctx):
     flag:
 
     - `push_at_build_time` / `push_at_build_time_content` / `forbid_layer_push` /
-      `deduplicated_push`: "auto" defers to the global setting.
-    - `push_at_build_time_blob_repository` / `push_at_build_time_manifest_repository`:
-      the USE_GLOBAL_SETTING sentinel defers to the global setting; any other
-      string (including "") is used verbatim.
+      `deduplicated_push` / `deduplicated_push_content`: "auto" defers to the global
+      setting.
+    - `push_at_build_time_blob_repository` / `push_at_build_time_manifest_repository` /
+      `deduplicated_push_blob_repository`: the USE_GLOBAL_SETTING sentinel defers to
+      the global setting; any other string (including "") is used verbatim.
     - `push_at_build_time_exec_properties`: used verbatim (no global fallback).
     - gateway endpoints: always global (there is no per-target attribute).
 
@@ -246,8 +247,9 @@ def resolve_push_at_build_time(ctx):
 
     Returns:
         A struct with fields: mode, content, blob_repository, manifest_repository,
-        forbid_layer_push (bool), deduplicated_push (bool), exec_properties (dict),
-        gateway, push_gateway, pull_gateway.
+        forbid_layer_push (bool), deduplicated_push (mode string),
+        deduplicated_push_blob_repository, deduplicated_push_content,
+        exec_properties (dict), gateway, push_gateway, pull_gateway.
     """
     global_settings = ctx.attr._push_at_build_time_settings[PushAtBuildTimeSettingsInfo]
     push_settings = ctx.attr._push_settings[PushSettingsInfo]
@@ -274,7 +276,15 @@ def resolve_push_at_build_time(ctx):
 
     deduplicated_push = ctx.attr.deduplicated_push
     if deduplicated_push == "auto":
-        deduplicated_push = "enabled" if push_settings.deduplicated_push else "disabled"
+        deduplicated_push = push_settings.deduplicated_push
+
+    deduplicated_push_blob_repository = ctx.attr.deduplicated_push_blob_repository
+    if deduplicated_push_blob_repository == USE_GLOBAL_SETTING:
+        deduplicated_push_blob_repository = push_settings.deduplicated_push_blob_repository
+
+    deduplicated_push_content = ctx.attr.deduplicated_push_content
+    if deduplicated_push_content == "auto":
+        deduplicated_push_content = push_settings.deduplicated_push_content
 
     return struct(
         mode = mode,
@@ -282,7 +292,9 @@ def resolve_push_at_build_time(ctx):
         blob_repository = blob_repository,
         manifest_repository = manifest_repository,
         forbid_layer_push = forbid_layer_push == "enabled",
-        deduplicated_push = deduplicated_push == "enabled",
+        deduplicated_push = deduplicated_push,
+        deduplicated_push_blob_repository = deduplicated_push_blob_repository,
+        deduplicated_push_content = deduplicated_push_content,
         exec_properties = ctx.attr.push_at_build_time_exec_properties,
         gateway = global_settings.gateway,
         push_gateway = global_settings.push_gateway,

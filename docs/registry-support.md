@@ -80,7 +80,7 @@ Notes:
 
 | Feature | Requires |
 | --- | --- |
-| [`deduplicated_push`](push-strategies.md#deduplicated-push) | Blob mount |
+| [`deduplicated_push`](push-strategies.md#deduplicated-push) | Blob mount, **or** sharing after a manifest references the blob (with [`deduplicated_push_content=blobs_and_artificial_manifests`](push-strategies.md#registries-that-will-not-mount)) |
 | [`push_at_build_time_blob_repository`](push-strategies.md#push-at-build-time) (staging + cross-mount) | Blob mount |
 | [`forbid_layer_push`](push-strategies.md#push-at-build-time) | Blob mount, or the blobs being present already |
 | `cross_mount_from` with a base image on another registry | Cross-registry mount |
@@ -92,14 +92,20 @@ In terms of the matrix above:
   `deduplicated_push`: each keeps a separate blob store per repository name *and*
   mounts, so pushing K images that share their layers can upload each shared layer
   once instead of K times.
-- **JFrog Artifactory**: leave `deduplicated_push` disabled. A mount is refused, and
-  the strategy deliberately fails loudly rather than silently uploading into every
-  repository. Its own sharing can cover part of the same ground: the first deploy of a
-  new layer still pays one upload per repository (the images are pushed concurrently,
-  so none of them has created a manifest yet), while a later deploy of those same
-  layers may upload nothing, because the plain per-blob `HEAD` now finds them. Whether
-  it does depends on the instance and on the repository paths involved, so
-  [probe it](#testing-a-registry-yourself) rather than relying on it.
+- **JFrog Artifactory**: a mount is refused, so plain `deduplicated_push=enabled`
+  deliberately fails loudly rather than silently uploading into every repository. Its
+  own sharing covers the same ground once something references the blob, which is what
+  [`deduplicated_push_content=blobs_and_artificial_manifests`](push-strategies.md#registries-that-will-not-mount)
+  arranges: the shared blob is uploaded to one repository, a manifest referencing it is
+  created there, and every other repository's own blob `HEAD` then finds it. Pair it
+  with `deduplicated_push_blob_repository` (one repository holding the shared blobs and
+  their manifests) and `deduplicated_push=best_effort` (upload the layer the ordinary
+  way if this instance turns out not to share it after all). Without it, the first
+  deploy of a new layer pays one upload per repository — the images are pushed
+  concurrently, so none of them has created a manifest yet — while a later deploy of
+  those same layers may upload nothing, because the plain per-blob `HEAD` now finds
+  them. Whether it does depends on the instance and on the repository paths involved,
+  so [probe it](#testing-a-registry-yourself) rather than relying on it.
 - **Docker Hub**: `deduplicated_push` works here too — the mounts it sends stay
   within Docker Hub, which its API documents. Note that a token scoped to a single
   repository cannot mount from another one.

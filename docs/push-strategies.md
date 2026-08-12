@@ -499,6 +499,8 @@ exactly as before:
 | `push_at_build_time_manifest_repository` | *(sentinel)* | `push_at_build_time_manifest_repository` |
 | `forbid_layer_push` | `auto` | `forbid_layer_push` |
 | `deduplicated_push` | `auto` | `deduplicated_push` |
+| `deduplicated_push_blob_repository` | *(sentinel)* | `deduplicated_push_blob_repository` |
+| `deduplicated_push_content` | `auto` | `deduplicated_push_content` |
 | `push_at_build_time_exec_properties` | `{"requires-network": "1"}` | *(none — per-target only)* |
 
 `auto` (and the repository sentinel) means "use the global setting"; any other
@@ -534,11 +536,15 @@ mount blobs from a repository nothing was pushed to.
 
 ## Deduplicated Push
 
-> **Requires a registry that supports cross-repository blob mounting.** The whole
-> point is to upload a shared blob once and mount it everywhere else, so on a
-> registry that refuses to mount, a push that opted in **fails loudly** instead of
-> silently uploading the blob into every repository. See the [registry support
-> matrix](registry-support.md) for what specific registries do, and
+> **Requires a registry that shares a blob between repositories.** The whole point is
+> to upload a shared blob once and have every other repository get it from there, so on
+> a registry that does neither of the two things that can make that work, a push that
+> opted in with `enabled` **fails loudly** instead of silently uploading the blob into
+> every repository. The two things are
+> [cross-repository blob mounting](#registry-requirements) and
+> [sharing a blob a manifest references](#registries-that-will-not-mount) — and
+> `best_effort` falls back to an ordinary upload where neither happens. See the
+> [registry support matrix](registry-support.md) for what specific registries do, and
 > [Registry requirements](#registry-requirements) below for how to check yours.
 
 ### The problem
@@ -583,17 +589,22 @@ phases instead of pushing each manifest independently:
       becomes the blob's *home repository* in that registry. No configuration and no
       extra repository: the home is somewhere the deploy was going to push anyway, so
       it needs no credentials beyond the ones it already has.
+
+   [`deduplicated_push_blob_repository`](#pinning-the-home-repository) replaces all
+   three with a repository you name.
 3. **Upload what has nowhere to come from.** Blobs that fell through to (iii) are
    uploaded to their home repository — once, however many repositories need them.
    Uploads are `HEAD`ed first, so re-running a deploy costs one request per blob
-   instead of a re-upload.
+   instead of a re-upload. In
+   [`blobs_and_artificial_manifests`](#registries-that-will-not-mount) mode a config
+   blob and a manifest referencing the blob follow it into the home repository.
 4. **Mount.** The manifest push then cross-mounts each blob out of its source.
    For a blob this deploy uploaded to its home, that mount is *strict*: the deploy
    put it there, so being asked for the blob's bytes means the mount failed and the
    push fails loudly instead of silently uploading into every repository. For (i)
    and (ii) the mount rests on an inference rather than on something the deploy did,
    so the ordinary byte-upload fallback stays in place — if the blob turns out to be
-   gone, uploading it is the right recovery.
+   gone, uploading it is the right recovery. So does everything under `best_effort`.
 5. **Write manifests and tags** as usual.
 
 So a first push of `foo` and `bar` uploads a layer they share to `bar` (first
@@ -627,7 +638,8 @@ image_push(
 )
 ```
 
-`img deploy --deduplicated-push=enabled|disabled` overrides both at run time.
+`img deploy --deduplicated-push=enabled|best_effort|disabled` overrides both at run
+time.
 
 ### Registry requirements
 The strategy rests on one request being answered the way the spec allows but does not
@@ -658,10 +670,14 @@ than never enabling the strategy — and it would hide the fact that the setting
 doing nothing. The two mount sources the deploy only *infers* (a repository whose
 manifest the registry already serves, and a recorded upstream repository) keep the
 ordinary byte-upload fallback, because there the blob may genuinely have been deleted
-and uploading it is the right recovery.
+and uploading it is the right recovery. So does everything under
+[`best_effort`](#not-depending-on-it-best_effort), which is that fallback chosen on
+purpose and with the cost understood.
 
-Which registries mount is therefore the deciding question. See the [registry support
-matrix](registry-support.md) for what we know about specific ones, and its
+Which registries mount is therefore the deciding question — or, where they do not,
+whether they [share a blob a manifest references](#registries-that-will-not-mount)
+instead. See the [registry support matrix](registry-support.md) for what we know about
+specific ones, and its
 [probe recipe](registry-support.md#testing-a-registry-yourself) for checking yours
 with a handful of `curl` calls against throwaway repositories.
 
@@ -685,6 +701,120 @@ A few more things worth knowing before enabling it:
   the mount go-containerregistry refuses to send there
   ([#1741](https://github.com/google/go-containerregistry/issues/1741)) is only the
   one whose source names a *different* registry.
+
+### Not depending on it: `best_effort`
+`enabled` insists on the deduplication: a blob this deploy uploaded to a home
+repository is served to the manifest push as a *mount-only* layer, so being asked for
+its bytes fails the push (see [Registry requirements](#registry-requirements) for why
+that is the right default). `best_effort` keeps everything about the strategy except
+that insistence:
+
+- A refused mount falls back to uploading the layer's bytes, exactly as a push without
+  the strategy would.
+- A failed upload to a home repository is a warning; that blob gives up its
+  cross-mount and is pushed the ordinary way.
+- Nothing else changes: the existence check, the planning and the configuration
+  validation still fail loudly, because those are not the registry disagreeing with an
+  assumption.
+
+The trade is what it sounds like: on a registry that shares blobs, `best_effort` costs
+nothing and does the same work as `enabled`; on one that does not, it silently pays the
+uploads the strategy meant to avoid instead of telling you the setting is doing nothing.
+Use it when you cannot probe the registry ahead of time (or when different destinations
+of one deploy differ), and `enabled` when you can.
+
+A blob shared between an `enabled` and a `best_effort` operation is treated as
+`best_effort`: whether a layer may be uploaded is a property of the per-registry view
+of the blobs, so it cannot be strict for one destination and lenient for the other, and
+the operation that asked never to fail is the one honored.
+
+### Registries that will not mount
+Some registries refuse every cross-repository mount and still share blobs — just not
+the way the mount asks them to. They expose a blob to every repository the caller may
+read **once some manifest references it**; until then the upload sits in the repository
+it was sent to, invisible from everywhere else. JFrog Artifactory is the one to know
+about.
+
+`deduplicated_push_content=blobs_and_artificial_manifests` is for those: after
+uploading a shared blob to its home repository, the deploy also uploads a config blob
+and creates a manifest referencing the two, in the same repository. The blob is then
+shared, so go-containerregistry's own existence check
+(`HEAD /v2/<destination>/blobs/<digest>`, which it makes before every layer upload)
+answers `200` in every other repository and the layer is skipped — **with or without a
+mount**. The mount request is still sent and still used where it works.
+
+```bash
+common --@rules_img//img/settings:deduplicated_push=best_effort
+common --@rules_img//img/settings:deduplicated_push_content=blobs_and_artificial_manifests
+common --@rules_img//img/settings:deduplicated_push_blob_repository=team/_blobs
+```
+
+That is the combination to reach for on such a registry: a repository to keep the
+shared blobs and their manifests in, and `best_effort` so that a registry which turns
+out not to share them after all costs the deduplication rather than the deploy.
+
+What is written, per shared blob, is a real manifest rather than a plausible-looking
+one — a registry strict enough to demand a manifest before sharing a blob is not one to
+hand a malformed manifest to:
+
+- a single-layer image manifest whose layer descriptor is the blob's own (media types
+  stay in one family: an OCI manifest for OCI layers, a Docker schema 2 manifest for
+  Docker ones);
+- a config blob recording that layer's uncompressed digest (its *diff id*), taken from
+  the config of the image the layer really belongs to, with `os` and `architecture` set
+  to `unknown` — the convention for a manifest that is not meant to be run. A blob with
+  no diff id to record (an artifact "layer" that is not a filesystem changeset, say a
+  ztoc or an SBOM) gets `{}` as its config instead of an invented one;
+- one annotation naming the blob it was written for, so whoever finds the manifest in a
+  repository can tell what it is.
+
+Everything about it is derived from the blob and its diff id, with no timestamp, so
+re-running a deploy finds the same manifest already there and writes nothing. It is
+written inside the same single-flight as the blob upload, so however many deploys of one
+`img deploy` process share the blob, one of them writes it and the rest do neither.
+
+The manifest is pushed **by digest and left untagged**, because it is not something
+anyone should resolve by name. The caveat that comes with that: a registry policy which
+deletes untagged manifests can undo the blob's visibility along with it, so keep the
+blob repository out of such a policy's way.
+
+Like every setting here it is also a per-target attribute
+(`deduplicated_push_content` on `image_push` / `image_push_spec`, where `auto` defers to
+the flag), and `img deploy --deduplicated-push-content=blobs|blobs_and_artificial_manifests`
+overrides both.
+
+### Pinning the home repository
+`deduplicated_push_blob_repository` names the repository every shared blob is uploaded
+to and mounted from, instead of letting the deploy work one out per blob:
+
+```bash
+common --@rules_img//img/settings:deduplicated_push_blob_repository=team/_blobs
+```
+
+It wins over all three sources above — including the two that would have cost no upload
+at all — because the reasons to name a repository are reasons to use it every time: one
+place to find, retain and clean up shared blobs, and one repository a credential has to
+be able to read for the mounts to work (a token scoped per destination repository can
+never mount out of a sibling service's repository). The cost is that blobs which were
+mountable for free are uploaded there once.
+
+Two consequences worth knowing:
+
+- A blob only one repository needs is uploaded to the pinned repository and mounted from
+  there too, so this is not a no-op for a single-image `bazel run //:push` the way the
+  unpinned strategy is.
+- The mount is *strict* (this deploy put the blob there), unless the operation asked for
+  `best_effort`.
+
+If two operations of one deploy pin the same blob to different repositories, the
+lexicographically smaller repository wins for that blob and the conflict is reported on
+stderr: one home per (registry, blob) is structural, because the manifest push sees one
+view of the blobs per registry.
+
+Like the settings above, it is a per-target attribute as well
+(`deduplicated_push_blob_repository` on `image_push` / `image_push_spec`, where the
+sentinel default defers to the flag and `""` forces "no pinned repository"), and
+`img deploy --deduplicated-push-blob-repository=<repo>` overrides both.
 
 ### Mixing destinations
 Whether a blob can be cross-mounted is a property of the *destination*, so the
@@ -721,15 +851,19 @@ opted-in group, and once by the operation that opted out.
 - **`push_at_build_time_blob_repository`.** When push at build time staged every
   blob into that repository, it is recorded in the deploy manifest and is used
   instead of a destination repository as the home — after the two upload-free
-  sources above, which are cheaper still.
+  sources above, which are cheaper still, and after
+  [`deduplicated_push_blob_repository`](#pinning-the-home-repository), which is not a
+  guess about where the blobs are but an instruction about where to put them.
 - **`forbid_layer_push`.** The upload phase is skipped entirely: the blobs are
   expected to be in place already. The existence check and the strict mounting still
-  apply.
+  apply. Nothing is uploaded, so nothing writes artificial manifests either —
+  `blobs_and_artificial_manifests` has no effect (and says so on stderr); whatever put
+  the blobs in the registry has to reference them too.
 - **`--sink` turns it off.** A sink captures the operations locally, so there is no
-  registry to ask what it already has and no repository to cross-mount between. The
-  setting is ignored rather than rejected, so a `.bazelrc` that enables it does not
-  get in the way of dumping an image to a tarball — the same way `--sink` already
-  bypasses the push strategy and the build-time staging repository.
+  registry to ask what it already has and no repository to cross-mount between. All
+  three settings are ignored rather than rejected, so a `.bazelrc` that enables them
+  does not get in the way of dumping an image to a tarball — the same way `--sink`
+  already bypasses the push strategy and the build-time staging repository.
 - **Not compatible** with the `bes` push strategy (the syncer performs the push) or
   the `cas_registry` strategy (blobs are committed to the CAS registry instead of
   uploaded). Both are rejected up front, because both mean the deploy manifest asked

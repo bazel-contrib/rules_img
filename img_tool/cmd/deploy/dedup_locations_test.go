@@ -42,7 +42,7 @@ func TestBlobLocationsSequentialRequestsMountFromTheFirstHome(t *testing.T) {
 
 	// Request A, pushing team/service-a only. There is nothing to cross-mount into
 	// yet, but the home is settled and published for whoever comes next.
-	first := locations.resolve(key, repositorySet("team/service-a"), nil, "", "")
+	first := locations.resolve(key, repositorySet("team/service-a"), nil, "", "", "")
 	if first.repository != "team/service-a" || first.kind != mountFromUpload {
 		t.Fatalf("first resolution = %+v, want team/service-a as an uploaded home", first)
 	}
@@ -53,7 +53,7 @@ func TestBlobLocationsSequentialRequestsMountFromTheFirstHome(t *testing.T) {
 
 	// Request B, pushing team/service-b: the blob is already in team/service-a, so it
 	// is mounted from there and nothing is uploaded.
-	second := locations.resolve(key, repositorySet("team/service-b"), nil, "", "")
+	second := locations.resolve(key, repositorySet("team/service-b"), nil, "", "", "")
 	if second.repository != "team/service-a" {
 		t.Errorf("second resolution = %+v, want the home the first request published", second)
 	}
@@ -91,7 +91,7 @@ func TestBlobLocationsConcurrentRequestsShareOneHome(t *testing.T) {
 		go func() {
 			defer done.Done()
 			start.Wait()
-			resolutions[i] = locations.resolve(key, repositorySet(repositoryFor(i)), nil, "", "")
+			resolutions[i] = locations.resolve(key, repositorySet(repositoryFor(i)), nil, "", "", "")
 		}()
 	}
 	start.Done()
@@ -119,7 +119,7 @@ func TestBlobLocationsConcurrentRequestsShareOneHome(t *testing.T) {
 	// Every one of them uploads to the home, so any of them succeeding is enough for
 	// the mount, and the first to finish publishes it.
 	locations.promote(key, home)
-	if got := locations.resolve(key, repositorySet("team/late"), nil, "", ""); got.upload || got.repository != home {
+	if got := locations.resolve(key, repositorySet("team/late"), nil, "", "", ""); got.upload || got.repository != home {
 		t.Errorf("a later request resolved to %+v, want a mount from %q with no upload", got, home)
 	}
 }
@@ -146,10 +146,10 @@ func TestBlobLocationsAbandonedClaimIsClaimedAgain(t *testing.T) {
 	locations := newBlobLocations(true)
 	key := sharedKey()
 
-	first := locations.resolve(key, repositorySet("team/service-a"), nil, "", "")
+	first := locations.resolve(key, repositorySet("team/service-a"), nil, "", "", "")
 	locations.abandon(key, first.repository)
 
-	second := locations.resolve(key, repositorySet("team/service-b"), nil, "", "")
+	second := locations.resolve(key, repositorySet("team/service-b"), nil, "", "", "")
 	if second.repository != "team/service-b" {
 		t.Errorf("second resolution = %+v, want a home of its own after the first claim was abandoned", second)
 	}
@@ -201,7 +201,7 @@ func TestBlobLocationsKeepsTheSofterSourcesSoft(t *testing.T) {
 			locations := newBlobLocations(true)
 			key := sharedKey()
 
-			first := locations.resolve(key, repositorySet("team/service-a"), tc.confirmed, tc.upstream, "")
+			first := locations.resolve(key, repositorySet("team/service-a"), tc.confirmed, tc.upstream, "", "")
 			if first.repository != tc.wantHome || first.kind != tc.wantKind {
 				t.Fatalf("first resolution = %+v, want %s as %v", first, tc.wantHome, tc.wantKind)
 			}
@@ -210,7 +210,7 @@ func TestBlobLocationsKeepsTheSofterSourcesSoft(t *testing.T) {
 			}
 			// Published without an upload phase: nothing has to happen for the next
 			// request to mount from the same place.
-			second := locations.resolve(key, repositorySet("team/service-b"), nil, "", "")
+			second := locations.resolve(key, repositorySet("team/service-b"), nil, "", "", "")
 			if second.repository != tc.wantHome || second.kind != tc.wantKind || second.upload {
 				t.Errorf("second resolution = %+v, want the same %v mount with no upload", second, tc.wantKind)
 			}
@@ -229,7 +229,7 @@ func TestBlobLocationsOneShotLeavesLoneDestinationsAlone(t *testing.T) {
 	locations := newBlobLocations(false)
 	key := sharedKey()
 
-	lone := locations.resolve(key, repositorySet("team/service-a"), nil, "", "")
+	lone := locations.resolve(key, repositorySet("team/service-a"), nil, "", "", "")
 	if lone.repository != "" || lone.upload {
 		t.Errorf("resolution = %+v, want none: one destination has nothing to cross-mount into", lone)
 	}
@@ -239,7 +239,7 @@ func TestBlobLocationsOneShotLeavesLoneDestinationsAlone(t *testing.T) {
 
 	// Two destinations are deduplicated as ever, and the home is published -- which a
 	// one-shot deploy has no second plan to use, but costs nothing either.
-	shared := locations.resolve(key, repositorySet("team/service-b", "team/service-a"), nil, "", "")
+	shared := locations.resolve(key, repositorySet("team/service-b", "team/service-a"), nil, "", "", "")
 	if shared.repository != "team/service-a" || !shared.upload || shared.joined {
 		t.Errorf("resolution = %+v, want the first repository alphabetically as a fresh claim", shared)
 	}
@@ -256,7 +256,7 @@ func TestBlobLocationsSeedConfirmedPublishesUnusedRepositories(t *testing.T) {
 
 	// A claim in flight must not be replaced by a confirmed repository: the requests
 	// that joined it are uploading to the home it names.
-	claimed := locations.resolve(other, repositorySet("team/service-a"), nil, "", "")
+	claimed := locations.resolve(other, repositorySet("team/service-a"), nil, "", "", "")
 	locations.seedConfirmed(map[blobKey]map[string]struct{}{
 		key:   repositorySet("team/service-z", "team/service-c"),
 		other: repositorySet("team/service-z"),
@@ -283,13 +283,13 @@ func TestBlobLocationsNilPlansOnItsOwn(t *testing.T) {
 	var locations *blobLocations
 	key := sharedKey()
 
-	first := locations.resolve(key, repositorySet("team/service-b", "team/service-a"), nil, "", "")
+	first := locations.resolve(key, repositorySet("team/service-b", "team/service-a"), nil, "", "", "")
 	if first.repository != "team/service-a" || !first.upload || first.cached {
 		t.Errorf("resolution = %+v, want the plain per-deploy answer", first)
 	}
 	// Nothing is remembered, so a second deploy decides for itself again.
 	locations.promote(key, first.repository)
-	second := locations.resolve(key, repositorySet("team/service-c"), nil, "", "")
+	second := locations.resolve(key, repositorySet("team/service-c"), nil, "", "", "")
 	if second.repository != "" {
 		t.Errorf("resolution = %+v, want none: a nil cache remembers nothing", second)
 	}
@@ -507,5 +507,57 @@ func TestUploadOnceStopsWaitingWhenTheCallerGivesUp(t *testing.T) {
 	})
 	if !errors.Is(err, context.Canceled) {
 		t.Errorf("uploadOnce = %v, want the caller's own context error", err)
+	}
+}
+
+// TestBlobLocationsPinnedHomeIgnoresOtherHomes covers deduplicated_push_blob_repository
+// against the process-wide cache: a home the cache knows is only usable when it is the
+// pinned repository, since that is the only place the configuration allows the blob to
+// be mounted from. Requests that share the pin still share one upload.
+func TestBlobLocationsPinnedHomeIgnoresOtherHomes(t *testing.T) {
+	const pinned = "shared/blobs"
+	locations := newBlobLocations(true)
+	key := sharedKey()
+
+	// An earlier request, with no pin, put the blob in its own repository.
+	unpinned := locations.resolve(key, repositorySet("team/service-a"), nil, "", "", "")
+	if unpinned.repository != "team/service-a" {
+		t.Fatalf("first resolution = %+v, want team/service-a", unpinned)
+	}
+	locations.promote(key, unpinned.repository)
+
+	// A request that pins its blobs cannot mount from there, so it claims the pinned
+	// repository and uploads the blob into it.
+	first := locations.resolve(key, repositorySet("team/service-b"), nil, "", "", pinned)
+	if first.repository != pinned || !first.upload || first.joined {
+		t.Fatalf("pinned resolution = %+v, want a fresh claim on %s", first, pinned)
+	}
+	if !first.pinned {
+		t.Error("pinned resolution is not reported as pinned")
+	}
+
+	// A second request with the same pin joins that upload rather than starting a
+	// second home.
+	second := locations.resolve(key, repositorySet("team/service-c"), nil, "", "", pinned)
+	if second.repository != pinned || !second.upload || !second.joined {
+		t.Errorf("second pinned resolution = %+v, want it to join the claim on %s", second, pinned)
+	}
+
+	// A request without a pin is happy with either, and the earlier home is still the
+	// one the cache offers it.
+	plain := locations.resolve(key, repositorySet("team/service-d"), nil, "", "", "")
+	if plain.repository != "team/service-a" || plain.upload {
+		t.Errorf("unpinned resolution = %+v, want the home an earlier request filled", plain)
+	}
+
+	// Once the pinned upload lands, the pinned requests mount from it without an upload
+	// -- and the pin travels with the home, so the report still calls it pinned.
+	locations.promote(key, pinned)
+	settled := locations.resolve(key, repositorySet("team/service-e"), nil, "", "", pinned)
+	if settled.repository != pinned || settled.upload {
+		t.Errorf("resolution after the pinned upload = %+v, want a mount out of %s with no upload", settled, pinned)
+	}
+	if !settled.pinned || settled.kind != mountFromUpload {
+		t.Errorf("resolution after the pinned upload = %+v, want the pinned, uploaded home", settled)
 	}
 }

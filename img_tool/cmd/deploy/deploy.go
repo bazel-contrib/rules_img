@@ -65,7 +65,11 @@ func DeployProcess(ctx context.Context, args []string) {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
-		if err := persistentWorker(jobs, sinkSpec, extractFlag(processedArgs, "--deduplicated-push")); err != nil {
+		if err := persistentWorker(jobs, sinkSpec, dedupFlags{
+			mode:           extractFlag(processedArgs, "--deduplicated-push"),
+			blobRepository: extractFlag(processedArgs, "--deduplicated-push-blob-repository"),
+			content:        extractFlag(processedArgs, "--deduplicated-push-content"),
+		}); err != nil {
 			fmt.Fprintf(os.Stderr, "Error in persistent worker: %v\n", err)
 			os.Exit(1)
 		}
@@ -89,6 +93,8 @@ func DeployProcess(ctx context.Context, args []string) {
 	var signForce bool
 	var signTargetsFlag string
 	var deduplicatedPush string
+	var deduplicatedPushBlobRepository string
+	var deduplicatedPushContent string
 
 	flagSet := flag.NewFlagSet("deploy", flag.ContinueOnError)
 	flagSet.Var(&requestFiles, "request-file", "Deploy manifest JSON request file (can be used multiple times)")
@@ -107,7 +113,9 @@ func DeployProcess(ctx context.Context, args []string) {
 	flagSet.StringVar(&defaultSignSetting, "default_sign_setting", "", "Default sign_setting for operations without one: a path to a config file, or sha256:<hex> referencing a discovered setting")
 	flagSet.BoolVar(&signForce, "sign_force", false, "Sign every push operation using the default sign_setting, even operations not configured to sign at build time")
 	flagSet.StringVar(&signTargetsFlag, "sign_targets", "", "Override which descriptors are signed: a comma-separated list of roots,child_manifests,referrers or 'all'")
-	flagSet.StringVar(&deduplicatedPush, "deduplicated-push", "", "Override the deploy manifest's deduplicated_push setting: 'enabled' checks which manifests the registry already has, uploads each blob several repositories need to just one of them, and cross-mounts it into the others; 'disabled' pushes each manifest independently. Requires a registry that supports cross-repository blob mounting: where mounting is refused, an opted-in push fails rather than uploading the blob into every repository. Empty (default) uses the deploy manifest's setting. Ignored when --sink is set.")
+	flagSet.StringVar(&deduplicatedPush, "deduplicated-push", "", "Override the deploy manifest's deduplicated_push setting: 'enabled' checks which manifests the registry already has, uploads each blob several repositories need to just one of them, and cross-mounts it into the others; 'best_effort' does the same but uploads a layer's bytes the ordinary way where the registry refuses to mount it; 'disabled' pushes each manifest independently. 'enabled' requires a registry that supports cross-repository blob mounting: where mounting is refused, an opted-in push fails rather than uploading the blob into every repository. Empty (default) uses the deploy manifest's setting. Ignored when --sink is set.")
+	flagSet.StringVar(&deduplicatedPushBlobRepository, "deduplicated-push-blob-repository", "", "Override the deploy manifest's deduplicated_push_blob_repository setting: the repository within each destination registry that every shared blob is uploaded to and cross-mounted from. Empty (default) uses the deploy manifest's setting, where empty in turn lets the deploy pick a home repository per blob.")
+	flagSet.StringVar(&deduplicatedPushContent, "deduplicated-push-content", "", "Override the deploy manifest's deduplicated_push_content setting: 'blobs' uploads a shared blob to its home repository and nothing else; 'blobs_and_artificial_manifests' also uploads a config blob and creates a manifest referencing the blob there, for registries that only expose a blob to other repositories once a manifest references it. Empty (default) uses the deploy manifest's setting.")
 
 	if err := flagSet.Parse(args); err != nil {
 		flagSet.Usage()
@@ -162,7 +170,11 @@ func DeployProcess(ctx context.Context, args []string) {
 		DefaultSignSetting:         defaultSignSetting,
 		SignForce:                  signForce,
 		SignTargets:                splitCommaList(signTargetsFlag),
-		DeduplicatedPush:           deduplicatedPush,
+		DeduplicatedPush: dedupFlags{
+			mode:           deduplicatedPush,
+			blobRepository: deduplicatedPushBlobRepository,
+			content:        deduplicatedPushContent,
+		},
 	}
 
 	if err := DeployWithExtras(ctx, rawRequest, opts); err != nil {
@@ -221,9 +233,40 @@ type DeployOptions struct {
 	SignForce          bool     // sign all push ops using the default setting
 	SignTargets        []string // override sign-target selection (roots/child_manifests/referrers/all)
 
-	// DeduplicatedPush overrides the deploy manifest's deduplicated_push setting:
-	// "enabled", "disabled", or "" to inherit it.
-	DeduplicatedPush string
+	// DeduplicatedPush overrides the deploy manifest's deduplicated_push settings.
+	DeduplicatedPush dedupFlags
+}
+
+// dedupFlags are the run-time overrides of the deduplicated push settings recorded
+// per operation in the deploy manifest. An empty field inherits the operation's own
+// value. They travel together because they are one setting with three parts, and
+// because the persistent worker takes the whole set twice: once at startup and once
+// per work request.
+type dedupFlags struct {
+	// mode overrides deduplicated_push: "enabled", "best_effort", "disabled" or "".
+	mode string
+	// blobRepository overrides deduplicated_push_blob_repository: the repository every
+	// shared blob is uploaded to and mounted from.
+	blobRepository string
+	// content overrides deduplicated_push_content: "blobs",
+	// "blobs_and_artificial_manifests" or "".
+	content string
+}
+
+// or returns the more specific of two sets of overrides, field by field: a work
+// request's value beats the one `img deploy` was started with, as --registry and
+// --repository do.
+func (f dedupFlags) or(fallback dedupFlags) dedupFlags {
+	if f.mode == "" {
+		f.mode = fallback.mode
+	}
+	if f.blobRepository == "" {
+		f.blobRepository = fallback.blobRepository
+	}
+	if f.content == "" {
+		f.content = fallback.content
+	}
+	return f
 }
 
 func DeployWithExtras(ctx context.Context, rawRequest []byte, opts DeployOptions) error {
@@ -242,7 +285,7 @@ func DeployWithExtras(ctx context.Context, rawRequest []byte, opts DeployOptions
 	// asking the registry) instead of the blanket ones below. It is decided per
 	// operation, so a deploy can mix destinations that cross-mount blobs with ones
 	// that do not.
-	dedupSelect, err := newDedupSelector(opts.DeduplicatedPush, opts.Sink != "")
+	dedupSelect, err := newDedupSelector(opts.DeduplicatedPush.mode, opts.DeduplicatedPush.blobRepository, opts.DeduplicatedPush.content, opts.Sink != "")
 	if err != nil {
 		return err
 	}

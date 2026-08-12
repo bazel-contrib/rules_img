@@ -66,6 +66,8 @@ def _compute_push_metadata(*, ctx, configuration_json, pbt, destination_file = N
         blob_repository = cross_mount_blob_repository(pbt.mode, pbt.blob_repository),
         forbid_layer_push = pbt.forbid_layer_push,
         deduplicated_push = pbt.deduplicated_push,
+        deduplicated_push_blob_repository = pbt.deduplicated_push_blob_repository,
+        deduplicated_push_content = pbt.deduplicated_push_content,
     )
 
 def _image_push_impl(ctx):

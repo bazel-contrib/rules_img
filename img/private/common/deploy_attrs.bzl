@@ -320,13 +320,18 @@ where pushing several images that share their layers otherwise uploads every sha
 layer once per repository. See
 [deduplicated push](/docs/push-strategies.md#deduplicated-push).
 
-**Only works on a registry that supports cross-repository blob mounting.** A push
-that opted in fails loudly where mounting is refused, rather than silently uploading
-the blob into every repository. See the
+**`enabled` only works on a registry that supports cross-repository blob mounting.**
+A push that opted in fails loudly where mounting is refused, rather than silently
+uploading the blob into every repository. See the
 [registry support matrix](/docs/registry-support.md).
 
 - **`auto`** (default): defer to the global `--@rules_img//img/settings:deduplicated_push` flag.
-- **`enabled`**: deduplicate blob uploads.
+- **`enabled`**: deduplicate blob uploads, and fail the push if a layer this deploy
+  uploaded to a home repository cannot be cross-mounted from there.
+- **`best_effort`**: deduplicate blob uploads, but upload a layer's bytes the ordinary
+  way if the registry refuses to mount it (and treat a failed upload to a home
+  repository as a warning). The deduplication is attempted without the deploy
+  depending on it, which is what makes it usable on a registry you have not probed.
 - **`disabled`**: push each manifest independently.
 
 The setting travels with this push operation, so a deploy that merges several of
@@ -335,7 +340,49 @@ operations that opted in are planned together and cross-mount between each other
 while the rest are pushed exactly as they would be with the setting off.
 """,
         default = "auto",
-        values = ["auto", "disabled", "enabled"],
+        values = ["auto", "disabled", "best_effort", "enabled"],
+    ),
+    deduplicated_push_blob_repository = attr.string(
+        doc = """Repository the deduplicated push uploads this target's shared blobs to.
+
+When non-empty, every blob the deduplicated push shares between repositories is
+uploaded to this repository (within the destination registry) and cross-mounted from
+there. It takes precedence over every home repository the deploy would have picked
+itself — including a repository the registry already serves the blob from — so that
+shared blobs all end up in one place: one repository to retain and clean up, and one
+repository a credential has to be able to read for the mounts to work. The cost is
+that blobs which were mountable for free are uploaded there.
+
+Left at its sentinel default, this defers to the global
+`--@rules_img//img/settings:deduplicated_push_blob_repository` flag. Set it to a
+string to override per target, or to `""` to force "no pinned repository" even when
+the global flag is set.
+
+Only consulted when deduplicated push is active (see `deduplicated_push`).
+""",
+        default = USE_GLOBAL_SETTING,
+    ),
+    deduplicated_push_content = attr.string(
+        doc = """What the deduplicated push writes to a shared blob's home repository.
+
+- **`auto`** (default): defer to the global `--@rules_img//img/settings:deduplicated_push_content` flag.
+- **`blobs`**: upload the shared blob to its home repository and nothing else.
+- **`blobs_and_artificial_manifests`**: additionally upload a config blob and create a
+  manifest referencing the blob and that config in the home repository, before the blob
+  counts as available to the repositories that share it. For registries that only expose
+  a blob to other repositories once a manifest references it: with the manifest in place
+  the blob is served to every repository the caller may read, so the manifest push finds
+  it there and uploads nothing — with or without a cross-mount.
+
+The artificial manifest is a real single-layer image manifest (the layer descriptor is
+the blob's own and the config records the layer's diff id), pushed by digest and
+untagged. Note that a registry policy which deletes untagged manifests can undo the
+blob's visibility along with it.
+
+Only consulted when deduplicated push is active (see `deduplicated_push`).
+""",
+        default = "auto",
+        values = ["auto", "blobs", "blobs_and_artificial_manifests"],
     ),
     push_at_build_time_exec_properties = attr.string_dict(
         doc = """Execution properties for the `PushImage` build-time push actions.

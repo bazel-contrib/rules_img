@@ -37,6 +37,8 @@ def _image_push_spec_impl(ctx):
         blob_repository = pbt.blob_repository,
         forbid_layer_push = pbt.forbid_layer_push,
         deduplicated_push = pbt.deduplicated_push,
+        deduplicated_push_blob_repository = pbt.deduplicated_push_blob_repository,
+        deduplicated_push_content = pbt.deduplicated_push_content,
         push_at_build_time_mode = pbt.mode,
         push_at_build_time_content = pbt.content,
         push_at_build_time_manifest_repository = pbt.manifest_repository,

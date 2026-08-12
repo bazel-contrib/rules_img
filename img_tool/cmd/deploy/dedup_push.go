@@ -38,17 +38,21 @@ import (
 // repeated *reads* of such a layer. They compose: a cross-mounted layer's bytes are
 // never read, so this removes those reads rather than leaving them to the cache.
 //
-// When Settings.DeduplicatedPush is set, the deploy instead pushes in phases:
+// When an operation's deduplicated_push is enabled (or best_effort), the deploy
+// instead pushes in phases:
 //
 //  1. ask the registry which of the manifests it already holds, in parallel;
 //  2. work out where each of the still-missing manifests' layers can be
 //     cross-mounted from (see resolveBlobMount) -- often a repository that already
 //     has it, because the registry just confirmed a manifest referencing it;
 //  3. upload the ones with nowhere to mount from to their home repository -- once,
-//     however many repositories need them;
+//     however many repositories need them -- and, where the registry needs a manifest
+//     to reference a blob before other repositories may have it, write one there too
+//     (see dedup_artificial.go);
 //  4. serve them to the manifest push as mount-only layers, so the other
 //     repositories cross-mount them out of the home repository and a request for
-//     their bytes fails loudly instead of quietly re-uploading them.
+//     their bytes fails loudly instead of quietly re-uploading them -- unless the
+//     operation asked for best_effort, where those bytes are served after all.
 //
 // Phase 5 is the ordinary manifest push, unchanged. A blob headed for a single
 // repository is left out of all of this, so a single-image deploy behaves exactly
@@ -63,21 +67,29 @@ import (
 // Values of the --deduplicated-push override. Empty inherits the deploy
 // manifest's deduplicated_push setting.
 const (
-	deduplicatedPushEnabled  = "enabled"
-	deduplicatedPushDisabled = "disabled"
+	deduplicatedPushEnabled    = api.DeduplicatedPushEnabled
+	deduplicatedPushBestEffort = api.DeduplicatedPushBestEffort
+	deduplicatedPushDisabled   = api.DeduplicatedPushDisabled
 )
 
 // dedupSelector decides, per operation, whether its layers may be served by a
-// cross-mount.
+// cross-mount -- and, when they may, everything else the strategy needs to know
+// about that operation's destination.
 //
 // The choice is per operation because it is an assumption about the destination: a
 // deploy may push to a registry that cross-mounts blobs and to one that does not,
 // and an operation that did not opt in must be pushed exactly as it would be
 // without the strategy -- never handed a layer it is expected to mount.
 type dedupSelector struct {
-	// override is the --deduplicated-push value: "enabled" or "disabled" forces
-	// every operation, "" leaves each one to its own setting.
+	// override is the --deduplicated-push value: "enabled", "best_effort" or
+	// "disabled" forces every operation, "" leaves each one to its own setting.
 	override string
+	// blobRepositoryOverride is the --deduplicated-push-blob-repository value: when
+	// set it pins the home repository of every blob, whatever the operations say.
+	blobRepositoryOverride string
+	// contentOverride is the --deduplicated-push-content value: when set it decides
+	// what is written to a home repository for every operation.
+	contentOverride string
 	// off disables the strategy wholesale. A sink captures the operations locally,
 	// so there is no registry to ask what it already holds and no repository to
 	// cross-mount between: nothing to deduplicate. Turning it off is what --sink
@@ -88,27 +100,71 @@ type dedupSelector struct {
 	off bool
 }
 
-// newDedupSelector validates the --deduplicated-push override and returns the
-// selector for it.
-func newDedupSelector(override string, hasSink bool) (dedupSelector, error) {
+// newDedupSelector validates the --deduplicated-push overrides and returns the
+// selector for them.
+func newDedupSelector(override, blobRepositoryOverride, contentOverride string, hasSink bool) (dedupSelector, error) {
 	if err := validateDeduplicatedPushOverride(override); err != nil {
 		return dedupSelector{}, err
 	}
-	return dedupSelector{override: override, off: hasSink}, nil
+	if err := validateDeduplicatedPushContent(contentOverride, "--deduplicated-push-content"); err != nil {
+		return dedupSelector{}, err
+	}
+	return dedupSelector{
+		override:               override,
+		blobRepositoryOverride: blobRepositoryOverride,
+		contentOverride:        contentOverride,
+		off:                    hasSink,
+	}, nil
+}
+
+// mode returns the deduplicated_push mode in force for an operation: the override
+// when there is one, else the operation's own setting.
+func (s dedupSelector) mode(op api.BaseCommandOperation) string {
+	if s.off {
+		return deduplicatedPushDisabled
+	}
+	if s.override != "" {
+		return s.override
+	}
+	if op.DeduplicatedPush == "" {
+		return deduplicatedPushDisabled
+	}
+	return op.DeduplicatedPush
 }
 
 // enabled reports whether the given operation deduplicates.
 func (s dedupSelector) enabled(op api.BaseCommandOperation) bool {
-	if s.off {
-		return false
-	}
-	switch s.override {
-	case deduplicatedPushEnabled:
+	switch s.mode(op) {
+	case deduplicatedPushEnabled, deduplicatedPushBestEffort:
 		return true
-	case deduplicatedPushDisabled:
-		return false
 	}
-	return op.DeduplicatedPush
+	return false
+}
+
+// lenient reports whether a refused cross-mount is allowed to fall back to
+// uploading the layer's bytes for this operation, i.e. whether it asked for
+// best_effort rather than enabled.
+func (s dedupSelector) lenient(op api.BaseCommandOperation) bool {
+	return s.mode(op) == deduplicatedPushBestEffort
+}
+
+// homeRepository returns the repository this operation's shared blobs must be
+// uploaded to and mounted from, or "" to let the deploy work it out per blob.
+func (s dedupSelector) homeRepository(op api.BaseCommandOperation) string {
+	if s.blobRepositoryOverride != "" {
+		return s.blobRepositoryOverride
+	}
+	return op.DeduplicatedPushBlobRepository
+}
+
+// artificialManifests reports whether a blob uploaded to its home repository for
+// this operation also needs a config blob and a manifest referencing it there.
+func (s dedupSelector) artificialManifests(op api.BaseCommandOperation) bool {
+	content := op.DeduplicatedPushContent
+	if s.contentOverride != "" {
+		content = s.contentOverride
+	}
+	return content == api.DeduplicatedPushContentBlobsAndArtificialManifests
 }
 
 // any reports whether any operation deduplicates, i.e. whether the preparation
@@ -131,10 +187,44 @@ func (s dedupSelector) any(pushOps []api.IndexedPushDeployOperation, tagOps []ap
 // means "inherit the deploy manifest's setting".
 func validateDeduplicatedPushOverride(value string) error {
 	switch value {
-	case "", deduplicatedPushEnabled, deduplicatedPushDisabled:
+	case "", deduplicatedPushEnabled, deduplicatedPushBestEffort, deduplicatedPushDisabled:
 		return nil
 	}
-	return fmt.Errorf("invalid --deduplicated-push value %q: want %q or %q", value, deduplicatedPushEnabled, deduplicatedPushDisabled)
+	return fmt.Errorf("invalid --deduplicated-push value %q: want %q, %q or %q", value, deduplicatedPushEnabled, deduplicatedPushBestEffort, deduplicatedPushDisabled)
+}
+
+// validateDeduplicatedPushContent checks a deduplicated_push_content value, named
+// by source so the message points at the flag or the operation that carried it.
+// Empty means "the default", i.e. blobs alone.
+func validateDeduplicatedPushContent(value, source string) error {
+	switch value {
+	case "", api.DeduplicatedPushContentBlobs, api.DeduplicatedPushContentBlobsAndArtificialManifests:
+		return nil
+	}
+	return fmt.Errorf("invalid %s value %q: want %q or %q", source, value, api.DeduplicatedPushContentBlobs, api.DeduplicatedPushContentBlobsAndArtificialManifests)
+}
+
+// validateDeduplicatedPushOperations checks the per-operation settings of every
+// deduplicating operation, before any registry I/O, so a misconfiguration fails
+// immediately rather than halfway through a deploy.
+func validateDeduplicatedPushOperations(pushOps []api.IndexedPushDeployOperation, tagOps []api.IndexedRegistryTagDeployOperation, selector dedupSelector) error {
+	for _, op := range pushOps {
+		if !selector.enabled(op.BaseCommandOperation) {
+			continue
+		}
+		if err := validateDeduplicatedPushContent(op.DeduplicatedPushContent, "deduplicated_push_content"); err != nil {
+			return fmt.Errorf("push operation %d (%s/%s): %w", op.I, op.Registry, op.Repository, err)
+		}
+	}
+	for _, op := range tagOps {
+		if !selector.enabled(op.BaseCommandOperation) {
+			continue
+		}
+		if err := validateDeduplicatedPushContent(op.DeduplicatedPushContent, "deduplicated_push_content"); err != nil {
+			return fmt.Errorf("registry_tag operation %d (%s/%s): %w", op.I, op.Registry, op.Repository, err)
+		}
+	}
+	return nil
 }
 
 // validateDeduplicatedPush rejects configurations the strategy cannot serve. It
@@ -155,6 +245,10 @@ func validateDeduplicatedPush(settings api.DeploySettings) error {
 // Settings.BlobRepository: when push at build time staged every blob there, it is
 // where they are cross-mounted from (see resolveBlobMount). Empty -- the usual
 // case -- means the mount source comes from the destinations themselves.
+//
+// The settings that are configured per push operation rather than per deploy -- the
+// mode, the pinned home repository and what is written there -- travel in the
+// selector.
 type dedupOptions struct {
 	selector           dedupSelector
 	blobRepository     string
@@ -212,6 +306,15 @@ type repositoryRef struct {
 type manifestDestination struct {
 	dest   destination
 	layers []api.LayerBlob
+	// home is the repository the operation writing this manifest pins its blobs to
+	// (deduplicated_push_blob_repository), or "" to let the deploy choose.
+	home string
+	// artificial records that a blob uploaded to a home repository for this
+	// destination also needs a config blob and a manifest referencing it there.
+	artificial bool
+	// lenient records that this destination asked for best_effort, so a layer it
+	// mounts keeps the ordinary byte-upload fallback.
+	lenient bool
 }
 
 // dedupWorkingSet flattens the deduplicating push and registry_tag operations into
@@ -233,31 +336,62 @@ func dedupWorkingSet(pushOps []api.IndexedPushDeployOperation, tagOps []api.Inde
 	var working []manifestDestination
 	index := make(map[destination]int)
 
-	add := func(registry, repository string, manifests []api.ManifestDeployInfo) {
+	add := func(registry, repository string, manifests []api.ManifestDeployInfo, home string, artificial, lenient bool) {
 		registry = normalizeRegistry(overrideOr(registry, overrideRegistry))
 		repository = overrideOr(repository, overrideRepository)
 		for _, manifest := range manifests {
 			dest := destination{registry: registry, repository: repository, digest: manifest.Descriptor.Digest}
 			if at, found := index[dest]; found {
 				working[at].layers = append(working[at].layers, manifest.LayerBlobs...)
+				// Two operations writing the same manifest to the same place must agree on
+				// one home, one content mode and one strictness (see pickHome).
+				working[at].home = pickHome(working[at].home, home, dest.String())
+				working[at].artificial = working[at].artificial || artificial
+				working[at].lenient = working[at].lenient || lenient
 				continue
 			}
 			index[dest] = len(working)
-			working = append(working, manifestDestination{dest: dest, layers: manifest.LayerBlobs})
+			working = append(working, manifestDestination{
+				dest:       dest,
+				layers:     manifest.LayerBlobs,
+				home:       home,
+				artificial: artificial,
+				lenient:    lenient,
+			})
 		}
 	}
 
 	for _, op := range pushOps {
 		if selector.enabled(op.BaseCommandOperation) {
-			add(op.Registry, op.Repository, op.Manifests)
+			add(op.Registry, op.Repository, op.Manifests, selector.homeRepository(op.BaseCommandOperation), selector.artificialManifests(op.BaseCommandOperation), selector.lenient(op.BaseCommandOperation))
 		}
 	}
 	for _, op := range tagOps {
 		if selector.enabled(op.BaseCommandOperation) {
-			add(op.Registry, op.Repository, op.Manifests)
+			add(op.Registry, op.Repository, op.Manifests, selector.homeRepository(op.BaseCommandOperation), selector.artificialManifests(op.BaseCommandOperation), selector.lenient(op.BaseCommandOperation))
 		}
 	}
 	return working
+}
+
+// pickHome combines two pinned home repositories into the one a blob can have.
+//
+// A home is a property of a (registry, blob) -- the manifest push sees one view of
+// the blobs per registry -- while the pin is configured per push operation, so two
+// operations sharing a blob can name different repositories. There is no answer that
+// honors both, so the lexicographically smallest wins (for the same reason the
+// unpinned home does: two processes looking at the same configuration agree) and the
+// conflict is reported rather than silently resolved.
+func pickHome(a, b, subject string) string {
+	switch {
+	case a == b || b == "":
+		return a
+	case a == "":
+		return b
+	}
+	winner := min(a, b)
+	fmt.Fprintf(os.Stderr, "warning: %s: conflicting deduplicated_push_blob_repository %q and %q; uploading shared blobs to %q\n", subject, a, b, winner)
+	return winner
 }
 
 // overrideOr returns override when it is set, else value: --registry and
@@ -323,11 +457,10 @@ type dedupPlan struct {
 	// repository rather than by registry because two blobs in one registry can have
 	// different home repositories.
 	uploads map[string][]registryv1.Hash
-	// joined lists the blobs whose home another request claimed first and is uploading
-	// to. Their upload is in uploads too -- scheduled here rather than waited on -- but
-	// it is another request's upload we are duplicating, so failing it only costs this
-	// deploy the cross-mount (see uploadDedupBlobs).
-	joined map[blobKey]struct{}
+	// flags holds what the plan decided about a blob beyond where it is mounted from:
+	// whether its upload duplicates another request's, whether it needs an artificial
+	// manifest, and whether a failure of either is fatal.
+	flags map[blobKey]blobFlags
 	// sources are the cross-mount sources for the layers of the still-missing
 	// manifests, keyed by registry and then by digest string.
 	sources map[string]map[string]api.CrossMountSource
@@ -345,8 +478,19 @@ type dedupPlan struct {
 	upstream  int
 	// cached counts the (registry, blob) pairs whose home came out of the process-wide
 	// location cache: a repository an earlier deploy in this process put the blob in,
-	// or one a concurrent deploy is putting it in (those are in joined as well).
+	// or one a concurrent deploy is putting it in (those are flagged joined as well).
 	cached int
+	// pinned counts the (registry, blob) pairs whose home was pinned by
+	// deduplicated_push_blob_repository rather than worked out from the deploy's own
+	// signals.
+	pinned int
+	// artificial counts the blobs whose upload is followed by a config blob and a
+	// manifest referencing it in the home repository.
+	artificial int
+	// lenient counts the (registry, blob) pairs this deploy uploaded to a home
+	// repository but did not make mount-only, because an operation that mounts them
+	// asked for best_effort.
+	lenient int
 	// waitedMu guards waited, which the upload phase counts from its goroutines.
 	waitedMu sync.Mutex
 	// waited counts the uploads another deploy of this process was already performing,
@@ -357,12 +501,40 @@ type dedupPlan struct {
 	skipped int
 }
 
+// blobFlags is what the plan decided about one blob beyond its mount source.
+type blobFlags struct {
+	// joined records that another request claimed this blob's home first and is
+	// uploading to it. The upload is scheduled here rather than waited on -- but it is
+	// another request's upload we are duplicating, so failing it only costs this
+	// deploy the cross-mount (see uploadDedupBlobs).
+	joined bool
+	// artificial records that the upload must be followed by a config blob and a
+	// manifest referencing the blob in the same repository, before it counts as
+	// available to the repositories that mount it.
+	artificial bool
+	// bestEffort records that failing to put the blob in its home is not fatal,
+	// because every operation that mounts it asked for best_effort.
+	bestEffort bool
+}
+
 // countWaited records an upload another deploy of this process performed while this
 // one waited for it.
 func (p *dedupPlan) countWaited() {
 	p.waitedMu.Lock()
 	defer p.waitedMu.Unlock()
 	p.waited++
+}
+
+// joinedCount returns how many of the planned uploads duplicate an upload another
+// request of this process claimed first.
+func (p *dedupPlan) joinedCount() int {
+	count := 0
+	for _, flags := range p.flags {
+		if flags.joined {
+			count++
+		}
+	}
+	return count
 }
 
 // uploadRepositories returns the repositories with blobs to upload, sorted.
@@ -408,10 +580,25 @@ func (p *dedupPlan) report(w io.Writer, opts dedupOptions) {
 	// cannot in a one-shot deploy planning every destination it has in one go.
 	var fromCache string
 	if p.cached > 0 {
-		fromCache = fmt.Sprintf(", %d from a repository another deploy in this process filled (%d uploaded alongside it)", p.cached, len(p.joined))
+		fromCache = fmt.Sprintf(", %d from a repository another deploy in this process filled (%d uploaded alongside it)", p.cached, p.joinedCount())
 	}
-	fmt.Fprintf(w, "    deduplicated push: %d of %d manifests already present; %d blobs %s%s, %d mounted from a repository the registry serves, %d from an upstream repository%s; %d repository/blob pairs cross-mounted; %d layers left to the ordinary push\n",
-		p.present, p.total, uploaded, verb, shared, p.confirmed, p.upstream, fromCache, p.mounted, p.skipped)
+	// The settings that change what the home repository is and what is written there.
+	var pinned string
+	if p.pinned > 0 {
+		pinned = fmt.Sprintf(", %d to a pinned repository", p.pinned)
+	}
+	var artificial string
+	if p.artificial > 0 {
+		artificial = fmt.Sprintf(", %d with an artificial manifest", p.artificial)
+	}
+	// A blob a best_effort operation mounts keeps the ordinary upload fallback, so a
+	// refused mount costs the deduplication rather than the deploy.
+	var lenient string
+	if p.lenient > 0 {
+		lenient = fmt.Sprintf(", %d mountable best-effort", p.lenient)
+	}
+	fmt.Fprintf(w, "    deduplicated push: %d of %d manifests already present; %d blobs %s%s%s%s, %d mounted from a repository the registry serves, %d from an upstream repository%s; %d repository/blob pairs cross-mounted%s; %d layers left to the ordinary push\n",
+		p.present, p.total, uploaded, verb, shared, pinned, artificial, p.confirmed, p.upstream, fromCache, p.mounted, lenient, p.skipped)
 }
 
 // blobKey is one blob in one registry: the granularity every mount decision is
@@ -431,7 +618,7 @@ func planDedupPush(working []manifestDestination, present map[destination]bool, 
 	plan := &dedupPlan{
 		total:     len(working),
 		uploads:   make(map[string][]registryv1.Hash),
-		joined:    make(map[blobKey]struct{}),
+		flags:     make(map[blobKey]blobFlags),
 		sources:   make(map[string]map[string]api.CrossMountSource),
 		mountOnly: make(map[string]map[string]struct{}),
 	}
@@ -448,6 +635,18 @@ func planDedupPush(working []manifestDestination, present map[destination]bool, 
 		// repository and from there for that one".
 		upstream string
 		mixed    bool
+		// home is the repository the needing destinations pin the blob to, or "".
+		home string
+		// artificial records that at least one of them wants an artificial manifest
+		// alongside the blob in its home repository. It is a superset of what the
+		// others asked for: a manifest referencing the blob does not stop anyone else
+		// from mounting it.
+		artificial bool
+		// lenient records that at least one of them asked for best_effort, which drops
+		// the strict mount for this blob: mount-only is a property of the per-registry
+		// view of the blobs, so it cannot be strict for one destination and lenient for
+		// another, and the operation that asked to never fail is the one to honor.
+		lenient bool
 	}
 	needs := make(map[blobKey]*blobNeed)
 	var order []blobKey
@@ -473,12 +672,17 @@ func planDedupPush(working []manifestDestination, present map[destination]bool, 
 			upstream := upstreamRepository(layer.Sources, manifest.dest.registry)
 			need, found := needs[key]
 			if !found {
-				need = &blobNeed{needing: make(map[string]struct{}), upstream: upstream}
+				need = &blobNeed{needing: make(map[string]struct{}), upstream: upstream, home: manifest.home}
 				needs[key] = need
 				order = append(order, key)
-			} else if upstream != need.upstream {
-				need.mixed = true
+			} else {
+				if upstream != need.upstream {
+					need.mixed = true
+				}
+				need.home = pickHome(need.home, manifest.home, key.registry+" blob "+key.digest)
 			}
+			need.artificial = need.artificial || manifest.artificial
+			need.lenient = need.lenient || manifest.lenient
 			need.needing[manifest.dest.repository] = struct{}{}
 		}
 	}
@@ -489,7 +693,7 @@ func planDedupPush(working []manifestDestination, present map[destination]bool, 
 		if need.mixed {
 			upstream = ""
 		}
-		resolution := locations.resolve(key, need.needing, confirmed[key], upstream, blobRepository)
+		resolution := locations.resolve(key, need.needing, confirmed[key], upstream, blobRepository, need.home)
 		if resolution.repository == "" {
 			// Nothing to gain: let the manifest push upload it as it normally would.
 			plan.skipped++
@@ -507,6 +711,8 @@ func planDedupPush(working []manifestDestination, present map[destination]bool, 
 		switch {
 		case resolution.cached:
 			plan.cached++
+		case resolution.pinned:
+			plan.pinned++
 		case resolution.kind == mountFromConfirmed:
 			plan.confirmed++
 		case resolution.kind == mountFromUpstream:
@@ -522,11 +728,18 @@ func planDedupPush(working []manifestDestination, present map[destination]bool, 
 		// requests that come after, and they set their own mount-only. Insisting on it
 		// here would turn "the upload landed but the registry cannot see it yet" into a
 		// failed deploy, where uploading the bytes again is the right recovery.
+		//
+		// And except in best_effort, where being asked for the bytes is answered with
+		// the bytes: the deduplication is worth having, but not worth a failed deploy.
 		if resolution.kind == mountFromUpload && mountedInto > 0 {
-			if plan.mountOnly[key.registry] == nil {
-				plan.mountOnly[key.registry] = make(map[string]struct{})
+			if need.lenient {
+				plan.lenient++
+			} else {
+				if plan.mountOnly[key.registry] == nil {
+					plan.mountOnly[key.registry] = make(map[string]struct{})
+				}
+				plan.mountOnly[key.registry][key.digest] = struct{}{}
 			}
-			plan.mountOnly[key.registry][key.digest] = struct{}{}
 		}
 		if resolution.upload {
 			hash, err := registryv1.NewHash(key.digest)
@@ -535,8 +748,9 @@ func planDedupPush(working []manifestDestination, present map[destination]bool, 
 			}
 			target := key.registry + "/" + resolution.repository
 			plan.uploads[target] = append(plan.uploads[target], hash)
-			if resolution.joined {
-				plan.joined[key] = struct{}{}
+			plan.flags[key] = blobFlags{joined: resolution.joined, artificial: need.artificial, bestEffort: need.lenient}
+			if need.artificial {
+				plan.artificial++
 			}
 		}
 	}
@@ -560,6 +774,12 @@ type blobMount struct {
 	// is left to the ordinary manifest push.
 	repository string
 	kind       mountKind
+	// pinned records that the repository was named by
+	// deduplicated_push_blob_repository rather than worked out. It only feeds the
+	// report -- a pinned home is an uploaded home like any other -- and travels with
+	// the mount so that a home read back from the location cache is reported the same
+	// way it was decided.
+	pinned bool
 }
 
 // mountKind distinguishes the mount sources by how much we trust them, which is
@@ -585,7 +805,14 @@ const (
 // from. So is the answer -- which is what keeps every mount inside one registry,
 // something few registries can do otherwise.
 //
-// The sources are tried in order of what they cost:
+// A pinned home (deduplicated_push_blob_repository) settles it outright: the point of
+// naming a repository is that every shared blob goes there, so it wins over the
+// sources below even where one of them would have cost nothing. The reasons to pay
+// for that are exactly the reasons to name a repository -- one place to find, retain
+// and clean up shared blobs, and one repository a credential has to be able to read
+// for the mounts to work.
+//
+// Otherwise the sources are tried in order of what they cost:
 //
 //  1. A repository whose manifest the registry already holds and which references
 //     this blob. The existence check confirmed that manifest a moment ago, and a
@@ -599,10 +826,11 @@ const (
 //     smallest -- which this deploy uploads the blob to. No extra repository, and
 //     no credentials beyond the ones the deploy already needs.
 //
-// Only (3) and (4) make the layer mount-only, because only there does this deploy
-// put the blob in its mount source. (1) and (2) rest on an inference instead, so
-// they keep the ordinary byte-upload fallback: if the blob turns out to be gone,
-// uploading it is the right recovery rather than failing the deploy.
+// Only a pinned home, (3) and (4) make the layer mount-only, because only there does
+// this deploy put the blob in its mount source. (1) and (2) rest on an inference
+// instead, so they keep the ordinary byte-upload fallback: if the blob turns out to be
+// gone, uploading it is the right recovery rather than failing the deploy. (So does
+// everything under best_effort, which is decided by the caller.)
 //
 // Because the answer names a repository in the caller's registry, the recorded
 // source can name that registry -- which matters more than it looks:
@@ -624,13 +852,15 @@ const (
 // The cost is one HEAD per layer: the upload moves into the deduplicated push's own
 // phase, where go-containerregistry HEADs it, and the manifest push then finds the
 // blob in its destination and skips it.
-func resolveBlobMount(needing map[string]struct{}, confirmed map[string]struct{}, upstream, blobRepository string, claimLone bool) blobMount {
+func resolveBlobMount(needing map[string]struct{}, confirmed map[string]struct{}, upstream, blobRepository, pinnedHome string, claimLone bool) blobMount {
 	if len(needing) == 0 {
 		return blobMount{}
 	}
 
 	var mount blobMount
 	switch home, found := smallestRepository(confirmed); {
+	case pinnedHome != "":
+		mount = blobMount{repository: pinnedHome, kind: mountFromUpload, pinned: true}
 	case found:
 		mount = blobMount{repository: home, kind: mountFromConfirmed}
 	case upstream != "":
@@ -779,21 +1009,29 @@ func manifestAbsent(err error) bool {
 // the first place. go-containerregistry HEADs each blob before uploading it, so
 // re-running a deploy costs one request per blob instead of a re-upload.
 //
+// In blobs_and_artificial_manifests mode the upload is followed by a config blob and
+// a manifest referencing both, in the same repository (see dedup_artificial.go). It
+// is part of the same unit of work: on a registry that only exposes a blob to other
+// repositories once a manifest references it, the blob is not shareable until the
+// manifest is there.
+//
 // Every upload goes through locations.uploadOnce, so a blob is never sent to the same
 // repository twice at once, however many deploys of this process are pushing it:
 // whichever of them gets there first uploads it while the others wait for that
 // attempt. A deploy that waited transfers nothing and reads nothing -- the blob is not
-// even resolved from the VFS, so a lazy push does not fetch it from the CAS.
+// even resolved from the VFS, so a lazy push does not fetch it from the CAS -- and
+// writes no artificial manifest either, because the attempt it waited for wrote one.
 //
 // An upload this deploy claimed is its own work, so failing it fails the deploy. An
-// upload it joined (plan.joined) is a duplicate of one another deploy in this process
-// claimed, and failing that says nothing about this deploy's own access to the
-// registry -- the home repository is one it never meant to write to. Rather than fail,
-// it gives up the cross-mount for that blob: the layer stops being mount-only, so the
-// manifest push mounts it if the claimer's upload made it and uploads the bytes into
-// its own repository if it did not, which is what would have happened without the
-// cache.
-func uploadDedupBlobs(ctx context.Context, vfs *deployvfs.VFS, plan *dedupPlan, jobs int, remoteOptions []remote.Option, locations *blobLocations) (retErr error) {
+// upload it joined (blobFlags.joined) is a duplicate of one another deploy in this
+// process claimed, and failing that says nothing about this deploy's own access to the
+// registry -- the home repository is one it never meant to write to. A blob every
+// operation mounting it asked for best_effort on (blobFlags.bestEffort) is not worth a
+// failed deploy either. Rather than fail, both give up the cross-mount for that blob:
+// the layer stops being mount-only, so the manifest push mounts it if the upload made
+// it after all and uploads the bytes into its own repository if it did not, which is
+// what would have happened without the strategy.
+func uploadDedupBlobs(ctx context.Context, vfs *deployvfs.VFS, plan *dedupPlan, jobs int, remoteOptions []remote.Option, locations *blobLocations, diffIDs *diffIDIndex) (retErr error) {
 	type upload struct {
 		repo   name.Repository
 		digest registryv1.Hash
@@ -804,7 +1042,7 @@ func uploadDedupBlobs(ctx context.Context, vfs *deployvfs.VFS, plan *dedupPlan, 
 		key    blobKey
 		home   string
 		target uploadTarget
-		joined bool
+		flags  blobFlags
 	}
 	var uploads []upload
 	for _, target := range plan.uploadRepositories() {
@@ -815,14 +1053,13 @@ func uploadDedupBlobs(ctx context.Context, vfs *deployvfs.VFS, plan *dedupPlan, 
 		registry, home, _ := strings.Cut(target, "/")
 		for _, digest := range plan.uploads[target] {
 			key := blobKey{registry: registry, digest: digest.String()}
-			_, joined := plan.joined[key]
 			uploads = append(uploads, upload{
 				repo:   repo,
 				digest: digest,
 				key:    key,
 				home:   home,
 				target: uploadTarget{registry: registry, repository: home, digest: digest.String()},
-				joined: joined,
+				flags:  plan.flags[key],
 			})
 		}
 	}
@@ -838,8 +1075,9 @@ func uploadDedupBlobs(ctx context.Context, vfs *deployvfs.VFS, plan *dedupPlan, 
 	}
 	defer func() { finishProgress(retErr) }()
 
-	// The blobs whose joined upload failed, collected here and applied to the plan
-	// once every upload has finished rather than from the goroutines themselves.
+	// The blobs whose upload failed without failing the deploy, collected here and
+	// applied to the plan once every upload has finished rather than from the
+	// goroutines themselves.
 	var abandonedMu sync.Mutex
 	var abandoned []upload
 
@@ -858,6 +1096,11 @@ func uploadDedupBlobs(ctx context.Context, vfs *deployvfs.VFS, plan *dedupPlan, 
 				if err := pusher.Upload(groupCtx, up.repo, layer); err != nil {
 					return fmt.Errorf("uploading blob %s to %s: %w", up.digest, up.repo, err)
 				}
+				if up.flags.artificial {
+					if err := publishArtificialManifest(groupCtx, pusher, up.repo, layer, diffIDs.diffIDFor(up.digest.String())); err != nil {
+						return fmt.Errorf("referencing blob %s from a manifest in %s: %w", up.digest, up.repo, err)
+					}
+				}
 				return nil
 			})
 			switch {
@@ -868,15 +1111,23 @@ func uploadDedupBlobs(ctx context.Context, vfs *deployvfs.VFS, plan *dedupPlan, 
 				}
 				locations.promote(up.key, up.home)
 				return nil
-			case !up.joined:
-				// This deploy's own claim: the home is not where the blob is after all, so
-				// give it up before failing, or the next deploy would mount from it.
+			case !up.flags.joined && !up.flags.bestEffort:
+				// This deploy's own claim, and a mount it insists on: the home is not where
+				// the blob is after all, so give it up before failing, or the next deploy
+				// would mount from it.
 				locations.abandon(up.key, up.home)
 				return err
 			case groupCtx.Err() != nil:
 				// Cancelled because another upload failed; that error is the one to report.
 				return nil
 			default:
+				if !up.flags.joined {
+					// Our own claim, given up rather than failed: the blob may not be in the
+					// home repository, so withdraw the claim before the next request mounts
+					// from it. A joined upload's claim belongs to the request that made it,
+					// whose own attempt may well be succeeding right now.
+					locations.abandon(up.key, up.home)
+				}
 				abandonedMu.Lock()
 				abandoned = append(abandoned, up)
 				abandonedMu.Unlock()
@@ -934,6 +1185,9 @@ func prepareDedupPush(ctx context.Context, vfs *deployvfs.VFS, pushOps []api.Ind
 		// errgroup.SetLimit(0) would let no goroutine run at all.
 		opts.jobs = 1
 	}
+	if err := validateDeduplicatedPushOperations(pushOps, tagOps, opts.selector); err != nil {
+		return nil, err
+	}
 
 	working := dedupWorkingSet(pushOps, tagOps, opts.selector, opts.overrideRegistry, opts.overrideRepository)
 	dests := make([]destination, len(working))
@@ -962,9 +1216,22 @@ func prepareDedupPush(ctx context.Context, vfs *deployvfs.VFS, pushOps []api.Ind
 	}
 
 	if !opts.forbidUpload {
-		if err := uploadDedupBlobs(ctx, vfs, plan, opts.jobs, remoteOptions, locations); err != nil {
+		// The diff ids of the blobs that get an artificial manifest, read from the
+		// configs of the images that reference them (see dedup_artificial.go). Built
+		// before the uploads so a config blob is parsed once however many blobs it
+		// covers, and only when there is an artificial manifest to write.
+		var diffIDs *diffIDIndex
+		if plan.artificial > 0 {
+			diffIDs = newDiffIDIndex(vfs, working, plan)
+		}
+		if err := uploadDedupBlobs(ctx, vfs, plan, opts.jobs, remoteOptions, locations, diffIDs); err != nil {
 			return nil, fmt.Errorf("uploading shared blobs: %w", err)
 		}
+	} else if artificialManifestsRequested(working) {
+		// Nothing is uploaded, so nothing writes the manifests that would make the
+		// blobs shareable. Whatever put the blobs in place (push at build time) is
+		// responsible for that too.
+		fmt.Fprintln(os.Stderr, "warning: deduplicated_push_content=blobs_and_artificial_manifests has no effect while layer uploads are forbidden (forbid_layer_push): this deploy uploads no blobs and writes no manifests to a home repository")
 	}
 
 	plan.report(os.Stderr, opts)
@@ -978,4 +1245,15 @@ func prepareDedupPush(ctx context.Context, vfs *deployvfs.VFS, pushOps []api.Ind
 		views.byRegistry[registry] = vfs.WithCrossMountPlan(crossMountPlan)
 	}
 	return views, nil
+}
+
+// artificialManifestsRequested reports whether any destination asked for artificial
+// manifests in its home repository.
+func artificialManifestsRequested(working []manifestDestination) bool {
+	for _, manifest := range working {
+		if manifest.artificial {
+			return true
+		}
+	}
+	return false
 }

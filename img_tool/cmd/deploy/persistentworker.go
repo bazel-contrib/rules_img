@@ -36,10 +36,10 @@ type deployWorkerHandler struct {
 	// configured.
 	casBlobs *casSources
 
-	// deduplicatedPush is the process-wide --deduplicated-push override ("",
-	// "enabled" or "disabled"). Empty lets each work request's deploy manifest
-	// decide, and a work request may override it in turn.
-	deduplicatedPush string
+	// deduplicatedPush holds the process-wide overrides of the deduplicated push
+	// settings. An empty field lets each work request's deploy manifest decide, and a
+	// work request may override it in turn.
+	deduplicatedPush dedupFlags
 
 	// blobLocations remembers where the deduplicated push has put each shared blob,
 	// for the lifetime of the worker: a work request only knows its own destinations,
@@ -54,8 +54,11 @@ type deployWorkerHandler struct {
 	sinkMu     sync.Mutex
 }
 
-func newDeployWorkerHandler(jobs int, sinkSpec, deduplicatedPush string) (*deployWorkerHandler, error) {
-	if err := validateDeduplicatedPushOverride(deduplicatedPush); err != nil {
+func newDeployWorkerHandler(jobs int, sinkSpec string, deduplicatedPush dedupFlags) (*deployWorkerHandler, error) {
+	if err := validateDeduplicatedPushOverride(deduplicatedPush.mode); err != nil {
+		return nil, err
+	}
+	if err := validateDeduplicatedPushContent(deduplicatedPush.content, "--deduplicated-push-content"); err != nil {
 		return nil, err
 	}
 
@@ -159,14 +162,11 @@ func (h *deployWorkerHandler) processRequest(ctx context.Context, req persistent
 		return "", fmt.Errorf("unmarshalling deploy manifest: %w", err)
 	}
 
-	// Resolve the push strategy. The work request's --deduplicated-push wins over
-	// the one img deploy was started with (more specific beats less specific, as
-	// for --registry/--repository), and both override each operation's own setting.
-	deduplicatedPushOverride := opts.deduplicatedPush
-	if deduplicatedPushOverride == "" {
-		deduplicatedPushOverride = h.deduplicatedPush
-	}
-	dedupSelect, err := newDedupSelector(deduplicatedPushOverride, opts.sink != "" || h.globalSink != nil)
+	// Resolve the push strategy. The work request's --deduplicated-push* values win
+	// over the ones img deploy was started with (more specific beats less specific, as
+	// for --registry/--repository), and both override each operation's own settings.
+	dedup := opts.deduplicatedPush.or(h.deduplicatedPush)
+	dedupSelect, err := newDedupSelector(dedup.mode, dedup.blobRepository, dedup.content, opts.sink != "" || h.globalSink != nil)
 	if err != nil {
 		return "", err
 	}
@@ -482,7 +482,9 @@ type workerOpts struct {
 	overrideRepository string
 	platforms          []string
 	sink               string
-	deduplicatedPush   string // "", "enabled" or "disabled"
+	// deduplicatedPush holds this work request's overrides of the deduplicated push
+	// settings recorded per operation in its deploy manifest.
+	deduplicatedPush dedupFlags
 }
 
 func parseWorkerArgs(args []string) (*workerOpts, error) {
@@ -586,7 +588,28 @@ func parseWorkerArgs(args []string) (*workerOpts, error) {
 			if err := validateDeduplicatedPushOverride(value); err != nil {
 				return nil, err
 			}
-			opts.deduplicatedPush = value
+			opts.deduplicatedPush.mode = value
+		case key == "--deduplicated-push-blob-repository":
+			if !hasValue {
+				if i+1 >= len(args) {
+					return nil, fmt.Errorf("--deduplicated-push-blob-repository requires a value")
+				}
+				i++
+				value = args[i]
+			}
+			opts.deduplicatedPush.blobRepository = value
+		case key == "--deduplicated-push-content":
+			if !hasValue {
+				if i+1 >= len(args) {
+					return nil, fmt.Errorf("--deduplicated-push-content requires a value")
+				}
+				i++
+				value = args[i]
+			}
+			if err := validateDeduplicatedPushContent(value, "--deduplicated-push-content"); err != nil {
+				return nil, err
+			}
+			opts.deduplicatedPush.content = value
 		case key == "--insecure":
 			// The worker builds its transports and pusher once, at startup, so
 			// insecure mode cannot be turned on per work request. Reject it
@@ -604,7 +627,7 @@ func parseWorkerArgs(args []string) (*workerOpts, error) {
 	return opts, nil
 }
 
-func persistentWorker(jobs int, sinkSpec, deduplicatedPush string) error {
+func persistentWorker(jobs int, sinkSpec string, deduplicatedPush dedupFlags) error {
 	handler, err := newDeployWorkerHandler(jobs, sinkSpec, deduplicatedPush)
 	if err != nil {
 		return err

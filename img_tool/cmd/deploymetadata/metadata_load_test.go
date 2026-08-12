@@ -39,6 +39,11 @@ func resetMetadataFlags(manifestPath, configPath string) {
 	referrerRootPaths = newIndexedStringFlag()
 	layerCompactStreams = newDoubleIndexedStringFlag()
 	layerSourcesForManifest = nil
+	blobRepository = ""
+	forbidLayerPush = false
+	deduplicatedPush = ""
+	deduplicatedPushBlobRepository = ""
+	deduplicatedPushContent = ""
 }
 
 func writeLoadMetadata(t *testing.T, configJSON string) api.LoadDeployOperation {
