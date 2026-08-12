@@ -2,8 +2,8 @@
 // the img tool enforces for every registry operation: multi-keychain
 // authentication, a patient retry backoff, a transport routed through the
 // oci-distribution-gateway (when one is configured) that honors a registry's
-// Retry-After header and accounts for how many requests are in flight, and a
-// default concurrency.
+// Retry-After header, accounts for how many requests are in flight and sends a
+// blob mount without go-cr's origin parameter, and a default concurrency.
 //
 // Callers assemble options through a small builder so the enforced defaults live
 // in one place while still allowing per-call additions and overrides:
@@ -165,7 +165,7 @@ func Default() *Options {
 		remote.WithJobs(DefaultJobs),
 	}
 	if Insecure() {
-		opts = append(opts, remote.WithTransport(BaseTransport()))
+		opts = append(opts, remote.WithTransport(WrapMountOrigin(BaseTransport())))
 	}
 	return &Options{opts: opts}
 }
@@ -217,8 +217,15 @@ func (o *Options) WithJobs(jobs int) *Options {
 // WithTransport overrides the default transport, e.g. for a caller that wraps
 // its own caching or redirect transport. Wrap the replacement with
 // [WrapRetryAfter] if it should also honor Retry-After.
+//
+// Whatever transport a caller brings is wrapped with [WrapMountOrigin], so a blob
+// mount never carries go-cr's origin parameter. This is the one place every
+// registry transport of the img tool enters go-cr, and it is above any gateway
+// routing the caller's transport does -- which is where that wrapper belongs for
+// as long as it has to exist at all (it works around a go-cr bug; see
+// [WrapMountOrigin]).
 func (o *Options) WithTransport(rt http.RoundTripper) *Options {
-	return o.With(remote.WithTransport(rt))
+	return o.With(remote.WithTransport(WrapMountOrigin(rt)))
 }
 
 // Remote returns the assembled options to pass to go-cr (remote.Get, NewPusher,

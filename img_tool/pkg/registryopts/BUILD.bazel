@@ -4,6 +4,7 @@ go_library(
     name = "registryopts",
     srcs = [
         "concurrency.go",
+        "mountorigin.go",
         "registryopts.go",
     ],
     importpath = "github.com/bazel-contrib/rules_img/img_tool/pkg/registryopts",
@@ -22,6 +23,7 @@ go_test(
     size = "small",
     srcs = [
         "concurrency_test.go",
+        "mountorigin_test.go",
         "registryopts_test.go",
     ],
     embed = [":registryopts"],
