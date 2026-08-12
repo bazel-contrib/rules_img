@@ -328,7 +328,16 @@ func TestPublish(t *testing.T) {
 func TestPublishIsAppendOnly(t *testing.T) {
 	cfg := testConfig(t)
 	root := t.TempDir()
-	versions := []string{"0.3.20-20260810-aaaaaaa", "0.3.20-20260811-bbbbbbb", "0.4.0-20260812-ccccccc"}
+	// Same-day builds whose commit hashes sort the opposite of publish order:
+	// lexicographic would put 195a893 first, but it must stay last in metadata
+	// and first on the landing page.
+	versions := []string{
+		"0.3.20-20260811-39082ed",
+		"0.3.20-20260811-7e77751",
+		"0.3.20-20260811-dfea139",
+		"0.3.20-20260811-b32a3b3",
+		"0.3.20-20260811-195a893",
+	}
 	for _, version := range versions {
 		if err := publishInto(t, cfg, root, version, defaultArchiveFiles()); err != nil {
 			t.Fatalf("publishing %s: %v", version, err)
@@ -357,7 +366,7 @@ func TestPublishIsAppendOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got, want := strings.Join(metadata.Versions, ","), strings.Join(versions, ","); got != want {
-		t.Errorf("metadata.json versions = %q, want %q (oldest first, all of them)", got, want)
+		t.Errorf("metadata.json versions = %q, want %q (publish order, oldest first)", got, want)
 	}
 
 	// Republishing a version neither duplicates it nor drops the others.
@@ -372,17 +381,28 @@ func TestPublishIsAppendOnly(t *testing.T) {
 	if err := json.Unmarshal(content, &metadata); err != nil {
 		t.Fatal(err)
 	}
-	if len(metadata.Versions) != len(versions) {
-		t.Errorf("republishing changed the version list to %v", metadata.Versions)
+	if got, want := strings.Join(metadata.Versions, ","), strings.Join(versions, ","); got != want {
+		t.Errorf("republishing changed the version list to %q, want %q", got, want)
 	}
 
-	// The newest version leads the landing page.
+	// The most recently published version leads the landing page as latest.
 	index, err := os.ReadFile(filepath.Join(root, "index.html"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(index), `version = "0.4.0-20260812-ccccccc"`) {
-		t.Error("index.html does not offer the newest version in its usage snippet")
+	latest := versions[len(versions)-1]
+	if !strings.Contains(string(index), `version = "`+latest+`"`) {
+		t.Errorf("index.html does not offer %q in its usage snippet", latest)
+	}
+	if !strings.Contains(string(index), latest+`<span class="latest">latest</span>`) {
+		t.Errorf("index.html does not mark %q as latest at the top of the list", latest)
+	}
+	// Earlier same-day builds follow in reverse publish order, not hash order.
+	pos195 := strings.Index(string(index), "0.3.20-20260811-195a893")
+	posB32 := strings.Index(string(index), "0.3.20-20260811-b32a3b3")
+	posDfe := strings.Index(string(index), "0.3.20-20260811-dfea139")
+	if pos195 < 0 || posB32 < 0 || posDfe < 0 || !(pos195 < posB32 && posB32 < posDfe) {
+		t.Errorf("index.html version order is wrong: 195a893@%d b32a3b3@%d dfea139@%d", pos195, posB32, posDfe)
 	}
 }
 

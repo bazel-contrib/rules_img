@@ -121,23 +121,3 @@ func TestValidatePrereleaseVersion(t *testing.T) {
 	}
 }
 
-func TestSortVersions(t *testing.T) {
-	versions := []string{
-		"0.3.20-20260811-bbbbbbb",
-		"0.4.0-20260812-ccccccc",
-		"0.3.9-20260101-aaaaaaa",
-		"0.3.20-20260810-aaaaaaa",
-		"0.3.20",
-	}
-	sortVersions(versions)
-	want := []string{
-		"0.3.9-20260101-aaaaaaa",
-		"0.3.20-20260810-aaaaaaa",
-		"0.3.20-20260811-bbbbbbb",
-		"0.3.20",
-		"0.4.0-20260812-ccccccc",
-	}
-	if strings.Join(versions, ",") != strings.Join(want, ",") {
-		t.Errorf("sortVersions gave %v, want %v", versions, want)
-	}
-}
