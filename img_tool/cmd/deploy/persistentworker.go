@@ -41,6 +41,12 @@ type deployWorkerHandler struct {
 	// decide, and a work request may override it in turn.
 	deduplicatedPush string
 
+	// blobLocations remembers where the deduplicated push has put each shared blob,
+	// for the lifetime of the worker: a work request only knows its own destinations,
+	// so without it two requests sharing a layer would each upload it into a
+	// repository of their own (see dedup_locations.go).
+	blobLocations *blobLocations
+
 	// globalSink, when set, redirects every request's operations into a shared
 	// local sink (distribution/oci) instead of a registry. It is not
 	// concurrency-safe, so access is serialized by sinkMu.
@@ -86,6 +92,9 @@ func newDeployWorkerHandler(jobs int, sinkSpec, deduplicatedPush string) (*deplo
 		pushTransport:    pushTransport,
 		casBlobs:         casBlobs,
 		deduplicatedPush: deduplicatedPush,
+		// Requests arrive one at a time, so a blob's home is settled the first time a
+		// request needs it and published for the rest.
+		blobLocations: newBlobLocations(true),
 	}
 
 	if sinkSpec != "" {
@@ -203,6 +212,10 @@ func (h *deployWorkerHandler) processRequest(ctx context.Context, req persistent
 	// dedupVFS is how the operations that opted into the deduplicated push see the
 	// blobs: one view per destination registry, planned across all of them together.
 	// Operations that did not opt in keep the plain VFS (see DeployWithExtras).
+	//
+	// The plan spans this request's destinations only -- another request's are not
+	// known yet -- so it is the shared location cache that keeps two requests from
+	// uploading the same blob into two repositories.
 	var dedupVFS *dedupViews
 	if dedupSelect.any(pushOps, registryTagOps) {
 		if err := validateDeduplicatedPush(dm.Settings); err != nil {
@@ -216,6 +229,7 @@ func (h *deployWorkerHandler) processRequest(ctx context.Context, req persistent
 			jobs:               h.jobs,
 			forbidUpload:       dm.Settings.ForbidLayerPush,
 			pushTransport:      h.pushTransport,
+			locations:          h.blobLocations,
 		})
 		if err != nil {
 			return "", fmt.Errorf("preparing deduplicated push: %w", err)

@@ -9,6 +9,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"sync"
 
 	"golang.org/x/sync/errgroup"
 
@@ -52,6 +53,12 @@ import (
 // Phase 5 is the ordinary manifest push, unchanged. A blob headed for a single
 // repository is left out of all of this, so a single-image deploy behaves exactly
 // as it would with the strategy off.
+//
+// One deploy is the whole picture for the phases above, but not for the process: the
+// persistent worker plans each work request on its own, so the home a blob is
+// uploaded to is settled in a cache the whole process shares (dedup_locations.go).
+// That is what keeps two requests sharing a layer from uploading it into a repository
+// each -- and what makes the single-repository case above worth planning there.
 
 // Values of the --deduplicated-push override. Empty inherits the deploy
 // manifest's deduplicated_push setting.
@@ -159,6 +166,10 @@ type dedupOptions struct {
 	// they were pushed at build time).
 	forbidUpload  bool
 	pushTransport http.RoundTripper
+	// locations is the process-wide blob location cache, shared by every deploy this
+	// process plans (see dedup_locations.go). Nil plans this deploy on its own, which
+	// is what the deploys that upload nothing do.
+	locations *blobLocations
 }
 
 // destination is one manifest this deploy intends the registry to hold. Several
@@ -312,6 +323,11 @@ type dedupPlan struct {
 	// repository rather than by registry because two blobs in one registry can have
 	// different home repositories.
 	uploads map[string][]registryv1.Hash
+	// joined lists the blobs whose home another request claimed first and is uploading
+	// to. Their upload is in uploads too -- scheduled here rather than waited on -- but
+	// it is another request's upload we are duplicating, so failing it only costs this
+	// deploy the cross-mount (see uploadDedupBlobs).
+	joined map[blobKey]struct{}
 	// sources are the cross-mount sources for the layers of the still-missing
 	// manifests, keyed by registry and then by digest string.
 	sources map[string]map[string]api.CrossMountSource
@@ -327,9 +343,26 @@ type dedupPlan struct {
 	// repository the build recorded the layer as coming from. Neither needs an upload.
 	confirmed int
 	upstream  int
+	// cached counts the (registry, blob) pairs whose home came out of the process-wide
+	// location cache: a repository an earlier deploy in this process put the blob in,
+	// or one a concurrent deploy is putting it in (those are in joined as well).
+	cached int
+	// waitedMu guards waited, which the upload phase counts from its goroutines.
+	waitedMu sync.Mutex
+	// waited counts the uploads another deploy of this process was already performing,
+	// so this one waited for it and sent nothing (see blobLocations.uploadOnce).
+	waited int
 	// skipped counts the (registry, blob) pairs left to the ordinary push because
 	// they have nowhere to be mounted from (see resolveBlobMount).
 	skipped int
+}
+
+// countWaited records an upload another deploy of this process performed while this
+// one waited for it.
+func (p *dedupPlan) countWaited() {
+	p.waitedMu.Lock()
+	defer p.waitedMu.Unlock()
+	p.waited++
 }
 
 // uploadRepositories returns the repositories with blobs to upload, sorted.
@@ -365,8 +398,20 @@ func (p *dedupPlan) report(w io.Writer, opts dedupOptions) {
 		// Nothing was uploaded; the blobs were expected to be in place already.
 		verb = "expected in place"
 	}
-	fmt.Fprintf(w, "    deduplicated push: %d of %d manifests already present; %d blobs %s, %d mounted from a repository the registry serves, %d from an upstream repository; %d repository/blob pairs cross-mounted; %d layers left to the ordinary push\n",
-		p.present, p.total, uploaded, verb, p.confirmed, p.upstream, p.mounted, p.skipped)
+	// The uploads a concurrent deploy of this process was already performing, which
+	// this one waited for instead of repeating.
+	var shared string
+	if p.waited > 0 {
+		shared = fmt.Sprintf(" (%d of them by a concurrent deploy in this process)", p.waited)
+	}
+	// Only mentioned when the process-wide cache contributed something, which it
+	// cannot in a one-shot deploy planning every destination it has in one go.
+	var fromCache string
+	if p.cached > 0 {
+		fromCache = fmt.Sprintf(", %d from a repository another deploy in this process filled (%d uploaded alongside it)", p.cached, len(p.joined))
+	}
+	fmt.Fprintf(w, "    deduplicated push: %d of %d manifests already present; %d blobs %s%s, %d mounted from a repository the registry serves, %d from an upstream repository%s; %d repository/blob pairs cross-mounted; %d layers left to the ordinary push\n",
+		p.present, p.total, uploaded, verb, shared, p.confirmed, p.upstream, fromCache, p.mounted, p.skipped)
 }
 
 // blobKey is one blob in one registry: the granularity every mount decision is
@@ -378,10 +423,15 @@ type blobKey struct {
 
 // planDedupPush decides where each layer is mounted from and which blobs have to
 // be uploaded first. It performs no I/O: the registry's answers arrive as present.
-func planDedupPush(working []manifestDestination, present map[destination]bool, blobRepository string) (*dedupPlan, error) {
+//
+// locations is the process-wide location cache, which is what lets deploys planned
+// separately agree on one home per (registry, blob); it may be nil, and then this
+// deploy is planned entirely on its own signals.
+func planDedupPush(working []manifestDestination, present map[destination]bool, blobRepository string, locations *blobLocations) (*dedupPlan, error) {
 	plan := &dedupPlan{
 		total:     len(working),
 		uploads:   make(map[string][]registryv1.Hash),
+		joined:    make(map[blobKey]struct{}),
 		sources:   make(map[string]map[string]api.CrossMountSource),
 		mountOnly: make(map[string]map[string]struct{}),
 	}
@@ -439,8 +489,8 @@ func planDedupPush(working []manifestDestination, present map[destination]bool, 
 		if need.mixed {
 			upstream = ""
 		}
-		mount := resolveBlobMount(need.needing, confirmed[key], upstream, blobRepository)
-		if mount.repository == "" {
+		resolution := locations.resolve(key, need.needing, confirmed[key], upstream, blobRepository)
+		if resolution.repository == "" {
 			// Nothing to gain: let the manifest push upload it as it normally would.
 			plan.skipped++
 			continue
@@ -451,26 +501,49 @@ func planDedupPush(working []manifestDestination, present map[destination]bool, 
 		if plan.sources[key.registry] == nil {
 			plan.sources[key.registry] = make(map[string]api.CrossMountSource)
 		}
-		plan.sources[key.registry][key.digest] = api.CrossMountSource{Registry: key.registry, Repository: mount.repository}
-		plan.mounted += countMountedInto(need.needing, mount.repository)
-		switch mount.kind {
-		case mountFromConfirmed:
+		plan.sources[key.registry][key.digest] = api.CrossMountSource{Registry: key.registry, Repository: resolution.repository}
+		mountedInto := countMountedInto(need.needing, resolution.repository)
+		plan.mounted += mountedInto
+		switch {
+		case resolution.cached:
+			plan.cached++
+		case resolution.kind == mountFromConfirmed:
 			plan.confirmed++
-		case mountFromUpstream:
+		case resolution.kind == mountFromUpstream:
 			plan.upstream++
-		case mountFromUpload:
-			hash, err := registryv1.NewHash(key.digest)
-			if err != nil {
-				return nil, fmt.Errorf("parsing layer digest %s: %w", key.digest, err)
-			}
+		}
+		// A home this process puts the blob in is one we know the mount can come from,
+		// which is what makes the layer mount-only -- whether the upload is this
+		// request's own claim, one it joined, or one an earlier request already
+		// finished.
+		//
+		// Except when this request mounts the blob nowhere: a home claimed for the one
+		// repository that needs it (see resolveBlobMount's claimLone) is claimed for the
+		// requests that come after, and they set their own mount-only. Insisting on it
+		// here would turn "the upload landed but the registry cannot see it yet" into a
+		// failed deploy, where uploading the bytes again is the right recovery.
+		if resolution.kind == mountFromUpload && mountedInto > 0 {
 			if plan.mountOnly[key.registry] == nil {
 				plan.mountOnly[key.registry] = make(map[string]struct{})
 			}
 			plan.mountOnly[key.registry][key.digest] = struct{}{}
-			target := key.registry + "/" + mount.repository
+		}
+		if resolution.upload {
+			hash, err := registryv1.NewHash(key.digest)
+			if err != nil {
+				return nil, fmt.Errorf("parsing layer digest %s: %w", key.digest, err)
+			}
+			target := key.registry + "/" + resolution.repository
 			plan.uploads[target] = append(plan.uploads[target], hash)
+			if resolution.joined {
+				plan.joined[key] = struct{}{}
+			}
 		}
 	}
+	// Whatever this deploy did not need, the next one in this process might: the
+	// layers of the manifests the registry already serves are mountable out of those
+	// repositories for free.
+	locations.seedConfirmed(confirmed)
 
 	for _, digests := range plan.uploads {
 		slices.SortFunc(digests, func(a, b registryv1.Hash) int {
@@ -543,7 +616,15 @@ const (
 // is the mount source itself. There is nothing to mount it into, so going through
 // this at all would only move the upload out of the manifest push and cost an extra
 // HEAD. This is what makes the strategy a no-op for a single-image deploy.
-func resolveBlobMount(needing map[string]struct{}, confirmed map[string]struct{}, upstream, blobRepository string) blobMount {
+//
+// claimLone overrides that last rule for a deploy whose destinations arrive
+// incrementally (the persistent worker). There the blob's home is worth settling
+// even with nothing to mount it into yet, because publishing it lets the *next* work
+// request mount from it instead of uploading the blob into a repository of its own.
+// The cost is one HEAD per layer: the upload moves into the deduplicated push's own
+// phase, where go-containerregistry HEADs it, and the manifest push then finds the
+// blob in its destination and skips it.
+func resolveBlobMount(needing map[string]struct{}, confirmed map[string]struct{}, upstream, blobRepository string, claimLone bool) blobMount {
 	if len(needing) == 0 {
 		return blobMount{}
 	}
@@ -564,7 +645,7 @@ func resolveBlobMount(needing map[string]struct{}, confirmed map[string]struct{}
 		mount = blobMount{repository: home, kind: mountFromUpload}
 	}
 
-	if countMountedInto(needing, mount.repository) == 0 {
+	if !claimLone && countMountedInto(needing, mount.repository) == 0 {
 		return blobMount{}
 	}
 	return mount
@@ -573,6 +654,12 @@ func resolveBlobMount(needing map[string]struct{}, confirmed map[string]struct{}
 // smallestRepository returns the lexicographically smallest repository of a set, so
 // that a blob several repositories need always gets the same home whatever order
 // the operations arrive in.
+//
+// Which is worth keeping even though the location cache already makes the deploys of
+// one process agree on a home: two *processes* looking at the same registry agree
+// too, so re-running a deploy -- or running the second half of one on another
+// machine -- finds the blob in the home repository it would have picked and uploads
+// nothing.
 func smallestRepository(repositories map[string]struct{}) (string, bool) {
 	if len(repositories) == 0 {
 		return "", false
@@ -684,25 +771,59 @@ func manifestAbsent(err error) bool {
 }
 
 // uploadDedupBlobs uploads each blob the plan calls for to its home repository,
-// with --jobs uploads in flight.
+// with --jobs uploads in flight, and publishes each home in locations as its upload
+// succeeds so the deploys that follow in this process mount from it instead.
 //
 // The blobs are read through VFS.RawLayer: the mount-only wrapping applies to the
 // manifest push, not to the upload that puts the bytes in the home repository in
 // the first place. go-containerregistry HEADs each blob before uploading it, so
 // re-running a deploy costs one request per blob instead of a re-upload.
-func uploadDedupBlobs(ctx context.Context, vfs *deployvfs.VFS, plan *dedupPlan, jobs int, remoteOptions []remote.Option) (retErr error) {
+//
+// Every upload goes through locations.uploadOnce, so a blob is never sent to the same
+// repository twice at once, however many deploys of this process are pushing it:
+// whichever of them gets there first uploads it while the others wait for that
+// attempt. A deploy that waited transfers nothing and reads nothing -- the blob is not
+// even resolved from the VFS, so a lazy push does not fetch it from the CAS.
+//
+// An upload this deploy claimed is its own work, so failing it fails the deploy. An
+// upload it joined (plan.joined) is a duplicate of one another deploy in this process
+// claimed, and failing that says nothing about this deploy's own access to the
+// registry -- the home repository is one it never meant to write to. Rather than fail,
+// it gives up the cross-mount for that blob: the layer stops being mount-only, so the
+// manifest push mounts it if the claimer's upload made it and uploads the bytes into
+// its own repository if it did not, which is what would have happened without the
+// cache.
+func uploadDedupBlobs(ctx context.Context, vfs *deployvfs.VFS, plan *dedupPlan, jobs int, remoteOptions []remote.Option, locations *blobLocations) (retErr error) {
 	type upload struct {
 		repo   name.Repository
 		digest registryv1.Hash
+		// key, home and target are the plan's own spelling of the destination, so that
+		// what is published in locations is exactly what was claimed there. The parsed
+		// repository above is not: it fills in the parts a registry client may leave out,
+		// and "docker.io/nginx" comes back as the repository "library/nginx".
+		key    blobKey
+		home   string
+		target uploadTarget
+		joined bool
 	}
 	var uploads []upload
-	for _, repository := range plan.uploadRepositories() {
-		repo, err := name.NewRepository(repository, registryopts.NameOptions()...)
+	for _, target := range plan.uploadRepositories() {
+		repo, err := name.NewRepository(target, registryopts.NameOptions()...)
 		if err != nil {
-			return fmt.Errorf("parsing home repository %s: %w", repository, err)
+			return fmt.Errorf("parsing home repository %s: %w", target, err)
 		}
-		for _, digest := range plan.uploads[repository] {
-			uploads = append(uploads, upload{repo: repo, digest: digest})
+		registry, home, _ := strings.Cut(target, "/")
+		for _, digest := range plan.uploads[target] {
+			key := blobKey{registry: registry, digest: digest.String()}
+			_, joined := plan.joined[key]
+			uploads = append(uploads, upload{
+				repo:   repo,
+				digest: digest,
+				key:    key,
+				home:   home,
+				target: uploadTarget{registry: registry, repository: home, digest: digest.String()},
+				joined: joined,
+			})
 		}
 	}
 	if len(uploads) == 0 {
@@ -717,22 +838,60 @@ func uploadDedupBlobs(ctx context.Context, vfs *deployvfs.VFS, plan *dedupPlan, 
 	}
 	defer func() { finishProgress(retErr) }()
 
+	// The blobs whose joined upload failed, collected here and applied to the plan
+	// once every upload has finished rather than from the goroutines themselves.
+	var abandonedMu sync.Mutex
+	var abandoned []upload
+
 	g, groupCtx := errgroup.WithContext(ctx)
 	g.SetLimit(jobs)
 	for _, up := range uploads {
 		up := up
 		g.Go(func() error {
-			layer, err := vfs.RawLayer(up.digest)
-			if err != nil {
-				return fmt.Errorf("resolving blob %s: %w", up.digest, err)
+			mine := false
+			err := locations.uploadOnce(groupCtx, up.target, func() error {
+				mine = true
+				layer, err := vfs.RawLayer(up.digest)
+				if err != nil {
+					return fmt.Errorf("resolving blob %s: %w", up.digest, err)
+				}
+				if err := pusher.Upload(groupCtx, up.repo, layer); err != nil {
+					return fmt.Errorf("uploading blob %s to %s: %w", up.digest, up.repo, err)
+				}
+				return nil
+			})
+			switch {
+			case err == nil:
+				if !mine {
+					// Another deploy in this process uploaded it while we waited.
+					plan.countWaited()
+				}
+				locations.promote(up.key, up.home)
+				return nil
+			case !up.joined:
+				// This deploy's own claim: the home is not where the blob is after all, so
+				// give it up before failing, or the next deploy would mount from it.
+				locations.abandon(up.key, up.home)
+				return err
+			case groupCtx.Err() != nil:
+				// Cancelled because another upload failed; that error is the one to report.
+				return nil
+			default:
+				abandonedMu.Lock()
+				abandoned = append(abandoned, up)
+				abandonedMu.Unlock()
+				fmt.Fprintf(os.Stderr, "warning: leaving blob %s to the ordinary push: %v\n", up.digest, err)
+				return nil
 			}
-			if err := pusher.Upload(groupCtx, up.repo, layer); err != nil {
-				return fmt.Errorf("uploading blob %s to %s: %w", up.digest, up.repo, err)
-			}
-			return nil
 		})
 	}
-	return g.Wait()
+	if err := g.Wait(); err != nil {
+		return err
+	}
+	for _, up := range abandoned {
+		delete(plan.mountOnly[up.key.registry], up.key.digest)
+	}
+	return nil
 }
 
 // dedupViews serves the blobs of a deduplicated push. Each registry gets its own
@@ -788,13 +947,22 @@ func prepareDedupPush(ctx context.Context, vfs *deployvfs.VFS, pushOps []api.Ind
 		return nil, err
 	}
 
-	plan, err := planDedupPush(working, present, opts.blobRepository)
+	// A deploy that uploads nothing learns nothing about where a blob is, and what it
+	// would publish is an assumption about the registry it never checked: the blobs
+	// are expected to be in place already. So it plans on its own signals and leaves
+	// the process-wide cache untouched.
+	locations := opts.locations
+	if opts.forbidUpload {
+		locations = nil
+	}
+
+	plan, err := planDedupPush(working, present, opts.blobRepository, locations)
 	if err != nil {
 		return nil, err
 	}
 
 	if !opts.forbidUpload {
-		if err := uploadDedupBlobs(ctx, vfs, plan, opts.jobs, remoteOptions); err != nil {
+		if err := uploadDedupBlobs(ctx, vfs, plan, opts.jobs, remoteOptions, locations); err != nil {
 			return nil, fmt.Errorf("uploading shared blobs: %w", err)
 		}
 	}

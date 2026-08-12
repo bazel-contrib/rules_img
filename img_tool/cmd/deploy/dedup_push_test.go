@@ -54,11 +54,132 @@ func pushOp(registry, repository, manifestDigest string, layers ...api.LayerBlob
 // present and no build-time staging repository -- the default configuration.
 func planFor(t *testing.T, ops ...api.IndexedPushDeployOperation) *dedupPlan {
 	t.Helper()
-	plan, err := planDedupPush(dedupWorkingSet(ops, nil, dedupSelector{}, "", ""), nil, "")
+	plan, err := planDedupPush(dedupWorkingSet(ops, nil, dedupSelector{}, "", ""), nil, "", newBlobLocations(false))
 	if err != nil {
 		t.Fatalf("planDedupPush: %v", err)
 	}
 	return plan
+}
+
+// planWith runs the planner the way one persistent worker request does: over that
+// request's operations alone, against the location cache the whole process shares.
+func planWith(t *testing.T, locations *blobLocations, ops ...api.IndexedPushDeployOperation) *dedupPlan {
+	t.Helper()
+	plan, err := planDedupPush(dedupWorkingSet(ops, nil, dedupSelector{}, "", ""), nil, "", locations)
+	if err != nil {
+		t.Fatalf("planDedupPush: %v", err)
+	}
+	return plan
+}
+
+// promoteUploads publishes the plan's uploads the way a successful upload phase
+// does, so a test can play out the requests that come after it.
+func promoteUploads(plan *dedupPlan, locations *blobLocations) {
+	for _, target := range plan.uploadRepositories() {
+		registry, repository, _ := strings.Cut(target, "/")
+		for _, digest := range plan.uploads[target] {
+			locations.promote(blobKey{registry: registry, digest: digest.String()}, repository)
+		}
+	}
+}
+
+// TestPlanDedupPushReusesAnEarlierRequestsHome is the persistent worker: each work
+// request is planned on its own, so it is the shared location cache that keeps two
+// requests sharing a layer from uploading it into two repositories. A lone
+// destination therefore still settles a home -- there is nothing to mount it into
+// today, but the next request mounts from it instead of uploading its own copy.
+func TestPlanDedupPushReusesAnEarlierRequestsHome(t *testing.T) {
+	locations := newBlobLocations(true)
+
+	// Request A pushes one image. Without the cache this would be a no-op.
+	first := planWith(t, locations, pushOp("reg.example.com", "team/service-a", manifestADigest,
+		layer(sharedLayerDigest), layer(serviceALayerDiges)))
+	if got := strings.Join(uploadedDigests(first, "reg.example.com/team/service-a"), ","); got != sharedLayerDigest+","+serviceALayerDiges {
+		t.Errorf("request A uploads %v, want both of its layers to their own repository as their home", got)
+	}
+	if first.mounted != 0 || first.skipped != 0 {
+		t.Errorf("request A cross-mounts %d and skips %d, want 0 and 0: it claims a home for each layer", first.mounted, first.skipped)
+	}
+	// It mounts nothing itself, so nothing is mount-only for it: the claim is for the
+	// requests that come after, and insisting the registry serve a mount request A does
+	// not need would only be a way to fail.
+	if countMountOnly(first) != 0 {
+		t.Errorf("request A marked %v mount-only, but it cross-mounts nothing", first.mountOnly)
+	}
+
+	// Request B arrives while A's upload phase is still running: it mounts from A's
+	// home and schedules the same upload rather than waiting for a request it knows
+	// nothing about, so the mount source is in place by the end of its own phase.
+	concurrent := planWith(t, locations, pushOp("reg.example.com", "team/service-b", manifestBDigest, layer(sharedLayerDigest)))
+	if src := sourceIn(concurrent, testRegistry, sharedLayerDigest); src.Repository != "team/service-a" {
+		t.Errorf("source for the shared layer = %+v, want request A's home team/service-a", src)
+	}
+	if got := strings.Join(uploadedDigests(concurrent, "reg.example.com/team/service-a"), ","); got != sharedLayerDigest {
+		t.Errorf("request B uploads %v to A's home, want the shared layer (it joins A's upload)", got)
+	}
+	key := blobKey{registry: testRegistry, digest: sharedLayerDigest}
+	if _, joined := concurrent.joined[key]; !joined {
+		t.Error("request B's upload is not recorded as joined, so failing it would fail the deploy")
+	}
+	if concurrent.cached != 1 {
+		t.Errorf("request B resolved %d blobs from the cache, want 1", concurrent.cached)
+	}
+
+	// Once the blob is in the home repository, the requests after that upload nothing
+	// for it at all.
+	promoteUploads(first, locations)
+	sequential := planWith(t, locations, pushOp("reg.example.com", "team/service-c", "sha256:cccc333333333333333333333333333333333333333333333333333333333333",
+		layer(sharedLayerDigest)))
+	if len(sequential.uploads) != 0 {
+		t.Errorf("request C uploads %v, want nothing: the shared layer is already in team/service-a", sequential.uploads)
+	}
+	if src := sourceIn(sequential, testRegistry, sharedLayerDigest); src.Repository != "team/service-a" || src.Registry != testRegistry {
+		t.Errorf("source for the shared layer = %+v, want team/service-a in %s", src, testRegistry)
+	}
+	// This process put the blob there, so a refused mount is a failure rather than a
+	// silent re-upload.
+	if !mountOnlyIn(sequential, testRegistry, sharedLayerDigest) {
+		t.Error("the shared layer is not mount-only, but this process uploaded it to team/service-a")
+	}
+	if sequential.mounted != 1 {
+		t.Errorf("request C cross-mounts %d times, want 1", sequential.mounted)
+	}
+}
+
+// TestPlanDedupPushSeedsTheCacheFromPresentManifests verifies the free half of the
+// cache: the layers of a manifest the registry already serves are published as
+// mountable out of that repository, so a later work request pushing a sibling image
+// mounts them without an upload -- even though the request that checked had nothing
+// to do with them.
+func TestPlanDedupPushSeedsTheCacheFromPresentManifests(t *testing.T) {
+	locations := newBlobLocations(true)
+	working := dedupWorkingSet([]api.IndexedPushDeployOperation{
+		pushOp("reg.example.com", "team/service-a", manifestADigest, layer(sharedLayerDigest)),
+	}, nil, dedupSelector{}, "", "")
+	present := map[destination]bool{
+		{registry: "reg.example.com", repository: "team/service-a", digest: manifestADigest}: true,
+	}
+	first, err := planDedupPush(working, present, "", locations)
+	if err != nil {
+		t.Fatalf("planDedupPush: %v", err)
+	}
+	if first.present != 1 || len(first.uploads) != 0 {
+		t.Fatalf("request A planned %d uploads with %d/%d manifests present, want none: it has nothing to push",
+			len(first.uploads), first.present, first.total)
+	}
+
+	second := planWith(t, locations, pushOp("reg.example.com", "team/service-b", manifestBDigest, layer(sharedLayerDigest)))
+	if src := sourceIn(second, testRegistry, sharedLayerDigest); src.Repository != "team/service-a" {
+		t.Errorf("source for the shared layer = %+v, want the repository the registry serves it from", src)
+	}
+	if len(second.uploads) != 0 {
+		t.Errorf("request B uploads %v, want nothing: team/service-a already holds the layer", second.uploads)
+	}
+	// The inference is the registry's, not something this process did, so the layer
+	// keeps its byte-upload fallback.
+	if mountOnlyIn(second, testRegistry, sharedLayerDigest) {
+		t.Error("the shared layer is mount-only, but this process never uploaded it")
+	}
 }
 
 // uploadedDigests returns the digests the plan uploads to the given full
@@ -176,7 +297,7 @@ func TestPlanDedupPushUsesTheBuildTimeStagingRepository(t *testing.T) {
 		pushOp("reg.example.com", "team/service-a", manifestADigest, layer(sharedLayerDigest)),
 		pushOp("reg.example.com", "team/service-b", manifestBDigest, layer(sharedLayerDigest)),
 	}
-	plan, err := planDedupPush(dedupWorkingSet(ops, nil, dedupSelector{}, "", ""), nil, "shared/blobs")
+	plan, err := planDedupPush(dedupWorkingSet(ops, nil, dedupSelector{}, "", ""), nil, "shared/blobs", newBlobLocations(false))
 	if err != nil {
 		t.Fatalf("planDedupPush: %v", err)
 	}
@@ -249,7 +370,7 @@ func TestPlanDedupPushMountsFromAPresentSibling(t *testing.T) {
 	present := map[destination]bool{
 		{registry: "reg.example.com", repository: "team/service-b", digest: manifestBDigest}: true,
 	}
-	plan, err := planDedupPush(dedupWorkingSet(ops, nil, dedupSelector{}, "", ""), present, "")
+	plan, err := planDedupPush(dedupWorkingSet(ops, nil, dedupSelector{}, "", ""), present, "", newBlobLocations(false))
 	if err != nil {
 		t.Fatalf("planDedupPush: %v", err)
 	}
@@ -322,7 +443,7 @@ func TestPlanDedupPushMixesSourcesPerRegistry(t *testing.T) {
 	present := map[destination]bool{
 		{registry: "a.example.com", repository: "team/service-b", digest: manifestBDigest}: true,
 	}
-	plan, err := planDedupPush(dedupWorkingSet(ops, nil, dedupSelector{}, "", ""), present, "")
+	plan, err := planDedupPush(dedupWorkingSet(ops, nil, dedupSelector{}, "", ""), present, "", newBlobLocations(false))
 	if err != nil {
 		t.Fatalf("planDedupPush: %v", err)
 	}
@@ -428,7 +549,7 @@ func TestPlanDedupPushNeverCrossesRegistries(t *testing.T) {
 	present := map[destination]bool{
 		{registry: "b.example.com", repository: "team/service-b", digest: manifestBDigest}: true,
 	}
-	plan, err := planDedupPush(dedupWorkingSet(ops, nil, dedupSelector{}, "", ""), present, "shared/blobs")
+	plan, err := planDedupPush(dedupWorkingSet(ops, nil, dedupSelector{}, "", ""), present, "shared/blobs", newBlobLocations(false))
 	if err != nil {
 		t.Fatalf("planDedupPush: %v", err)
 	}
@@ -506,7 +627,7 @@ func TestDedupWorkingSetIncludesRegistryTagOperations(t *testing.T) {
 	}
 
 	// Both destinations need the layer, so it is deduplicated across them.
-	plan, err := planDedupPush(working, nil, "")
+	plan, err := planDedupPush(working, nil, "", newBlobLocations(false))
 	if err != nil {
 		t.Fatalf("planDedupPush: %v", err)
 	}
@@ -564,7 +685,7 @@ func TestPlanDedupPushIndexPrunesPresentChildren(t *testing.T) {
 	present := map[destination]bool{
 		{registry: "reg.example.com", repository: "team/service-a", digest: manifestADigest}: true,
 	}
-	plan, err := planDedupPush(working, present, "")
+	plan, err := planDedupPush(working, present, "", newBlobLocations(false))
 	if err != nil {
 		t.Fatalf("planDedupPush: %v", err)
 	}
@@ -600,6 +721,7 @@ func TestResolveBlobMount(t *testing.T) {
 		confirmed      map[string]struct{}
 		upstream       string
 		blobRepository string
+		claimLone      bool
 		want           blobMount
 	}{
 		{
@@ -612,8 +734,24 @@ func TestResolveBlobMount(t *testing.T) {
 			needing: set("team/a"),
 		},
 		{
+			// ... unless more destinations may still arrive and mount from it (the
+			// persistent worker): then settling the home now is what lets the next work
+			// request mount instead of uploading its own copy.
+			name:      "a single repository claims a home when more may arrive",
+			needing:   set("team/a"),
+			claimLone: true,
+			want:      blobMount{repository: "team/a", kind: mountFromUpload},
+		},
+		{
 			name:    "no repository at all is not worth it",
 			needing: set(),
+		},
+		{
+			// Not even then: nothing in this request needs the blob, so there is nothing
+			// to upload and nothing to mount.
+			name:      "no repository at all is not worth it even incrementally",
+			needing:   set(),
+			claimLone: true,
 		},
 		{
 			name:      "a repository the registry already serves needs no upload",
@@ -639,6 +777,15 @@ func TestResolveBlobMount(t *testing.T) {
 			name:      "a confirmed repository that is the only destination",
 			needing:   set("team/a"),
 			confirmed: set("team/a"),
+		},
+		{
+			// Incrementally it is worth recording all the same -- and for free, since a
+			// confirmed repository needs no upload.
+			name:      "a confirmed repository that is the only destination, incrementally",
+			needing:   set("team/a"),
+			confirmed: set("team/a"),
+			claimLone: true,
+			want:      blobMount{repository: "team/a", kind: mountFromConfirmed},
 		},
 		{
 			name:      "confirmed beats upstream",
@@ -676,7 +823,7 @@ func TestResolveBlobMount(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := resolveBlobMount(tc.needing, tc.confirmed, tc.upstream, tc.blobRepository); got != tc.want {
+			if got := resolveBlobMount(tc.needing, tc.confirmed, tc.upstream, tc.blobRepository, tc.claimLone); got != tc.want {
 				t.Errorf("resolveBlobMount = %+v, want %+v", got, tc.want)
 			}
 		})
@@ -759,7 +906,7 @@ func TestDedupWorkingSetExcludesOptedOutOperations(t *testing.T) {
 	// The shared layer now has a single deduplicating destination, so it is not
 	// deduplicated at all -- and in particular is not mount-only, which would have
 	// broken the opted-out operation's push.
-	plan, err := planDedupPush(working, nil, "")
+	plan, err := planDedupPush(working, nil, "", newBlobLocations(false))
 	if err != nil {
 		t.Fatalf("planDedupPush: %v", err)
 	}
@@ -814,7 +961,7 @@ func TestPlanDedupPushMountsAcrossEveryOptedInOperation(t *testing.T) {
 		optedOut,
 	}
 
-	plan, err := planDedupPush(dedupWorkingSet(ops, nil, dedupSelector{}, "", ""), nil, "")
+	plan, err := planDedupPush(dedupWorkingSet(ops, nil, dedupSelector{}, "", ""), nil, "", newBlobLocations(false))
 	if err != nil {
 		t.Fatalf("planDedupPush: %v", err)
 	}
