@@ -1,6 +1,7 @@
 package deploy
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -49,6 +50,22 @@ type naiveRegistry struct {
 	// than quietly re-upload.
 	mountable bool
 
+	// sharesBlobsAfterManifest models the other way a registry shares blobs between
+	// repositories: not by mounting, but by exposing a blob to every repository once
+	// some manifest references it (JFrog Artifactory behaves this way). With it on, a
+	// blob's own HEAD answers 200 in a repository it was never uploaded to, which is
+	// what deduplicated_push_content=blobs_and_artificial_manifests is for.
+	sharesBlobsAfterManifest bool
+	// requireBlobsForManifest rejects a manifest whose config or layers the registry
+	// cannot see, the way a registry validating a manifest PUT does. It is what holds
+	// an artificial manifest to being written after the blobs it references.
+	requireBlobsForManifest bool
+	// allBlobs holds every blob ever stored, by digest, so a blob shared by a manifest
+	// reference can be served from a repository it was not uploaded to.
+	allBlobs map[string][]byte
+	// referenced holds the digests some stored manifest references.
+	referenced map[string]struct{}
+
 	// refuseUploads holds the repositories that answer an upload session with 401,
 	// modelling a credential that may not write there. A deploy is only ever asked to
 	// upload into a repository it does not push to by the process-wide blob location
@@ -81,11 +98,25 @@ type storedManifest struct {
 
 func newNaiveRegistry() *naiveRegistry {
 	return &naiveRegistry{
-		blobs:     map[string]map[string][]byte{},
-		manifests: map[string]map[string]storedManifest{},
-		uploads:   map[string][]byte{},
-		mountable: true,
+		blobs:      map[string]map[string][]byte{},
+		manifests:  map[string]map[string]storedManifest{},
+		uploads:    map[string][]byte{},
+		allBlobs:   map[string][]byte{},
+		referenced: map[string]struct{}{},
+		mountable:  true,
 	}
+}
+
+// newArtifactoryLikeRegistry returns a registry that refuses every cross-repository
+// mount but shares a blob with every repository once a manifest references it, and
+// validates the manifests it is given. It is the registry
+// deduplicated_push_content=blobs_and_artificial_manifests exists for.
+func newArtifactoryLikeRegistry() *naiveRegistry {
+	r := newNaiveRegistry()
+	r.mountable = false
+	r.sharesBlobsAfterManifest = true
+	r.requireBlobsForManifest = true
+	return r
 }
 
 // transport serves the registry in-process, so the test needs no listening socket.
@@ -249,7 +280,7 @@ func (r *naiveRegistry) continueUpload(w http.ResponseWriter, req *http.Request,
 
 func (r *naiveRegistry) serveBlob(w http.ResponseWriter, req *http.Request, repository, digest string) {
 	r.mu.Lock()
-	content, found := r.blobs[repository][digest]
+	content, found := r.blobVisibleLocked(repository, digest)
 	r.mu.Unlock()
 	if !found {
 		http.Error(w, "blob unknown", http.StatusNotFound)
@@ -275,6 +306,11 @@ func (r *naiveRegistry) serveManifest(w http.ResponseWriter, req *http.Request, 
 		digest := sha256Hash(body).String()
 		stored := storedManifest{mediaType: req.Header.Get("Content-Type"), digest: digest, body: body}
 		r.mu.Lock()
+		if missing := r.missingManifestBlobsLocked(repository, body); missing != "" {
+			r.mu.Unlock()
+			http.Error(w, "blob unknown to registry: "+missing, http.StatusBadRequest)
+			return
+		}
 		if r.manifests[repository] == nil {
 			r.manifests[repository] = map[string]storedManifest{}
 		}
@@ -282,6 +318,7 @@ func (r *naiveRegistry) serveManifest(w http.ResponseWriter, req *http.Request, 
 		if reference != digest {
 			r.manifests[repository][reference] = stored
 		}
+		r.referenceManifestBlobsLocked(body)
 		r.manifestPuts = append(r.manifestPuts, repository+":"+reference)
 		r.mu.Unlock()
 		w.Header().Set("Docker-Content-Digest", digest)
@@ -312,6 +349,66 @@ func (r *naiveRegistry) putBlobLocked(repository, digest string, content []byte)
 		r.blobs[repository] = map[string][]byte{}
 	}
 	r.blobs[repository][digest] = content
+	r.allBlobs[digest] = content
+}
+
+// blobVisibleLocked returns the blob as the given repository sees it: the copy stored
+// there, or -- on a registry that shares blobs a manifest references -- any copy at
+// all, once some manifest references the digest.
+func (r *naiveRegistry) blobVisibleLocked(repository, digest string) ([]byte, bool) {
+	if content, found := r.blobs[repository][digest]; found {
+		return content, true
+	}
+	if !r.sharesBlobsAfterManifest {
+		return nil, false
+	}
+	if _, referenced := r.referenced[digest]; !referenced {
+		return nil, false
+	}
+	content, found := r.allBlobs[digest]
+	return content, found
+}
+
+// manifestBlobDigests returns the digests a manifest body references: its config and
+// its layers. An index (or anything else this cannot parse as an image manifest)
+// references no blobs of its own.
+func manifestBlobDigests(body []byte) []string {
+	var manifest registryv1.Manifest
+	if err := json.Unmarshal(body, &manifest); err != nil {
+		return nil
+	}
+	if len(manifest.Layers) == 0 {
+		return nil
+	}
+	digests := []string{manifest.Config.Digest.String()}
+	for _, layer := range manifest.Layers {
+		digests = append(digests, layer.Digest.String())
+	}
+	return digests
+}
+
+// missingManifestBlobsLocked returns the first blob a manifest references that the
+// repository cannot see, or "" when it can see all of them. It is what makes a
+// manifest PUT depend on the uploads that precede it.
+func (r *naiveRegistry) missingManifestBlobsLocked(repository string, body []byte) string {
+	if !r.requireBlobsForManifest {
+		return ""
+	}
+	for _, digest := range manifestBlobDigests(body) {
+		if _, found := r.blobVisibleLocked(repository, digest); !found {
+			return digest
+		}
+	}
+	return ""
+}
+
+// referenceManifestBlobsLocked records the blobs a stored manifest references, which
+// is what makes them visible from every repository on a registry that shares them
+// that way.
+func (r *naiveRegistry) referenceManifestBlobsLocked(body []byte) {
+	for _, digest := range manifestBlobDigests(body) {
+		r.referenced[digest] = struct{}{}
+	}
 }
 
 // countBlobPuts returns how many times the given blob's bytes were uploaded, to
@@ -424,8 +521,22 @@ func buildSharedLayerLayouts(t *testing.T, registry string, services, sharedLaye
 	var operations []json.RawMessage
 	for service := range services {
 		repository := fmt.Sprintf("team/service-%d", service)
-		config := []byte(fmt.Sprintf(`{"architecture":"amd64","os":"linux","service":%d}`, service))
 		unique := []byte(fmt.Sprintf("service-%d-layer", service))
+		contents := append(append([][]byte{}, sharedContent...), unique)
+
+		// A real image config, because the artificial manifests of
+		// deduplicated_push_content=blobs_and_artificial_manifests take each layer's
+		// diff id from here. Nothing in these tests decompresses a layer, so the
+		// fixture simply records each layer's own digest as its diff id.
+		diffIDs := make([]string, len(contents))
+		for i, content := range contents {
+			diffIDs[i] = sha256Hash(content).String()
+		}
+		encodedDiffIDs, err := json.Marshal(diffIDs)
+		if err != nil {
+			t.Fatalf("marshalling diff ids: %v", err)
+		}
+		config := []byte(fmt.Sprintf(`{"architecture":"amd64","os":"linux","service":%d,"rootfs":{"type":"layers","diff_ids":%s}}`, service, encodedDiffIDs))
 
 		src := ocilayout.NewMemBlobSource()
 		src.Add(sha256Hash(config).Hex, config).Add(sha256Hash(unique).Hex, unique)
@@ -433,7 +544,7 @@ func buildSharedLayerLayouts(t *testing.T, registry string, services, sharedLaye
 		images.blobs[sha256Hash(unique).Hex] = unique
 		descriptors := make([]registryv1.Descriptor, 0, sharedLayers+1)
 		layerBlobs := make([]api.LayerBlob, 0, sharedLayers+1)
-		for _, content := range append(append([][]byte{}, sharedContent...), unique) {
+		for _, content := range contents {
 			src.Add(sha256Hash(content).Hex, content)
 			images.blobs[sha256Hash(content).Hex] = content
 			descriptor := registryv1.Descriptor{MediaType: types.OCILayer, Digest: sha256Hash(content), Size: int64(len(content))}
@@ -464,7 +575,7 @@ func buildSharedLayerLayouts(t *testing.T, registry string, services, sharedLaye
 			BaseCommandOperation: api.BaseCommandOperation{
 				Command:          "push",
 				RootKind:         "manifest",
-				DeduplicatedPush: true,
+				DeduplicatedPush: api.DeduplicatedPushEnabled,
 				Root:             api.Descriptor{MediaType: string(types.OCIManifestSchema1), Digest: sha256Hash(raw).String(), Size: int64(len(raw))},
 				Manifests: []api.ManifestDeployInfo{{
 					Descriptor: api.Descriptor{MediaType: string(types.OCIManifestSchema1), Digest: sha256Hash(raw).String(), Size: int64(len(raw))},
@@ -1181,7 +1292,7 @@ func withoutDedup(t *testing.T, dm api.DeployManifest, index int) api.DeployMani
 			if err := json.Unmarshal(raw, &op); err != nil {
 				t.Fatalf("unmarshalling operation: %v", err)
 			}
-			op.DeduplicatedPush = false
+			op.DeduplicatedPush = ""
 			patched, err := json.Marshal(op)
 			if err != nil {
 				t.Fatalf("marshalling operation: %v", err)
@@ -1249,7 +1360,7 @@ func withLayerSource(t *testing.T, dm api.DeployManifest, digest string, source 
 // blobs' actual bytes -- a mount-only view would have nothing to write.
 func TestDeduplicatedPushIgnoredForASink(t *testing.T) {
 	layoutDirs, dm, images := buildSharedLayerLayouts(t, "reg.example.com", 2, 1)
-	if ops, err := dm.PushOperations(); err != nil || len(ops) == 0 || !ops[0].DeduplicatedPush {
+	if ops, err := dm.PushOperations(); err != nil || len(ops) == 0 || ops[0].DeduplicatedPush != api.DeduplicatedPushEnabled {
 		t.Fatal("the fixture should have deduplicated_push enabled on its operations")
 	}
 	rawRequest, err := json.Marshal(dm)
@@ -1279,4 +1390,311 @@ func TestDeduplicatedPushIgnoredForASink(t *testing.T) {
 			t.Errorf("%s is missing from the sink tarball", entry)
 		}
 	}
+}
+
+// withDedupSettingsOnEveryOp returns dm with the given deduplicated push settings on
+// every push operation, as the global flags (or every target's attributes) produce.
+// An empty mode leaves each operation's own value alone.
+func withDedupSettingsOnEveryOp(t *testing.T, dm api.DeployManifest, mode, home, content string) api.DeployManifest {
+	t.Helper()
+	out := dm
+	out.Operations = nil
+	for _, raw := range dm.Operations {
+		var op api.PushDeployOperation
+		if err := json.Unmarshal(raw, &op); err != nil {
+			t.Fatalf("unmarshalling operation: %v", err)
+		}
+		if mode != "" {
+			op.DeduplicatedPush = mode
+		}
+		op.DeduplicatedPushBlobRepository = home
+		op.DeduplicatedPushContent = content
+		patched, err := json.Marshal(op)
+		if err != nil {
+			t.Fatalf("marshalling operation: %v", err)
+		}
+		out.Operations = append(out.Operations, patched)
+	}
+	return out
+}
+
+// artificialManifestsIn returns the manifests a repository holds that this deploy
+// wrote only to reference a blob, keyed by the digest they reference.
+func (r *naiveRegistry) artificialManifestsIn(t *testing.T, repository string) map[string]registryv1.Manifest {
+	t.Helper()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := map[string]registryv1.Manifest{}
+	for identifier, stored := range r.manifests[repository] {
+		var manifest registryv1.Manifest
+		if err := json.Unmarshal(stored.body, &manifest); err != nil {
+			continue
+		}
+		referenced, artificial := manifest.Annotations[artificialManifestAnnotation]
+		if !artificial {
+			continue
+		}
+		if identifier != stored.digest {
+			t.Errorf("artificial manifest for %s is tagged %q, want it pushed by digest only", referenced, identifier)
+		}
+		out[referenced] = manifest
+	}
+	return out
+}
+
+// TestDeduplicatedPushArtificialManifestsShareBlobsWithoutMounting is the registry
+// deduplicated_push_content=blobs_and_artificial_manifests exists for: one that
+// refuses every cross-repository mount, but shares a blob with every repository once
+// a manifest references it. The shared layers are uploaded once, referenced from a
+// manifest in their home repository, and found by every other repository's own blob
+// check -- so no mount is needed and nothing is uploaded twice.
+func TestDeduplicatedPushArtificialManifestsShareBlobsWithoutMounting(t *testing.T) {
+	reg := newArtifactoryLikeRegistry()
+	layoutDirs, dm, images := buildSharedLayerLayouts(t, "reg.example.com", 3, 2)
+	dm = withDedupSettingsOnEveryOp(t, dm, api.DeduplicatedPushEnabled, "", api.DeduplicatedPushContentBlobsAndArtificialManifests)
+
+	if err := runDedupDeploy(t, reg, layoutDirs, dm); err != nil {
+		t.Fatalf("deduplicated push: %v", err)
+	}
+
+	home := images.repositories[0]
+	artificial := reg.artificialManifestsIn(t, home)
+	if len(artificial) != len(images.shared) {
+		t.Fatalf("home repository %s holds %d artificial manifests, want one per shared layer (%d)", home, len(artificial), len(images.shared))
+	}
+	for i, digest := range images.shared {
+		// One upload, into the home repository, and no mounts anywhere.
+		if got := reg.blobPutRepositories(digest); len(got) != 1 || got[0] != home {
+			t.Errorf("shared layer %d was uploaded to %v, want only the home repository %s", i, got, home)
+		}
+		manifest, found := artificial[digest]
+		if !found {
+			t.Fatalf("no artificial manifest references shared layer %d (%s)", i, digest)
+		}
+		if len(manifest.Layers) != 1 || manifest.Layers[0].Digest.String() != digest {
+			t.Errorf("artificial manifest layers = %+v, want just the shared layer %s", manifest.Layers, digest)
+		}
+		// The manifest is only a reference if the registry can resolve what it points
+		// at: both blobs have to be in the home repository.
+		if !reg.hasBlob(home, manifest.Config.Digest.String()) {
+			t.Errorf("the artificial config %s is not in %s", manifest.Config.Digest, home)
+		}
+		// Every other repository sees the blob without holding a copy of its own.
+		for _, repository := range images.repositories[1:] {
+			if reg.hasBlob(repository, digest) {
+				t.Errorf("%s holds its own copy of shared layer %d, want it shared from %s", repository, i, home)
+			}
+		}
+	}
+	if _, mounts, _ := reg.snapshot(); len(mounts) != 0 {
+		t.Errorf("registry satisfied %v mounts, want none: this registry does not mount at all", mounts)
+	}
+	// Every image is pushed, so every real manifest is there -- which this registry
+	// only accepts once it can see the blobs the manifest references.
+	for i, repository := range images.repositories {
+		if _, found := reg.storedManifestFor(repository, images.manifests[i]); !found {
+			t.Errorf("%s does not hold its manifest %s", repository, images.manifests[i])
+		}
+	}
+}
+
+// TestDeduplicatedPushArtificialConfigRecordsTheDiffID checks the config blob of an
+// artificial manifest against the image config the layer really belongs to: a
+// registry that insists on a manifest before sharing a blob deserves a real one.
+func TestDeduplicatedPushArtificialConfigRecordsTheDiffID(t *testing.T) {
+	reg := newArtifactoryLikeRegistry()
+	layoutDirs, dm, images := buildSharedLayerLayouts(t, "reg.example.com", 2, 1)
+	dm = withDedupSettingsOnEveryOp(t, dm, api.DeduplicatedPushEnabled, "", api.DeduplicatedPushContentBlobsAndArtificialManifests)
+
+	if err := runDedupDeploy(t, reg, layoutDirs, dm); err != nil {
+		t.Fatalf("deduplicated push: %v", err)
+	}
+
+	home := images.repositories[0]
+	shared := images.shared[0]
+	manifest, found := reg.artificialManifestsIn(t, home)[shared]
+	if !found {
+		t.Fatalf("no artificial manifest references the shared layer %s", shared)
+	}
+	raw, found := reg.blobContent(home, manifest.Config.Digest.String())
+	if !found {
+		t.Fatalf("the artificial config %s is not in %s", manifest.Config.Digest, home)
+	}
+	config, err := registryv1.ParseConfigFile(bytes.NewReader(raw))
+	if err != nil {
+		t.Fatalf("parsing the artificial config %s: %v", manifest.Config.Digest, err)
+	}
+	// The fixture's configs record each layer's own digest as its diff id, so that is
+	// what the artificial config must have picked up.
+	if len(config.RootFS.DiffIDs) != 1 || config.RootFS.DiffIDs[0].String() != shared {
+		t.Errorf("artificial config diff ids = %v, want just the shared layer's uncompressed digest %s", config.RootFS.DiffIDs, shared)
+	}
+	if config.OS != "unknown" || config.Architecture != "unknown" {
+		t.Errorf("artificial config platform = %s/%s, want unknown/unknown: it is not a runnable image", config.OS, config.Architecture)
+	}
+	if manifest.MediaType != types.OCIManifestSchema1 || manifest.Config.MediaType != types.OCIConfigJSON {
+		t.Errorf("artificial manifest media types = %s / %s, want the OCI pair matching the OCI layers", manifest.MediaType, manifest.Config.MediaType)
+	}
+}
+
+// TestDeduplicatedPushWithoutArtificialManifestsFailsOnSuchARegistry is the control
+// for the two tests above: on the same registry, uploading the blobs alone leaves
+// them invisible to every other repository, and the strict mount fails the push
+// rather than uploading them everywhere.
+func TestDeduplicatedPushWithoutArtificialManifestsFailsOnSuchARegistry(t *testing.T) {
+	reg := newArtifactoryLikeRegistry()
+	layoutDirs, dm, images := buildSharedLayerLayouts(t, "reg.example.com", 2, 1)
+	dm = withDedupSettingsOnEveryOp(t, dm, api.DeduplicatedPushEnabled, "", api.DeduplicatedPushContentBlobs)
+
+	err := runDedupDeploy(t, reg, layoutDirs, dm)
+	if err == nil {
+		t.Fatal("the push succeeded without an artificial manifest, want the mount-only failure")
+	}
+	if !strings.Contains(err.Error(), "refusing to upload layer") {
+		t.Fatalf("error = %v, want the mount-only refusal", err)
+	}
+	if !strings.Contains(err.Error(), images.repositories[0]) {
+		t.Errorf("error = %v, want it to name the home repository %s", err, images.repositories[0])
+	}
+}
+
+// TestDeduplicatedPushBestEffortFallsBackToUploading is the best_effort mode against
+// a registry that shares blobs no way at all: the deduplication is attempted, every
+// mount is refused, and the layer's bytes are uploaded the ordinary way instead of
+// failing the deploy the way TestDeduplicatedPushFailsWhenMountsAreUnsupported does.
+// The cost is the upload the strategy meant to avoid -- which is the trade the mode is.
+func TestDeduplicatedPushBestEffortFallsBackToUploading(t *testing.T) {
+	reg := newNaiveRegistry()
+	reg.mountable = false
+	layoutDirs, dm, images := buildSharedLayerLayouts(t, "reg.example.com", 3, 1)
+	dm = withDedupSettingsOnEveryOp(t, dm, api.DeduplicatedPushBestEffort, "", api.DeduplicatedPushContentBlobs)
+
+	if err := runDedupDeploy(t, reg, layoutDirs, dm); err != nil {
+		t.Fatalf("best-effort deduplicated push: %v", err)
+	}
+	// Every repository ends up with the layer, and every image is pushed.
+	if got := reg.blobPutRepositories(images.shared[0]); len(got) != len(images.repositories) {
+		t.Errorf("the shared layer was uploaded to %v, want every repository once the mount was refused", got)
+	}
+	for i, repository := range images.repositories {
+		if _, found := reg.storedManifestFor(repository, images.manifests[i]); !found {
+			t.Errorf("%s does not hold its manifest %s", repository, images.manifests[i])
+		}
+	}
+}
+
+// TestDeduplicatedPushPinsTheBlobRepository covers
+// deduplicated_push_blob_repository: every blob shared between repositories is
+// uploaded to the named repository and cross-mounted from there, and no destination
+// repository is ever uploaded a layer of its own.
+func TestDeduplicatedPushPinsTheBlobRepository(t *testing.T) {
+	const pinned = "team/_blobs"
+	reg := newNaiveRegistry()
+	layoutDirs, dm, images := buildSharedLayerLayouts(t, "reg.example.com", 3, 2)
+	dm = withDedupSettingsOnEveryOp(t, dm, api.DeduplicatedPushEnabled, pinned, "")
+
+	if err := runDedupDeploy(t, reg, layoutDirs, dm); err != nil {
+		t.Fatalf("deduplicated push: %v", err)
+	}
+
+	// Both the shared layers and each service's own layer live in the pinned
+	// repository: a home this deploy uploads to is a home wherever the blob is headed.
+	for _, digest := range append(append([]string{}, images.shared...), images.unique...) {
+		if got := reg.blobPutRepositories(digest); len(got) != 1 || got[0] != pinned {
+			t.Errorf("layer %s was uploaded to %v, want only the pinned repository %s", digest, got, pinned)
+		}
+	}
+	_, mounts, _ := reg.snapshot()
+	for i, repository := range images.repositories {
+		for _, digest := range append([]string{images.unique[i]}, images.shared...) {
+			if !slices.Contains(mounts, repository+"@"+digest) {
+				t.Errorf("%s did not cross-mount %s, want it mounted out of %s", repository, digest, pinned)
+			}
+		}
+		if _, found := reg.storedManifestFor(repository, images.manifests[i]); !found {
+			t.Errorf("%s does not hold its manifest %s", repository, images.manifests[i])
+		}
+	}
+}
+
+// TestDeduplicatedPushArtificialManifestsAreWrittenOnce plays two work requests
+// through one location cache, as the persistent worker does: the second request
+// mounts the shared layer out of the home the first one filled, and writes no second
+// artificial manifest for it.
+func TestDeduplicatedPushArtificialManifestsAreWrittenOnce(t *testing.T) {
+	reg := newArtifactoryLikeRegistry()
+	layoutDirs, dm, images := buildSharedLayerLayouts(t, "reg.example.com", 2, 1)
+	dm = withDedupSettingsOnEveryOp(t, dm, api.DeduplicatedPushEnabled, "", api.DeduplicatedPushContentBlobsAndArtificialManifests)
+	locations := newBlobLocations(true)
+
+	if err := runDedupDeployWith(t, reg.transport(), layoutDirs, workRequest(dm, 0), locations); err != nil {
+		t.Fatalf("first work request: %v", err)
+	}
+	_, _, afterFirst := reg.snapshot()
+
+	if err := runDedupDeployWith(t, reg.transport(), layoutDirs, workRequest(dm, 1), locations); err != nil {
+		t.Fatalf("second work request: %v", err)
+	}
+
+	home := images.repositories[0]
+	shared := images.shared[0]
+	if got := reg.countBlobPuts(shared); got != 1 {
+		t.Errorf("the shared layer's bytes were uploaded %d times, want once across both work requests", got)
+	}
+	// One manifest references the shared layer, in the home repository the first
+	// request filled. (Each request also writes one for the layer only it needs, which
+	// is what lets a later request share that one too.)
+	if _, found := reg.artificialManifestsIn(t, home)[shared]; !found {
+		t.Errorf("home repository %s holds no artificial manifest for the shared layer", home)
+	}
+	if _, found := reg.artificialManifestsIn(t, images.repositories[1])[shared]; found {
+		t.Errorf("the second request wrote its own artificial manifest for the shared layer, want it shared from %s", home)
+	}
+	// The manifest was written by the first request, before the second one needed it.
+	var referenced int
+	for _, put := range afterFirst {
+		if strings.HasPrefix(put, home+":") {
+			referenced++
+		}
+	}
+	if referenced < 2 {
+		t.Errorf("the first work request wrote %d manifests to %s, want its own plus the artificial one", referenced, home)
+	}
+}
+
+// TestDeduplicatedPushArtificialManifestsAreIdempotent re-runs the same deploy: the
+// artificial manifests are derived from the blob and its diff id alone, so the second
+// run finds everything in place and uploads nothing.
+func TestDeduplicatedPushArtificialManifestsAreIdempotent(t *testing.T) {
+	reg := newArtifactoryLikeRegistry()
+	layoutDirs, dm, _ := buildSharedLayerLayouts(t, "reg.example.com", 2, 1)
+	dm = withDedupSettingsOnEveryOp(t, dm, api.DeduplicatedPushEnabled, "", api.DeduplicatedPushContentBlobsAndArtificialManifests)
+
+	if err := runDedupDeploy(t, reg, layoutDirs, dm); err != nil {
+		t.Fatalf("first deduplicated push: %v", err)
+	}
+	firstBlobPuts, _, firstManifestPuts := reg.snapshot()
+
+	if err := runDedupDeploy(t, reg, layoutDirs, dm); err != nil {
+		t.Fatalf("second deduplicated push: %v", err)
+	}
+	secondBlobPuts, _, secondManifestPuts := reg.snapshot()
+
+	if len(secondBlobPuts) != len(firstBlobPuts) {
+		t.Errorf("the second run uploaded %d blobs (first run: %d), want none: everything is already there",
+			len(secondBlobPuts)-len(firstBlobPuts), len(firstBlobPuts))
+	}
+	// The manifests the deploy itself writes are re-tagged; the artificial ones are
+	// pushed by digest, which go-containerregistry HEADs first and skips.
+	if extra := len(secondManifestPuts) - len(firstManifestPuts); extra > len(firstManifestPuts) {
+		t.Errorf("the second run wrote %d extra manifests, want at most the tagged ones again", extra)
+	}
+}
+
+// blobContent returns the bytes a repository holds for a digest.
+func (r *naiveRegistry) blobContent(repository, digest string) ([]byte, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	content, found := r.blobs[repository][digest]
+	return content, found
 }

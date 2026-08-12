@@ -37,7 +37,7 @@ func pushOp(registry, repository, manifestDigest string, layers ...api.LayerBlob
 			BaseCommandOperation: api.BaseCommandOperation{
 				Command:          "push",
 				RootKind:         "manifest",
-				DeduplicatedPush: true,
+				DeduplicatedPush: api.DeduplicatedPushEnabled,
 				Root:             api.Descriptor{MediaType: "application/vnd.oci.image.manifest.v1+json", Digest: manifestDigest},
 				Manifests: []api.ManifestDeployInfo{{
 					Descriptor: api.Descriptor{MediaType: "application/vnd.oci.image.manifest.v1+json", Digest: manifestDigest},
@@ -118,7 +118,7 @@ func TestPlanDedupPushReusesAnEarlierRequestsHome(t *testing.T) {
 		t.Errorf("request B uploads %v to A's home, want the shared layer (it joins A's upload)", got)
 	}
 	key := blobKey{registry: testRegistry, digest: sharedLayerDigest}
-	if _, joined := concurrent.joined[key]; !joined {
+	if !concurrent.flags[key].joined {
 		t.Error("request B's upload is not recorded as joined, so failing it would fail the deploy")
 	}
 	if concurrent.cached != 1 {
@@ -607,7 +607,7 @@ func TestDedupWorkingSetIncludesRegistryTagOperations(t *testing.T) {
 			BaseCommandOperation: api.BaseCommandOperation{
 				Command:          "registry_tag",
 				RootKind:         "manifest",
-				DeduplicatedPush: true,
+				DeduplicatedPush: api.DeduplicatedPushEnabled,
 				Root:             api.Descriptor{Digest: manifestADigest},
 				Manifests: []api.ManifestDeployInfo{{
 					Descriptor: api.Descriptor{Digest: manifestADigest},
@@ -662,7 +662,7 @@ func indexPushOp(registry, repository, indexDigest string) api.IndexedPushDeploy
 			BaseCommandOperation: api.BaseCommandOperation{
 				Command:          "push",
 				RootKind:         "index",
-				DeduplicatedPush: true,
+				DeduplicatedPush: api.DeduplicatedPushEnabled,
 				Root:             api.Descriptor{MediaType: "application/vnd.oci.image.index.v1+json", Digest: indexDigest},
 				Manifests: []api.ManifestDeployInfo{
 					{Descriptor: api.Descriptor{Digest: manifestADigest}, LayerBlobs: []api.LayerBlob{layer(serviceALayerDiges)}},
@@ -721,6 +721,7 @@ func TestResolveBlobMount(t *testing.T) {
 		confirmed      map[string]struct{}
 		upstream       string
 		blobRepository string
+		pinnedHome     string
 		claimLone      bool
 		want           blobMount
 	}{
@@ -821,9 +822,41 @@ func TestResolveBlobMount(t *testing.T) {
 			blobRepository: "shared/blobs",
 			want:           blobMount{repository: "shared/blobs", kind: mountFromUpload},
 		},
+		{
+			// The point of naming a repository is that every shared blob goes there, so
+			// it wins even over the sources that would have cost nothing.
+			name:       "a pinned home beats everything",
+			needing:    set("team/a", "team/b"),
+			confirmed:  set("team/z"),
+			upstream:   "library/base",
+			pinnedHome: "shared/blobs",
+			want:       blobMount{repository: "shared/blobs", kind: mountFromUpload, pinned: true},
+		},
+		{
+			name:           "a pinned home beats the staging repository",
+			needing:        set("team/a", "team/b"),
+			blobRepository: "staging/blobs",
+			pinnedHome:     "shared/blobs",
+			want:           blobMount{repository: "shared/blobs", kind: mountFromUpload, pinned: true},
+		},
+		{
+			// Like staging: the blob is uploaded somewhere else, so even one destination
+			// has something to mount it from.
+			name:       "a pinned home applies to a single destination too",
+			needing:    set("team/a"),
+			pinnedHome: "shared/blobs",
+			want:       blobMount{repository: "shared/blobs", kind: mountFromUpload, pinned: true},
+		},
+		{
+			// Nothing to mount it into, and nothing to gain from moving the upload out of
+			// the manifest push: the pinned repository is the destination.
+			name:       "a pinned home that is the only destination is not worth it",
+			needing:    set("shared/blobs"),
+			pinnedHome: "shared/blobs",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := resolveBlobMount(tc.needing, tc.confirmed, tc.upstream, tc.blobRepository, tc.claimLone); got != tc.want {
+			if got := resolveBlobMount(tc.needing, tc.confirmed, tc.upstream, tc.blobRepository, tc.pinnedHome, tc.claimLone); got != tc.want {
 				t.Errorf("resolveBlobMount = %+v, want %+v", got, tc.want)
 			}
 		})
@@ -834,7 +867,7 @@ func TestResolveBlobMount(t *testing.T) {
 // unless --deduplicated-push forces every operation or a sink turns the strategy
 // off wholesale.
 func TestDedupSelector(t *testing.T) {
-	opted := api.BaseCommandOperation{DeduplicatedPush: true}
+	opted := api.BaseCommandOperation{DeduplicatedPush: api.DeduplicatedPushEnabled}
 	plain := api.BaseCommandOperation{}
 	for _, tc := range []struct {
 		name      string
@@ -856,7 +889,7 @@ func TestDedupSelector(t *testing.T) {
 		{name: "rejects a bogus override even with a sink", override: "yes", hasSink: true, wantErr: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			selector, err := newDedupSelector(tc.override, tc.hasSink)
+			selector, err := newDedupSelector(tc.override, "", "", tc.hasSink)
 			if tc.wantErr {
 				if err == nil {
 					t.Fatalf("newDedupSelector(%q) = (%+v, nil), want an error", tc.override, selector)
@@ -889,7 +922,7 @@ func TestDedupSelector(t *testing.T) {
 // layer would fail its push on a registry that does not cross-mount blobs.
 func TestDedupWorkingSetExcludesOptedOutOperations(t *testing.T) {
 	optedOut := pushOp("reg.example.com", "team/service-b", manifestBDigest, layer(sharedLayerDigest))
-	optedOut.DeduplicatedPush = false
+	optedOut.DeduplicatedPush = ""
 	ops := []api.IndexedPushDeployOperation{
 		pushOp("reg.example.com", "team/service-a", manifestADigest, layer(sharedLayerDigest)),
 		optedOut,
@@ -922,7 +955,7 @@ func TestDedupWorkingSetExcludesOptedOutOperations(t *testing.T) {
 // nowhere -- staged in the blob repository they no longer point at.
 func TestStagingPushOperationsKeepsTheOptedOutOnes(t *testing.T) {
 	optedOut := pushOp("reg.example.com", "team/service-b", manifestBDigest, layer(sharedLayerDigest))
-	optedOut.DeduplicatedPush = false
+	optedOut.DeduplicatedPush = ""
 	ops := []api.IndexedPushDeployOperation{
 		pushOp("reg.example.com", "team/service-a", manifestADigest, layer(sharedLayerDigest)),
 		optedOut,
@@ -953,7 +986,7 @@ func TestStagingPushOperationsKeepsTheOptedOutOnes(t *testing.T) {
 // the operation that opted out is left to upload its own copy.
 func TestPlanDedupPushMountsAcrossEveryOptedInOperation(t *testing.T) {
 	optedOut := pushOp("reg.example.com", "team/service-d", "sha256:dddd444444444444444444444444444444444444444444444444444444444444", layer(sharedLayerDigest))
-	optedOut.DeduplicatedPush = false
+	optedOut.DeduplicatedPush = ""
 	ops := []api.IndexedPushDeployOperation{
 		pushOp("reg.example.com", "team/service-c", "sha256:cccc333333333333333333333333333333333333333333333333333333333333", layer(sharedLayerDigest)),
 		pushOp("reg.example.com", "team/service-a", manifestADigest, layer(sharedLayerDigest)),
@@ -1060,5 +1093,260 @@ func TestDedupPlanUploadRepositoriesIsSorted(t *testing.T) {
 	got := strings.Join(plan.uploadRepositories(), ",")
 	if got != "reg.example.com/team/a,reg.example.com/team/b,reg.example.com/team/c" {
 		t.Errorf("uploadRepositories = %s, want them sorted", got)
+	}
+}
+
+// withDedupSettings returns op with the deduplicated push settings a target
+// configures: the mode, the pinned home repository and the content mode.
+func withDedupSettings(op api.IndexedPushDeployOperation, mode, home, content string) api.IndexedPushDeployOperation {
+	op.DeduplicatedPush = mode
+	op.DeduplicatedPushBlobRepository = home
+	op.DeduplicatedPushContent = content
+	return op
+}
+
+// TestPlanDedupPushPinsTheHomeRepository covers deduplicated_push_blob_repository:
+// every shared blob is uploaded to the named repository and mounted from there,
+// including the blobs a single repository needs -- the point of naming a repository
+// is that shared blobs are all in one place, not that the deploy keeps guessing.
+func TestPlanDedupPushPinsTheHomeRepository(t *testing.T) {
+	const pinned = "shared/blobs"
+	plan := planFor(t,
+		withDedupSettings(pushOp(testRegistry, "team/service-b", manifestBDigest, layer(sharedLayerDigest), layer(serviceBLayerDiges)), api.DeduplicatedPushEnabled, pinned, ""),
+		withDedupSettings(pushOp(testRegistry, "team/service-a", manifestADigest, layer(sharedLayerDigest), layer(serviceALayerDiges)), api.DeduplicatedPushEnabled, pinned, ""),
+	)
+
+	if len(plan.uploads) != 1 {
+		t.Fatalf("plan uploads to %v, want the pinned repository alone", plan.uploads)
+	}
+	want := sharedLayerDigest + "," + serviceALayerDiges + "," + serviceBLayerDiges
+	if got := strings.Join(uploadedDigests(plan, testRegistry+"/"+pinned), ","); got != want {
+		t.Errorf("plan uploads %v to the pinned repository, want every layer %v", got, want)
+	}
+	for _, digest := range []string{sharedLayerDigest, serviceALayerDiges, serviceBLayerDiges} {
+		if src := sourceIn(plan, testRegistry, digest); src.Repository != pinned || src.Registry != testRegistry {
+			t.Errorf("source for %s = %+v, want %s in %s", digest, src, pinned, testRegistry)
+		}
+		// The deploy put the blob there itself, so a refused mount is a failure.
+		if !mountOnlyIn(plan, testRegistry, digest) {
+			t.Errorf("%s is not mount-only, but this deploy uploaded it to the pinned repository", digest)
+		}
+	}
+	if plan.pinned != 3 || plan.skipped != 0 {
+		t.Errorf("plan resolved %d pinned homes and skipped %d blobs, want 3 and 0", plan.pinned, plan.skipped)
+	}
+	// The shared layer is mounted into both services, each own layer into its own.
+	if plan.mounted != 4 {
+		t.Errorf("plan cross-mounts %d repository/blob pairs, want 4", plan.mounted)
+	}
+}
+
+// TestPlanDedupPushPinnedHomeBeatsAFreeSource verifies the precedence: a pinned
+// repository wins even over a repository the registry already serves the blob from,
+// which would have cost no upload at all.
+func TestPlanDedupPushPinnedHomeBeatsAFreeSource(t *testing.T) {
+	const pinned = "shared/blobs"
+	ops := []api.IndexedPushDeployOperation{
+		withDedupSettings(pushOp(testRegistry, "team/service-a", manifestADigest, layer(sharedLayerDigest)), api.DeduplicatedPushEnabled, pinned, ""),
+		withDedupSettings(pushOp(testRegistry, "team/service-b", manifestBDigest,
+			layer(sharedLayerDigest, api.LayerSource{Registry: testRegistry, Repository: "library/base"})), api.DeduplicatedPushEnabled, pinned, ""),
+	}
+	present := map[destination]bool{
+		{registry: testRegistry, repository: "team/service-a", digest: manifestADigest}: true,
+	}
+	plan, err := planDedupPush(dedupWorkingSet(ops, nil, dedupSelector{}, "", ""), present, "staging/blobs", newBlobLocations(false))
+	if err != nil {
+		t.Fatalf("planDedupPush: %v", err)
+	}
+	if src := sourceIn(plan, testRegistry, sharedLayerDigest); src.Repository != pinned {
+		t.Errorf("source for the shared layer = %+v, want the pinned %s ahead of the confirmed, upstream and staging repositories", src, pinned)
+	}
+	if got := strings.Join(uploadedDigests(plan, testRegistry+"/"+pinned), ","); got != sharedLayerDigest {
+		t.Errorf("plan uploads %v to the pinned repository, want the shared layer", got)
+	}
+	if plan.confirmed != 0 || plan.upstream != 0 || plan.pinned != 1 {
+		t.Errorf("plan resolved %d confirmed, %d upstream and %d pinned homes, want 0, 0 and 1", plan.confirmed, plan.upstream, plan.pinned)
+	}
+}
+
+// TestPlanDedupPushConflictingPinsPickTheSmallest covers two operations that share a
+// layer but pin it to different repositories. One home per (registry, blob) is
+// structural -- the manifest push sees one view of the blobs per registry -- so the
+// lexicographically smaller repository wins, the same tie-break an unpinned home uses.
+func TestPlanDedupPushConflictingPinsPickTheSmallest(t *testing.T) {
+	plan := planFor(t,
+		withDedupSettings(pushOp(testRegistry, "team/service-a", manifestADigest, layer(sharedLayerDigest)), api.DeduplicatedPushEnabled, "team/z-blobs", ""),
+		withDedupSettings(pushOp(testRegistry, "team/service-b", manifestBDigest, layer(sharedLayerDigest)), api.DeduplicatedPushEnabled, "team/a-blobs", ""),
+	)
+	if src := sourceIn(plan, testRegistry, sharedLayerDigest); src.Repository != "team/a-blobs" {
+		t.Errorf("source for the shared layer = %+v, want the smaller of the two pinned repositories", src)
+	}
+	if got := strings.Join(uploadedDigests(plan, testRegistry+"/team/a-blobs"), ","); got != sharedLayerDigest {
+		t.Errorf("plan uploads %v to team/a-blobs, want the shared layer there and nowhere else", got)
+	}
+	if len(plan.uploads) != 1 {
+		t.Errorf("plan uploads to %v, want one repository", plan.uploads)
+	}
+}
+
+// TestPlanDedupPushRecordsArtificialManifests covers
+// deduplicated_push_content=blobs_and_artificial_manifests: the blobs this deploy
+// uploads to a home repository are the ones a manifest has to be written for, and one
+// operation asking for it is enough -- a manifest referencing a blob does not stop
+// anyone else from mounting it.
+func TestPlanDedupPushRecordsArtificialManifests(t *testing.T) {
+	plan := planFor(t,
+		withDedupSettings(pushOp(testRegistry, "team/service-a", manifestADigest, layer(sharedLayerDigest)), api.DeduplicatedPushEnabled, "", api.DeduplicatedPushContentBlobsAndArtificialManifests),
+		withDedupSettings(pushOp(testRegistry, "team/service-b", manifestBDigest, layer(sharedLayerDigest), layer(serviceBLayerDiges)), api.DeduplicatedPushEnabled, "", api.DeduplicatedPushContentBlobs),
+	)
+	shared := blobKey{registry: testRegistry, digest: sharedLayerDigest}
+	if !plan.flags[shared].artificial {
+		t.Error("the shared layer gets no artificial manifest, but one of the operations that mounts it asked for one")
+	}
+	if plan.artificial != 1 {
+		t.Errorf("plan writes %d artificial manifests, want 1", plan.artificial)
+	}
+	// service-b's own layer is not deduplicated at all, so there is nothing to
+	// reference from a manifest.
+	if _, planned := plan.flags[blobKey{registry: testRegistry, digest: serviceBLayerDiges}]; planned {
+		t.Error("service-b's own layer is in the plan, but only one repository needs it")
+	}
+}
+
+// TestPlanDedupPushArtificialManifestsAreOnlyForUploads verifies that a blob nobody
+// uploads gets no manifest: the repository the registry already serves it from has a
+// real manifest referencing it, which is exactly what the artificial one substitutes
+// for.
+func TestPlanDedupPushArtificialManifestsAreOnlyForUploads(t *testing.T) {
+	ops := []api.IndexedPushDeployOperation{
+		withDedupSettings(pushOp(testRegistry, "team/service-a", manifestADigest, layer(sharedLayerDigest)), api.DeduplicatedPushEnabled, "", api.DeduplicatedPushContentBlobsAndArtificialManifests),
+		withDedupSettings(pushOp(testRegistry, "team/service-b", manifestBDigest, layer(sharedLayerDigest)), api.DeduplicatedPushEnabled, "", api.DeduplicatedPushContentBlobsAndArtificialManifests),
+	}
+	present := map[destination]bool{
+		{registry: testRegistry, repository: "team/service-a", digest: manifestADigest}: true,
+	}
+	plan, err := planDedupPush(dedupWorkingSet(ops, nil, dedupSelector{}, "", ""), present, "", newBlobLocations(false))
+	if err != nil {
+		t.Fatalf("planDedupPush: %v", err)
+	}
+	if len(plan.uploads) != 0 || plan.artificial != 0 {
+		t.Errorf("plan uploads %v and writes %d artificial manifests, want neither: the registry already serves a manifest referencing the layer", plan.uploads, plan.artificial)
+	}
+}
+
+// TestPlanDedupPushBestEffortKeepsTheUploadFallback covers the best_effort mode: the
+// blob is still uploaded once and mounted everywhere else, but the layer is not
+// mount-only, so a registry that refuses the mount is answered with the bytes instead
+// of failing the deploy.
+func TestPlanDedupPushBestEffortKeepsTheUploadFallback(t *testing.T) {
+	plan := planFor(t,
+		withDedupSettings(pushOp(testRegistry, "team/service-a", manifestADigest, layer(sharedLayerDigest)), api.DeduplicatedPushBestEffort, "", ""),
+		withDedupSettings(pushOp(testRegistry, "team/service-b", manifestBDigest, layer(sharedLayerDigest)), api.DeduplicatedPushBestEffort, "", ""),
+	)
+	if src := sourceIn(plan, testRegistry, sharedLayerDigest); src.Repository != "team/service-a" {
+		t.Errorf("source for the shared layer = %+v, want team/service-a: best_effort still deduplicates", src)
+	}
+	if got := strings.Join(uploadedDigests(plan, testRegistry+"/team/service-a"), ","); got != sharedLayerDigest {
+		t.Errorf("plan uploads %v to the home repository, want the shared layer", got)
+	}
+	if countMountOnly(plan) != 0 {
+		t.Errorf("plan marked %v mount-only, but every operation that mounts the layer asked for best_effort", plan.mountOnly)
+	}
+	if plan.lenient != 1 {
+		t.Errorf("plan counted %d best-effort mounts, want 1", plan.lenient)
+	}
+	if !plan.flags[blobKey{registry: testRegistry, digest: sharedLayerDigest}].bestEffort {
+		t.Error("the shared layer's upload is not marked best-effort, so failing it would fail the deploy")
+	}
+}
+
+// TestPlanDedupPushBestEffortWinsOverStrict covers a blob shared by an operation that
+// insists on the mount and one that does not. Mount-only is a property of the
+// per-registry view of the blobs, so it cannot be strict for one destination and
+// lenient for the other: the operation that asked never to fail is the one honored.
+func TestPlanDedupPushBestEffortWinsOverStrict(t *testing.T) {
+	plan := planFor(t,
+		withDedupSettings(pushOp(testRegistry, "team/service-a", manifestADigest, layer(sharedLayerDigest)), api.DeduplicatedPushEnabled, "", ""),
+		withDedupSettings(pushOp(testRegistry, "team/service-b", manifestBDigest, layer(sharedLayerDigest)), api.DeduplicatedPushBestEffort, "", ""),
+	)
+	if countSources(plan) != 1 {
+		t.Fatalf("plan mounts %d blobs, want the shared layer", countSources(plan))
+	}
+	if countMountOnly(plan) != 0 {
+		t.Errorf("plan marked %v mount-only, but one of the operations that mounts the layer asked for best_effort", plan.mountOnly)
+	}
+}
+
+// TestDedupSelectorResolvesPerOperationSettings covers the rest of the per-operation
+// configuration: the mode decides strictness, and the pinned repository and content
+// mode are each overridable at run time.
+func TestDedupSelectorResolvesPerOperationSettings(t *testing.T) {
+	op := api.BaseCommandOperation{
+		DeduplicatedPush:               api.DeduplicatedPushBestEffort,
+		DeduplicatedPushBlobRepository: "shared/blobs",
+		DeduplicatedPushContent:        api.DeduplicatedPushContentBlobsAndArtificialManifests,
+	}
+
+	own, err := newDedupSelector("", "", "", false)
+	if err != nil {
+		t.Fatalf("newDedupSelector: %v", err)
+	}
+	if !own.enabled(op) || !own.lenient(op) {
+		t.Errorf("best_effort operation: enabled = %v, lenient = %v, want both true", own.enabled(op), own.lenient(op))
+	}
+	if got := own.homeRepository(op); got != "shared/blobs" {
+		t.Errorf("homeRepository = %q, want shared/blobs", got)
+	}
+	if !own.artificialManifests(op) {
+		t.Error("artificialManifests = false, want true")
+	}
+
+	overridden, err := newDedupSelector(api.DeduplicatedPushEnabled, "other/blobs", api.DeduplicatedPushContentBlobs, false)
+	if err != nil {
+		t.Fatalf("newDedupSelector: %v", err)
+	}
+	if overridden.lenient(op) {
+		t.Error("lenient = true, want the --deduplicated-push override to insist on the mount")
+	}
+	if got := overridden.homeRepository(op); got != "other/blobs" {
+		t.Errorf("homeRepository = %q, want the overriding other/blobs", got)
+	}
+	if overridden.artificialManifests(op) {
+		t.Error("artificialManifests = true, want the --deduplicated-push-content override to turn them off")
+	}
+
+	// A sink leaves nothing to deduplicate, whatever the operation asked for.
+	sunk, err := newDedupSelector("", "", "", true)
+	if err != nil {
+		t.Fatalf("newDedupSelector: %v", err)
+	}
+	if sunk.enabled(op) {
+		t.Error("enabled = true for a sink, want the strategy off")
+	}
+
+	if _, err := newDedupSelector("", "", "manifests", false); err == nil {
+		t.Error("newDedupSelector accepted a bogus --deduplicated-push-content value")
+	}
+	if err := validateDeduplicatedPushOverride(api.DeduplicatedPushBestEffort); err != nil {
+		t.Errorf("validateDeduplicatedPushOverride(best_effort): %v", err)
+	}
+}
+
+// TestValidateDeduplicatedPushOperations rejects a bogus per-operation content value
+// before any registry request is made -- but only for the operations that
+// deduplicate, since it is the only place the value is read.
+func TestValidateDeduplicatedPushOperations(t *testing.T) {
+	bogus := withDedupSettings(pushOp(testRegistry, "team/service-a", manifestADigest, layer(sharedLayerDigest)), api.DeduplicatedPushEnabled, "", "manifests")
+	err := validateDeduplicatedPushOperations([]api.IndexedPushDeployOperation{bogus}, nil, dedupSelector{})
+	if err == nil {
+		t.Fatal("validateDeduplicatedPushOperations = nil, want an error naming the operation")
+	}
+	if !strings.Contains(err.Error(), "team/service-a") || !strings.Contains(err.Error(), "deduplicated_push_content") {
+		t.Errorf("validateDeduplicatedPushOperations = %q, want it to name the operation and the setting", err)
+	}
+
+	optedOut := withDedupSettings(bogus, "", "", "manifests")
+	if err := validateDeduplicatedPushOperations([]api.IndexedPushDeployOperation{optedOut}, nil, dedupSelector{}); err != nil {
+		t.Errorf("validateDeduplicatedPushOperations for an opted-out operation: %v", err)
 	}
 }

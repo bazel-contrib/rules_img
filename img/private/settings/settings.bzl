@@ -13,7 +13,9 @@ def _push_settings_impl(ctx):
     cross_mount = ctx.attr._cross_mount[BuildSettingInfo].value
     blob_repository = ctx.attr._blob_repository[BuildSettingInfo].value
     forbid_layer_push = ctx.attr._forbid_layer_push[BuildSettingInfo].value == "enabled"
-    deduplicated_push = ctx.attr._deduplicated_push[BuildSettingInfo].value == "enabled"
+    deduplicated_push = ctx.attr._deduplicated_push[BuildSettingInfo].value
+    deduplicated_push_blob_repository = ctx.attr._deduplicated_push_blob_repository[BuildSettingInfo].value
+    deduplicated_push_content = ctx.attr._deduplicated_push_content[BuildSettingInfo].value
     insecure = ctx.attr._insecure[BuildSettingInfo].value == "enabled"
 
     return [PushSettingsInfo(
@@ -27,6 +29,8 @@ def _push_settings_impl(ctx):
         blob_repository = blob_repository,
         forbid_layer_push = forbid_layer_push,
         deduplicated_push = deduplicated_push,
+        deduplicated_push_blob_repository = deduplicated_push_blob_repository,
+        deduplicated_push_content = deduplicated_push_content,
         insecure = insecure,
     )]
 
@@ -71,6 +75,14 @@ push_settings = rule(
         ),
         "_deduplicated_push": attr.label(
             default = Label("//img/settings:deduplicated_push"),
+            providers = [BuildSettingInfo],
+        ),
+        "_deduplicated_push_blob_repository": attr.label(
+            default = Label("//img/settings:deduplicated_push_blob_repository"),
+            providers = [BuildSettingInfo],
+        ),
+        "_deduplicated_push_content": attr.label(
+            default = Label("//img/settings:deduplicated_push_content"),
             providers = [BuildSettingInfo],
         ),
         "_insecure": attr.label(

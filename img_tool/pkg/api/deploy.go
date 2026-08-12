@@ -160,6 +160,35 @@ type SignConfig struct {
 	Targets []string `json:"targets,omitempty"`
 }
 
+// Values of BaseCommandOperation.DeduplicatedPush: whether `img deploy` may serve
+// an operation's layers by cross-mounting them, and what a refused mount means.
+const (
+	// DeduplicatedPushDisabled pushes the operation as it would be pushed without the
+	// strategy. It is also what an empty value means.
+	DeduplicatedPushDisabled = "disabled"
+	// DeduplicatedPushEnabled deduplicates and insists on the cross-mount: being
+	// asked for the bytes of a layer this deploy uploaded to a home repository fails
+	// the push, rather than quietly uploading it into every repository.
+	DeduplicatedPushEnabled = "enabled"
+	// DeduplicatedPushBestEffort deduplicates but keeps the ordinary byte upload as a
+	// fallback, so a registry that refuses to mount (or a failed upload to a home
+	// repository) costs the deduplication rather than the deploy.
+	DeduplicatedPushBestEffort = "best_effort"
+)
+
+// Values of BaseCommandOperation.DeduplicatedPushContent: what the deduplicated
+// push writes to a blob's home repository.
+const (
+	// DeduplicatedPushContentBlobs uploads the blob and nothing else. It is also what
+	// an empty value means.
+	DeduplicatedPushContentBlobs = "blobs"
+	// DeduplicatedPushContentBlobsAndArtificialManifests additionally uploads a
+	// config blob and creates a single-layer manifest referencing the blob and that
+	// config, for registries that only expose a blob to other repositories once a
+	// manifest references it.
+	DeduplicatedPushContentBlobsAndArtificialManifests = "blobs_and_artificial_manifests"
+)
+
 type BaseCommandOperation struct {
 	Command   string               `json:"command"`   // "push" or "load"
 	RootKind  string               `json:"root_kind"` // "manifest" or "index"
@@ -168,8 +197,9 @@ type BaseCommandOperation struct {
 
 	CrossMountHint *CrossMountSource `json:"cross_mount_hint,omitempty"` // repository from which layers can be cross-mounted
 
-	// DeduplicatedPush, when true, lets `img deploy` serve this operation's layers
-	// by cross-mounting them: it checks which manifests the registry already holds,
+	// DeduplicatedPush, when set to DeduplicatedPushEnabled or
+	// DeduplicatedPushBestEffort, lets `img deploy` serve this operation's layers by
+	// cross-mounting them: it checks which manifests the registry already holds,
 	// uploads each layer that several of the deduplicating operations' repositories
 	// need to just one of them, and cross-mounts it into the others. On a registry
 	// that keeps a separate blob store per repository name this replaces one upload
@@ -177,10 +207,30 @@ type BaseCommandOperation struct {
 	//
 	// It is per operation rather than per deploy because it is an assumption about
 	// the destination: one deploy may push to a registry that cross-mounts blobs and
-	// to one that does not. An operation that leaves this false is pushed exactly as
-	// it would be without the strategy, and never has a layer served to it as a
-	// mount.
-	DeduplicatedPush bool `json:"deduplicated_push,omitempty"`
+	// to one that does not. An operation that leaves this empty (or "disabled") is
+	// pushed exactly as it would be without the strategy, and never has a layer
+	// served to it as a mount.
+	//
+	// The difference between the two active modes is what happens when the registry
+	// refuses to serve a layer by mounting it: DeduplicatedPushEnabled fails the
+	// push, DeduplicatedPushBestEffort uploads the layer's bytes the ordinary way.
+	DeduplicatedPush string `json:"deduplicated_push,omitempty"`
+
+	// DeduplicatedPushBlobRepository pins the repository the deduplicated push
+	// uploads this operation's shared blobs to and cross-mounts them from. Empty --
+	// the default -- lets the deploy work the repository out for itself (a repository
+	// the registry already serves a manifest from, an upstream repository recorded
+	// for the layer, the build-time staging repository, or one of the destinations).
+	// Only read when DeduplicatedPush is active.
+	DeduplicatedPushBlobRepository string `json:"deduplicated_push_blob_repository,omitempty"`
+
+	// DeduplicatedPushContent is what the deduplicated push writes to a blob's home
+	// repository: DeduplicatedPushContentBlobs (the default) uploads the blob alone,
+	// DeduplicatedPushContentBlobsAndArtificialManifests also uploads a config blob
+	// and creates a manifest referencing both, for registries that only expose a blob
+	// to other repositories once a manifest references it. Only read when
+	// DeduplicatedPush is active.
+	DeduplicatedPushContent string `json:"deduplicated_push_content,omitempty"`
 
 	PullInfo
 }

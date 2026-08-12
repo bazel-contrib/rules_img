@@ -186,12 +186,27 @@ common --@rules_img//img/settings:forbid_layer_push=enabled
 # collapses the repeated *downloads* of such a layer. Needs no further
 # configuration: the blobs go to a repository the deploy pushes to anyway.
 #
-# ONLY WORKS ON REGISTRIES THAT SUPPORT CROSS-REPOSITORY BLOB MOUNTING: the whole
-# point is to upload a blob once and mount it everywhere else, so a push that opted
-# in fails loudly on a registry that refuses to mount, instead of silently uploading
-# the blob into every repository. See docs/registry-support.md for what specific
+# ONLY WORKS ON REGISTRIES THAT SHARE A BLOB BETWEEN REPOSITORIES: the whole point
+# is to upload a blob once and have every other repository get it from there, so a
+# push that opted in with "enabled" fails loudly on a registry that does neither of
+# the two things which make that work, instead of silently uploading the blob into
+# every repository. Use "best_effort" to upload the layer the ordinary way where it
+# does not work, rather than failing. See docs/registry-support.md for what specific
 # registries do, and docs/push-strategies.md#deduplicated-push.
 common --@rules_img//img/settings:deduplicated_push=enabled
+
+# Upload every blob the deduplicated push shares between repositories to one named
+# repository and mount it from there, instead of letting the deploy pick a home
+# repository per blob. One place to find, retain and clean up shared blobs -- and one
+# repository a credential has to be able to read for the mounts to work.
+common --@rules_img//img/settings:deduplicated_push_blob_repository=team/_blobs
+
+# For registries that only expose a blob to other repositories once a manifest
+# references it (JFrog Artifactory, for one): also upload a config blob and create a
+# manifest referencing the shared blob in its home repository. The blob is then
+# shared, so every other repository's own blob check finds it -- with or without a
+# cross-mount.
+common --@rules_img//img/settings:deduplicated_push_content=blobs_and_artificial_manifests
 
 # Optional OCI distribution gateway endpoints. When set, registry requests made by
 # build actions (lazy layer downloads and build-time uploads) are routed through

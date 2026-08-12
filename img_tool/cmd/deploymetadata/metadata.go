@@ -44,11 +44,13 @@ var (
 	// syncer can reconstruct the layer from it.
 	layerCompactStreams *doubleIndexedStringFlag
 
-	crossMountStrategy         string
-	crossMountFromManifestPath string
-	blobRepository             string
-	forbidLayerPush            bool
-	deduplicatedPush           bool
+	crossMountStrategy             string
+	crossMountFromManifestPath     string
+	blobRepository                 string
+	forbidLayerPush                bool
+	deduplicatedPush               string
+	deduplicatedPushBlobRepository string
+	deduplicatedPushContent        string
 
 	destinationFilePath string
 
@@ -100,7 +102,9 @@ func DeployMetadataProcess(ctx context.Context, args []string) {
 	flagSet.StringVar(&crossMountFromManifestPath, "cross-mount-from-manifest-path", "", `(Optional) deploy manifest of another push, from which layers for this push could be cross mounted.`)
 	flagSet.StringVar(&blobRepository, "blob-repository", "", `(Optional) repository to push layer blobs to instead of the operation's own repository. The manifest push cross-mounts blobs from this repository into the real repository.`)
 	flagSet.BoolVar(&forbidLayerPush, "forbid-layer-push", false, `(Optional) forbid uploading layer blob bytes during the push. Layers may still be cross-mounted or skipped when already present; any actual upload fails. Use when layer blobs are pushed at build time and mounted server-side.`)
-	flagSet.BoolVar(&deduplicatedPush, "deduplicated-push", false, `(Optional) let img deploy serve this operation's layers by cross-mounting: check which manifests the registry already has, upload each layer several repositories need to just one of them, and cross-mount it into the others. For registries that keep a separate blob store per repository name -- and that support cross-repository blob mounting, without which an opted-in push fails instead of uploading the layer everywhere. Recorded per operation, so one deploy can mix destinations that cross-mount blobs with ones that do not.`)
+	flagSet.StringVar(&deduplicatedPush, "deduplicated-push", "", `(Optional) let img deploy serve this operation's layers by cross-mounting: check which manifests the registry already has, upload each layer several repositories need to just one of them, and cross-mount it into the others. For registries that keep a separate blob store per repository name. One of "enabled" (a refused mount fails the push, rather than uploading the layer into every repository), "best_effort" (a refused mount falls back to uploading the layer's bytes) or "disabled" (the default). Recorded per operation, so one deploy can mix destinations that cross-mount blobs with ones that do not.`)
+	flagSet.StringVar(&deduplicatedPushBlobRepository, "deduplicated-push-blob-repository", "", `(Optional) repository within the destination registry that the deduplicated push uploads this operation's shared blobs to and cross-mounts them from. Empty (the default) lets the deploy pick a home repository per blob. Only read when --deduplicated-push is active.`)
+	flagSet.StringVar(&deduplicatedPushContent, "deduplicated-push-content", "", `(Optional) what the deduplicated push writes to a blob's home repository: "blobs" (the default) uploads the blob alone, "blobs_and_artificial_manifests" also uploads a config blob and creates a manifest referencing the blob, for registries that only expose a blob to other repositories once a manifest references it. Only read when --deduplicated-push is active.`)
 	flagSet.Func("original-registry", `(Optional) original registry that the base of this image was pulled from. Can be specified multiple times.`, func(value string) error {
 		originalRegistries = append(originalRegistries, value)
 		return nil
@@ -406,6 +410,8 @@ func WriteMetadata(ctx context.Context, outputPath string) error {
 		deploySettings.BlobRepository = blobRepository
 		deploySettings.ForbidLayerPush = forbidLayerPush
 		baseCommand.DeduplicatedPush = deduplicatedPush
+		baseCommand.DeduplicatedPushBlobRepository = deduplicatedPushBlobRepository
+		baseCommand.DeduplicatedPushContent = deduplicatedPushContent
 		operation, err := pushOperation(baseCommand, config)
 		if err != nil {
 			return err
@@ -922,7 +928,9 @@ func registryTagOperations(pushTarget api.PushTarget, manifests []api.ManifestDe
 				Root:     child.Descriptor,
 				// The tag is written to the same repository as the push operation
 				// that created the manifest, so it follows that operation's strategy.
-				DeduplicatedPush: deduplicatedPush,
+				DeduplicatedPush:               deduplicatedPush,
+				DeduplicatedPushBlobRepository: deduplicatedPushBlobRepository,
+				DeduplicatedPushContent:        deduplicatedPushContent,
 			},
 			PushTarget: api.PushTarget{
 				Registry:   pushTarget.Registry,

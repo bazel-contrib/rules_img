@@ -93,7 +93,9 @@ def compute_push_metadata(
         signing = None,
         blob_repository = "",
         forbid_layer_push = False,
-        deduplicated_push = False):
+        deduplicated_push = "disabled",
+        deduplicated_push_blob_repository = "",
+        deduplicated_push_content = ""):
     """Compute push metadata for a deploy operation.
 
     Args:
@@ -116,11 +118,18 @@ def compute_push_metadata(
         forbid_layer_push: When True, records in the deploy manifest that layer
             blob uploads are forbidden (deploy may only cross-mount or skip
             already-present layers). Guards deploys of build-time-pushed blobs.
-        deduplicated_push: When True, records in the deploy manifest that
-            `img deploy` should push through blob_repository in phases: check
-            which manifests the registry already has, upload each still-missing
-            blob once per registry, then cross-mount it into every destination
-            repository.
+        deduplicated_push: Resolved deduplicated push mode ("disabled",
+            "best_effort" or "enabled"). When not "disabled", records in the deploy
+            manifest that `img deploy` should push in phases: check which manifests
+            the registry already has, upload each still-missing blob once per
+            registry, then cross-mount it into every destination repository.
+        deduplicated_push_blob_repository: Repository that every blob the
+            deduplicated push shares between repositories is uploaded to and
+            cross-mounted from, or "" to let the deploy pick one per blob. Only
+            recorded when deduplicated_push is active.
+        deduplicated_push_content: What the deduplicated push writes to a blob's
+            home repository ("blobs" or "blobs_and_artificial_manifests"). Only
+            recorded when it is not the "blobs" default.
 
     Returns:
         Tuple of (metadata_file, layer_hints_file).
@@ -141,8 +150,15 @@ def compute_push_metadata(
         args.add("--blob-repository", blob_repository)
     if forbid_layer_push:
         args.add("--forbid-layer-push")
-    if deduplicated_push:
-        args.add("--deduplicated-push")
+    if deduplicated_push in ("best_effort", "enabled"):
+        args.add("--deduplicated-push", deduplicated_push)
+
+        # Both only mean anything to a deduplicating operation, so an operation that
+        # opted out records neither.
+        if deduplicated_push_blob_repository:
+            args.add("--deduplicated-push-blob-repository", deduplicated_push_blob_repository)
+        if deduplicated_push_content and deduplicated_push_content != "blobs":
+            args.add("--deduplicated-push-content", deduplicated_push_content)
 
     if destination_file != None:
         inputs.append(destination_file)
@@ -842,6 +858,8 @@ def process_deploy_specs(
             blob_repository = cross_mount_blob_repository(push_config.push_at_build_time_mode, push_config.blob_repository),
             forbid_layer_push = push_config.forbid_layer_push,
             deduplicated_push = push_config.deduplicated_push,
+            deduplicated_push_blob_repository = push_config.deduplicated_push_blob_repository,
+            deduplicated_push_content = push_config.deduplicated_push_content,
         )
         deploy_infos.append(struct(metadata = deploy_metadata, layer_hints = layer_hints))
         if push_config.signing != None:

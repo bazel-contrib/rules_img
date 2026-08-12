@@ -102,7 +102,8 @@ type blobResolution struct {
 // The arguments are this request's own signals for one (registry, blob), all scoped
 // to that registry the way resolveBlobMount needs them: the repositories that need
 // the blob, the ones whose manifests the registry just confirmed, the repository the
-// build recorded the layer as coming from, and the build-time staging repository.
+// build recorded the layer as coming from, the build-time staging repository, and the
+// repository the configuration pins the blob to (or "").
 //
 // The cache is consulted first, and in the order the two maps cost:
 //
@@ -122,23 +123,29 @@ type blobResolution struct {
 //     answer: a home it uploads to is claimed in inflight until the upload succeeds,
 //     anything else -- a repository the registry confirmed, an upstream repository --
 //     goes straight into present for later requests to mount from.
-func (l *blobLocations) resolve(key blobKey, needing, confirmed map[string]struct{}, upstream, blobRepository string) blobResolution {
+//
+// A pinned home narrows the first two steps rather than skipping them: only a cached
+// home that *is* the pinned repository may be used, because that is the only place the
+// configuration allows this blob to be mounted from. So a request with a pin never
+// mounts out of a repository an earlier request happened to fill, and two requests
+// that share the pin still share one upload.
+func (l *blobLocations) resolve(key blobKey, needing, confirmed map[string]struct{}, upstream, blobRepository, pinnedHome string) blobResolution {
 	if l == nil {
-		mount := resolveBlobMount(needing, confirmed, upstream, blobRepository, false)
+		mount := resolveBlobMount(needing, confirmed, upstream, blobRepository, pinnedHome, false)
 		return blobResolution{blobMount: mount, upload: mount.kind == mountFromUpload}
 	}
 
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	if home, found := l.present[key]; found {
+	if home, found := l.present[key]; found && homeAllowed(home.repository, pinnedHome) {
 		return blobResolution{blobMount: home, cached: true}
 	}
-	if home, found := l.inflight[key]; found {
+	if home, found := l.inflight[key]; found && homeAllowed(home.repository, pinnedHome) {
 		return blobResolution{blobMount: home, upload: true, joined: true, cached: true}
 	}
 
-	mount := resolveBlobMount(needing, confirmed, upstream, blobRepository, l.incremental)
+	mount := resolveBlobMount(needing, confirmed, upstream, blobRepository, pinnedHome, l.incremental)
 	switch {
 	case mount.repository == "":
 		return blobResolution{}
@@ -149,6 +156,12 @@ func (l *blobLocations) resolve(key blobKey, needing, confirmed map[string]struc
 		l.present[key] = mount
 		return blobResolution{blobMount: mount}
 	}
+}
+
+// homeAllowed reports whether a home the cache knows may serve a request that pins
+// its blobs to pinnedHome. Without a pin, any home the cache knows will do.
+func homeAllowed(home, pinnedHome string) bool {
+	return pinnedHome == "" || home == pinnedHome
 }
 
 // promote records that the blob is now in the home repository, so that the requests
@@ -165,10 +178,12 @@ func (l *blobLocations) promote(key blobKey, home string) {
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	l.present[key] = blobMount{repository: home, kind: mountFromUpload}
+	pinned := false
 	if inflight, found := l.inflight[key]; found && inflight.repository == home {
+		pinned = inflight.pinned
 		delete(l.inflight, key)
 	}
+	l.present[key] = blobMount{repository: home, kind: mountFromUpload, pinned: pinned}
 }
 
 // abandon withdraws a claim whose upload failed, so that the next request picks a

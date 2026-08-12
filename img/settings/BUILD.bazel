@@ -401,9 +401,9 @@ string_flag(
     visibility = ["//visibility:public"],
 )
 
-# When "enabled", `img deploy` (image_push / multi_deploy) pushes in phases instead
-# of pushing each manifest independently: it asks the registry which manifests it
-# already holds, then uploads every layer that more than one repository needs to
+# When not "disabled", `img deploy` (image_push / multi_deploy) pushes in phases
+# instead of pushing each manifest independently: it asks the registry which manifests
+# it already holds, then uploads every layer that more than one repository needs to
 # just one of those repositories -- the first alphabetically -- and cross-mounts it
 # into the others from there. Meant for registries that keep a separate blob store
 # per repository name, where pushing K images that share their layers to K
@@ -411,17 +411,55 @@ string_flag(
 # configuration: the blobs go to a repository the deploy pushes to anyway, so no
 # extra repository and no extra credentials are involved. When
 # push_at_build_time_blob_repository staged the blobs at build time, that repository
-# is used instead.
+# is used instead; deduplicated_push_blob_repository overrides both.
 #
-# Only works on a registry that supports cross-repository blob mounting: a push that
-# opted in fails loudly where mounting is refused, instead of silently uploading the
-# blob into every repository. See docs/registry-support.md.
+# "enabled" only works on a registry that supports cross-repository blob mounting: a
+# push that opted in fails loudly where mounting is refused, instead of silently
+# uploading the blob into every repository. "best_effort" deduplicates the same way
+# but uploads a layer's bytes the ordinary way where the mount is refused, so the
+# deduplication is attempted without the deploy depending on it. See
+# docs/registry-support.md.
 string_flag(
     name = "deduplicated_push",
     build_setting_default = "disabled",
     values = [
         "disabled",
+        "best_effort",
         "enabled",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+# When non-empty, every blob the deduplicated push shares between repositories is
+# uploaded to this repository (within the destination registry) and cross-mounted from
+# there, instead of the deploy working out a home repository per blob. It takes
+# precedence over every source the deploy would have picked itself -- including a
+# repository the registry already serves the blob from -- so that shared blobs are all
+# in one place: one repository to retain and clean up, and one repository a credential
+# has to be able to read for the mounts to work.
+#
+# Only consulted when deduplicated_push is active.
+string_flag(
+    name = "deduplicated_push_blob_repository",
+    build_setting_default = "",
+    visibility = ["//visibility:public"],
+)
+
+# What the deduplicated push writes to a blob's home repository. "blobs" (the default)
+# uploads the blob and nothing else. "blobs_and_artificial_manifests" additionally
+# uploads a config blob and creates a manifest referencing the blob and that config,
+# for registries that only expose a blob to other repositories once a manifest
+# references it (JFrog Artifactory, for one): with the manifest in place, the blob is
+# served to every repository the caller may read, so the manifest push finds it there
+# and uploads nothing -- with or without a cross-mount.
+#
+# Only consulted when deduplicated_push is active.
+string_flag(
+    name = "deduplicated_push_content",
+    build_setting_default = "blobs",
+    values = [
+        "blobs",
+        "blobs_and_artificial_manifests",
     ],
     visibility = ["//visibility:public"],
 )
