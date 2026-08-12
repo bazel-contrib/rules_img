@@ -79,15 +79,20 @@ type naiveRegistry struct {
 	blobPuts     []string
 	mounts       []string
 	manifestPuts []string
-	// mountOrigins records the "origin" query parameter of every satisfied mount, in
-	// step with mounts. go-containerregistry only sends it -- and only asks the token
-	// service for read access to the source repository -- when the cross-mount source
-	// names a registry, so an empty entry here means the deploy recorded a source that
-	// a scope-enforcing registry would refuse to mount from.
-	mountOrigins []string
+	// mountAttempts records the query parameters of every mount request, satisfied or
+	// not, so a test can check the shape of the request and not just its effect.
+	mountAttempts []mountAttempt
 	// crossRegistryMounts records every mount attempt whose "origin" named another
 	// registry. It must stay empty: see startUpload.
 	crossRegistryMounts []string
+}
+
+// mountAttempt is a POST that asked to mount a blob rather than upload it.
+type mountAttempt struct {
+	repository string
+	digest     string
+	from       string
+	origin     string
 }
 
 type storedManifest struct {
@@ -216,12 +221,14 @@ func (r *naiveRegistry) startUpload(w http.ResponseWriter, req *http.Request, re
 
 	query := req.URL.Query()
 	mount, from, origin := query.Get("mount"), query.Get("from"), query.Get("origin")
+	if mount != "" {
+		r.mountAttempts = append(r.mountAttempts, mountAttempt{repository: repository, digest: mount, from: from, origin: origin})
+	}
 	sameRegistry := origin == "" || origin == req.URL.Host
 	if r.mountable && sameRegistry && mount != "" && from != "" {
 		if content, found := r.blobs[from][mount]; found {
 			r.putBlobLocked(repository, mount, content)
 			r.mounts = append(r.mounts, repository+"@"+mount)
-			r.mountOrigins = append(r.mountOrigins, origin)
 			w.Header().Set("Location", "/v2/"+repository+"/blobs/"+mount)
 			w.Header().Set("Docker-Content-Digest", mount)
 			w.WriteHeader(http.StatusCreated)
@@ -609,10 +616,11 @@ func buildSharedLayerLayouts(t *testing.T, registry string, services, sharedLaye
 //
 // It also holds every one of these tests to the no-cross-registry invariant: whatever
 // the plan decided, the registry must never have been asked to fetch a blob from
-// another registry.
+// another registry -- nor to mount one with an "origin" parameter at all.
 func runDedupDeploy(t *testing.T, registry *naiveRegistry, layoutDirs []string, dm api.DeployManifest) error {
 	t.Helper()
 	defer registry.assertNoCrossRegistryMounts(t)
+	defer registry.assertMountsCarryNoOrigin(t)
 	return runDedupDeployVia(t, registry.transport(), layoutDirs, dm)
 }
 
@@ -624,6 +632,26 @@ func (r *naiveRegistry) assertNoCrossRegistryMounts(t *testing.T) {
 	defer r.mu.Unlock()
 	if len(r.crossRegistryMounts) > 0 {
 		t.Errorf("registry saw cross-registry mount attempts, want none: %v", r.crossRegistryMounts)
+	}
+}
+
+// assertMountsCarryNoOrigin holds every mount request to the shape it leaves the
+// tool with: a "from" naming the source repository, and no "origin". The parameter
+// is go-containerregistry's extension for mounting across registries, which it
+// derives from any mount source that names its registry and sends even for a source
+// the destination already serves; registryopts.WrapMountOrigin removes it, since a
+// registry that mounts only within itself may otherwise refuse the mount.
+func (r *naiveRegistry) assertMountsCarryNoOrigin(t *testing.T) {
+	t.Helper()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, attempt := range r.mountAttempts {
+		if attempt.from == "" {
+			t.Errorf("the mount of %s into %s named no source repository, so it is no mount at all", attempt.digest, attempt.repository)
+		}
+		if attempt.origin != "" {
+			t.Errorf("the mount of %s into %s from %s carried origin %q, want none", attempt.digest, attempt.repository, attempt.from, attempt.origin)
+		}
 	}
 }
 
@@ -716,18 +744,6 @@ func TestDeduplicatedPushUploadsSharedLayersOnce(t *testing.T) {
 	if len(mounts) != 4 {
 		t.Errorf("registry satisfied %d mounts, want 4 (2 shared layers x 2 non-home repositories): %v", len(mounts), mounts)
 	}
-	// Every one of them named the registry the source repository is in. Without that,
-	// go-containerregistry never asks the token service for read access to the source,
-	// and a registry that enforces per-repository scopes cannot authorize the mount --
-	// which for a mount-only layer means a failed push, not a slower one.
-	reg.mu.Lock()
-	origins := append([]string(nil), reg.mountOrigins...)
-	reg.mu.Unlock()
-	for i, origin := range origins {
-		if origin != images.registry {
-			t.Errorf("mount %d carried origin %q, want the destination registry %q", i, origin, images.registry)
-		}
-	}
 	for _, repository := range images.repositories[1:] {
 		for _, digest := range images.shared {
 			if !reg.hasBlob(repository, digest) {
@@ -760,6 +776,46 @@ func TestDeduplicatedPushUploadsSharedLayersOnce(t *testing.T) {
 		if stored, found := reg.storedManifestFor(repository, "latest"); !found || stored.digest != images.manifests[i] {
 			t.Errorf("tag latest in %s = %+v, want it to point at %s", repository, stored.digest, images.manifests[i])
 		}
+	}
+}
+
+// TestDeduplicatedPushMountsNameOnlyTheSourceRepository pins the shape of the mount
+// requests that leave the tool: every one names the home repository as its "from" and
+// carries no "origin". go-containerregistry derives that parameter from the mount
+// source's reference -- which still names the destination's registry, so go-cr asks
+// the token service for read access to the source -- and
+// registryopts.WrapMountOrigin takes it off the wire, because a registry that mounts
+// only within itself may read it as a mount it cannot serve and ask for the bytes. A
+// mount-only layer has none to give.
+func TestDeduplicatedPushMountsNameOnlyTheSourceRepository(t *testing.T) {
+	reg := newNaiveRegistry()
+	layoutDirs, dm, images := buildSharedLayerLayouts(t, "reg.example.com", 3, 2)
+	home := images.repositories[0] // team/service-0, first alphabetically
+
+	if err := runDedupDeploy(t, reg, layoutDirs, dm); err != nil {
+		t.Fatalf("deduplicated push: %v", err)
+	}
+
+	reg.mu.Lock()
+	attempts := append([]mountAttempt(nil), reg.mountAttempts...)
+	reg.mu.Unlock()
+
+	// 2 shared layers x the 2 repositories that are not the home. Without this the
+	// assertions below would hold for a deploy that never mounted anything at all.
+	if len(attempts) != 4 {
+		t.Errorf("registry saw %d mount requests, want 4 (2 shared layers x 2 non-home repositories): %+v", len(attempts), attempts)
+	}
+	for _, attempt := range attempts {
+		if attempt.from != home {
+			t.Errorf("mount of %s into %s named from=%q, want the home repository %q", attempt.digest, attempt.repository, attempt.from, home)
+		}
+		if attempt.origin != "" {
+			t.Errorf("mount of %s into %s carried origin=%q, want no origin at all", attempt.digest, attempt.repository, attempt.origin)
+		}
+	}
+	// Every mount was satisfied, so no layer's bytes were asked for twice.
+	if _, mounts, _ := reg.snapshot(); len(mounts) != len(attempts) {
+		t.Errorf("registry satisfied %d of %d mount requests, want all of them: %v", len(mounts), len(attempts), mounts)
 	}
 }
 
@@ -801,14 +857,7 @@ func TestDeduplicatedPushDeduplicatesEachRegistrySeparately(t *testing.T) {
 		if len(mounts) != 4 {
 			t.Errorf("%s: satisfied %d mounts, want 4 (2 shared layers x 2 non-home repositories): %v", name, len(mounts), mounts)
 		}
-		reg.mu.Lock()
-		origins := append([]string(nil), reg.mountOrigins...)
-		reg.mu.Unlock()
-		for i, origin := range origins {
-			if origin != name {
-				t.Errorf("%s: mount %d carried origin %q, want its own registry", name, i, origin)
-			}
-		}
+		reg.assertMountsCarryNoOrigin(t)
 	}
 }
 
