@@ -306,7 +306,10 @@ func (c *CachingReader) ReaderForBlob(ctx context.Context, digest Digest) (io.Re
 			return file, nil
 		}
 
-		fetch, joined := c.fetchFor(digest)
+		fetch, joined, inStore := c.fetchFor(digest)
+		if inStore {
+			continue // another reader just finalized it; store.open will find it
+		}
 		if fetch == nil {
 			break // the cache directory is unusable; read straight from upstream
 		}
@@ -324,22 +327,32 @@ func (c *CachingReader) ReaderForBlob(ctx context.Context, digest Digest) (io.Re
 }
 
 // fetchFor returns the fetch for a digest, starting one if none is in flight,
-// and reports whether it joined an existing one. It returns nil if the blob
-// cannot be cached locally.
-func (c *CachingReader) fetchFor(digest Digest) (*blobFetch, bool) {
+// and reports whether it joined an existing one. It returns a nil fetch and
+// inStore==false if the blob cannot be cached locally, or inStore==true if the
+// blob is already in the store and the caller should read it from there.
+func (c *CachingReader) fetchFor(digest Digest) (fetch *blobFetch, joined, inStore bool) {
 	key := digest.cacheKey()
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if fetch, ok := c.inflight[key]; ok {
-		return fetch, true
+		return fetch, true, false
 	}
-	fetch := c.startFetch(digest, key)
-	if fetch == nil {
-		return nil, false
+	// No fetch is in flight. Because finalize renames the blob into the store
+	// before it forgets the fetch, and both forget and this lookup hold c.mu, a
+	// digest missing from inflight but present in the store was just completed by
+	// another reader. Send the caller back to the store instead of starting a
+	// redundant fetch that would read the same bytes from upstream again -- the
+	// race the caller's earlier store.open lost to a finalize in progress.
+	if c.store.has(digest) {
+		return nil, false, true
 	}
-	c.inflight[key] = fetch
-	return fetch, false
+	newFetch := c.startFetch(digest, key)
+	if newFetch == nil {
+		return nil, false, false
+	}
+	c.inflight[key] = newFetch
+	return newFetch, false, false
 }
 
 // startFetch begins fetching a blob into a temp file. c.mu must be held.
@@ -609,10 +622,16 @@ func (b *blobFetch) finalize() {
 	if !eligible {
 		return
 	}
-	b.cache.forget(b.key, b)
+	// Move the completed blob into the store before dropping the in-flight
+	// fetch, not after: a reader entering ReaderForBlob between the two steps
+	// must always find the blob in one place or the other. Forgetting first
+	// leaves a window where the temp file is neither in the store nor reachable
+	// through c.inflight, and a racing reader starts a redundant second fetch of
+	// a blob that is already downloaded.
 	if err := b.cache.store.finalize(b.tempPath, b.digest); err != nil && isNoSpace(err) {
 		b.cache.store.disable(err)
 	}
+	b.cache.forget(b.key, b)
 }
 
 // waitFor blocks until data past off is available or the fetch has ended,

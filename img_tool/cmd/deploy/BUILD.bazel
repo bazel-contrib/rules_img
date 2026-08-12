@@ -3,6 +3,7 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "deploy",
     srcs = [
+        "dedup_locations.go",
         "dedup_push.go",
         "deploy.go",
         "persistentworker.go",
@@ -42,6 +43,7 @@ go_test(
     srcs = [
         "casblobcache_test.go",
         "dedup_cascache_test.go",
+        "dedup_locations_test.go",
         "dedup_push_test.go",
         "dedup_registry_test.go",
         "progress_test.go",

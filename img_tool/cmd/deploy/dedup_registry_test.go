@@ -10,6 +10,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -47,6 +48,12 @@ type naiveRegistry struct {
 	// that does not support them, which must make a mount-only layer fail rather
 	// than quietly re-upload.
 	mountable bool
+
+	// refuseUploads holds the repositories that answer an upload session with 401,
+	// modelling a credential that may not write there. A deploy is only ever asked to
+	// upload into a repository it does not push to by the process-wide blob location
+	// cache, when it joins another deploy's claim (see blobLocations).
+	refuseUploads map[string]struct{}
 
 	// blobPuts records every finalized blob upload as "<repository>@<digest>", and
 	// mounts every satisfied mount as "<repository>@<digest>". A blob that appears
@@ -170,6 +177,11 @@ func (r *naiveRegistry) startUpload(w http.ResponseWriter, req *http.Request, re
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+
+	if _, refused := r.refuseUploads[repository]; refused {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
 
 	query := req.URL.Query()
 	mount, from, origin := query.Get("mount"), query.Get("from"), query.Get("origin")
@@ -322,6 +334,26 @@ func (r *naiveRegistry) putBlob(repository, digest string, content []byte) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.putBlobLocked(repository, digest, content)
+}
+
+// blobPutRepositories returns the repositories the blob's bytes were uploaded to,
+// sorted and without duplicates. One entry means every other repository that has the
+// blob cross-mounted it.
+func (r *naiveRegistry) blobPutRepositories(digest string) []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var repositories []string
+	for _, put := range r.blobPuts {
+		repository, uploaded, found := strings.Cut(put, "@")
+		if !found || uploaded != digest {
+			continue
+		}
+		if !slices.Contains(repositories, repository) {
+			repositories = append(repositories, repository)
+		}
+	}
+	sort.Strings(repositories)
+	return repositories
 }
 
 // hasBlob reports whether the repository holds the blob.
@@ -488,6 +520,14 @@ func (r *naiveRegistry) assertNoCrossRegistryMounts(t *testing.T) {
 // serve more than one registry (see registryFleet).
 func runDedupDeployVia(t *testing.T, transport http.RoundTripper, layoutDirs []string, dm api.DeployManifest) error {
 	t.Helper()
+	return runDedupDeployWith(t, transport, layoutDirs, dm, newBlobLocations(false))
+}
+
+// runDedupDeployWith is runDedupDeployVia against a given blob location cache, so a
+// test can play several deploys through one cache the way the persistent worker
+// handles several work requests.
+func runDedupDeployWith(t *testing.T, transport http.RoundTripper, layoutDirs []string, dm api.DeployManifest, locations *blobLocations) error {
+	t.Helper()
 	vfsBuilder := deployvfs.NewBuilder(dm)
 	for _, layoutDir := range layoutDirs {
 		vfsBuilder = vfsBuilder.WithOCILayout(layoutDir)
@@ -509,6 +549,7 @@ func runDedupDeployVia(t *testing.T, transport http.RoundTripper, layoutDirs []s
 		jobs:           4,
 		forbidUpload:   dm.Settings.ForbidLayerPush,
 		pushTransport:  transport,
+		locations:      locations,
 	})
 	if err != nil {
 		return err
@@ -907,6 +948,223 @@ func TestDeduplicatedPushMountsUpstreamLayersInsteadOfUploading(t *testing.T) {
 		if got := reg.countBlobPuts(digest); got != 1 {
 			t.Errorf("layer %s uploaded %d times, want exactly 1", digest, got)
 		}
+	}
+}
+
+// workRequest returns dm with only the operation at the given index, which is the
+// shape a persistent worker sees: one deploy manifest per work request, planned on
+// its own, with no way to know what the next request will push.
+func workRequest(dm api.DeployManifest, index int) api.DeployManifest {
+	out := dm
+	out.Operations = dm.Operations[index : index+1]
+	return out
+}
+
+// TestDeduplicatedPushMountsFromAnEarlierWorkRequestsHome is the persistent worker,
+// one request at a time: two services that share their base layers are deployed by
+// two work requests, each of which only knows its own image. The process-wide
+// location cache is what makes the second one mount the shared layers out of the
+// first one's repository instead of uploading its own copy -- and the control below
+// shows that without it, it does.
+func TestDeduplicatedPushMountsFromAnEarlierWorkRequestsHome(t *testing.T) {
+	reg := newNaiveRegistry()
+	layoutDirs, dm, images := buildSharedLayerLayouts(t, "reg.example.com", 2, 2)
+	locations := newBlobLocations(true)
+
+	for i := range images.repositories {
+		if err := runDedupDeployWith(t, reg.transport(), layoutDirs, workRequest(dm, i), locations); err != nil {
+			t.Fatalf("work request %d: %v", i, err)
+		}
+	}
+	reg.assertNoCrossRegistryMounts(t)
+
+	home := images.repositories[0] // the first request's repository: it settled the home
+	for _, digest := range images.shared {
+		if got := reg.countBlobPuts(digest); got != 1 {
+			t.Errorf("shared layer %s uploaded %d times across the two work requests, want exactly 1", digest, got)
+		}
+		if !reg.hasBlob(home, digest) {
+			t.Errorf("shared layer %s is not in the home repository %s", digest, home)
+		}
+		if !reg.hasBlob(images.repositories[1], digest) {
+			t.Errorf("shared layer %s never reached %s", digest, images.repositories[1])
+		}
+	}
+	// One cross-mount per shared layer, into the second request's repository.
+	_, mounts, _ := reg.snapshot()
+	if len(mounts) != len(images.shared) {
+		t.Errorf("registry satisfied %d mounts, want one per shared layer (%d): %v", len(mounts), len(images.shared), mounts)
+	}
+	// Each service's own layer is still uploaded to its own repository.
+	for i, digest := range images.unique {
+		if got := reg.countBlobPuts(digest); got != 1 {
+			t.Errorf("layer %s uploaded %d times, want exactly 1", digest, got)
+		}
+		if !reg.hasBlob(images.repositories[i], digest) {
+			t.Errorf("layer %s never reached %s", digest, images.repositories[i])
+		}
+	}
+	for i, repository := range images.repositories {
+		if _, found := reg.storedManifestFor(repository, images.manifests[i]); !found {
+			t.Errorf("manifest %s never reached %s", images.manifests[i], repository)
+		}
+	}
+
+	// The control: the same two work requests without a shared cache -- each planning
+	// its own deploy, as a one-shot img deploy does -- upload every shared layer twice.
+	// A single-image deploy has nothing to cross-mount into, so on its own the strategy
+	// cannot help here at all.
+	control := newNaiveRegistry()
+	for i := range images.repositories {
+		if err := runDedupDeployVia(t, control.transport(), layoutDirs, workRequest(dm, i)); err != nil {
+			t.Fatalf("control work request %d: %v", i, err)
+		}
+	}
+	for _, digest := range images.shared {
+		if got := control.countBlobPuts(digest); got != 2 {
+			t.Errorf("without the shared cache, shared layer %s was uploaded %d times, want once per work request (2)", digest, got)
+		}
+	}
+}
+
+// TestDeduplicatedPushConcurrentWorkRequestsShareOneHome is the concurrent worker:
+// several work requests are planned at the same time, so none of them can see
+// another's finished upload. They must still agree on one home per shared blob, and
+// the blob's bytes must cross the wire exactly once -- each request pushes through a
+// remote.Pusher of its own, so nothing below the location cache would keep them from
+// all uploading it.
+func TestDeduplicatedPushConcurrentWorkRequestsShareOneHome(t *testing.T) {
+	reg := newNaiveRegistry()
+	layoutDirs, dm, images := buildSharedLayerLayouts(t, "reg.example.com", 3, 2)
+	locations := newBlobLocations(true)
+
+	errs := make([]error, len(images.repositories))
+	var wg sync.WaitGroup
+	for i := range images.repositories {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs[i] = runDedupDeployWith(t, reg.transport(), layoutDirs, workRequest(dm, i), locations)
+		}()
+	}
+	wg.Wait()
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent work request %d: %v", i, err)
+		}
+	}
+	reg.assertNoCrossRegistryMounts(t)
+
+	for _, digest := range images.shared {
+		// One home, whichever request got there first, and one upload into it: the
+		// requests that did not perform it either waited for the one that did or found
+		// the blob already there.
+		if repositories := reg.blobPutRepositories(digest); len(repositories) != 1 {
+			t.Errorf("shared layer %s was uploaded to %v, want a single home repository", digest, repositories)
+		}
+		if got := reg.countBlobPuts(digest); got != 1 {
+			t.Errorf("shared layer %s uploaded %d times, want exactly 1 across the concurrent requests", digest, got)
+		}
+		for _, repository := range images.repositories {
+			if !reg.hasBlob(repository, digest) {
+				t.Errorf("shared layer %s never reached %s", digest, repository)
+			}
+		}
+	}
+	for i, repository := range images.repositories {
+		if _, found := reg.storedManifestFor(repository, images.manifests[i]); !found {
+			t.Errorf("manifest %s never reached %s", images.manifests[i], repository)
+		}
+	}
+}
+
+// TestDeduplicatedPushLeavesARefusedJoinedUploadToTheOrdinaryPush covers the one
+// thing the location cache asks of a deploy that it did not ask for itself: uploading
+// a blob to a repository it does not push to, because a concurrent deploy claimed it
+// as the home. A credential that may not write there must not fail the deploy -- it
+// gives up the cross-mount for that blob and uploads the bytes into its own
+// repository, which is what would have happened without the cache.
+func TestDeduplicatedPushLeavesARefusedJoinedUploadToTheOrdinaryPush(t *testing.T) {
+	reg := newNaiveRegistry()
+	reg.refuseUploads = map[string]struct{}{"other/home": {}}
+	layoutDirs, dm, images := buildSharedLayerLayouts(t, "reg.example.com", 1, 1)
+	shared := images.shared[0]
+
+	// A concurrent deploy in this process claimed a home this one cannot write to.
+	locations := newBlobLocations(true)
+	locations.inflight[blobKey{registry: "reg.example.com", digest: shared}] = blobMount{repository: "other/home", kind: mountFromUpload}
+
+	if err := runDedupDeployWith(t, reg.transport(), layoutDirs, dm, locations); err != nil {
+		t.Fatalf("deduplicated push: %v", err)
+	}
+	reg.assertNoCrossRegistryMounts(t)
+
+	if reg.hasBlob("other/home", shared) {
+		t.Error("the shared layer reached the home repository, which refuses uploads")
+	}
+	if !reg.hasBlob(images.repositories[0], shared) {
+		t.Errorf("the shared layer never reached %s, so the deploy pushed an unservable manifest", images.repositories[0])
+	}
+	if got := reg.countBlobPuts(shared); got != 1 {
+		t.Errorf("the shared layer's bytes were uploaded %d times, want 1 (into its own repository)", got)
+	}
+	if _, found := reg.storedManifestFor(images.repositories[0], images.manifests[0]); !found {
+		t.Errorf("manifest %s never reached %s", images.manifests[0], images.repositories[0])
+	}
+}
+
+// TestDeduplicatedPushFailsWhenItsOwnHomeRefusesTheUpload is the other half of the
+// pair: an upload this deploy chose to make is its own work, so failing it fails the
+// deploy rather than being papered over.
+func TestDeduplicatedPushFailsWhenItsOwnHomeRefusesTheUpload(t *testing.T) {
+	reg := newNaiveRegistry()
+	layoutDirs, dm, images := buildSharedLayerLayouts(t, "reg.example.com", 2, 1)
+	reg.refuseUploads = map[string]struct{}{images.repositories[0]: {}} // the home
+
+	err := runDedupDeploy(t, reg, layoutDirs, dm)
+	if err == nil {
+		t.Fatal("deduplicated push succeeded although the home repository refused the upload")
+	}
+	if !strings.Contains(err.Error(), "uploading shared blobs") {
+		t.Errorf("error = %v, want the upload phase to name itself", err)
+	}
+	if !strings.Contains(err.Error(), images.shared[0]) {
+		t.Errorf("error = %v, want it to name the shared layer %s", err, images.shared[0])
+	}
+}
+
+// TestDeduplicatedPushFailsWhenAnEarlierHomeCannotBeMounted pins the trust the
+// location cache carries across work requests: the home is a repository *this
+// process* uploaded the blob to, so the request that mounts from it fails loudly if
+// the registry refuses, exactly as it would for a home of its own choosing. A silent
+// fallback would upload the blob into every repository after having already uploaded
+// it to the home -- strictly worse than never enabling the strategy.
+func TestDeduplicatedPushFailsWhenAnEarlierHomeCannotBeMounted(t *testing.T) {
+	reg := newNaiveRegistry()
+	layoutDirs, dm, images := buildSharedLayerLayouts(t, "reg.example.com", 2, 1)
+	locations := newBlobLocations(true)
+
+	// The first work request settles the home and puts the shared layer in it.
+	if err := runDedupDeployWith(t, reg.transport(), layoutDirs, workRequest(dm, 0), locations); err != nil {
+		t.Fatalf("first work request: %v", err)
+	}
+	home := images.repositories[0]
+	if !reg.hasBlob(home, images.shared[0]) {
+		t.Fatalf("the shared layer is not in the home repository %s, so this test proves nothing", home)
+	}
+
+	// The second one has nothing to upload for that layer -- and no way to push it
+	// either, once the registry stops mounting.
+	reg.mountable = false
+	err := runDedupDeployWith(t, reg.transport(), layoutDirs, workRequest(dm, 1), locations)
+	if err == nil {
+		t.Fatal("the second work request succeeded against a registry without mount support, want a mount-only failure")
+	}
+	if !strings.Contains(err.Error(), "refusing to upload layer") {
+		t.Fatalf("error = %v, want the mount-only refusal", err)
+	}
+	if !strings.Contains(err.Error(), home) {
+		t.Errorf("error = %v, want it to name the home repository %s the first request uploaded to", err, home)
 	}
 }
 

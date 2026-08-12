@@ -410,6 +410,11 @@ func DeployWithExtras(ctx context.Context, rawRequest []byte, opts DeployOptions
 			jobs:               opts.Jobs,
 			forbidUpload:       req.Settings.ForbidLayerPush,
 			pushTransport:      pushTransport,
+			// One-shot: every destination this deploy will ever have is in the plan
+			// below, so the cache has no second deploy to agree with. It is passed all
+			// the same, so that both entry points resolve a blob's home through the one
+			// mechanism (see dedup_locations.go).
+			locations: newBlobLocations(false),
 		})
 		if err != nil {
 			return fmt.Errorf("preparing deduplicated push: %w", err)
