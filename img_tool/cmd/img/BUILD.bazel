@@ -34,6 +34,7 @@ go_library(
         "//cmd/sparseocilayout",
         "//cmd/syncocirefgraph",
         "//cmd/validate",
+        "//pkg/auth/protohelper",
         "//pkg/registryopts",
         "@com_github_google_go_containerregistry//pkg/logs",
     ],
@@ -83,5 +84,8 @@ go_test(
     name = "img_test",
     srcs = ["img_test.go"],
     embed = [":img_lib"],
-    deps = ["//pkg/registryopts"],
+    deps = [
+        "//pkg/auth/protohelper",
+        "//pkg/registryopts",
+    ],
 )

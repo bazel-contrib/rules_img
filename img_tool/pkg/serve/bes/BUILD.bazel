@@ -1,4 +1,4 @@
-load("@rules_go//go:def.bzl", "go_library")
+load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "bes",
@@ -6,11 +6,23 @@ go_library(
     importpath = "github.com/bazel-contrib/rules_img/img_tool/pkg/serve/bes",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/auth/protohelper",
         "//pkg/proto/bazel/src/main/java/com/google/devtools/build/lib/buildeventstream",
         "//pkg/proto/build_event_service",
         "//pkg/serve/bes/syncer",
         "@org_golang_google_protobuf//proto",
         "@org_golang_google_protobuf//types/known/emptypb",
+        "@org_golang_x_sync//errgroup",
+    ],
+)
+
+go_test(
+    name = "bes_test",
+    srcs = ["bes_test.go"],
+    embed = [":bes"],
+    deps = [
+        "//pkg/auth/protohelper",
+        "//pkg/proto/bazel/src/main/java/com/google/devtools/build/lib/buildeventstream",
         "@org_golang_x_sync//errgroup",
     ],
 )

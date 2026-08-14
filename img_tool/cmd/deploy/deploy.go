@@ -65,7 +65,7 @@ func DeployProcess(ctx context.Context, args []string) {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
-		if err := persistentWorker(jobs, sinkSpec, dedupFlags{
+		if err := persistentWorker(ctx, jobs, sinkSpec, dedupFlags{
 			mode:           extractFlag(processedArgs, "--deduplicated-push"),
 			blobRepository: extractFlag(processedArgs, "--deduplicated-push-blob-repository"),
 			content:        extractFlag(processedArgs, "--deduplicated-push-content"),
@@ -155,6 +155,7 @@ func DeployProcess(ctx context.Context, args []string) {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
+	ctx = withDeployRequestMetadata(ctx, requestFiles)
 
 	opts := DeployOptions{
 		AdditionalTags:             []string(additionalTags),
@@ -181,6 +182,19 @@ func DeployProcess(ctx context.Context, args []string) {
 		fmt.Fprintf(os.Stderr, "Error during deploy: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+func withDeployRequestMetadata(ctx context.Context, requestFiles []string) context.Context {
+	requestMetadata, _ := protohelper.RequestMetadataFromContext(ctx)
+	requestMetadata.ActionMnemonic = "ImgDeploy"
+	requestMetadata.ActionID = "rules_img:deploy"
+	requestMetadata.TargetID = "rules_img"
+	if len(requestFiles) > 0 {
+		logicalRequest := strings.Join(requestFiles, ",")
+		requestMetadata.ActionID += ":" + logicalRequest
+		requestMetadata.TargetID = logicalRequest
+	}
+	return protohelper.WithRequestMetadata(ctx, requestMetadata)
 }
 
 // mergeRequestFiles reads multiple deploy manifest files and merges them into a single manifest.
@@ -323,7 +337,7 @@ func DeployWithExtras(ctx context.Context, rawRequest []byte, opts DeployOptions
 			break
 		}
 	}
-	vfsBuilder, casBlobs, err := configureBuilderFromEnv(vfsBuilder, hasLazyStrategy, opts.Jobs)
+	vfsBuilder, casBlobs, err := configureBuilderFromEnv(ctx, vfsBuilder, hasLazyStrategy, opts.Jobs)
 	if err != nil {
 		return err
 	}
@@ -796,7 +810,7 @@ func credentialHelperInstance() credential.Helper {
 // CAS reads go through a local blob cache (see casBlobCacheFromEnv). Both it and
 // the connection pool behind it are returned so the caller can report their
 // statistics and close them; the result is nil when no CAS is configured.
-func configureBuilderFromEnv(builder *deployvfs.Builder, needsCAS bool, jobs int) (*deployvfs.Builder, *casSources, error) {
+func configureBuilderFromEnv(ctx context.Context, builder *deployvfs.Builder, needsCAS bool, jobs int) (*deployvfs.Builder, *casSources, error) {
 	diskCachePath := os.Getenv("IMG_DISK_CACHE")
 	if diskCachePath != "" {
 		builder = builder.WithDiskCache(diskCachePath)
@@ -818,8 +832,9 @@ func configureBuilderFromEnv(builder *deployvfs.Builder, needsCAS bool, jobs int
 	// reads across them (cf. Bazel's --remote_max_connections).
 	numConns := reapiMaxConnections(jobs)
 	members := make([]*cas.CAS, 0, numConns)
+	requestMetadata, _ := protohelper.RequestMetadataFromContext(ctx)
 	for range numConns {
-		grpcConn, err := protohelper.Client(reapiEndpoint, credHelper)
+		grpcConn, err := protohelper.ClientWithRequestMetadata(reapiEndpoint, credHelper, requestMetadata)
 		if err != nil {
 			return nil, nil, fmt.Errorf("creating gRPC client for REAPI: %w", err)
 		}
