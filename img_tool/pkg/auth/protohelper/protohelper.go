@@ -20,6 +20,63 @@ import (
 )
 
 func Client(uri string, helper credhelper.Helper, opts ...grpc.DialOption) (*grpc.ClientConn, error) {
+	return client(uri, helper, grpcheaderinterceptor.RequestMetadata{}, opts...)
+}
+
+// ClientWithToolInvocationID creates a gRPC client whose requests carry the
+// supplied REAPI RequestMetadata.tool_invocation_id by default.
+func ClientWithToolInvocationID(uri string, helper credhelper.Helper, toolInvocationID string, opts ...grpc.DialOption) (*grpc.ClientConn, error) {
+	return client(uri, helper, grpcheaderinterceptor.RequestMetadata{ToolInvocationID: toolInvocationID}, opts...)
+}
+
+// ClientWithRequestMetadata creates a gRPC client whose requests carry the
+// supplied logical-operation metadata by default.
+func ClientWithRequestMetadata(uri string, helper credhelper.Helper, requestMetadata RequestMetadata, opts ...grpc.DialOption) (*grpc.ClientConn, error) {
+	return client(uri, helper, requestMetadata.interceptorMetadata(), opts...)
+}
+
+// RequestMetadata identifies one logical rules_img operation. The same values
+// are attached to unary RPCs, ByteStream RPCs, lazy reads, and retries.
+type RequestMetadata struct {
+	ToolInvocationID string
+	ActionID         string
+	ActionMnemonic   string
+	TargetID         string
+}
+
+func (m RequestMetadata) interceptorMetadata() grpcheaderinterceptor.RequestMetadata {
+	return grpcheaderinterceptor.RequestMetadata{
+		ToolInvocationID: m.ToolInvocationID,
+		ActionID:         m.ActionID,
+		ActionMnemonic:   m.ActionMnemonic,
+		TargetID:         m.TargetID,
+	}
+}
+
+// WithRequestMetadata returns a context that identifies one logical rules_img
+// operation on every outgoing cache request.
+func WithRequestMetadata(ctx context.Context, requestMetadata RequestMetadata) context.Context {
+	return grpcheaderinterceptor.WithRequestMetadata(ctx, requestMetadata.interceptorMetadata())
+}
+
+// RequestMetadataFromContext returns rules_img metadata stored on ctx.
+func RequestMetadataFromContext(ctx context.Context) (RequestMetadata, bool) {
+	requestMetadata, ok := grpcheaderinterceptor.RequestMetadataFromContext(ctx)
+	return RequestMetadata{
+		ToolInvocationID: requestMetadata.ToolInvocationID,
+		ActionID:         requestMetadata.ActionID,
+		ActionMnemonic:   requestMetadata.ActionMnemonic,
+		TargetID:         requestMetadata.TargetID,
+	}, ok
+}
+
+// WithToolInvocationID returns a context that overrides the connection's
+// default RequestMetadata.tool_invocation_id for RPCs made with that context.
+func WithToolInvocationID(ctx context.Context, toolInvocationID string) context.Context {
+	return grpcheaderinterceptor.WithToolInvocationID(ctx, toolInvocationID)
+}
+
+func client(uri string, helper credhelper.Helper, requestMetadata grpcheaderinterceptor.RequestMetadata, opts ...grpc.DialOption) (*grpc.ClientConn, error) {
 	opts = slices.Clone(opts)
 
 	parsed, err := url.Parse(uri)
@@ -49,7 +106,7 @@ func Client(uri string, helper credhelper.Helper, opts ...grpc.DialOption) (*grp
 		opts = append(opts, grpc.WithPerRPCCredentials(basicAuthFromUserinfo(parsed.User)))
 	}
 
-	opts = append(opts, grpcheaderinterceptor.DialOptions(helper)...)
+	opts = append(opts, grpcheaderinterceptor.DialOptionsWithRequestMetadata(helper, requestMetadata)...)
 
 	// Keepalive, so a peer that goes away during a long transfer is noticed rather
 	// than leaving a read blocked forever: with a stream in flight and no data

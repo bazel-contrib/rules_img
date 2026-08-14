@@ -37,6 +37,7 @@ go_test(
     ],
     embed = [":cas"],
     deps = [
+        "//pkg/auth/protohelper",
         "//pkg/proto/remote-apis/build/bazel/remote/execution/v2",
         "@org_golang_google_genproto_googleapis_bytestream//:bytestream",
         "@org_golang_google_genproto_googleapis_rpc//errdetails",

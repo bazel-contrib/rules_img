@@ -1,4 +1,4 @@
-load("@rules_go//go:def.bzl", "go_library")
+load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "grpcheaderinterceptor",
@@ -10,6 +10,21 @@ go_library(
         "//pkg/proto/remote-apis/build/bazel/remote/execution/v2",
         "//pkg/version",
         "@org_golang_google_grpc//:grpc",
+        "@org_golang_google_grpc//metadata",
+        "@org_golang_google_protobuf//proto",
+    ],
+)
+
+go_test(
+    name = "grpcheaderinterceptor_test",
+    size = "small",
+    srcs = ["grpcheaderinterceptor_test.go"],
+    embed = [":grpcheaderinterceptor"],
+    deps = [
+        "//pkg/auth/credential",
+        "//pkg/proto/remote-apis/build/bazel/remote/execution/v2",
+        "@org_golang_google_grpc//:grpc",
+        "@org_golang_google_grpc//credentials/insecure",
         "@org_golang_google_grpc//metadata",
         "@org_golang_google_protobuf//proto",
     ],

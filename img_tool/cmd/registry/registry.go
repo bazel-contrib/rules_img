@@ -40,6 +40,7 @@ func Run(ctx context.Context, args []string) {
 	var s3Region string
 	var s3profile string
 	var credentialHelperPath string
+	var toolInvocationID string
 	var manifestTTL time.Duration
 	var tagTTLFlag optionalDuration
 	var casKeepAlive bool
@@ -75,6 +76,8 @@ func Run(ctx context.Context, args []string) {
 	flagSet.StringVar(&s3Region, "s3-region", "", "S3 region to use for the S3 blob store (optional, defaults to auto detect)")
 	flagSet.StringVar(&s3profile, "s3-profile", "", "AWS profile to use for the S3 blob store (optional, defaults to default profile)")
 	flagSet.StringVar(&credentialHelperPath, "credential-helper", "", "Path to credential helper binary (optional, defaults to no helper)")
+	flagSet.StringVar(&toolInvocationID, "invocation-id", "", "REAPI RequestMetadata tool invocation ID")
+	flagSet.StringVar(&toolInvocationID, "invocation_id", "", "Alias for --invocation-id")
 	flagSet.DurationVar(&manifestTTL, "ttl", 0, "How long a manifest or blob is kept after it was last pushed or pulled. Anything a tag or an unexpired index still references is kept regardless of its own age. 0 keeps everything until the process exits.")
 	flagSet.Var(&tagTTLFlag, "tag-ttl", "How long a tag is kept after it was last pushed or read. Defaults to --ttl, since a tag keeps everything it references alive. Set 0 to keep tags -- and their images -- forever.")
 	flagSet.BoolVar(&casKeepAlive, "cas-keepalive", false, `Periodically ask the remote cache about live blobs so it keeps them. Requires the "reapi" blob store.`)
@@ -110,7 +113,20 @@ func Run(ctx context.Context, args []string) {
 	var grpcClientConn *grpc.ClientConn
 	if reapiEndpoint != "" {
 		var err error
-		grpcClientConn, err = protohelper.Client(reapiEndpoint, credentialHelper)
+		requestMetadata, _ := protohelper.RequestMetadataFromContext(ctx)
+		if toolInvocationID != "" {
+			requestMetadata.ToolInvocationID = toolInvocationID
+		}
+		if requestMetadata.ActionID == "" {
+			requestMetadata.ActionID = "rules_img:registry"
+		}
+		if requestMetadata.ActionMnemonic == "" {
+			requestMetadata.ActionMnemonic = "ImgRegistry"
+		}
+		if requestMetadata.TargetID == "" {
+			requestMetadata.TargetID = "rules_img"
+		}
+		grpcClientConn, err = protohelper.ClientWithRequestMetadata(reapiEndpoint, credentialHelper, requestMetadata)
 		if err != nil {
 			log.Fatalf("Failed to create gRPC client connection: %v", err)
 		}

@@ -13,6 +13,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/auth/protohelper"
 )
 
 // fakeBlobs is a BlobSource serving blobs from memory. It counts reads per
@@ -29,6 +31,7 @@ type fakeBlobs struct {
 	data      map[string][]byte // hex digest -> served content
 	reads     map[string]int
 	findCalls [][]Digest
+	metadata  []protohelper.RequestMetadata
 }
 
 func newFakeBlobs(blobs ...[]byte) *fakeBlobs {
@@ -74,6 +77,9 @@ func (f *fakeBlobs) ReadBlob(ctx context.Context, digest Digest) ([]byte, error)
 func (f *fakeBlobs) ReaderForBlob(ctx context.Context, digest Digest) (io.ReadCloser, error) {
 	f.mu.Lock()
 	f.reads[digest.hexHash()]++
+	if requestMetadata, ok := protohelper.RequestMetadataFromContext(ctx); ok {
+		f.metadata = append(f.metadata, requestMetadata)
+	}
 	data, found := f.data[digest.hexHash()]
 	f.mu.Unlock()
 
@@ -84,6 +90,12 @@ func (f *fakeBlobs) ReaderForBlob(ctx context.Context, digest Digest) (io.ReadCl
 		return nil, fmt.Errorf("fake: blob %s not found", digest.hexHash())
 	}
 	return &fakeBlobReader{source: f, data: data, ctx: ctx}, nil
+}
+
+func (f *fakeBlobs) requestMetadata() []protohelper.RequestMetadata {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.metadata)
 }
 
 func (f *fakeBlobs) readCount(digest Digest) int {
@@ -257,6 +269,31 @@ func TestCachingReaderCachesBlobOnDisk(t *testing.T) {
 	stats := cache.Stats()
 	if stats.Hits != 1 || stats.Fetches != 1 {
 		t.Errorf("stats = %+v, want 1 hit and 1 fetch", stats)
+	}
+}
+
+func TestCachingReaderPropagatesRequestMetadataToCacheMiss(t *testing.T) {
+	blob := blobContent(7, 256)
+	digest := blobDigest(blob)
+	source := newFakeBlobs(blob)
+	cache := newTestCache(t, source)
+
+	want := protohelper.RequestMetadata{
+		ToolInvocationID: "invocation",
+		ActionID:         "rules_img:deploy:app",
+		ActionMnemonic:   "ImgDeploy",
+		TargetID:         "app",
+	}
+	ctx := protohelper.WithRequestMetadata(context.Background(), want)
+	reader, err := cache.ReaderForBlob(ctx, digest)
+	if err != nil {
+		t.Fatalf("ReaderForBlob: %v", err)
+	}
+	readAllAndClose(t, reader)
+
+	got := source.requestMetadata()
+	if len(got) != 1 || got[0] != want {
+		t.Fatalf("upstream request metadata = %+v, want [%+v]", got, want)
 	}
 }
 

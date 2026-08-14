@@ -48,6 +48,7 @@ go_test(
         "dedup_locations_test.go",
         "dedup_push_test.go",
         "dedup_registry_test.go",
+        "persistentworker_test.go",
         "progress_test.go",
         "sign_sink_test.go",
         "sink_test.go",

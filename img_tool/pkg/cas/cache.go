@@ -306,7 +306,7 @@ func (c *CachingReader) ReaderForBlob(ctx context.Context, digest Digest) (io.Re
 			return file, nil
 		}
 
-		fetch, joined, inStore := c.fetchFor(digest)
+		fetch, joined, inStore := c.fetchFor(ctx, digest)
 		if inStore {
 			continue // another reader just finalized it; store.open will find it
 		}
@@ -330,7 +330,7 @@ func (c *CachingReader) ReaderForBlob(ctx context.Context, digest Digest) (io.Re
 // and reports whether it joined an existing one. It returns a nil fetch and
 // inStore==false if the blob cannot be cached locally, or inStore==true if the
 // blob is already in the store and the caller should read it from there.
-func (c *CachingReader) fetchFor(digest Digest) (fetch *blobFetch, joined, inStore bool) {
+func (c *CachingReader) fetchFor(ctx context.Context, digest Digest) (fetch *blobFetch, joined, inStore bool) {
 	key := digest.cacheKey()
 
 	c.mu.Lock()
@@ -347,7 +347,7 @@ func (c *CachingReader) fetchFor(digest Digest) (fetch *blobFetch, joined, inSto
 	if c.store.has(digest) {
 		return nil, false, true
 	}
-	newFetch := c.startFetch(digest, key)
+	newFetch := c.startFetch(ctx, digest, key)
 	if newFetch == nil {
 		return nil, false, false
 	}
@@ -356,7 +356,7 @@ func (c *CachingReader) fetchFor(digest Digest) (fetch *blobFetch, joined, inSto
 }
 
 // startFetch begins fetching a blob into a temp file. c.mu must be held.
-func (c *CachingReader) startFetch(digest Digest, key string) *blobFetch {
+func (c *CachingReader) startFetch(requestCtx context.Context, digest Digest, key string) *blobFetch {
 	file, err := c.store.createTemp(digest.SizeBytes)
 	if err != nil {
 		if !errors.Is(err, errDiskCacheDisabled) {
@@ -365,13 +365,22 @@ func (c *CachingReader) startFetch(digest Digest, key string) *blobFetch {
 		}
 		return nil
 	}
-	ctx, cancel := context.WithCancel(c.baseCtx)
+	// The fetch may be shared with callers that arrive after the one that starts
+	// it, so it must not inherit that first caller's cancellation or deadline.
+	// Keep its values, notably REAPI RequestMetadata, while making Close and an
+	// abandoned fetch responsible for cancellation.
+	ctx, cancel := context.WithCancel(context.WithoutCancel(requestCtx))
+	stopBaseCancel := context.AfterFunc(c.baseCtx, cancel)
+	cancelFetch := func() {
+		stopBaseCancel()
+		cancel()
+	}
 	fetch := &blobFetch{
 		cache:    c,
 		digest:   digest,
 		key:      key,
 		tempPath: file.Name(),
-		cancel:   cancel,
+		cancel:   cancelFetch,
 		changed:  make(chan struct{}),
 	}
 	c.counters.fetches.Add(1)
@@ -440,6 +449,7 @@ type fetchState struct {
 
 func (b *blobFetch) run(ctx context.Context, file *os.File) {
 	defer b.cache.running.Done()
+	defer b.cancel()
 	err := b.stream(ctx, file)
 	file.Close()
 	b.finish(err)

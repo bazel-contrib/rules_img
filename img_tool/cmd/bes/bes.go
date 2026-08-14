@@ -29,6 +29,7 @@ func Run(ctx context.Context, args []string) {
 	var commitMode string
 	var casEndpoint string
 	var credentialHelperPath string
+	var toolInvocationID string
 
 	flagSet := flag.NewFlagSet("bes", flag.ExitOnError)
 	flagSet.Usage = func() {
@@ -51,6 +52,8 @@ func Run(ctx context.Context, args []string) {
 	flagSet.StringVar(&commitMode, "commit-mode", "background", "Commit mode: 'background' or 'per-stream'")
 	flagSet.StringVar(&casEndpoint, "cas-endpoint", "", "CAS gRPC endpoint (required)")
 	flagSet.StringVar(&credentialHelperPath, "credential-helper", "", "Path to credential helper binary (optional, defaults to no helper)")
+	flagSet.StringVar(&toolInvocationID, "invocation-id", "", "REAPI RequestMetadata tool invocation ID")
+	flagSet.StringVar(&toolInvocationID, "invocation_id", "", "Alias for --invocation-id")
 
 	if err := flagSet.Parse(args[1:]); err != nil {
 		fmt.Fprint(os.Stderr, err.Error())
@@ -85,7 +88,20 @@ func Run(ctx context.Context, args []string) {
 		log.Println("No credential helper configured")
 	}
 
-	grpcClientConn, err := protohelper.Client(casEndpoint, credentialHelper)
+	requestMetadata, _ := protohelper.RequestMetadataFromContext(ctx)
+	if toolInvocationID != "" {
+		requestMetadata.ToolInvocationID = toolInvocationID
+	}
+	if requestMetadata.ActionID == "" {
+		requestMetadata.ActionID = "rules_img:bes"
+	}
+	if requestMetadata.ActionMnemonic == "" {
+		requestMetadata.ActionMnemonic = "ImgBESCommit"
+	}
+	if requestMetadata.TargetID == "" {
+		requestMetadata.TargetID = "rules_img"
+	}
+	grpcClientConn, err := protohelper.ClientWithRequestMetadata(casEndpoint, credentialHelper, requestMetadata)
 	if err != nil {
 		log.Fatalf("Failed to create gRPC client connection to CAS: %v", err)
 	}
