@@ -25,11 +25,16 @@ go_library(
     ],
 )
 
+version_x_defs = {
+    "github.com/bazel-contrib/rules_img/img_tool/pkg/version.Version": module_version() or "dev",
+}
+
 go_binary(
     name = "registry",
     embed = [":registry_lib"],
     pure = "on",
     visibility = ["//visibility:public"],
+    x_defs = version_x_defs,
 )
 
 go_test(

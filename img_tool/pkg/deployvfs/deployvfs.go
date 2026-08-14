@@ -964,7 +964,7 @@ func (b *Builder) layerFromCAS(desc api.Descriptor) (blobEntry, error) {
 	if err != nil {
 		return blobEntry{}, &BlobSourceError{Source: "remote CAS", Digest: desc.Digest, Kind: BlobSourceBlobMissing, Err: err}
 	}
-	if missing, err := b.casReader.FindMissingBlobs(context.TODO(), []cas.Digest{digest}); err == nil && len(missing) > 0 {
+	if missing, err := b.casReader.FindMissingBlobs(b.context(), []cas.Digest{digest}); err == nil && len(missing) > 0 {
 		return blobEntry{}, &BlobSourceError{Source: "remote CAS", Digest: desc.Digest, Kind: BlobSourceBlobMissing, Message: "blob not found in remote CAS"}
 	}
 	stats := b.stats
@@ -974,7 +974,7 @@ func (b *Builder) layerFromCAS(desc api.Descriptor) (blobEntry, error) {
 		stats:      stats,
 		Opener: func() (io.ReadCloser, error) {
 			stats.BlobsFromRemoteCache.Add(1)
-			return b.casReader.ReaderForBlob(context.TODO(), digest)
+			return b.casReader.ReaderForBlob(b.context(), digest)
 		},
 	}, nil
 }
@@ -1051,7 +1051,7 @@ func (b *Builder) blobFromCAS(desc api.Descriptor) (blobEntry, error) {
 	if err != nil {
 		return blobEntry{}, &BlobSourceError{Source: "remote CAS", Digest: desc.Digest, Kind: BlobSourceBlobMissing, Err: err}
 	}
-	if missing, err := b.casReader.FindMissingBlobs(context.TODO(), []cas.Digest{digest}); err == nil && len(missing) > 0 {
+	if missing, err := b.casReader.FindMissingBlobs(b.context(), []cas.Digest{digest}); err == nil && len(missing) > 0 {
 		return blobEntry{}, &BlobSourceError{Source: "remote CAS", Digest: desc.Digest, Kind: BlobSourceBlobMissing, Message: "blob not found in remote CAS"}
 	}
 	stats := b.stats
@@ -1061,7 +1061,7 @@ func (b *Builder) blobFromCAS(desc api.Descriptor) (blobEntry, error) {
 		stats:      stats,
 		Opener: func() (io.ReadCloser, error) {
 			stats.BlobsFromRemoteCache.Add(1)
-			return b.casReader.ReaderForBlob(context.TODO(), digest)
+			return b.casReader.ReaderForBlob(b.context(), digest)
 		},
 	}, nil
 }

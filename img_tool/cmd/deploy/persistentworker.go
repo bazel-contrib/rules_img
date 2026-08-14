@@ -16,6 +16,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/api"
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/auth/protohelper"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/deployvfs"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/gateway"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/load"
@@ -29,6 +30,10 @@ type deployWorkerHandler struct {
 	jobs          int
 	baseBuilder   *deployvfs.Builder
 	pushTransport http.RoundTripper
+	// requestMetadata is inherited from the worker startup context. Bazel does
+	// not include BUILD_ID in WorkRequest, so this preserves a global
+	// --invocation-id / BUILD_ID while allowing a per-request flag to override it.
+	requestMetadata protohelper.RequestMetadata
 
 	// casBlobs is the connection pool to the remote CAS and the blob cache in
 	// front of it, which lives for the lifetime of the worker so requests that
@@ -54,7 +59,7 @@ type deployWorkerHandler struct {
 	sinkMu     sync.Mutex
 }
 
-func newDeployWorkerHandler(jobs int, sinkSpec string, deduplicatedPush dedupFlags) (*deployWorkerHandler, error) {
+func newDeployWorkerHandler(ctx context.Context, jobs int, sinkSpec string, deduplicatedPush dedupFlags) (*deployWorkerHandler, error) {
 	if err := validateDeduplicatedPushOverride(deduplicatedPush.mode); err != nil {
 		return nil, err
 	}
@@ -84,7 +89,7 @@ func newDeployWorkerHandler(jobs int, sinkSpec string, deduplicatedPush dedupFla
 	// We set needsCAS to true unconditionally.
 	// The reason is that we just cannot know in advance whether a future work request
 	// wants to connect to the remote cache or not.
-	baseBuilder, casBlobs, err := configureBuilderFromEnv(baseBuilder, true /* needsCAS */, jobs)
+	baseBuilder, casBlobs, err := configureBuilderFromEnv(ctx, baseBuilder, true /* needsCAS */, jobs)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "warning: failed to configure VFS from environment: %v\n", err)
 	}
@@ -99,6 +104,7 @@ func newDeployWorkerHandler(jobs int, sinkSpec string, deduplicatedPush dedupFla
 		// request needs it and published for the rest.
 		blobLocations: newBlobLocations(true),
 	}
+	h.requestMetadata, _ = protohelper.RequestMetadataFromContext(ctx)
 
 	if sinkSpec != "" {
 		// A global distribution/oci sink redirects every request; no pusher is
@@ -151,6 +157,7 @@ func (h *deployWorkerHandler) processRequest(ctx context.Context, req persistent
 	if err != nil {
 		return "", fmt.Errorf("parsing arguments: %w", err)
 	}
+	ctx = withWorkerRequestMetadata(ctx, h.requestMetadata, opts.requestFiles, opts.toolInvocationID)
 
 	rawRequest, err := mergeRequestFiles(opts.requestFiles)
 	if err != nil {
@@ -482,6 +489,7 @@ type workerOpts struct {
 	overrideRepository string
 	platforms          []string
 	sink               string
+	toolInvocationID   string
 	// deduplicatedPush holds this work request's overrides of the deduplicated push
 	// settings recorded per operation in its deploy manifest.
 	deduplicatedPush dedupFlags
@@ -610,6 +618,18 @@ func parseWorkerArgs(args []string) (*workerOpts, error) {
 				return nil, err
 			}
 			opts.deduplicatedPush.content = value
+		case key == "--invocation-id" || key == "--invocation_id":
+			if !hasValue {
+				if i+1 >= len(args) {
+					return nil, fmt.Errorf("%s requires a value", key)
+				}
+				i++
+				value = args[i]
+			}
+			if value == "" {
+				return nil, fmt.Errorf("%s requires a value", key)
+			}
+			opts.toolInvocationID = value
 		case key == "--insecure":
 			// The worker builds its transports and pusher once, at startup, so
 			// insecure mode cannot be turned on per work request. Reject it
@@ -627,8 +647,17 @@ func parseWorkerArgs(args []string) (*workerOpts, error) {
 	return opts, nil
 }
 
-func persistentWorker(jobs int, sinkSpec string, deduplicatedPush dedupFlags) error {
-	handler, err := newDeployWorkerHandler(jobs, sinkSpec, deduplicatedPush)
+func withWorkerRequestMetadata(ctx context.Context, defaults protohelper.RequestMetadata, requestFiles []string, toolInvocationID string) context.Context {
+	ctx = protohelper.WithRequestMetadata(ctx, defaults)
+	ctx = withDeployRequestMetadata(ctx, requestFiles)
+	if toolInvocationID != "" {
+		ctx = protohelper.WithToolInvocationID(ctx, toolInvocationID)
+	}
+	return ctx
+}
+
+func persistentWorker(ctx context.Context, jobs int, sinkSpec string, deduplicatedPush dedupFlags) error {
+	handler, err := newDeployWorkerHandler(ctx, jobs, sinkSpec, deduplicatedPush)
 	if err != nil {
 		return err
 	}
