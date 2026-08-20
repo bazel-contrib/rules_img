@@ -771,39 +771,58 @@ func (h *Handler) forward(obs *observation, w http.ResponseWriter, r *http.Reque
 		action = transport.PushScope
 	}
 
-	rt, err := h.authTransport(r.Context(), obs, repo, action)
-	if err != nil {
-		h.writeError(obs, w, r, http.StatusBadGateway, "UNAUTHORIZED", authErrorType(err),
-			fmt.Sprintf("authenticating to upstream %s: %v", repo.RegistryStr(), err))
-		return
-	}
-
 	// Preserve the exact request URI (path + query) as received.
 	upstreamURL := repo.Scheme() + "://" + repo.RegistryStr() + r.URL.RequestURI()
-	outReq, err := http.NewRequestWithContext(r.Context(), r.Method, upstreamURL, r.Body)
-	if err != nil {
-		h.writeError(obs, w, r, http.StatusBadGateway, "UNKNOWN", errBadUpstreamRequest,
-			fmt.Sprintf("building upstream request: %v", err))
-		return
-	}
-	copyHeader(outReq.Header, r.Header)
-	outReq.ContentLength = r.ContentLength
+	var resp *http.Response
+	var started time.Time
+	for attempt := 0; attempt < 2; attempt++ {
+		rt, auth, err := h.authTransport(r.Context(), obs, repo, action)
+		if err != nil {
+			h.writeError(obs, w, r, http.StatusBadGateway, "UNAUTHORIZED", authErrorType(err),
+				fmt.Sprintf("authenticating to upstream %s: %v", repo.RegistryStr(), err))
+			return
+		}
 
-	// Use an http.Client so redirects (e.g. a blob GET pointing at CDN/blob
-	// storage) are followed transparently. checkRedirect only follows for safe
-	// read methods and refuses redirects to private/link-local addresses.
-	client := &http.Client{Transport: rt, CheckRedirect: checkRedirect(r.Method)}
-	started := time.Now()
-	resp, err := client.Do(outReq)
-	if err != nil {
-		// A delete whose answer never came back may have taken effect all the same,
-		// and an entry for a blob that is gone is the one wrong answer this cache can
-		// give. The peers are not told: with no answer there is no evidence a blob
-		// left, and each of them will hear it from their own traffic or its TTL.
-		h.forgetDeletedBlob(r.Context(), repo, cls, nil)
-		h.writeError(obs, w, r, http.StatusBadGateway, "UNKNOWN", transportErrorType(err),
-			fmt.Sprintf("forwarding to upstream %s: %v", repo.RegistryStr(), err))
-		return
+		body := r.Body
+		if attempt > 0 {
+			body = http.NoBody
+		}
+		outReq, err := http.NewRequestWithContext(r.Context(), r.Method, upstreamURL, body)
+		if err != nil {
+			h.writeError(obs, w, r, http.StatusBadGateway, "UNKNOWN", errBadUpstreamRequest,
+				fmt.Sprintf("building upstream request: %v", err))
+			return
+		}
+		copyHeader(outReq.Header, r.Header)
+		outReq.ContentLength = r.ContentLength
+
+		// Use an http.Client so redirects (e.g. a blob GET pointing at CDN/blob
+		// storage) are followed transparently. checkRedirect only follows for safe
+		// read methods and refuses redirects to private/link-local addresses.
+		client := &http.Client{Transport: rt, CheckRedirect: checkRedirect(r.Method)}
+		started = time.Now()
+		resp, err = client.Do(outReq)
+		if err != nil {
+			// A delete whose answer never came back may have taken effect all the same,
+			// and an entry for a blob that is gone is the one wrong answer this cache can
+			// give. The peers are not told: with no answer there is no evidence a blob
+			// left, and each of them will hear it from their own traffic or its TTL.
+			h.forgetDeletedBlob(r.Context(), repo, cls, nil)
+			h.writeError(obs, w, r, http.StatusBadGateway, "UNKNOWN", transportErrorType(err),
+				fmt.Sprintf("forwarding to upstream %s: %v", repo.RegistryStr(), err))
+			return
+		}
+
+		if attempt == 0 && (resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden) {
+			h.cache.invalidate(auth)
+			// Incoming request bodies are streams and cannot be replayed. A zero
+			// Content-Length is the server-side guarantee that no bytes were consumed.
+			if r.ContentLength == 0 {
+				_ = resp.Body.Close()
+				continue
+			}
+		}
+		break
 	}
 	defer resp.Body.Close()
 	obs.upstreamResponse(r.Context(), cls, resp.StatusCode, time.Since(started))
@@ -840,7 +859,7 @@ func (h *Handler) forward(obs *observation, w http.ResponseWriter, r *http.Reque
 // authTransport returns a cached authenticated RoundTripper for the given
 // repository and scope action ("pull" or "push,pull"). It resolves credentials
 // from the keychain and performs the crane ping + token-exchange handshake.
-func (h *Handler) authTransport(reqCtx context.Context, obs *observation, repo name.Repository, action string) (http.RoundTripper, error) {
+func (h *Handler) authTransport(reqCtx context.Context, obs *observation, repo name.Repository, action string) (http.RoundTripper, authCacheHandle, error) {
 	key := repo.String() + "|" + action
 	return h.cache.get(key, func() (http.RoundTripper, error) {
 		// The resulting transport is cached and shared across requests, so the
@@ -1133,7 +1152,13 @@ type authEntry struct {
 	err  error
 }
 
-func (c *authCache) get(key string, create func() (http.RoundTripper, error)) (http.RoundTripper, error) {
+// authCacheHandle identifies the generation returned by one cache lookup.
+type authCacheHandle struct {
+	key   string
+	entry *authEntry
+}
+
+func (c *authCache) get(key string, create func() (http.RoundTripper, error)) (http.RoundTripper, authCacheHandle, error) {
 	c.mu.Lock()
 	e, ok := c.inner[key]
 	if !ok {
@@ -1154,5 +1179,16 @@ func (c *authCache) get(key string, create func() (http.RoundTripper, error)) (h
 		}
 		c.mu.Unlock()
 	}
-	return e.rt, e.err
+	return e.rt, authCacheHandle{key: key, entry: e}, e.err
+}
+
+// invalidate removes handle's entry only if it is still the current generation.
+// An old request must not evict the replacement installed after another request
+// observed the same expired credential.
+func (c *authCache) invalidate(handle authCacheHandle) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.inner[handle.key] == handle.entry {
+		delete(c.inner, handle.key)
+	}
 }

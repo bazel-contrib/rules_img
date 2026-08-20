@@ -192,8 +192,12 @@ func TestBlobExistenceCacheStoresOnlyPresentBlobs(t *testing.T) {
 
 			head(h, testUpstreamHost, testBlobPath)
 			head(h, testUpstreamHost, testBlobPath)
-			if got := up.count(http.MethodHead, testBlobPath); got != 2 {
-				t.Errorf("a %d answer was cached (%d upstream probes, want 2)", status, got)
+			wantProbes := 2
+			if status == http.StatusUnauthorized {
+				wantProbes = 4
+			}
+			if got := up.count(http.MethodHead, testBlobPath); got != wantProbes {
+				t.Errorf("a %d answer was cached (%d upstream probes, want %d)", status, got, wantProbes)
 			}
 			if entries := h.blobCache.stats().entries; entries != 0 {
 				t.Errorf("cache holds %d entries after a %d answer, want 0", entries, status)
@@ -465,8 +469,12 @@ func TestBlobExistenceCacheIgnoresUnfinishedUploads(t *testing.T) {
 			if got := head(h, testUpstreamHost, testBlobPath); got.StatusCode != tc.status {
 				t.Errorf("probe status = %d, want the upstream's %d: it must not have been answered from the cache", got.StatusCode, tc.status)
 			}
-			if got := up.count(http.MethodHead, testBlobPath); got != 1 {
-				t.Errorf("upstream saw %d probes, want 1", got)
+			wantProbes := 1
+			if tc.status == http.StatusUnauthorized {
+				wantProbes = 2
+			}
+			if got := up.count(http.MethodHead, testBlobPath); got != wantProbes {
+				t.Errorf("upstream saw %d probes, want %d", got, wantProbes)
 			}
 		})
 	}
