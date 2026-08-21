@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/api"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/cas"
@@ -20,6 +21,43 @@ import (
 
 type stubCASReader struct {
 	blobs map[string][]byte // keyed by hex(digest.Hash)
+}
+
+type blockingCASReader struct {
+	blobs   map[string][]byte
+	started chan struct{}
+	release chan struct{}
+}
+
+func (s *blockingCASReader) FindMissingBlobs(context.Context, []cas.Digest) ([]cas.Digest, error) {
+	return nil, nil
+}
+
+func (s *blockingCASReader) ReadBlob(ctx context.Context, d cas.Digest) ([]byte, error) {
+	reader, err := s.ReaderForBlob(ctx, d)
+	if err != nil {
+		return nil, err
+	}
+	defer reader.Close()
+	return io.ReadAll(reader)
+}
+
+func (s *blockingCASReader) ReaderForBlob(ctx context.Context, d cas.Digest) (io.ReadCloser, error) {
+	select {
+	case s.started <- struct{}{}:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	select {
+	case <-s.release:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	b, ok := s.blobs[hex.EncodeToString(d.Hash)]
+	if !ok {
+		return nil, fmt.Errorf("blob not found")
+	}
+	return io.NopCloser(bytes.NewReader(b)), nil
 }
 
 func (s *stubCASReader) FindMissingBlobs(context.Context, []cas.Digest) ([]cas.Digest, error) {
@@ -77,6 +115,59 @@ func TestCasDirStoreInputDirHit(t *testing.T) {
 	}
 	if got := readAllClose(t, rc); !bytes.Equal(got, content) {
 		t.Fatalf("got %q, want %q", got, content)
+	}
+}
+
+func TestCasDirStoreReadsBatchConcurrently(t *testing.T) {
+	const blobCount = 8
+	remote := &blockingCASReader{
+		blobs:   make(map[string][]byte, blobCount),
+		started: make(chan struct{}, blobCount),
+		release: make(chan struct{}),
+	}
+	released := false
+	defer func() {
+		if !released {
+			close(remote.release)
+		}
+	}()
+
+	requests := make([]compactstream.BlobRequest, blobCount)
+	for i := range blobCount {
+		blob := []byte(fmt.Sprintf("blob-%d", i))
+		digest := sha256.Sum256(blob)
+		remote.blobs[hex.EncodeToString(digest[:])] = blob
+		requests[i] = compactstream.BlobRequest{Digest: digest[:], Size: int64(len(blob))}
+	}
+
+	type result struct {
+		blobs [][]byte
+		err   error
+	}
+	done := make(chan result, 1)
+	go func() {
+		blobs, err := (&casDirStore{casReader: remote}).ReadBlobs(context.Background(), requests)
+		done <- result{blobs: blobs, err: err}
+	}()
+
+	for range blobCount {
+		select {
+		case <-remote.started:
+		case <-time.After(time.Second):
+			t.Fatal("blob reads did not run concurrently")
+		}
+	}
+	close(remote.release)
+	released = true
+
+	got := <-done
+	if got.err != nil {
+		t.Fatal(got.err)
+	}
+	for i, blob := range got.blobs {
+		if want := fmt.Sprintf("blob-%d", i); string(blob) != want {
+			t.Fatalf("blob %d = %q, want %q", i, blob, want)
+		}
 	}
 }
 

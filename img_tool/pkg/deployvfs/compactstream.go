@@ -13,6 +13,7 @@ import (
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/api"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/cas"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/compactstream"
+	"golang.org/x/sync/errgroup"
 )
 
 // WithCompactStreamLayer registers a .cstream index file that reconstructs the
@@ -243,6 +244,8 @@ type casDirStore struct {
 	casReader     casReader
 }
 
+var _ compactstream.BatchBlobStore = (*casDirStore)(nil)
+
 func (s *casDirStore) ReaderForBlob(ctx context.Context, digest []byte, size int64) (io.ReadCloser, error) {
 	hexDigest := hex.EncodeToString(digest)
 
@@ -273,4 +276,38 @@ func (s *casDirStore) ReaderForBlob(ctx context.Context, digest []byte, size int
 	}
 
 	return nil, fmt.Errorf("blob sha256:%s (size %d) not found in input file CAS directory, disk cache, or remote cache", hexDigest, size)
+}
+
+// ReadBlobs fetches a bounded compact-stream batch concurrently. Reconstruct
+// caps batches at 64 blobs and 16 MiB, so reading each result into memory here
+// remains bounded while allowing high-latency CAS requests to overlap.
+func (s *casDirStore) ReadBlobs(ctx context.Context, requests []compactstream.BlobRequest) ([][]byte, error) {
+	blobs := make([][]byte, len(requests))
+	g, groupCtx := errgroup.WithContext(ctx)
+	for i, request := range requests {
+		i, request := i, request
+		g.Go(func() error {
+			reader, err := s.ReaderForBlob(groupCtx, request.Digest, request.Size)
+			if err != nil {
+				return err
+			}
+			blob, readErr := io.ReadAll(io.LimitReader(reader, request.Size+1))
+			closeErr := reader.Close()
+			if readErr != nil {
+				return readErr
+			}
+			if closeErr != nil {
+				return closeErr
+			}
+			if int64(len(blob)) != request.Size {
+				return fmt.Errorf("blob sha256:%s has size %d, expected %d", hex.EncodeToString(request.Digest), len(blob), request.Size)
+			}
+			blobs[i] = blob
+			return nil
+		})
+	}
+	if err := g.Wait(); err != nil {
+		return nil, err
+	}
+	return blobs, nil
 }

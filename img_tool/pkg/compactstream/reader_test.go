@@ -72,6 +72,30 @@ func (m mapBlobStore) ReaderForBlob(_ context.Context, digest []byte, _ int64) (
 	return io.NopCloser(bytes.NewReader(data)), nil
 }
 
+type batchMapBlobStore struct {
+	blobs       mapBlobStore
+	batchSizes  []int
+	serialReads int
+}
+
+func (s *batchMapBlobStore) ReaderForBlob(ctx context.Context, digest []byte, size int64) (io.ReadCloser, error) {
+	s.serialReads++
+	return s.blobs.ReaderForBlob(ctx, digest, size)
+}
+
+func (s *batchMapBlobStore) ReadBlobs(_ context.Context, requests []BlobRequest) ([][]byte, error) {
+	s.batchSizes = append(s.batchSizes, len(requests))
+	blobs := make([][]byte, len(requests))
+	for i, request := range requests {
+		blob, ok := s.blobs[string(request.Digest)]
+		if !ok {
+			return nil, fmt.Errorf("blob not found: %x", request.Digest)
+		}
+		blobs[i] = blob
+	}
+	return blobs, nil
+}
+
 func validEmptyIndex(t *testing.T) []byte {
 	t.Helper()
 	var buf bytes.Buffer
@@ -182,6 +206,62 @@ func TestReconstructInterleavesGapsAndBlobs(t *testing.T) {
 	}
 	if got, want := out.String(), "HDR-BLOBDATA-END"; got != want {
 		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+func TestReconstructReadsSmallBlobsInBoundedBatches(t *testing.T) {
+	store := &batchMapBlobStore{blobs: mapBlobStore{}}
+	var refs []rawRef
+	var stream, want []byte
+	var offset uint64
+	for i := range 130 {
+		gap := []byte{byte(i)}
+		blob := bytes.Repeat([]byte{byte(i), byte(i >> 8)}, 512)
+		digest := store.blobs.put(blob)
+		stream = append(stream, gap...)
+		want = append(want, gap...)
+		offset += uint64(len(gap))
+		refs = append(refs, rawRef{offset: offset, digest: digest, size: uint64(len(blob))})
+		want = append(want, blob...)
+		offset += uint64(len(blob))
+	}
+
+	idx := buildRawCompactStream(refs, stream)
+	var out bytes.Buffer
+	if err := Reconstruct(context.Background(), bytes.NewReader(idx), store, &out); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(out.Bytes(), want) {
+		t.Fatal("batched reconstruction changed the output")
+	}
+	if got, want := fmt.Sprint(store.batchSizes), "[64 64 2]"; got != want {
+		t.Fatalf("batch sizes = %s, want %s", got, want)
+	}
+	if store.serialReads != 0 {
+		t.Fatalf("small blobs were read serially %d times", store.serialReads)
+	}
+}
+
+func TestBlobBatchEndHonorsLimits(t *testing.T) {
+	countLimited := make([]CASReference, maxBatchBlobs+1)
+	for i := range countLimited {
+		countLimited[i].Size = 1
+	}
+	if got := blobBatchEnd(countLimited, 0); got != maxBatchBlobs {
+		t.Fatalf("count-limited batch ended at %d, want %d", got, maxBatchBlobs)
+	}
+
+	byteLimited := make([]CASReference, 10)
+	for i := range byteLimited {
+		byteLimited[i].Size = maxBatchBlobSize
+	}
+	if got := blobBatchEnd(byteLimited, 0); got != maxBatchBytes/maxBatchBlobSize {
+		t.Fatalf("byte-limited batch ended at %d, want %d", got, maxBatchBytes/maxBatchBlobSize)
+	}
+
+	tooLarge := []CASReference{{Size: maxBatchBlobSize + 1}}
+	if got := blobBatchEnd(tooLarge, 0); got != 0 {
+		t.Fatalf("oversized blob was included in a batch ending at %d", got)
 	}
 }
 
