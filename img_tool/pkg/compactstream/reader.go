@@ -16,6 +16,31 @@ type BlobStore interface {
 	ReaderForBlob(ctx context.Context, digest []byte, size int64) (io.ReadCloser, error)
 }
 
+// BlobRequest identifies one content-addressed blob needed to reconstruct a
+// compact stream.
+type BlobRequest struct {
+	Digest []byte
+	Size   int64
+}
+
+// BatchBlobStore can fetch several small blobs concurrently. Results must
+// correspond to requests by index and contain exactly the requested bytes.
+// Reconstruct falls back to BlobStore for stores that do not implement this
+// optional interface and for blobs too large to buffer.
+type BatchBlobStore interface {
+	BlobStore
+	ReadBlobs(ctx context.Context, requests []BlobRequest) ([][]byte, error)
+}
+
+const (
+	// These limits cover a high-latency 1 Gbit/s link without letting one layer
+	// retain an unbounded amount of prefetched data. The per-blob limit matches
+	// the default REAPI BatchReadBlobs limit used by pkg/cas.
+	maxBatchBlobSize = 2 << 20
+	maxBatchBytes    = 16 << 20
+	maxBatchBlobs    = 64
+)
+
 func Reconstruct(ctx context.Context, index io.Reader, store BlobStore, output io.Writer) error {
 	header, err := ReadHeader(index)
 	if err != nil {
@@ -331,17 +356,46 @@ func (zeroReader) Read(p []byte) (int, error) {
 // materializes the whole tar.
 func writeReconstructed(ctx context.Context, dst io.Writer, stream io.Reader, refs []CASReference, store BlobStore) error {
 	var outputPos uint64
-	for _, r := range refs {
+	batchStore, canBatch := store.(BatchBlobStore)
+	for refIndex := 0; refIndex < len(refs); {
+		if canBatch {
+			batchEnd := blobBatchEnd(refs, refIndex)
+			if batchEnd > refIndex {
+				requests := make([]BlobRequest, batchEnd-refIndex)
+				for i, ref := range refs[refIndex:batchEnd] {
+					requests[i] = BlobRequest{Digest: ref.Digest, Size: int64(ref.Size)}
+				}
+				blobs, err := batchStore.ReadBlobs(ctx, requests)
+				if err != nil {
+					return fmt.Errorf("fetching blob batch at offset %d: %w", refs[refIndex].Offset, err)
+				}
+				if len(blobs) != len(requests) {
+					return fmt.Errorf("fetching blob batch at offset %d: got %d blobs, expected %d", refs[refIndex].Offset, len(blobs), len(requests))
+				}
+				for i, blob := range blobs {
+					ref := refs[refIndex+i]
+					if uint64(len(blob)) != ref.Size {
+						return fmt.Errorf("blob at offset %d has size %d, expected %d", ref.Offset, len(blob), ref.Size)
+					}
+					if err := writeGap(dst, stream, &outputPos, ref.Offset); err != nil {
+						return err
+					}
+					if _, err := io.Copy(dst, bytes.NewReader(blob)); err != nil {
+						return fmt.Errorf("writing blob at offset %d: %w", ref.Offset, err)
+					}
+					outputPos = ref.Offset + ref.Size
+				}
+				refIndex = batchEnd
+				continue
+			}
+		}
+
+		r := refs[refIndex]
 		// readRefTable already rejects unsorted/overlapping refs; this guard is
 		// belt-and-suspenders so the unsigned subtraction below can never
 		// underflow into a negative int64 copy count.
-		if r.Offset < outputPos {
-			return fmt.Errorf("CAS ref offset %d precedes current output position %d (unsorted or overlapping ref table)", r.Offset, outputPos)
-		}
-		if gap := r.Offset - outputPos; gap > 0 {
-			if _, err := io.CopyN(dst, stream, int64(gap)); err != nil {
-				return fmt.Errorf("copying stream bytes at offset %d (gap %d): %w", outputPos, gap, err)
-			}
+		if err := writeGap(dst, stream, &outputPos, r.Offset); err != nil {
+			return err
 		}
 
 		blobReader, err := store.ReaderForBlob(ctx, r.Digest, int64(r.Size))
@@ -355,11 +409,41 @@ func writeReconstructed(ctx context.Context, dst io.Writer, stream io.Reader, re
 		blobReader.Close()
 
 		outputPos = r.Offset + r.Size
+		refIndex++
 	}
 
 	if _, err := io.Copy(dst, stream); err != nil {
 		return fmt.Errorf("copying remaining stream bytes: %w", err)
 	}
+	return nil
+}
+
+func blobBatchEnd(refs []CASReference, start int) int {
+	var total uint64
+	end := start
+	for end < len(refs) && end-start < maxBatchBlobs {
+		size := refs[end].Size
+		if size > maxBatchBlobSize || total+size > maxBatchBytes {
+			break
+		}
+		total += size
+		end++
+	}
+	return end
+}
+
+func writeGap(dst io.Writer, stream io.Reader, outputPos *uint64, nextOffset uint64) error {
+	if nextOffset < *outputPos {
+		return fmt.Errorf("CAS ref offset %d precedes current output position %d (unsorted or overlapping ref table)", nextOffset, *outputPos)
+	}
+	gap := nextOffset - *outputPos
+	if gap == 0 {
+		return nil
+	}
+	if _, err := io.CopyN(dst, stream, int64(gap)); err != nil {
+		return fmt.Errorf("copying stream bytes at offset %d (gap %d): %w", *outputPos, gap, err)
+	}
+	*outputPos = nextOffset
 	return nil
 }
 
