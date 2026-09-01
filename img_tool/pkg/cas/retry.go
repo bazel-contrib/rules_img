@@ -350,6 +350,9 @@ func retriable(ctx context.Context, err error) bool {
 	switch st.Code() {
 	case codes.Unavailable, codes.Internal, codes.Aborted, codes.Unknown,
 		codes.DeadlineExceeded, codes.ResourceExhausted:
+		// grpc-go reports transient name-resolution failures as Unavailable
+		// (for example, "name resolver error: produced zero addresses"), so
+		// they use the same bounded retry budget as other transport failures.
 		return true
 	case codes.Canceled:
 		// Not our cancellation (checked above), so something between us and the

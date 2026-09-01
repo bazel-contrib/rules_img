@@ -27,6 +27,8 @@ type fakeCASClient struct {
 	blob      []byte
 	failErr   error
 	failTimes int
+	// attempted is notified after each RPC attempt when non-nil.
+	attempted chan struct{}
 	// perBlobStatus fails the single blob inside the batch response rather than
 	// the call itself.
 	perBlobStatus bool
@@ -37,9 +39,16 @@ type fakeCASClient struct {
 
 func (f *fakeCASClient) attempt() error {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.calls++
-	if f.calls <= f.failTimes {
+	calls := f.calls
+	f.mu.Unlock()
+	if f.attempted != nil {
+		select {
+		case f.attempted <- struct{}{}:
+		default:
+		}
+	}
+	if calls <= f.failTimes {
 		return f.failErr
 	}
 	return nil
@@ -183,6 +192,67 @@ func TestFindMissingBlobsRetriesTransientFailure(t *testing.T) {
 	}
 	if fake.callCount() != 2 {
 		t.Fatalf("FindMissingBlobs calls = %d, want 2", fake.callCount())
+	}
+}
+
+func TestFindMissingBlobsRetriesResolverFailure(t *testing.T) {
+	resolverErr := status.Error(codes.Unavailable, "name resolver error: produced zero addresses")
+	fake := &fakeCASClient{failErr: resolverErr, failTimes: 1}
+	c := testCAS(nil, fake)
+
+	if _, err := c.FindMissingBlobs(context.Background(), []Digest{SHA256(make([]byte, 32), 100)}); err != nil {
+		t.Fatalf("FindMissingBlobs: %v", err)
+	}
+	if fake.callCount() != 2 {
+		t.Fatalf("FindMissingBlobs calls = %d, want 2", fake.callCount())
+	}
+}
+
+func TestFindMissingBlobsDoesNotRetryAuthFailure(t *testing.T) {
+	for _, code := range []codes.Code{codes.Unauthenticated, codes.PermissionDenied} {
+		t.Run(code.String(), func(t *testing.T) {
+			fake := &fakeCASClient{failErr: status.Error(code, "auth rejected"), failTimes: 99}
+			c := testCAS(nil, fake)
+
+			_, err := c.FindMissingBlobs(context.Background(), []Digest{SHA256(make([]byte, 32), 100)})
+			if status.Code(err) != code {
+				t.Fatalf("error = %v, want %s", err, code)
+			}
+			if fake.callCount() != 1 {
+				t.Fatalf("FindMissingBlobs calls = %d, want 1", fake.callCount())
+			}
+		})
+	}
+}
+
+func TestFindMissingBlobsStopsBackoffOnCallerCancel(t *testing.T) {
+	attempted := make(chan struct{}, 1)
+	fake := &fakeCASClient{failErr: unavailable(), failTimes: 99, attempted: attempted}
+	c := testCAS(nil, fake)
+	policy := testRetryPolicy()
+	policy.BaseDelay = time.Hour
+	policy.MaxDelay = time.Hour
+	c.retry = newRetryConfig(policy)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := c.FindMissingBlobs(ctx, []Digest{SHA256(make([]byte, 32), 100)})
+		errCh <- err
+	}()
+	<-attempted
+	cancel()
+
+	select {
+	case err := <-errCh:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("error = %v, want context.Canceled", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("FindMissingBlobs did not stop its backoff after cancellation")
+	}
+	if fake.callCount() != 1 {
+		t.Fatalf("FindMissingBlobs calls = %d, want 1", fake.callCount())
 	}
 }
 
@@ -397,6 +467,7 @@ func TestRetriableClassification(t *testing.T) {
 		{"cancelled by someone else", status.Error(codes.Canceled, ""), true},
 		{"not found", status.Error(codes.NotFound, ""), false},
 		{"invalid argument", status.Error(codes.InvalidArgument, ""), false},
+		{"unauthenticated", status.Error(codes.Unauthenticated, ""), false},
 		{"permission denied", status.Error(codes.PermissionDenied, ""), false},
 		{"wrapped status", casErr(status.Error(codes.Unavailable, "")), true},
 		{"local error", errors.New("short read"), false},
