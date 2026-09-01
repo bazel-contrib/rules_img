@@ -55,6 +55,34 @@ of blocking the deploy forever.
 Uploads are deliberately left without an idle limit: unlike a read, a write
 cannot be resumed for free.
 
+## Message size
+
+Every connection the `img` tool opens to the remote cache accepts gRPC messages up
+to 100 MiB, above grpc-go's own 4 MiB default. Without that, an ordinary blob read
+can fail:
+
+```
+rpc error: code = ResourceExhausted desc = grpc: received message larger than max (4194309 vs. 4194304)
+```
+
+The remote execution API places no bound on the size of a `ReadResponse`, and
+`GetCapabilities` exposes no field from which a client could derive one, so a server
+is free to divide a blob into whatever chunks it likes, and is within spec when it
+does. Bazel raises the same limit to `Integer.MAX_VALUE`; 100 MiB is the figure
+`bazelbuild/remote-apis-sdks` uses.
+
+Treat 100 MiB as a compromise rather than a safety bound. It applies per call, and
+`img deploy` pools one connection per job, so reads in flight together can hold a
+multiple of it.
+
+| Variable | Effect |
+|----------|--------|
+| `IMG_REAPI_MAX_RECV_MSG_SIZE` | Largest gRPC message the tool will accept, in bytes (default `104857600`, 100 MiB). Values below grpc-go's own 4 MiB default are ignored with a warning |
+
+The limit covers every call on those connections, including to the
+[local blob cache](push-strategies.md#local-blob-cache) endpoint, which is not a
+remote execution API service despite the variable's `IMG_REAPI_` prefix.
+
 ## Connection pooling
 
 A single gRPC connection multiplexes every request onto one TCP connection, which
