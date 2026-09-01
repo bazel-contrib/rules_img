@@ -136,6 +136,50 @@ func rstErr() error {
 	return status.Error(codes.Internal, "stream terminated by RST_STREAM with error code: NO_ERROR")
 }
 
+// fakeCapabilitiesClient answers GetCapabilities with a fixed batch size limit.
+type fakeCapabilitiesClient struct {
+	maxBatchTotalSizeBytes int64
+}
+
+func (f *fakeCapabilitiesClient) GetCapabilities(context.Context, *remoteexecution_proto.GetCapabilitiesRequest, ...grpc.CallOption) (*remoteexecution_proto.ServerCapabilities, error) {
+	return &remoteexecution_proto.ServerCapabilities{
+		CacheCapabilities: &remoteexecution_proto.CacheCapabilities{
+			DigestFunctions:        []remoteexecution_proto.DigestFunction_Value{remoteexecution_proto.DigestFunction_SHA256},
+			MaxBatchTotalSizeBytes: f.maxBatchTotalSizeBytes,
+		},
+	}, nil
+}
+
+func TestLearnCapabilitiesBatchPayloadBudget(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		declared int64
+		want     int64
+	}{
+		{"undeclared falls back to 1 MiB, less headroom", 0, 1*1024*1024 - batchFramingHeadroom},
+		{"a negative declaration is treated as undeclared", -1, 1*1024*1024 - batchFramingHeadroom},
+		{"below the cap still loses headroom", 1 * 1024 * 1024, 1*1024*1024 - batchFramingHeadroom},
+		// The case in #720.
+		{"exactly 4 MiB", 4 * 1024 * 1024, maxBatchMessageSize - batchFramingHeadroom},
+		{"above the cap is clamped to ours", 8 * 1024 * 1024, maxBatchMessageSize - batchFramingHeadroom},
+		{"a tiny declaration is floored", 4096, minBatchPayload},
+		{"a declaration below the headroom is floored", batchFramingHeadroom - 1, minBatchPayload},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client := &fakeCapabilitiesClient{maxBatchTotalSizeBytes: tc.declared}
+
+			caps, err := learnCapabilities(context.Background(), client, "", newRetryConfig(testRetryPolicy()))
+			if err != nil {
+				t.Fatalf("learnCapabilities returned error: %v", err)
+			}
+
+			if caps.MaxBatchTotalSizeBytes != tc.want {
+				t.Errorf("MaxBatchTotalSizeBytes = %d, want %d", caps.MaxBatchTotalSizeBytes, tc.want)
+			}
+		})
+	}
+}
+
 func TestStreamReadReconnectResumesAfterRST(t *testing.T) {
 	blob := testBlob(1000)
 	fake := &fakeByteStreamClient{
