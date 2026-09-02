@@ -55,9 +55,9 @@ manifest referencing it has been created).
 
 | Registry | OCI 1.1 referrers | Blob mount | Anonymous mount | Cross-registry mount | Automatic cross-repository sharing |
 | --- | --- | --- | --- | --- | --- |
-| Amazon ECR | ✅ [[1]](https://aws.amazon.com/blogs/opensource/diving-into-oci-image-and-distribution-1-1-support-in-amazon-ecr/) | ✅ [[2]](https://docs.aws.amazon.com/AmazonECR/latest/userguide/blob-mounting.html) | ❓ | ❓ | ❌ |
-| Docker Hub | ❓ | ✅ [[3]](https://docs.docker.com/reference/api/registry/latest/) | ❓ | ❌ | ❌ |
-| Google Artifact Registry | ✅ [[4]](https://docs.cloud.google.com/artifact-registry/docs/manage-metadata-with-attachments) | ✅ | ❓ | ✅ [[5]](https://github.com/google/go-containerregistry/issues/1321) | ❌ |
+| Amazon ECR | ✅ [[1]](https://aws.amazon.com/blogs/opensource/diving-into-oci-image-and-distribution-1-1-support-in-amazon-ecr/) | ✅ after a manifest references the blob [[2]](https://docs.aws.amazon.com/AmazonECR/latest/userguide/blob-mounting.html) [[3]](https://github.com/aws/containers-roadmap/issues/2860) | ❓ | ❓ | ❌ |
+| Docker Hub | ❓ | ✅ [[4]](https://docs.docker.com/reference/api/registry/latest/) | ❓ | ❌ | ❌ |
+| Google Artifact Registry | ✅ [[5]](https://docs.cloud.google.com/artifact-registry/docs/manage-metadata-with-attachments) | ✅ | ❓ | ✅ [[6]](https://github.com/google/go-containerregistry/issues/1321) | ❌ |
 | Harbor | ✅ | ✅ | ❌ | ❓ | ❌ |
 | JFrog Artifactory | ✅ | ❌ | ❌ | ❌ | ✅ after a manifest references the blob |
 
