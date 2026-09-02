@@ -22,6 +22,18 @@ write_file(
     content = ["single\n"],
 )
 
+write_file(
+    name = "only",
+    out = "sub/only.txt",
+    content = ["only\n"],
+)
+
+write_file(
+    name = "exact",
+    out = "sub2/exact.txt",
+    content = ["exact\n"],
+)
+
 filegroup(
     name = "files",
     srcs = [
@@ -30,14 +42,33 @@ filegroup(
     ],
 )
 
-# srcs keys ending in "/" are treated as directories:
+# Filegroups that happen to hold exactly one file, nested in a subdirectory.
+# Bazel reports the single file as such a filegroup's executable (so that
+# `bazel run` works on it), but it is a plain file set, not a binary.
+filegroup(
+    name = "single_nested",
+    srcs = [":only"],
+)
+
+filegroup(
+    name = "single_exact",
+    srcs = [":exact"],
+)
+
+# srcs keys ending in "/" are treated as directories, so the outputs of a target
+# are laid out inside them the same way no matter how many outputs there are:
 # - a multi-output target is placed package-relative beneath the directory, with
 #   the trailing slash normalized (no doubled slash);
-# - a single file is placed inside the directory under its basename.
+# - a target with a single output is placed package-relative too, keeping the
+#   file's subdirectory instead of collapsing onto the key.
+# A key without a trailing slash keeps the single-output shortcut: the file is
+# placed exactly at the key.
 image_layer(
     name = "layer",
     srcs = {
         "/opt/data/": ":files",
+        "/opt/exact.txt": ":single_exact",
+        "/opt/nested/": ":single_nested",
         "/opt/solo/": ":single",
     },
 )
