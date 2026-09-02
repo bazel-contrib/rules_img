@@ -1,5 +1,15 @@
 load("@rules_go//go:def.bzl", "go_library", "go_test")
 
+# The test target is maintained by hand, and its source is hidden from gazelle,
+# so that it can keep a name far shorter than the one the naming convention
+# would give it ("grpcheaderinterceptor_test"). Windows caps a path at 260
+# characters, and a go_test's executable appears inside its own runfiles tree,
+# so the package and target name are each spelled twice: the conventional name
+# lands at 290 characters and the test cannot start at all ("cannot shorten the
+# path enough"). Keep this name short. Add any new test dependency to deps
+# below by hand — gazelle will not do it for you.
+# gazelle:exclude grpcheaderinterceptor_test.go
+
 go_library(
     name = "grpcheaderinterceptor",
     srcs = ["grpcheaderinterceptor.go"],
@@ -16,10 +26,12 @@ go_library(
 )
 
 go_test(
-    name = "grpcheaderinterceptor_test",
+    name = "main_test",
     size = "small",
+    # keep
     srcs = ["grpcheaderinterceptor_test.go"],
     embed = [":grpcheaderinterceptor"],
+    # keep
     deps = [
         "//pkg/auth/credential",
         "//pkg/proto/remote-apis/build/bazel/remote/execution/v2",
