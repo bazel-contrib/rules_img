@@ -9,6 +9,7 @@ load(
     "file_type",
     "files_arg",
     "get_repo_mapping_manifest",
+    "is_executable_target",
     "place_extra_executable_files",
     "place_non_executable_files",
     "resolve_layer_settings",
@@ -46,7 +47,7 @@ def _image_layer_impl(ctx):
         default_info = files[DefaultInfo]
         files_to_run = default_info.files_to_run
         extra_inputs.append(default_info.files)
-        is_executable = files_to_run != None and files_to_run.executable != None and not files_to_run.executable.is_source
+        is_executable = is_executable_target(default_info)
         if is_executable:
             # This is an executable. Place the executable at path_in_image and any
             # other default outputs relative to it. When include_runfiles is True,
@@ -170,7 +171,9 @@ included (unless include_runfiles is set to False). Any additional default outpu
 location relative to the executable that it has in the source tree.
 
 When a value is a non-executable target that produces more than one default output, the path key is
-treated as a directory and the outputs are placed inside it according to `multi_file_layout`.""",
+treated as a directory and the outputs are placed inside it according to `multi_file_layout`. A path
+key that ends with "/" is always treated as a directory, even when the target produces exactly one
+output.""",
             allow_files = True,
         ),
         "symlinks": attr.string_dict(
@@ -186,8 +189,9 @@ values are the targets they point to.""",
   preserving its path relative to the producing target's package.
 - `"flatten"`: place each file directly in the directory by basename (restores the older behavior).
 
-A src that produces a single output is always placed exactly at its path key, regardless of this
-setting.""",
+A src that produces a single output is placed exactly at its path key, regardless of this
+setting. To opt out of that shortcut, end the path key with "/": it then always denotes a
+directory, and a single output is laid out inside it just like multiple outputs would be.""",
         ),
         "default_metadata": attr.string(
             default = "",

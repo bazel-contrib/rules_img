@@ -1,3 +1,5 @@
 {"name":"opt/data/a.txt","typeflag":"0","size":2,"mode":493,"uid":0,"gid":0,"modtime":"1970-01-01T00:00:00Z","sha256":"87428fc522803d31065e7bce3cf03fe475096631e5e07bbd7a0fde60c4cf25c7"}
 {"name":"opt/data/nested/b.txt","typeflag":"0","size":2,"mode":493,"uid":0,"gid":0,"modtime":"1970-01-01T00:00:00Z","sha256":"0263829989b6fd954f72baaf2fc64bc2e2f01d692d4de72986ea808f6e99813f"}
+{"name":"opt/exact.txt","typeflag":"0","size":6,"mode":493,"uid":0,"gid":0,"modtime":"1970-01-01T00:00:00Z","sha256":"8e266f4266798896afd029fd0502d7ced391c612da600485ff68fa04c984b630"}
+{"name":"opt/nested/sub/only.txt","typeflag":"0","size":5,"mode":493,"uid":0,"gid":0,"modtime":"1970-01-01T00:00:00Z","sha256":"321b4285d2fec34a6dc5b6fdb1ab9ee46b1a3129c83e52a00a713a38bac0fe00"}
 {"name":"opt/solo/single.txt","typeflag":"0","size":7,"mode":493,"uid":0,"gid":0,"modtime":"1970-01-01T00:00:00Z","sha256":"f9ea4b8413f7b84383d16b6fdf36872439f9d7223623480c0eebfba0e5291ded"}

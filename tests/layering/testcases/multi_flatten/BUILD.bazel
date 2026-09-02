@@ -16,6 +16,12 @@ write_file(
     content = ["b\n"],
 )
 
+write_file(
+    name = "c",
+    out = "nested/c.txt",
+    content = ["c\n"],
+)
+
 filegroup(
     name = "files",
     srcs = [
@@ -24,13 +30,22 @@ filegroup(
     ],
 )
 
+# A filegroup that happens to hold exactly one file, nested in a subdirectory.
+filegroup(
+    name = "single_nested",
+    srcs = [":c"],
+)
+
 # multi_file_layout = "flatten": every output of a multi-output src is placed
 # directly under the directory key by basename, so the nested "nested/b.txt"
 # collapses to "b.txt" (contrast with the default package_relative layout).
+# A src with a single output is placed exactly at its path key, unless the key
+# ends in "/" — then it is a directory key and the file is flattened into it.
 image_layer(
     name = "layer",
     srcs = {
         "/opt/data": ":files",
+        "/opt/solo/": ":single_nested",
     },
     multi_file_layout = "flatten",
 )

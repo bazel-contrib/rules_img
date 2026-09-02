@@ -52,6 +52,39 @@ def symlinks_arg(x):
     type = file_type(x.target_file)
     return "_main/{}\0{}{}".format(x.path, type, x.target_file.path)
 
+def is_executable_target(default_info):
+    """Returns True if a src should be treated as an executable with runfiles.
+
+    `DefaultInfo.files_to_run.executable` alone is not a reliable signal: a
+    `filegroup` holding exactly one file reports that file as its executable so
+    that `bazel run` works on it, even though it is a plain file set. Treating
+    such a target as an executable would place its single file at the srcs key
+    verbatim, so a one-file filegroup would be laid out differently from the same
+    filegroup with a second file added.
+
+    A genuinely executable target has runfiles support, which a filegroup never
+    creates. The runfiles manifest is the cheap signal for that, but it is not
+    built under `--nobuild_runfile_manifests`; the repo mapping manifest covers
+    that case under Bzlmod, and only if both are absent do we fall back to
+    flattening the runfiles (a genuinely executable target always carries itself
+    in its own runfiles, a filegroup has no default runfiles at all).
+
+    Args:
+        default_info: the DefaultInfo of the src.
+
+    Returns:
+        True if the src is an executable whose runfiles should be included.
+    """
+    files_to_run = default_info.files_to_run
+    if files_to_run == None or files_to_run.executable == None:
+        return False
+    if files_to_run.executable.is_source:
+        return False
+    if files_to_run.runfiles_manifest != None or files_to_run.repo_mapping_manifest != None:
+        return True
+    default_runfiles = getattr(default_info, "default_runfiles", None)
+    return default_runfiles != None and len(default_runfiles.files.to_list()) > 0
+
 def _rebase_short_path(f):
     """Rebase a File's short_path into the unified runfiles-tree namespace.
 
@@ -113,8 +146,10 @@ def place_non_executable_files(ctx, files, label, path_in_image, layout, extra_a
     A single output is placed exactly at path_in_image. Multiple outputs treat
     path_in_image as a directory: "package_relative" preserves each file's path
     relative to the producing target's package, while "flatten" places each file
-    directly in the directory by basename. The single-output case is resolved by
-    the Go tool, so the depset is never flattened in Starlark.
+    directly in the directory by basename. A path_in_image ending in "/" is an
+    explicit directory key, so the single-output shortcut does not apply to it
+    and one output is laid out just like many. The single-output case is
+    resolved by the Go tool, so the depset is never flattened in Starlark.
 
     Args:
         ctx: rule context.

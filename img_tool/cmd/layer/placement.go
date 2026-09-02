@@ -33,13 +33,14 @@ import (
 //     an executable's extra default outputs, anchored at the executable.
 //   - "package_relative": like "relative", but if the spec resolves to exactly
 //     one file that file is placed directly at dest (the path key is the file
-//     path, not a directory). If dest ends with "/" it is treated as a
-//     directory and the single file is placed inside it by basename.
+//     path, not a directory).
 //   - "flatten": each file is placed directly under dest by basename; but if
-//     the spec resolves to exactly one file it is placed directly at dest
-//     (or, when dest ends with "/", inside it by basename).
+//     the spec resolves to exactly one file it is placed directly at dest.
 //   - dest is the normalized (no leading slash) destination directory (or, for
-//     the single-file collapse, the destination path) in the image.
+//     the single-file collapse, the destination path) in the image. A dest
+//     ending in "/" is an explicit directory key: the single-file collapse does
+//     not apply to it, so a target's outputs are laid out inside the directory
+//     the same way whether it produces one file or many.
 //   - anchor is the rebased short_path prefix that files are placed relative to.
 //     Empty means the image root.
 //   - skip is a rebased short_path to omit (the executable, which is added
@@ -146,13 +147,11 @@ func parsePlaceFilesHeader(line string) (placeFilesSpec, error) {
 // (after skips), used by the single-file collapse modes.
 func (s placeFilesSpec) place(shortPath string, count int) (string, error) {
 	// In the collapse modes, a single output is placed directly at dest (the
-	// path key is the file path, not a directory) — unless dest is a directory
-	// key (trailing slash), in which case the file is placed inside it by
-	// basename, matching the multi-file directory semantics.
-	if count == 1 && (s.Mode == "package_relative" || s.Mode == "flatten") {
-		if strings.HasSuffix(s.Dest, "/") {
-			return path.Join(s.Dest, path.Base(shortPath)), nil
-		}
+	// path key is the file path, not a directory) — unless dest is an explicit
+	// directory key (trailing slash), in which case the file is laid out inside
+	// the directory by the mode's normal rules, exactly as it would be if the
+	// target produced more files.
+	if count == 1 && !strings.HasSuffix(s.Dest, "/") && (s.Mode == "package_relative" || s.Mode == "flatten") {
 		return s.Dest, nil
 	}
 	if s.Mode == "flatten" {

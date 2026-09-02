@@ -32,6 +32,9 @@ go_library(
 
 go_test(
     name = "layer_test",
-    srcs = ["layer_test.go"],
+    srcs = [
+        "layer_test.go",
+        "placement_test.go",
+    ],
     embed = [":layer"],
 )
