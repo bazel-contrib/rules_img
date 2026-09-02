@@ -53,6 +53,15 @@ func TestHandleGlobalFlags(t *testing.T) {
 			wantArgs:         []string{"img", "deploy", "--request-file", "req.json"},
 			wantInvocationID: "5678",
 		},
+		{
+			// image_push passes --original-tag "" for a base pinned by digest.
+			// Dropping the empty value would make --original-tag swallow the
+			// next flag and shift every argument after it, leaving the
+			// subcommand without its positional output path.
+			name:     "empty argument is passed through",
+			args:     []string{"img", "deploy-metadata", "--original-tag", "", "--original-digest", "sha256:abc", "push.json"},
+			wantArgs: []string{"img", "deploy-metadata", "--original-tag", "", "--original-digest", "sha256:abc", "push.json"},
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

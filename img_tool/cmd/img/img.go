@@ -223,17 +223,18 @@ func handleGlobalFlags(args []string) ([]string, globalOptions, error) {
 			opts.toolInvocationID = args[i]
 			continue
 		}
+		consumed := false
 		for _, prefix := range []string{"--invocation-id=", "-invocation-id=", "--invocation_id=", "-invocation_id="} {
 			if value, ok := strings.CutPrefix(arg, prefix); ok {
 				if value == "" {
 					return nil, globalOptions{}, fmt.Errorf("%s requires a value", strings.TrimSuffix(arg, "="))
 				}
 				opts.toolInvocationID = value
-				arg = ""
+				consumed = true
 				break
 			}
 		}
-		if arg == "" {
+		if consumed {
 			continue
 		}
 		filtered = append(filtered, arg)
