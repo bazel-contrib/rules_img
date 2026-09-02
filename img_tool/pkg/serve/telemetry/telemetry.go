@@ -353,6 +353,29 @@ func validateEndpointURL(endpoint string) error {
 	return nil
 }
 
+// defaultMetricsPath is where OTLP/HTTP metrics are posted on a collector that
+// was named by host alone.
+const defaultMetricsPath = "/v1/metrics"
+
+// otlpHTTPEndpointURL returns the URL to hand to otlpmetrichttp. An endpoint
+// with a path of its own is used verbatim; one without gains the default
+// metrics path, so "http://collector:4318" reaches the collector rather than
+// its bare root.
+//
+// The exporter used to append that path itself, but since v1.46.0
+// WithEndpointURL normalizes an empty path to "/" and posts there, which a
+// collector answers with 404. An unparseable endpoint cannot get here —
+// validateEndpointURL already rejected it — and is passed through for the
+// exporter to complain about.
+func otlpHTTPEndpointURL(endpoint string) string {
+	u, err := url.Parse(endpoint)
+	if err != nil || u.Path != "" {
+		return endpoint
+	}
+	u.Path = defaultMetricsPath
+	return u.String()
+}
+
 // otlpHTTPClient overrides the HTTP client of the OTLP/HTTP exporters. It is nil
 // in production; the tests set it to a client with a stub transport so they can
 // assert what each endpoint receives without binding a listening socket (the
@@ -392,7 +415,7 @@ func newOTLPExporters(ctx context.Context, protocol string, endpoints []string) 
 		newExporter = func(endpoint string) (sdkmetric.Exporter, error) {
 			var opts []otlpmetrichttp.Option
 			if endpoint != "" {
-				opts = append(opts, otlpmetrichttp.WithEndpointURL(endpoint))
+				opts = append(opts, otlpmetrichttp.WithEndpointURL(otlpHTTPEndpointURL(endpoint)))
 			}
 			if otlpHTTPClient != nil {
 				opts = append(opts, otlpmetrichttp.WithHTTPClient(otlpHTTPClient))

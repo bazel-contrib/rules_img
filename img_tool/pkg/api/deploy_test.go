@@ -158,6 +158,13 @@ func TestNormalizeLoadReference(t *testing.T) {
 			ref:  "my-app:LATEST",
 			want: "my-app:LATEST",
 		},
+		{
+			// The distribution grammar allows a one-character path component,
+			// and go-containerregistry accepts one since v0.22.0.
+			name: "single-character repository",
+			ref:  "a:1",
+			want: "a:1",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := NormalizeLoadReference(tc.ref)
@@ -186,12 +193,6 @@ func TestNormalizeLoadReferenceErrors(t *testing.T) {
 			// registry with a port.
 			name: "doubly-qualified name",
 			ref:  "docker.io/library/docker.mycompany.tld:1234/foo:latest",
-		},
-		{
-			// go-containerregistry requires at least two characters, the same
-			// rule image_push already applies to its repository.
-			name: "single-character repository",
-			ref:  "a:1",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
