@@ -1,7 +1,9 @@
 package gateway
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -84,13 +86,161 @@ func allowHostPolicy(t *testing.T, host string, ops ...string) *CompiledPolicy {
 }
 
 func do(h *Handler, method, host, path string) *http.Response {
-	r, _ := http.NewRequest(method, "http://gateway"+path, nil)
+	return doBody(h, method, host, path, "")
+}
+
+func doBody(h *Handler, method, host, path, body string) *http.Response {
+	r, _ := http.NewRequest(method, "http://gateway"+path, strings.NewReader(body))
 	if host != "" {
 		r.Header.Set(clientgateway.OriginalHostHeader, host)
 	}
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, r)
 	return rec.Result()
+}
+
+type rotatingKeychain struct {
+	resolutions int
+}
+
+func (k *rotatingKeychain) Resolve(target authn.Resource) (authn.Authenticator, error) {
+	return k.ResolveContext(context.Background(), target)
+}
+
+func (k *rotatingKeychain) ResolveContext(context.Context, authn.Resource) (authn.Authenticator, error) {
+	k.resolutions++
+	return &authn.Basic{Username: "AWS", Password: fmt.Sprintf("token-%d", k.resolutions)}, nil
+}
+
+type expiringAuthUpstream struct {
+	rejectedStatus   int
+	acceptedPassword string
+	attempts         int
+}
+
+func (u *expiringAuthUpstream) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.URL.Path == "/v2/" {
+		return upstreamResponse(http.StatusUnauthorized, http.Header{
+			"WWW-Authenticate": {`Basic realm="registry.test"`},
+		}, ""), nil
+	}
+	u.attempts++
+	_, password, ok := req.BasicAuth()
+	if !ok || password != u.acceptedPassword {
+		return upstreamResponse(u.rejectedStatus, nil, "rejected"), nil
+	}
+	return upstreamResponse(http.StatusOK, http.Header{
+		"Content-Type": {"application/vnd.oci.image.manifest.v1+json"},
+	}, `{"schemaVersion":2}`), nil
+}
+
+func newAuthRefreshHandler(t *testing.T, keychain authn.Keychain, base http.RoundTripper) *Handler {
+	t.Helper()
+	return New(
+		WithAuthorizer(allowHostPolicy(t, testUpstreamHost, "manifest:read", "manifest:write")),
+		WithKeychain(keychain),
+		WithLogger(log.New(io.Discard, "", 0)),
+		WithBaseTransport(base),
+	)
+}
+
+func TestForwardRefreshesRejectedAuthentication(t *testing.T) {
+	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			keychain := &rotatingKeychain{}
+			upstream := &expiringAuthUpstream{rejectedStatus: status, acceptedPassword: "token-2"}
+			h := newAuthRefreshHandler(t, keychain, upstream)
+
+			resp := do(h, http.MethodGet, testUpstreamHost, "/v2/app/manifests/latest")
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("status = %d, want 200", resp.StatusCode)
+			}
+			if keychain.resolutions != 2 {
+				t.Fatalf("keychain resolutions = %d, want 2", keychain.resolutions)
+			}
+			if upstream.attempts != 2 {
+				t.Fatalf("upstream attempts = %d, want 2", upstream.attempts)
+			}
+
+			resp = do(h, http.MethodGet, testUpstreamHost, "/v2/app/manifests/latest")
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("cached refreshed auth status = %d, want 200", resp.StatusCode)
+			}
+			if keychain.resolutions != 2 {
+				t.Fatalf("keychain resolutions after cache hit = %d, want 2", keychain.resolutions)
+			}
+		})
+	}
+}
+
+func TestForwardRetriesRejectedAuthenticationOnlyOnce(t *testing.T) {
+	keychain := &rotatingKeychain{}
+	upstream := &expiringAuthUpstream{rejectedStatus: http.StatusForbidden, acceptedPassword: "never"}
+	h := newAuthRefreshHandler(t, keychain, upstream)
+
+	resp := do(h, http.MethodGet, testUpstreamHost, "/v2/app/manifests/latest")
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", resp.StatusCode)
+	}
+	if keychain.resolutions != 2 {
+		t.Fatalf("keychain resolutions = %d, want 2", keychain.resolutions)
+	}
+	if upstream.attempts != 2 {
+		t.Fatalf("upstream attempts = %d, want 2", upstream.attempts)
+	}
+}
+
+func TestForwardDoesNotReplayRequestBody(t *testing.T) {
+	keychain := &rotatingKeychain{}
+	upstream := &expiringAuthUpstream{rejectedStatus: http.StatusForbidden, acceptedPassword: "token-2"}
+	h := newAuthRefreshHandler(t, keychain, upstream)
+
+	resp := doBody(h, http.MethodPut, testUpstreamHost, "/v2/app/manifests/latest", `{"schemaVersion":2}`)
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", resp.StatusCode)
+	}
+	if upstream.attempts != 1 {
+		t.Fatalf("upstream attempts = %d, want 1", upstream.attempts)
+	}
+
+	resp = doBody(h, http.MethodPut, testUpstreamHost, "/v2/app/manifests/latest", "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status with refreshed auth = %d, want 200", resp.StatusCode)
+	}
+	if keychain.resolutions != 2 {
+		t.Fatalf("keychain resolutions = %d, want 2", keychain.resolutions)
+	}
+}
+
+func TestAuthCacheStaleHandleDoesNotInvalidateReplacement(t *testing.T) {
+	cache := authCache{inner: make(map[string]*authEntry)}
+	created := 0
+	create := func() (http.RoundTripper, error) {
+		created++
+		return &fakeUpstreamRT{}, nil
+	}
+
+	_, stale, err := cache.get("repo|pull", create)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cache.invalidate(stale)
+	_, replacement, err := cache.get("repo|pull", create)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cache.invalidate(stale)
+	_, current, err := cache.get("repo|pull", create)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.entry != replacement.entry {
+		t.Fatal("stale handle invalidated the replacement entry")
+	}
+	if created != 2 {
+		t.Fatalf("created %d transports, want 2", created)
+	}
 }
 
 func TestForwardManifestRead(t *testing.T) {
