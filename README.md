@@ -632,7 +632,7 @@ linux/arm64).
 - [Platforms Guide](docs/platforms.md) - Working with Bazel platforms, architecture variants, and multi-platform builds
 - [Image Signing Guide](docs/image-signing.md) - Sign pushed images with pluggable signer plugins (Notation, cosign, or your own)
 - [Push Strategies](docs/push-strategies.md) - Push strategies and [push at build time](docs/push-strategies.md#push-at-build-time)
-- [Remote Cache Reliability](docs/remote-cache.md) - How the `img` tool talks to Bazel's remote cache: retries, timeouts, connection pooling and resumable transfers
+- [Remote Cache Reliability](docs/remote-cache.md) - How the `img` tool talks to Bazel's remote cache: retries, timeouts, message sizes, connection pooling and resumable transfers
 - [Registry Support Matrix](docs/registry-support.md) - Which registries mount blobs across repositories, serve OCI 1.1 referrers, or share blobs on their own — and which features need what
 - [Authenticating Build Actions](docs/authenticating-build-actions.md) - Registry credentials for build-time pull/push, and the OCI distribution gateway
 - [Insecure (Plain-HTTP) Registries](docs/insecure-registries.md) - Push to a local development registry that speaks HTTP or has an untrusted certificate

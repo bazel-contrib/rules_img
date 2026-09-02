@@ -309,6 +309,29 @@ func (d Digest) protoDigestFunction() remoteexecution_proto.DigestFunction_Value
 	}
 }
 
+// max_batch_total_size_bytes limits blob payload, not the serialized message: the spec
+// calls it the "maximum total size of blobs" and names the transport's message limit
+// separately, and Buildbarn enforces it that way, counting only digest sizes. So a
+// request for exactly the declared limit is inside the server's stated budget and still
+// 103 bytes (BatchUpdateBlobsRequest) or 157 bytes (ByteStream WriteRequest) over what
+// gRPC will carry. The limit that binds is the one on what a *server* receives, which
+// nothing a client sets can raise, hence the headroom below.
+const (
+	// maxBatchMessageSize is what a server is assumed to receive when it declares more
+	// than this, or nothing: grpc-go's defaultServerMaxReceiveMessageSize, and
+	// grpc-java's.
+	maxBatchMessageSize = 4 * 1024 * 1024
+
+	// batchFramingHeadroom covers the per-blob digest, status and length-delimiter
+	// fields, and a WriteRequest's resource name. Same figure as
+	// bazelbuild/remote-apis-sdks holds back in DefaultMaxBatchSize (4*1024*1024 - 1024).
+	batchFramingHeadroom = 1024
+
+	// minBatchPayload keeps an unusually small declared limit from driving the budget to
+	// zero. It also sizes WriteBlob's chunk buffer, which at zero makes no progress.
+	minBatchPayload = 64 * 1024
+)
+
 type capabilities struct {
 	DigestFunctionSHA256   bool
 	DigestFunctionSHA512   bool
@@ -355,16 +378,24 @@ func learnCapabilities(ctx context.Context, capabilitiesClient remoteexecution_p
 			caps.DigestFunctionSHA512 = true
 		}
 	}
-	caps.MaxBatchTotalSizeBytes = resp.CacheCapabilities.MaxBatchTotalSizeBytes
-	if caps.MaxBatchTotalSizeBytes <= 0 {
-		// Default to 1 MiB if not set.
-		caps.MaxBatchTotalSizeBytes = 1 * 1024 * 1024
+	declared := resp.CacheCapabilities.MaxBatchTotalSizeBytes
+	if declared <= 0 {
+		// Assume 1 MiB when the server declares no limit.
+		declared = 1 * 1024 * 1024
 	}
-	if caps.MaxBatchTotalSizeBytes > 4*1024*1024 {
-		// Cap to 4 MiB to avoid excessive memory usage.
-		caps.MaxBatchTotalSizeBytes = 4 * 1024 * 1024
-	}
+	caps.MaxBatchTotalSizeBytes = batchPayloadBudget(declared)
 	return caps, nil
+}
+
+// batchPayloadBudget turns a batch message limit into how much blob payload may go in
+// one. Headroom comes off whichever limit binds, the server's or ours: a server declaring
+// under 4 MiB may be enforcing a lower transport limit to match.
+func batchPayloadBudget(messageLimit int64) int64 {
+	budget := min(messageLimit, int64(maxBatchMessageSize)) - batchFramingHeadroom
+	if budget < minBatchPayload {
+		return minBatchPayload
+	}
+	return budget
 }
 
 func getCapabilitiesOnce(ctx context.Context, client remoteexecution_proto.CapabilitiesClient, request *remoteexecution_proto.GetCapabilitiesRequest, policy RetryPolicy) (*remoteexecution_proto.ServerCapabilities, error) {

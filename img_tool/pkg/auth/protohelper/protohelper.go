@@ -6,7 +6,8 @@ import (
 	"fmt"
 	"net/url"
 	"os"
-	"slices"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -19,8 +20,49 @@ import (
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/auth/grpcheaderinterceptor"
 )
 
+// EnvMaxRecvMsgSize overrides, in bytes, the largest gRPC message the clients built here
+// will accept. It follows the IMG_REAPI_* convention of pkg/cas, though it reaches every
+// connection [Client] builds, including the blob cache endpoint, which is not a remote
+// execution API service.
+const EnvMaxRecvMsgSize = "IMG_REAPI_MAX_RECV_MSG_SIZE"
+
+// defaultMaxRecvMsgSize has to exceed grpc-go's own 4 MiB, because the remote execution
+// API bounds ReadResponse size nowhere and GetCapabilities exposes no field to derive a
+// bound from: a conforming server may answer an ordinary whole-blob read with a larger
+// message. 100 MiB is bazelbuild/remote-apis-sdks' figure, kept finite even though the
+// limit is per call and a deploy pools one connection per job, so concurrent allocation
+// can reach this times the job count. Bazel keeps no ceiling at all
+// (maxInboundMessageSize(Integer.MAX_VALUE)).
+const defaultMaxRecvMsgSize = 100 * 1024 * 1024
+
+// minMaxRecvMsgSize is the floor for EnvMaxRecvMsgSize, and grpc-go's own default. Below
+// it, reads an unconfigured client would have completed fail instead, and pkg/cas spends a
+// full retry budget per blob on the ResourceExhausted before reporting anything.
+const minMaxRecvMsgSize = 4 * 1024 * 1024
+
+// maxRecvMsgSize is the environment-derived limit [Client] applies, parsed once: a deploy
+// builds one client per pooled connection, and a malformed value is worth one warning.
+var maxRecvMsgSize = sync.OnceValue(maxRecvMsgSizeFromEnv)
+
+func maxRecvMsgSizeFromEnv() int {
+	raw := strings.TrimSpace(os.Getenv(EnvMaxRecvMsgSize))
+	if raw == "" {
+		return defaultMaxRecvMsgSize
+	}
+	size, err := strconv.Atoi(raw)
+	if err != nil || size < minMaxRecvMsgSize {
+		warnInvalidEnv(EnvMaxRecvMsgSize, raw, defaultMaxRecvMsgSize)
+		return defaultMaxRecvMsgSize
+	}
+	return size
+}
+
 func Client(uri string, helper credhelper.Helper, opts ...grpc.DialOption) (*grpc.ClientConn, error) {
-	opts = slices.Clone(opts)
+	// Ours goes first so a caller passing its own MaxCallRecvMsgSize wins: grpc
+	// applies call options in order and the last one set takes effect.
+	opts = append([]grpc.DialOption{
+		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(maxRecvMsgSize())),
+	}, opts...)
 
 	parsed, err := url.Parse(uri)
 	if err != nil {
@@ -119,7 +161,12 @@ func warnUnencryptedGRPC(uri string) {
 		return
 	}
 	WarnedURIs[uri] = struct{}{}
-	fmt.Fprintf(os.Stderr, "WARNING: using unencrypted grpc connection to %s - please consider using grpcs instead", uri)
+	fmt.Fprintf(os.Stderr, "WARNING: using unencrypted grpc connection to %s - please consider using grpcs instead\n", uri)
+}
+
+// warnInvalidEnv is duplicated from pkg/cas, where the same helper is unexported.
+func warnInvalidEnv(name, raw string, fallback any) {
+	fmt.Fprintf(os.Stderr, "WARNING: ignoring invalid %s=%q, using %v\n", name, raw, fallback)
 }
 
 // WarnedURIs is a set of URIs that have already been warned about.
