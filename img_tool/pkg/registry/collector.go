@@ -61,6 +61,9 @@ type Collector struct {
 	interval time.Duration
 	now      func() time.Time
 
+	// sweeps excludes a sweep from a write that takes more than one call to
+	// the Store. A writer holds it for reading, a sweep for writing.
+	sweeps        sync.RWMutex
 	lock          sync.Mutex
 	lastSweep     time.Time
 	manifests     map[manifestKey]time.Time
@@ -251,6 +254,29 @@ func (c *Collector) ForgetBlob(digest v1.Hash) {
 	delete(c.blobs, digest)
 }
 
+// writing announces a write that a sweep must not run in the middle of, and
+// returns the function that ends it.
+//
+// Storing a manifest and then the tag that names it is two calls to a Store
+// that offers no transactions, and in between them the manifest is a manifest
+// nothing points at. One sweep landing there is harmless -- it adopts what it
+// has not seen before, so the first sweep never collects. A second one finds
+// that adopted manifest past its TTL with no root reaching it and collects it,
+// out from under the tag that is about to be written. What is left is a tag
+// resolving to a manifest that is gone: a 404 for a reference the client was
+// told, moments later, that the registry had created.
+//
+// Holding this for the whole write is what makes the pair atomic as far as the
+// Collector is concerned. It is the outer of the two locks: a writer takes it
+// before touching anything, and lock only afterwards.
+func (c *Collector) writing() func() {
+	if c == nil {
+		return func() {}
+	}
+	c.sweeps.RLock()
+	return c.sweeps.RUnlock
+}
+
 // MaybeCollect sweeps if the configured interval has passed since the last
 // sweep. Handlers call it before serving a request, so a request arriving after
 // something expired does not see it.
@@ -274,11 +300,13 @@ func (c *Collector) Collect() CollectStats {
 		return CollectStats{}
 	}
 
+	c.sweeps.Lock()
 	c.lock.Lock()
 	live := c.markLocked()
 	stats, collectedBlobs := c.sweepLocked(live)
 	c.lastSweep = c.now()
 	c.lock.Unlock()
+	c.sweeps.Unlock()
 
 	c.reportCollectedBlobs(collectedBlobs)
 	return stats

@@ -510,8 +510,13 @@ func TestNewRejectsAStoreTheCollectorDoesNotUse(t *testing.T) {
 // nanosecond so a sweep runs on practically every request. Anything reachable
 // from a tag has to survive that; run under -race it also covers the lock order
 // between the collector and the store.
+//
+// The store leaves a gap between storing a manifest and tagging it, which is
+// the moment a push is most exposed: the manifest is there and nothing points
+// at it yet. Timing alone hits that window rarely enough to make the test a
+// flake rather than a check, so it is widened here on purpose.
 func TestRegistryKeepsTaggedManifestsWhileCollectingConcurrently(t *testing.T) {
-	store := NewMemStore()
+	store := untaggedForAWhileStore{Store: NewMemStore(), gap: time.Millisecond}
 	collector := NewCollector(store, CollectorConfig{TTL: time.Nanosecond, Interval: time.Nanosecond})
 	handler := New(
 		WithStore(store),
@@ -577,6 +582,19 @@ func TestRegistryKeepsTaggedManifestsWhileCollectingConcurrently(t *testing.T) {
 			}
 		}
 	}
+}
+
+// untaggedForAWhileStore waits before pointing a tag at the manifest it names,
+// leaving the manifest untagged for long enough that a concurrent sweep is
+// certain to land in between rather than now and then.
+type untaggedForAWhileStore struct {
+	Store
+	gap time.Duration
+}
+
+func (s untaggedForAWhileStore) PutTag(repo, tag string, digest v1.Hash) {
+	time.Sleep(s.gap)
+	s.Store.PutTag(repo, tag, digest)
 }
 
 func assertErrorCode(t *testing.T, recorder *httptest.ResponseRecorder, wantStatus int, wantCode string) {
