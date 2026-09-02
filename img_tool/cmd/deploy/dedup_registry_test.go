@@ -1590,10 +1590,20 @@ func TestDeduplicatedPushArtificialConfigRecordsTheDiffID(t *testing.T) {
 // for the two tests above: on the same registry, uploading the blobs alone leaves
 // them invisible to every other repository, and the strict mount fails the push
 // rather than uploading them everywhere.
+//
+// The home is pinned to a repository this deploy pushes no image to, because that is
+// the only home whose contents the test controls. A home picked from the destinations
+// receives that destination's own image manifest, which references the shared layer as
+// well -- so the moment it lands, the registry shares the blob exactly as an artificial
+// manifest would, and the deploy that was supposed to fail succeeds. Which of the two
+// wins is a race between manifest pushes that run concurrently, so the pin is what
+// makes "nothing in the home references the blob" a property of the deploy rather than
+// of its scheduling.
 func TestDeduplicatedPushWithoutArtificialManifestsFailsOnSuchARegistry(t *testing.T) {
+	const pinned = "team/_blobs"
 	reg := newArtifactoryLikeRegistry()
 	layoutDirs, dm, images := buildSharedLayerLayouts(t, "reg.example.com", 2, 1)
-	dm = withDedupSettingsOnEveryOp(t, dm, api.DeduplicatedPushEnabled, "", api.DeduplicatedPushContentBlobs)
+	dm = withDedupSettingsOnEveryOp(t, dm, api.DeduplicatedPushEnabled, pinned, api.DeduplicatedPushContentBlobs)
 
 	err := runDedupDeploy(t, reg, layoutDirs, dm)
 	if err == nil {
@@ -1602,8 +1612,51 @@ func TestDeduplicatedPushWithoutArtificialManifestsFailsOnSuchARegistry(t *testi
 	if !strings.Contains(err.Error(), "refusing to upload layer") {
 		t.Fatalf("error = %v, want the mount-only refusal", err)
 	}
-	if !strings.Contains(err.Error(), images.repositories[0]) {
-		t.Errorf("error = %v, want it to name the home repository %s", err, images.repositories[0])
+	if !strings.Contains(err.Error(), pinned) {
+		t.Errorf("error = %v, want it to name the home repository %s", err, pinned)
+	}
+	// The blob did reach its home, and no manifest there references it: what the
+	// registry refused is sharing it, which is what the artificial manifest is for.
+	if got := reg.blobPutRepositories(images.shared[0]); len(got) != 1 || got[0] != pinned {
+		t.Errorf("the shared layer was uploaded to %v, want only the pinned home %s", got, pinned)
+	}
+	if artificial := reg.artificialManifestsIn(t, pinned); len(artificial) != 0 {
+		t.Errorf("the pinned home %s holds %d artificial manifests, want none in this mode", pinned, len(artificial))
+	}
+}
+
+// TestDeduplicatedPushArtificialManifestsShareAPinnedHome is the other half of that
+// control: the same pinned home on the same registry, with the artificial manifests
+// turned back on, shares every blob with every destination -- without a mount, and
+// without uploading anything twice.
+func TestDeduplicatedPushArtificialManifestsShareAPinnedHome(t *testing.T) {
+	const pinned = "team/_blobs"
+	reg := newArtifactoryLikeRegistry()
+	layoutDirs, dm, images := buildSharedLayerLayouts(t, "reg.example.com", 2, 1)
+	dm = withDedupSettingsOnEveryOp(t, dm, api.DeduplicatedPushEnabled, pinned, api.DeduplicatedPushContentBlobsAndArtificialManifests)
+
+	if err := runDedupDeploy(t, reg, layoutDirs, dm); err != nil {
+		t.Fatalf("deduplicated push: %v", err)
+	}
+
+	// A pinned home is a home for every layer, shared or not, so every one of them is
+	// uploaded there once and referenced by a manifest of its own.
+	artificial := reg.artificialManifestsIn(t, pinned)
+	for _, digest := range append(append([]string{}, images.shared...), images.unique...) {
+		if got := reg.blobPutRepositories(digest); len(got) != 1 || got[0] != pinned {
+			t.Errorf("layer %s was uploaded to %v, want only the pinned home %s", digest, got, pinned)
+		}
+		if _, found := artificial[digest]; !found {
+			t.Errorf("the pinned home %s holds no artificial manifest for layer %s", pinned, digest)
+		}
+	}
+	if _, mounts, _ := reg.snapshot(); len(mounts) != 0 {
+		t.Errorf("registry satisfied %v mounts, want none: this registry does not mount at all", mounts)
+	}
+	for i, repository := range images.repositories {
+		if _, found := reg.storedManifestFor(repository, images.manifests[i]); !found {
+			t.Errorf("%s does not hold its manifest %s", repository, images.manifests[i])
+		}
 	}
 }
 
