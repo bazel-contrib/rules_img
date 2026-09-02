@@ -3,6 +3,7 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "compactstream",
     srcs = [
+        "blobstream.go",
         "inspect.go",
         "reader.go",
         "writer.go",
@@ -18,6 +19,7 @@ go_library(
 go_test(
     name = "compactstream_test",
     srcs = [
+        "blobstream_test.go",
         "reader_test.go",
         "reconstruct_uncompressed_test.go",
         "writer_test.go",

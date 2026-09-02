@@ -74,6 +74,18 @@ func (s *countingBlobSource) ReaderForBlob(_ context.Context, digest cas.Digest)
 	return io.NopCloser(bytes.NewReader(content)), nil
 }
 
+func (s *countingBlobSource) ReaderForBlobs(ctx context.Context, digests []cas.Digest) (io.ReadCloser, error) {
+	var buf bytes.Buffer
+	for _, digest := range digests {
+		content, err := s.ReadBlob(ctx, digest)
+		if err != nil {
+			return nil, err
+		}
+		buf.Write(content)
+	}
+	return io.NopCloser(&buf), nil
+}
+
 // readsOf returns how many times the blob with the given "sha256:<hex>" digest was
 // read from the fake CAS.
 func (s *countingBlobSource) readsOf(digest string) int {

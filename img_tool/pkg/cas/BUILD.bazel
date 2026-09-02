@@ -4,8 +4,10 @@ go_library(
     name = "cas",
     srcs = [
         "cache.go",
+        "cachemultiread.go",
         "cachestore.go",
         "error.go",
+        "multiread.go",
         "pool.go",
         "read.go",
         "retry.go",
@@ -29,7 +31,9 @@ go_test(
     size = "small",
     srcs = [
         "cache_test.go",
+        "cachemultiread_test.go",
         "cachestore_test.go",
+        "multiread_test.go",
         "pool_test.go",
         "read_test.go",
         "retry_test.go",

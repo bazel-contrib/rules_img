@@ -1,6 +1,7 @@
 package cas
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"errors"
@@ -84,6 +85,18 @@ func (f *fakeBlobs) ReaderForBlob(ctx context.Context, digest Digest) (io.ReadCl
 		return nil, fmt.Errorf("fake: blob %s not found", digest.hexHash())
 	}
 	return &fakeBlobReader{source: f, data: data, ctx: ctx}, nil
+}
+
+func (f *fakeBlobs) ReaderForBlobs(ctx context.Context, digests []Digest) (io.ReadCloser, error) {
+	var buf bytes.Buffer
+	for _, digest := range digests {
+		data, err := f.ReadBlob(ctx, digest)
+		if err != nil {
+			return nil, err
+		}
+		buf.Write(data)
+	}
+	return io.NopCloser(&buf), nil
 }
 
 func (f *fakeBlobs) readCount(digest Digest) int {

@@ -108,6 +108,33 @@ will not accept.
 `img deploy` does not ask the server for its capabilities and uses a fixed 2 MiB
 budget regardless. The figures above apply to the BES and CAS registry paths.
 
+## Batched reads
+
+Reconstructing a compact layer means reading every file the layer's index
+references out of the cache. A layer of many small files is thousands of such
+references — often tens of kilobytes each — and reading them one at a time costs
+one round trip per file, which on a high-latency link dominates everything else.
+
+So the reference table is read as a list rather than a blob at a time.
+Consecutive references small enough to batch are fetched with a single
+`BatchReadBlobs` request, filled up to the payload budget above, so the cost is a
+round trip per few megabytes instead of per file. References too large for a batch
+keep using ByteStream, one at a time. Blobs are fetched as the layer is written out,
+so a reconstruction never holds more than one batch in memory however long the list
+is.
+
+The 1 KiB of framing headroom above is a fixed reservation, and a read batch holding
+many blobs spends far more than that: every blob in the response carries its own
+digest, status and length delimiters. A batched read therefore charges each blob its
+framing as well as its bytes against the budget, and caps the number of blobs in one
+request, so the message stays inside the limit however small the blobs are.
+
+References the deploy can satisfy without the network — from the layer's input
+directory (shipped by the eager strategies) or from the disk cache — are still
+read straight from disk, and only the gaps between them go to the remote cache.
+Whatever the batch fetches is written into the disk cache on the way through, so
+a later deploy finds it there.
+
 ## Connection pooling
 
 A single gRPC connection multiplexes every request onto one TCP connection, which

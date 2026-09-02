@@ -302,6 +302,31 @@ func (s *diskStore) finalize(tempPath string, d Digest) error {
 	return nil
 }
 
+// put stores a blob that is already in memory. It is the whole-blob counterpart
+// of the createTemp/writeAll/finalize dance a streaming fetch does, for callers
+// that read a blob in one piece (a batched read). Caching is best effort: a
+// failure here costs the caching of one blob and is not reported.
+func (s *diskStore) put(d Digest, data []byte) {
+	f, err := s.createTemp(d.SizeBytes)
+	if err != nil {
+		if !errors.Is(err, errDiskCacheDisabled) {
+			s.disable(err)
+		}
+		return
+	}
+	tempPath := f.Name()
+	writeErr := s.writeAll(f, data)
+	f.Close()
+	if writeErr != nil {
+		s.disable(writeErr)
+		s.discard(tempPath, d.SizeBytes)
+		return
+	}
+	if err := s.finalize(tempPath, d); err != nil && isNoSpace(err) {
+		s.disable(err)
+	}
+}
+
 // writeAll writes p to f, making room by evicting cached blobs when the file
 // system reports it is out of space. The bytes already written stay valid, so a
 // retry never needs to re-fetch anything.

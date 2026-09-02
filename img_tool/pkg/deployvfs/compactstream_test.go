@@ -42,6 +42,18 @@ func (s *stubCASReader) ReaderForBlob(_ context.Context, d cas.Digest) (io.ReadC
 	return io.NopCloser(bytes.NewReader(b)), nil
 }
 
+func (s *stubCASReader) ReaderForBlobs(ctx context.Context, digests []cas.Digest) (io.ReadCloser, error) {
+	var buf bytes.Buffer
+	for _, d := range digests {
+		b, err := s.ReadBlob(ctx, d)
+		if err != nil {
+			return nil, err
+		}
+		buf.Write(b)
+	}
+	return io.NopCloser(&buf), nil
+}
+
 func writeBlobFile(t *testing.T, path string, data []byte) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
