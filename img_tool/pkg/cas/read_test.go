@@ -14,6 +14,7 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/auth/protohelper"
 	remoteexecution_proto "github.com/bazel-contrib/rules_img/img_tool/pkg/proto/remote-apis/build/bazel/remote/execution/v2"
 )
 
@@ -29,14 +30,16 @@ type fakeByteStreamClient struct {
 	failAfterBytes []int
 	failErr        error
 
-	conns   int
-	offsets []int64 // recorded ReadOffset per connection, in order
+	conns    int
+	offsets  []int64 // recorded ReadOffset per connection, in order
+	contexts []context.Context
 }
 
 func (f *fakeByteStreamClient) Read(ctx context.Context, in *bytestream_proto.ReadRequest, _ ...grpc.CallOption) (bytestream_proto.ByteStream_ReadClient, error) {
 	idx := f.conns
 	f.conns++
 	f.offsets = append(f.offsets, in.ReadOffset)
+	f.contexts = append(f.contexts, ctx)
 	failAfter := -1
 	if idx < len(f.failAfterBytes) {
 		failAfter = f.failAfterBytes[idx]
@@ -192,7 +195,12 @@ func TestStreamReadReconnectResumesAfterRST(t *testing.T) {
 	}
 	c := testCAS(fake, nil)
 
-	rc, err := c.streamReadOne(context.Background(), SHA256(make([]byte, 32), int64(len(blob))))
+	ctx := protohelper.WithRequestMetadata(context.Background(), protohelper.RequestMetadata{
+		ToolInvocationID: "invocation",
+		ActionID:         "rules_img:deploy",
+		ActionMnemonic:   "ImgDeploy",
+	})
+	rc, err := c.streamReadOne(ctx, SHA256(make([]byte, 32), int64(len(blob))))
 	if err != nil {
 		t.Fatalf("streamReadOne: %v", err)
 	}
@@ -210,6 +218,15 @@ func TestStreamReadReconnectResumesAfterRST(t *testing.T) {
 	wantOffsets := []int64{0, 100, 350}
 	if !reflect.DeepEqual(fake.offsets, wantOffsets) {
 		t.Fatalf("resume offsets = %v, want %v", fake.offsets, wantOffsets)
+	}
+	if len(fake.contexts) != len(wantOffsets) {
+		t.Fatalf("request contexts = %d, want %d", len(fake.contexts), len(wantOffsets))
+	}
+	for i, requestCtx := range fake.contexts {
+		got, ok := protohelper.RequestMetadataFromContext(requestCtx)
+		if !ok || got.ToolInvocationID != "invocation" || got.ActionID != "rules_img:deploy" {
+			t.Errorf("retry %d request metadata = %+v, present=%v", i, got, ok)
+		}
 	}
 }
 

@@ -69,7 +69,7 @@ func makeTagKey(ref name.Repository, tag string) string {
 // The syncer maintains thread-safe state across multiple concurrent operations
 // and provides graceful shutdown capabilities.
 type Syncer struct {
-	casClient *cas.CAS
+	casClient casClient
 
 	// Memory cache for small metadata (manifests, configs)
 	metadataCache map[string][]byte
@@ -93,6 +93,12 @@ type Syncer struct {
 	workerCount int
 	shutdown    chan struct{}
 	workerWg    sync.WaitGroup
+}
+
+type casClient interface {
+	ReadBlob(context.Context, cas.Digest) ([]byte, error)
+	ReaderForBlob(context.Context, cas.Digest) (io.ReadCloser, error)
+	ReaderForBlobs(context.Context, []cas.Digest) (io.ReadCloser, error)
 }
 
 // New creates a new Syncer instance with the default worker count of 4.
@@ -412,6 +418,7 @@ func (s *Syncer) pushImage(ctx context.Context, ref name.Repository, pushOp api.
 	// Create and push manifest
 	img := &casImage{
 		syncer:       s,
+		ctx:          ctx,
 		manifest:     &manifest,
 		manifestData: manifestData,
 		pushOp:       pushOp,
@@ -464,6 +471,7 @@ func (s *Syncer) pushIndex(ctx context.Context, ref name.Repository, pushOp api.
 	// Create and push index
 	idx := &casIndex{
 		syncer:    s,
+		ctx:       ctx,
 		index:     &index,
 		indexData: indexData,
 		pushOp:    pushOp,
@@ -651,6 +659,7 @@ func (s *Syncer) uploadBlob(ctx context.Context, ref name.Repository, desc api.D
 		// on the fly from the .cstream (fetched from CAS) and its input blobs.
 		layer = &compactStreamReconstructingLayer{
 			syncer:    s,
+			ctx:       ctx,
 			digest:    digest,
 			diffID:    desc.DiffID,
 			size:      desc.Size,
@@ -673,6 +682,7 @@ func (s *Syncer) uploadBlob(ctx context.Context, ref name.Repository, desc api.D
 		// Locally-built layer; stream from CAS.
 		layer = &casStreamingLayer{
 			syncer:    s,
+			ctx:       ctx,
 			digest:    digest,
 			diffID:    desc.DiffID,
 			size:      desc.Size,
@@ -784,6 +794,7 @@ func apiDescriptorFromV1(desc v1.Descriptor) api.Descriptor {
 // This type is used when writing single-platform images to registries.
 type casImage struct {
 	syncer       *Syncer
+	ctx          context.Context
 	manifest     *v1.Manifest
 	manifestData []byte
 	pushOp       api.IndexedPushDeployOperation
@@ -806,7 +817,7 @@ func (i *casImage) ConfigName() (v1.Hash, error) {
 
 func (i *casImage) ConfigFile() (*v1.ConfigFile, error) {
 	i.configOnce.Do(func() {
-		configData, err := i.syncer.getBlobFromCAS(context.Background(), apiDescriptorFromV1(i.manifest.Config))
+		configData, err := i.syncer.getBlobFromCAS(i.ctx, apiDescriptorFromV1(i.manifest.Config))
 		if err != nil {
 			i.configErr = err
 			return
@@ -823,7 +834,7 @@ func (i *casImage) ConfigFile() (*v1.ConfigFile, error) {
 }
 
 func (i *casImage) RawConfigFile() ([]byte, error) {
-	return i.syncer.getBlobFromCAS(context.Background(), apiDescriptorFromV1(i.manifest.Config))
+	return i.syncer.getBlobFromCAS(i.ctx, apiDescriptorFromV1(i.manifest.Config))
 }
 
 func (i *casImage) Digest() (v1.Hash, error) {
@@ -904,6 +915,7 @@ func (i *casImage) LayerByDiffID(hash v1.Hash) (v1.Layer, error) {
 // This type is used when writing multi-platform image indexes to registries.
 type casIndex struct {
 	syncer    *Syncer
+	ctx       context.Context
 	index     *v1.IndexManifest
 	indexData []byte
 	pushOp    api.IndexedPushDeployOperation
@@ -937,7 +949,7 @@ func (idx *casIndex) RawManifest() ([]byte, error) {
 func (idx *casIndex) Image(hash v1.Hash) (v1.Image, error) {
 	for _, manifest := range idx.index.Manifests {
 		if manifest.Digest == hash {
-			manifestData, err := idx.syncer.getBlobFromCAS(context.Background(), apiDescriptorFromV1(manifest))
+			manifestData, err := idx.syncer.getBlobFromCAS(idx.ctx, apiDescriptorFromV1(manifest))
 			if err != nil {
 				return nil, err
 			}
@@ -949,6 +961,7 @@ func (idx *casIndex) Image(hash v1.Hash) (v1.Image, error) {
 
 			return &casImage{
 				syncer:       idx.syncer,
+				ctx:          idx.ctx,
 				manifest:     &manifestObj,
 				manifestData: manifestData,
 				pushOp:       idx.pushOp,
@@ -1016,6 +1029,7 @@ func (l *casLayer) Uncompressed() (io.ReadCloser, error) {
 // This is used for large blobs (> 1MB) to minimize memory usage during registry uploads.
 type casStreamingLayer struct {
 	syncer    *Syncer
+	ctx       context.Context
 	digest    string
 	diffID    string
 	size      int64
@@ -1078,7 +1092,7 @@ func (l *casStreamingLayer) Compressed() (io.ReadCloser, error) {
 	casDigest := cas.SHA256(hashBytes, l.desc.Size)
 
 	// Get streaming reader from CAS
-	return l.syncer.casClient.ReaderForBlob(context.Background(), casDigest)
+	return l.syncer.casClient.ReaderForBlob(l.ctx, casDigest)
 }
 
 func (l *casStreamingLayer) Uncompressed() (io.ReadCloser, error) {
@@ -1151,6 +1165,7 @@ func (l *remoteStreamingLayer) Uncompressed() (io.ReadCloser, error) {
 // stream from CAS by their digests.
 type compactStreamReconstructingLayer struct {
 	syncer    *Syncer
+	ctx       context.Context
 	digest    string
 	diffID    string
 	size      int64
@@ -1186,7 +1201,7 @@ func (l *compactStreamReconstructingLayer) Compressed() (io.ReadCloser, error) {
 	if err != nil {
 		return nil, fmt.Errorf("compact stream digest %s: %w", l.cstream.Digest, err)
 	}
-	cstreamReader, err := l.syncer.casClient.ReaderForBlob(context.Background(), casDigest)
+	cstreamReader, err := l.syncer.casClient.ReaderForBlob(l.ctx, casDigest)
 	if err != nil {
 		return nil, fmt.Errorf("fetching compact stream %s from CAS: %w", l.cstream.Digest, err)
 	}
@@ -1197,7 +1212,7 @@ func (l *compactStreamReconstructingLayer) Compressed() (io.ReadCloser, error) {
 	pr, pw := io.Pipe()
 	go func() {
 		defer cstreamReader.Close()
-		err := compactstream.Reconstruct(context.Background(), cstreamReader, &casBlobStore{syncer: l.syncer}, pw)
+		err := compactstream.Reconstruct(l.ctx, cstreamReader, &casBlobStore{syncer: l.syncer}, pw)
 		pw.CloseWithError(err)
 	}()
 	return pr, nil

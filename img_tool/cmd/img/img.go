@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/google/go-containerregistry/pkg/logs"
 
@@ -34,6 +35,7 @@ import (
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/sparseocilayout"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/syncocirefgraph"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/validate"
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/auth/protohelper"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/registryopts"
 )
 
@@ -44,6 +46,8 @@ Global flags (accepted by any command):
   --insecure               allows registries to be addressed over plain HTTP and
                            accepts untrusted TLS certificates (like crane's
                            --insecure). Also settable via IMG_INSECURE=1.
+  --invocation-id ID       sets RequestMetadata.tool_invocation_id on outgoing
+                           REAPI and ByteStream requests
 
 Commands:
   base                     describes base image contents (subcommands: etc, trust-store, system-libraries, skeleton)
@@ -80,7 +84,22 @@ func Run(ctx context.Context, args []string) {
 	// Handle the global flags for all subcommands. We strip them from
 	// the arguments before dispatching so each subcommand's own flag parser
 	// doesn't have to know about them.
-	args = handleGlobalFlags(args)
+	args, globalOpts, err := handleGlobalFlags(args)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		fmt.Fprintln(os.Stderr, usage)
+		os.Exit(1)
+	}
+	toolInvocationID := resolveToolInvocationID(globalOpts)
+	if len(args) >= 2 {
+		command := args[1]
+		ctx = protohelper.WithRequestMetadata(ctx, protohelper.RequestMetadata{
+			ToolInvocationID: toolInvocationID,
+			ActionID:         "rules_img:" + command,
+			ActionMnemonic:   actionMnemonic(command),
+			TargetID:         "rules_img",
+		})
+	}
 
 	if len(args) < 2 {
 		fmt.Fprintln(os.Stderr, usage)
@@ -153,12 +172,26 @@ func Run(ctx context.Context, args []string) {
 	}
 }
 
+func resolveToolInvocationID(opts globalOptions) string {
+	if opts.toolInvocationID != "" {
+		return opts.toolInvocationID
+	}
+	// Bazel sets BUILD_ID to the command's invocation UUID for `bazel run`.
+	// Explicit --invocation-id always wins, while this fallback makes generated
+	// image_push/image_load launchers correlate without extra user wiring.
+	return os.Getenv("BUILD_ID")
+}
+
 func main() {
 	ctx := context.Background()
 	Run(ctx, os.Args)
 }
 
-// handleGlobalFlags looks for the global flags (--verbose, --insecure) anywhere
+type globalOptions struct {
+	toolInvocationID string
+}
+
+// handleGlobalFlags looks for global flags anywhere
 // in args, applies them, and returns args with those flags removed so the
 // individual subcommand flag parsers don't see them.
 //
@@ -166,17 +199,42 @@ func main() {
 //   - --insecure lets every registry operation talk plain HTTP and accept
 //     untrusted TLS certificates, like crane's --insecure. It is only ever
 //     enabling: without the flag, IMG_INSECURE still decides.
-func handleGlobalFlags(args []string) []string {
+//   - --invocation-id sets RequestMetadata.tool_invocation_id on outgoing
+//     REAPI and ByteStream requests.
+func handleGlobalFlags(args []string) ([]string, globalOptions, error) {
 	filtered := make([]string, 0, len(args))
+	var opts globalOptions
 	verbose := false
 	insecure := false
-	for _, arg := range args {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
 		switch arg {
 		case "--verbose", "-verbose":
 			verbose = true
 			continue
 		case "--insecure", "-insecure":
 			insecure = true
+			continue
+		case "--invocation-id", "-invocation-id", "--invocation_id", "-invocation_id":
+			if i+1 >= len(args) || strings.HasPrefix(args[i+1], "-") {
+				return nil, globalOptions{}, fmt.Errorf("%s requires a value", arg)
+			}
+			i++
+			opts.toolInvocationID = args[i]
+			continue
+		}
+		consumed := false
+		for _, prefix := range []string{"--invocation-id=", "-invocation-id=", "--invocation_id=", "-invocation_id="} {
+			if value, ok := strings.CutPrefix(arg, prefix); ok {
+				if value == "" {
+					return nil, globalOptions{}, fmt.Errorf("%s requires a value", strings.TrimSuffix(arg, "="))
+				}
+				opts.toolInvocationID = value
+				consumed = true
+				break
+			}
+		}
+		if consumed {
 			continue
 		}
 		filtered = append(filtered, arg)
@@ -187,5 +245,26 @@ func handleGlobalFlags(args []string) []string {
 	if insecure {
 		registryopts.SetInsecure(true)
 	}
-	return filtered
+	return filtered, opts, nil
+}
+
+func actionMnemonic(command string) string {
+	if command == "bes" {
+		return "ImgBES"
+	}
+	var mnemonic strings.Builder
+	mnemonic.WriteString("Img")
+	upperNext := true
+	for _, r := range command {
+		if r == '-' || r == '_' {
+			upperNext = true
+			continue
+		}
+		if upperNext {
+			r = []rune(strings.ToUpper(string(r)))[0]
+			upperNext = false
+		}
+		mnemonic.WriteRune(r)
+	}
+	return mnemonic.String()
 }

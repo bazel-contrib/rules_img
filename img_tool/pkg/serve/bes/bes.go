@@ -12,6 +12,7 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/emptypb"
 
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/auth/protohelper"
 	build_event_stream_proto "github.com/bazel-contrib/rules_img/img_tool/pkg/proto/bazel/src/main/java/com/google/devtools/build/lib/buildeventstream"
 	bes_proto "github.com/bazel-contrib/rules_img/img_tool/pkg/proto/build_event_service"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/serve/bes/syncer"
@@ -29,9 +30,13 @@ const (
 	CommitModePerStream
 )
 
+type imageCommitter interface {
+	Commit(context.Context, string, int64) error
+}
+
 type BES struct {
 	bes_proto.UnimplementedPublishBuildEventServer
-	syncer     *syncer.Syncer
+	syncer     imageCommitter
 	commitMode CommitMode
 
 	// Global errgroup for background commits
@@ -132,7 +137,16 @@ func (b *BES) PublishBuildToolEventStream(stream bes_proto.PublishBuildEvent_Pub
 		if err := proto.Unmarshal(bazelEvent.Value, &buildEvent); err != nil {
 			return err
 		} else {
-			if err := b.processBuildEvent(&buildEvent, tracker, requestErrGroup, commitCtx); err != nil {
+			eventCtx := commitCtx
+			if invocationID := req.GetOrderedBuildEvent().GetStreamId().GetInvocationId(); invocationID != "" {
+				eventCtx = protohelper.WithRequestMetadata(eventCtx, protohelper.RequestMetadata{
+					ToolInvocationID: invocationID,
+					ActionID:         "rules_img:bes",
+					ActionMnemonic:   "ImgBESCommit",
+					TargetID:         "rules_img",
+				})
+			}
+			if err := b.processBuildEvent(&buildEvent, tracker, requestErrGroup, eventCtx); err != nil {
 				log.Printf("Error processing build event: %v", err)
 				// Continue processing other events even if one fails
 			}
@@ -187,6 +201,14 @@ func (b *BES) processBuildEvent(event *build_event_stream_proto.BuildEvent, trac
 		if err != nil {
 			return fmt.Errorf("failed to hash event ID: %w", err)
 		}
+		targetID := event.Id.GetTargetCompleted().GetLabel()
+		requestMetadata, _ := protohelper.RequestMetadataFromContext(commitCtx)
+		requestMetadata.ActionMnemonic = "ImgBESCommit"
+		requestMetadata.ActionID = "rules_img:bes:" + idHash[:12]
+		if targetID != "" {
+			requestMetadata.TargetID = targetID
+		}
+		commitCtx = protohelper.WithRequestMetadata(commitCtx, requestMetadata)
 		// Check if this matches a TargetConfigured event
 		// seen earlier.
 		if !tracker.hasTargetCompleted(event.Id) {
