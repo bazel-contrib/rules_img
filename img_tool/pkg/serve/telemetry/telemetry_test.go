@@ -248,6 +248,39 @@ func TestResolveOTLPEndpoints(t *testing.T) {
 	}
 }
 
+// TestOTLPHTTPEndpointURL checks the path an OTLP/HTTP collector is posted to.
+// The exporter no longer appends the default metrics path itself, so a
+// collector named by host alone would otherwise be posted to at its root.
+func TestOTLPHTTPEndpointURL(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		endpoint string
+		want     string
+	}{
+		{
+			name:     "no path gains the default metrics path",
+			endpoint: "http://collector:4318",
+			want:     "http://collector:4318/v1/metrics",
+		},
+		{
+			name:     "an explicit root path is left alone",
+			endpoint: "http://collector:4318/",
+			want:     "http://collector:4318/",
+		},
+		{
+			name:     "a path of its own is used verbatim",
+			endpoint: "https://collector:4318/custom/v1/metrics",
+			want:     "https://collector:4318/custom/v1/metrics",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := otlpHTTPEndpointURL(tc.endpoint); got != tc.want {
+				t.Errorf("otlpHTTPEndpointURL(%q) = %q, want %q", tc.endpoint, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestSetupDisabled(t *testing.T) {
 	clearOTelEnv(t)
 	provider, err := Setup(context.Background(), Config{ServiceName: "test"})
