@@ -53,24 +53,36 @@ def _write_layer_info(ctx, manifest, config, history, layer_index, index_positio
 
     rootfs = config.get("rootfs", {})
     diff_ids = rootfs.get("diff_ids", [])
-    if layer_index >= len(diff_ids):
-        fail("layer index out of range for config: {}".format(layer_index))
-    diff_id = diff_ids[layer_index]
-    if not diff_id.startswith("sha256:"):
-        fail("invalid diff_id: {}".format(diff_id))
+
+    # A config that declares no rootfs layers at all does not describe an image.
+    # That is what an index's attestation children look like (buildx marks them
+    # with the vnd.docker.reference.type annotation and an "unknown/unknown"
+    # platform, and writes an empty config), and what a non-image OCI artifact
+    # looks like. Such layers have no diff_id to record; they are still imported,
+    # because the index blob is used verbatim and keeps referring to them.
+    # A config that has *some* diff_ids but fewer than the manifest has layers is
+    # a different matter -- that is a corrupt image, and still an error.
+    diff_id = None
+    if len(diff_ids) > 0:
+        if layer_index >= len(diff_ids):
+            fail("layer index out of range for config: {}".format(layer_index))
+        diff_id = diff_ids[layer_index]
+        if not diff_id.startswith("sha256:"):
+            fail("invalid diff_id: {}".format(diff_id))
 
     if history and layer_index < len(history):
         layer_history = history[layer_index]
     else:
         layer_history = []
     metadata = dict(
-        diff_id = diff_id,
         mediaType = media_type,
         digest = digest,
         size = size,
         annotations = layer.get("annotations", {}),
         history = layer_history,
     )
+    if diff_id != None:
+        metadata["diff_id"] = diff_id
     index_position_str = "" if index_position == None else str(index_position) + "_"
     layer_metadata = ctx.actions.declare_file(ctx.attr.name + "_{}{}_layer_metadata.json".format(index_position_str, layer_index))
     ctx.actions.write(layer_metadata, json.encode(metadata))
