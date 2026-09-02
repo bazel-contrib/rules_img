@@ -3,21 +3,23 @@ package cas
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 )
 
-// maxPopulateBytes bounds how much of a blob list a CachingReader fetches --
-// and therefore holds in memory -- in one go. It matches the largest batch the
-// remote cache will serve, so a window is usually a single BatchReadBlobs
-// request. A blob bigger than this is read on its own through the per-blob path,
-// which streams it into the cache instead of buffering it.
+// maxPopulateBytes bounds how much of a blob list a CachingReader fetches in one
+// go. It matches the largest batch the remote cache will serve, so a window is
+// usually a single BatchReadBlobs request. A blob bigger than this is read on its
+// own through the per-blob path, which streams it into the cache instead of
+// buffering it.
+//
+// How many windows may be in flight, and how much they may hold between them, is
+// the shared prefetch budget's business (see [EnvPrefetchBytes]).
 const maxPopulateBytes = 4 << 20
 
 // ReaderForBlobs reads a whole list of blobs as one stream, serving the blobs
 // the cache directory already has from disk and fetching the rest from upstream
-// in batches.
+// in batches, several of them in flight at a time.
 //
 // The fetched blobs are cached on the way through, so a later read -- in this
 // process or the next one -- is a cache hit just as it would be after
@@ -38,89 +40,58 @@ func (c *CachingReader) ReaderForBlobs(ctx context.Context, digests []Digest) (i
 			wanted = append(wanted, digest)
 		}
 	}
-	return &cachedMultiReader{cache: c, ctx: ctx, digests: wanted}, nil
+	return newPrefetchingReader(ctx, &cachedSource{cache: c, digests: wanted}, sharedPrefetchBudget), nil
 }
 
-// cachedMultiReader delivers a list of blobs as one stream, pulling the ones the
-// cache does not have from upstream a window at a time.
-type cachedMultiReader struct {
+// cachedSource is a list of blobs served from the cache directory where it can
+// be, and fetched from upstream a window at a time where it cannot.
+type cachedSource struct {
 	cache   *CachingReader
-	ctx     context.Context
 	digests []Digest
-
-	next    int           // index of the next digest to deliver
-	fetched [][]byte      // undelivered blobs of the current window, in order
-	cur     io.ReadCloser // per-blob reader for a cache hit or a joined fetch
-	err     error         // sticky: the stream delivers nothing after a failure
 }
 
-func (r *cachedMultiReader) Read(p []byte) (int, error) {
-	for {
-		if r.err != nil {
-			return 0, r.err
-		}
-		switch {
-		case len(r.fetched) > 0:
-			n := copy(p, r.fetched[0])
-			r.fetched[0] = r.fetched[0][n:]
-			if len(r.fetched[0]) == 0 {
-				r.fetched = r.fetched[1:]
-			}
-			return n, nil
-		case r.cur != nil:
-			n, err := r.cur.Read(p)
-			if err == nil {
-				return n, nil
-			}
-			if !errors.Is(err, io.EOF) {
-				r.err = err
-				r.closeCurrent()
-				return n, r.err
-			}
-			if closeErr := r.closeCurrent(); closeErr != nil {
-				r.err = closeErr
-			}
-			if n > 0 {
-				return n, nil
-			}
-		case r.next >= len(r.digests):
-			return 0, io.EOF
-		default:
-			if err := r.advance(); err != nil {
-				r.err = err
-				return 0, r.err
-			}
-		}
+var _ chunkSource = (*cachedSource)(nil)
+
+func (s *cachedSource) count() int { return len(s.digests) }
+
+// plan groups the digests from i onwards into a window worth fetching in one go:
+// consecutive blobs the cache cannot already serve, bounded by maxPopulateBytes
+// and by maxBatchReadDigests so a run of tiny blobs cannot make it unboundedly
+// long.
+//
+// A blob the cache can serve -- from disk, or by attaching to a fetch another
+// reader started -- is a chunk of its own, streamed rather than fetched: it
+// costs nothing to read on its own, and joining that fetch beats starting a
+// second one. So is a blob too large to hold in memory, which the per-blob path
+// streams through a temp file.
+func (s *cachedSource) plan(i int) chunk {
+	if !s.batchable(s.digests[i]) {
+		return chunk{from: i, to: i + 1, bytes: s.digests[i].SizeBytes, streamed: true}
 	}
-}
-
-// advance readies the next blob (or window of blobs) for delivery.
-func (r *cachedMultiReader) advance() error {
-	digest := r.digests[r.next]
-	// Read a blob on its own when batching would not help: one the cache can
-	// already serve -- from disk, or by attaching to a fetch another reader
-	// started -- and one too large to hold in memory, which the per-blob path
-	// streams through a temp file instead.
-	if digest.SizeBytes > maxPopulateBytes || r.cache.cachedOrInflight(digest) {
-		reader, err := r.cache.ReaderForBlob(r.ctx, digest)
-		if err != nil {
-			return err
+	var total int64
+	end := i
+	for end < len(s.digests) && end-i < maxBatchReadDigests {
+		digest := s.digests[end]
+		if end > i && (!s.batchable(digest) || total+digest.SizeBytes > maxPopulateBytes) {
+			break
 		}
-		r.cur = reader
-		r.next++
-		return nil
+		total += digest.SizeBytes
+		end++
 	}
-	return r.populate()
+	return chunk{from: i, to: end, bytes: total}
 }
 
-// populate fetches a window of consecutive blobs the cache does not have, in one
-// upstream read, and caches them.
-func (r *cachedMultiReader) populate() error {
-	end := r.windowEnd()
-	window := r.digests[r.next:end]
-	stream, err := r.cache.upstream.ReaderForBlobs(r.ctx, window)
+// batchable reports whether a blob is worth putting in a window at all.
+func (s *cachedSource) batchable(digest Digest) bool {
+	return digest.SizeBytes <= maxPopulateBytes && !s.cache.cachedOrInflight(digest)
+}
+
+// fetch reads a window from upstream in one call and caches every blob in it.
+func (s *cachedSource) fetch(ctx context.Context, c chunk) ([][]byte, error) {
+	window := s.digests[c.from:c.to]
+	stream, err := s.cache.upstream.ReaderForBlobs(ctx, window)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer stream.Close()
 
@@ -128,63 +99,24 @@ func (r *cachedMultiReader) populate() error {
 	for _, digest := range window {
 		data := make([]byte, digest.SizeBytes)
 		if _, err := io.ReadFull(stream, data); err != nil {
-			return fmt.Errorf("reading blob %s from the remote cache: %w", digest.hexHash(), err)
+			return nil, fmt.Errorf("reading blob %s from the remote cache: %w", digest.hexHash(), err)
 		}
 		if hasher := digestHasher(digest); hasher != nil {
 			hasher.Write(data)
 			if sum := hasher.Sum(nil); !bytes.Equal(sum, digest.Hash) {
-				return fmt.Errorf("blob %s: content from remote cache hashes to %x", digest.hexHash(), sum)
+				return nil, fmt.Errorf("blob %s: content from remote cache hashes to %x", digest.hexHash(), sum)
 			}
 		}
-		r.cache.counters.fetches.Add(1)
-		r.cache.counters.bytesFetched.Add(digest.SizeBytes)
-		r.cache.store.put(digest, data)
+		s.cache.counters.fetches.Add(1)
+		s.cache.counters.bytesFetched.Add(digest.SizeBytes)
+		s.cache.store.put(digest, data)
 		blobs = append(blobs, data)
 	}
-
-	r.fetched = blobs
-	r.next = end
-	return nil
+	return blobs, nil
 }
 
-// windowEnd returns the end of the run of blobs starting at r.next that is worth
-// fetching in one request: consecutive blobs the cache cannot already serve,
-// bounded by maxPopulateBytes so a window always fits in memory and by
-// maxBatchReadDigests so a run of tiny blobs cannot make it unboundedly long.
-// advance has already vetted the blob at r.next, which is what keeps the window
-// non-empty.
-func (r *cachedMultiReader) windowEnd() int {
-	var total int64
-	end := r.next
-	for end < len(r.digests) && end-r.next < maxBatchReadDigests {
-		digest := r.digests[end]
-		if end > r.next {
-			if digest.SizeBytes > maxPopulateBytes || r.cache.cachedOrInflight(digest) {
-				break
-			}
-			if total+digest.SizeBytes > maxPopulateBytes {
-				break
-			}
-		}
-		total += digest.SizeBytes
-		end++
-	}
-	return end
-}
-
-func (r *cachedMultiReader) closeCurrent() error {
-	if r.cur == nil {
-		return nil
-	}
-	err := r.cur.Close()
-	r.cur = nil
-	return err
-}
-
-func (r *cachedMultiReader) Close() error {
-	r.next = len(r.digests)
-	r.fetched = nil
-	return r.closeCurrent()
+func (s *cachedSource) open(ctx context.Context, c chunk) (io.ReadCloser, error) {
+	return s.cache.ReaderForBlob(ctx, s.digests[c.from])
 }
 
 // cachedOrInflight reports whether ReaderForBlob can serve the blob without
