@@ -1,6 +1,7 @@
 """Binary layer rule for packaging a *_binary target into a container image layer."""
 
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
+load("@rules_runfiles_group//runfiles_group:aspect.bzl", "runfiles_group_aspect")
 load("@rules_runfiles_group//runfiles_group:lib.bzl", "runfiles_groups")
 load("//img/private/common:build.bzl", "TOOLCHAINS")
 load("//img/private/common:layer_attrs.bzl", "layer_attrs")
@@ -502,12 +503,15 @@ In addition to the executable and its runfiles, any other default outputs of the
 target (the rest of `DefaultInfo.files`) are copied into the layer, each placed at the same
 location relative to the executable that it has in the source tree.
 
-If the binary provides RunfilesGroupInfo (from rules_runfiles_group), the runfiles are split
-into separate layers based on the groups. This allows for better caching: stable layers
-(interpreter, stdlib) change infrequently and can be shared, while the application code layer
-changes with each build. Layers are emitted in the groups' `rank` order (lowest first), so
-foundational content ends up in the earliest, most cacheable layers. Any
-RunfilesGroupTransformInfo in the binary's `aspect_hints` is applied first, which lets users
+If the binary's runfiles can be described as RunfilesGroupInfo (from rules_runfiles_group),
+they are split into separate layers based on the groups. The groups are built by
+`runfiles_group_aspect`, which this rule attaches to the `binary` attribute and which asks each
+target in the closure how it is grouped -- so a language ruleset participates by pointing its rules
+at a callback target, without depending on rules_img and without its rules returning anything. This
+allows for better caching: stable layers (interpreter, stdlib) change infrequently and can be
+shared, while the application code layer changes with each build. Layers are emitted in the groups'
+`rank` order (lowest first), so foundational content ends up in the earliest, most cacheable layers.
+Any RunfilesGroupTransformInfo in the binary's `aspect_hints` is applied first, which lets users
 drop or re-shape groups per target.
 
 Note that RunfilesGroupInfo emission is off by default in rules_runfiles_group. Build with
@@ -566,11 +570,12 @@ The binary's `args` and `env` attributes are extracted and provided as image con
 (cmd and env) via ImageLayerConfigInfo. The `data` attribute is used for `$(location)` expansion
 in args and env values.
 
-If the binary provides RunfilesGroupInfo, the runfiles are split into separate layers per group.""",
+If the binary's runfiles can be described as RunfilesGroupInfo -- built by the
+`runfiles_group_aspect` this attribute applies -- they are split into separate layers per group.""",
             executable = True,
             mandatory = True,
             cfg = "target",
-            aspects = [_binary_run_info_extraction_aspect],
+            aspects = [_binary_run_info_extraction_aspect, runfiles_group_aspect],
         ),
         "path": attr.string(
             mandatory = False,

@@ -79,10 +79,13 @@ image configuration:
 - **env** is populated from the binary's `env` attribute (or RunEnvironmentInfo provider)
 - **working_dir** is set to the binary's runfiles root
 
-If the binary provides RunfilesGroupInfo (from rules_runfiles_group), the runfiles are split
-into separate layers based on the groups. This allows for better caching: stable layers
-(interpreter, stdlib) change infrequently and can be shared, while the application code layer
-changes with each build. Layers are emitted in the groups' `rank` order (lowest first), and any
+If the binary's runfiles can be described as RunfilesGroupInfo (from rules_runfiles_group),
+they are split into separate layers based on the groups. The groups are built by the
+`runfiles_group_aspect` that layer_from_binary attaches, which asks each target in the closure how
+it is grouped -- so a language ruleset participates by pointing its rules at a callback target,
+without its rules returning anything. This allows for better caching: stable layers (interpreter,
+stdlib) change infrequently and can be shared, while the application code layer changes with each
+build. Layers are emitted in the groups' `rank` order (lowest first), and any
 RunfilesGroupTransformInfo in the binary's `aspect_hints` is applied first.
 
 Note that RunfilesGroupInfo emission is off by default in rules_runfiles_group. Build with
@@ -147,7 +150,9 @@ Targets created:
 The binary's `args` and `env` attributes are extracted and applied as image configuration
 (cmd and env). The `data` attribute is used for `$(location)` expansion in args and env values.
 
-If the binary provides RunfilesGroupInfo, the runfiles are split into separate layers per group.""",
+If the binary's runfiles can be described as RunfilesGroupInfo -- built by the
+`runfiles_group_aspect` layer_from_binary applies -- they are split into separate layers per
+group.""",
             mandatory = True,
         ),
         "path": attr.string(

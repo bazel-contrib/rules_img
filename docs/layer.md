@@ -119,12 +119,15 @@ In addition to the executable and its runfiles, any other default outputs of the
 target (the rest of `DefaultInfo.files`) are copied into the layer, each placed at the same
 location relative to the executable that it has in the source tree.
 
-If the binary provides RunfilesGroupInfo (from rules_runfiles_group), the runfiles are split
-into separate layers based on the groups. This allows for better caching: stable layers
-(interpreter, stdlib) change infrequently and can be shared, while the application code layer
-changes with each build. Layers are emitted in the groups' `rank` order (lowest first), so
-foundational content ends up in the earliest, most cacheable layers. Any
-RunfilesGroupTransformInfo in the binary's `aspect_hints` is applied first, which lets users
+If the binary's runfiles can be described as RunfilesGroupInfo (from rules_runfiles_group),
+they are split into separate layers based on the groups. The groups are built by
+`runfiles_group_aspect`, which this rule attaches to the `binary` attribute and which asks each
+target in the closure how it is grouped -- so a language ruleset participates by pointing its rules
+at a callback target, without depending on rules_img and without its rules returning anything. This
+allows for better caching: stable layers (interpreter, stdlib) change infrequently and can be
+shared, while the application code layer changes with each build. Layers are emitted in the groups'
+`rank` order (lowest first), so foundational content ends up in the earliest, most cacheable layers.
+Any RunfilesGroupTransformInfo in the binary's `aspect_hints` is applied first, which lets users
 drop or re-shape groups per target.
 
 Note that RunfilesGroupInfo emission is off by default in rules_runfiles_group. Build with
@@ -183,7 +186,7 @@ layer_from_binary(
 | <a id="layer_from_binary-name"></a>name |  A unique name for this target.   | <a href="https://bazel.build/concepts/labels#target-names">Name</a> | required |  |
 | <a id="layer_from_binary-annotations"></a>annotations |  Annotations to add to the layer metadata as key-value pairs.   | <a href="https://bazel.build/rules/lib/core/dict">Dictionary: String -> String</a> | optional |  `{}`  |
 | <a id="layer_from_binary-annotations_file"></a>annotations_file |  File containing annotations for the layer, as JSON or newline-delimited text.<br><br>The file is parsed in one of the following formats, auto-detected from its contents:<br><br>- JSON object with string values: `{"key": "value"}` - JSON object with list values: `{"key": ["value1", "value2"]}` (the last value wins) - JSON array of `KEY=VALUE` strings: `["key=value"]` - newline-delimited `KEY=VALUE` text (one per line; blank lines and `#` comments are ignored)<br><br>Values in JSON objects are used verbatim, so they can encode arbitrary strings including values that contain `=`, spaces, or newlines. The `KEY=VALUE` forms (JSON array and text) split on the first `=` and trim surrounding whitespace from the key and value.<br><br>Annotations from this file are merged with annotations specified via the `annotations` attribute, which take precedence for matching keys.<br><br>Example file content: <pre><code>version=1.0.0&#10;build.date=2024-01-15&#10;source.url=https://github.com/...</code></pre>   | <a href="https://bazel.build/concepts/labels">Label</a> | optional |  `None`  |
-| <a id="layer_from_binary-binary"></a>binary |  The *_binary target to package into the layer.<br><br>The binary's `args` and `env` attributes are extracted and provided as image configuration (cmd and env) via ImageLayerConfigInfo. The `data` attribute is used for `$(location)` expansion in args and env values.<br><br>If the binary provides RunfilesGroupInfo, the runfiles are split into separate layers per group.   | <a href="https://bazel.build/concepts/labels">Label</a> | required |  |
+| <a id="layer_from_binary-binary"></a>binary |  The *_binary target to package into the layer.<br><br>The binary's `args` and `env` attributes are extracted and provided as image configuration (cmd and env) via ImageLayerConfigInfo. The `data` attribute is used for `$(location)` expansion in args and env values.<br><br>If the binary's runfiles can be described as RunfilesGroupInfo -- built by the `runfiles_group_aspect` this attribute applies -- they are split into separate layers per group.   | <a href="https://bazel.build/concepts/labels">Label</a> | required |  |
 | <a id="layer_from_binary-compress"></a>compress |  Compression algorithm to use. If set to 'auto', uses the global default compression setting.   | String | optional |  `"auto"`  |
 | <a id="layer_from_binary-create_parent_directories"></a>create_parent_directories |  Whether to automatically create parent directory entries in the tar file for all files. If set to 'auto', uses the global default create_parent_directories setting. When enabled, parent directories will be created automatically for all files in the layer.   | String | optional |  `"auto"`  |
 | <a id="layer_from_binary-estargz"></a>estargz |  Whether to use estargz format. If set to 'auto', uses the global default estargz setting. When enabled, the layer will be optimized for lazy pulling and will be compatible with the estargz format.   | String | optional |  `"auto"`  |

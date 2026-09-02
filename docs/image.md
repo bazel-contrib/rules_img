@@ -250,10 +250,13 @@ image configuration:
 - **env** is populated from the binary's `env` attribute (or RunEnvironmentInfo provider)
 - **working_dir** is set to the binary's runfiles root
 
-If the binary provides RunfilesGroupInfo (from rules_runfiles_group), the runfiles are split
-into separate layers based on the groups. This allows for better caching: stable layers
-(interpreter, stdlib) change infrequently and can be shared, while the application code layer
-changes with each build. Layers are emitted in the groups' `rank` order (lowest first), and any
+If the binary's runfiles can be described as RunfilesGroupInfo (from rules_runfiles_group),
+they are split into separate layers based on the groups. The groups are built by the
+`runfiles_group_aspect` that layer_from_binary attaches, which asks each target in the closure how
+it is grouped -- so a language ruleset participates by pointing its rules at a callback target,
+without its rules returning anything. This allows for better caching: stable layers (interpreter,
+stdlib) change infrequently and can be shared, while the application code layer changes with each
+build. Layers are emitted in the groups' `rank` order (lowest first), and any
 RunfilesGroupTransformInfo in the binary's `aspect_hints` is applied first.
 
 Note that RunfilesGroupInfo emission is off by default in rules_runfiles_group. Build with
@@ -320,7 +323,7 @@ Targets created:
 | <a id="image_from_binary-artifact_type"></a>artifact_type |  Optional IANA media type of the artifact when the manifest is used for an artifact.<br><br>This sets the `artifactType` field in the OCI manifest, as defined in the [OCI Image Spec](https://github.com/opencontainers/image-spec/blob/main/manifest.md#image-manifest-property-descriptions).<br><br>Common values include `application/vnd.cncf.helm.chart.v1` for Helm charts or `application/spdx+json` for SPDX SBOMs.   | String | optional |  `None`  |
 | <a id="image_from_binary-aspect_hints"></a>aspect_hints |  <a href="https://bazel.build/reference/be/common-definitions#common.aspect_hints">Inherited rule attribute</a>   | <a href="https://bazel.build/concepts/labels">List of labels</a> | optional |  `None`  |
 | <a id="image_from_binary-base"></a>base |  Base image to inherit layers from. Should provide ImageManifestInfo or ImageIndexInfo.   | <a href="https://bazel.build/concepts/labels">Label</a> | optional |  `None`  |
-| <a id="image_from_binary-binary"></a>binary |  The *_binary target to package into the image.<br><br>The binary's `args` and `env` attributes are extracted and applied as image configuration (cmd and env). The `data` attribute is used for `$(location)` expansion in args and env values.<br><br>If the binary provides RunfilesGroupInfo, the runfiles are split into separate layers per group.   | <a href="https://bazel.build/concepts/labels">Label</a> | required |  |
+| <a id="image_from_binary-binary"></a>binary |  The *_binary target to package into the image.<br><br>The binary's `args` and `env` attributes are extracted and applied as image configuration (cmd and env). The `data` attribute is used for `$(location)` expansion in args and env values.<br><br>If the binary's runfiles can be described as RunfilesGroupInfo -- built by the `runfiles_group_aspect` layer_from_binary applies -- they are split into separate layers per group.   | <a href="https://bazel.build/concepts/labels">Label</a> | required |  |
 | <a id="image_from_binary-build_settings"></a>build_settings |  Build settings for template expansion.<br><br>Maps template variable names to string_flag targets. These values can be used in env, labels, and annotations attributes using `{{.VARIABLE_NAME}}` syntax (Go template).<br><br>Example: <pre><code class="language-python">build_settings = {&#10;    "REGISTRY": "//settings:docker_registry",&#10;    "VERSION": "//settings:app_version",&#10;}</code></pre><br><br>See [template expansion](/docs/templating.md) for more details.   | Dictionary: String -> Label | optional |  `None`  |
 | <a id="image_from_binary-cmd"></a>cmd |  Default arguments to the entrypoint of the container. These values act as defaults and may be replaced by any specified when creating a container. If an Entrypoint value is not specified, then the first entry of the Cmd array SHOULD be interpreted as the executable to run.<br><br>Defaults to `[INHERIT_FROM_BASE]`: the value is inherited from the base image (or, for `image_from_binary`, from the packaged binary's `args`). Set it to an explicit list to override, or to `[]` to unset it. An `INHERIT_FROM_BASE` item inside the list is replaced in place by the base image's cmd, so `[INHERIT_FROM_BASE, "--flag"]` appends `"--flag"` to it.   | List of strings | optional |  `None`  |
 | <a id="image_from_binary-compatible_with"></a>compatible_with |  <a href="https://bazel.build/reference/be/common-definitions#common.compatible_with">Inherited rule attribute</a>   | <a href="https://bazel.build/concepts/labels">List of labels</a>; <a href="https://bazel.build/reference/be/common-definitions#configurable-attributes">nonconfigurable</a> | optional |  `None`  |
