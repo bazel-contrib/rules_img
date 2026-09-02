@@ -224,8 +224,11 @@ func (m *manifests) handle(resp http.ResponseWriter, req *http.Request) *regErro
 
 		// A manifest is stored once, under its digest. A tag is a pointer to
 		// that digest rather than a second copy, so the two cannot be evicted
-		// independently of one another.
+		// independently of one another. Writing them is still two calls to the
+		// Store, so the write is announced to the collector: a sweep that ran
+		// between them would see a manifest no tag names yet.
 		// See https://docs.docker.com/engine/reference/commandline/pull/#pull-an-image-by-digest-immutable-identifier.
+		done := m.collector.writing()
 		m.store.PutManifest(repo, h, mf)
 		if target != h.String() {
 			m.store.PutTag(repo, target, h)
@@ -237,6 +240,7 @@ func (m *manifests) handle(resp http.ResponseWriter, req *http.Request) *regErro
 		for _, blob := range parseReferences(mf).blobs {
 			m.collector.TouchBlob(repo, blob.digest, blob.size)
 		}
+		done()
 
 		resp.Header().Set("Docker-Content-Digest", h.String())
 		resp.WriteHeader(http.StatusCreated)
