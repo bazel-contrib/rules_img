@@ -1215,6 +1215,7 @@ type casReader interface {
 	FindMissingBlobs(ctx context.Context, digests []cas.Digest) ([]cas.Digest, error)
 	ReadBlob(ctx context.Context, digest cas.Digest) ([]byte, error)
 	ReaderForBlob(ctx context.Context, digest cas.Digest) (io.ReadCloser, error)
+	ReaderForBlobs(ctx context.Context, digests []cas.Digest) (io.ReadCloser, error)
 }
 
 func digestFromDescriptor(blobMeta api.Descriptor) (cas.Digest, error) {

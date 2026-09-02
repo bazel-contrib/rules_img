@@ -15,6 +15,11 @@ type BlobSource interface {
 	FindMissingBlobs(ctx context.Context, digests []Digest) ([]Digest, error)
 	ReadBlob(ctx context.Context, digest Digest) ([]byte, error)
 	ReaderForBlob(ctx context.Context, digest Digest) (io.ReadCloser, error)
+	// ReaderForBlobs reads a whole list of blobs as one stream: the
+	// concatenation of the blobs, in the order requested. It is what
+	// ReaderForBlob is to a single blob, and exists so that an implementation
+	// can serve many small blobs without a round trip each.
+	ReaderForBlobs(ctx context.Context, digests []Digest) (io.ReadCloser, error)
 }
 
 var (
@@ -83,6 +88,13 @@ func (p *Pool) ReadBlob(ctx context.Context, digest Digest) ([]byte, error) {
 
 func (p *Pool) ReaderForBlob(ctx context.Context, digest Digest) (io.ReadCloser, error) {
 	return p.pick().ReaderForBlob(ctx, digest)
+}
+
+// ReaderForBlobs serves the whole list from one member, so the batches of a
+// single stream stay on one connection and arrive in order. Pooling still pays
+// off across streams: concurrent readers land on different members.
+func (p *Pool) ReaderForBlobs(ctx context.Context, digests []Digest) (io.ReadCloser, error) {
+	return p.pick().ReaderForBlobs(ctx, digests)
 }
 
 // RetryStats reports what the retry loops of every member did.

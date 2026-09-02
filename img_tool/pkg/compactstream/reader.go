@@ -329,7 +329,17 @@ func (zeroReader) Read(p []byte) (int, error) {
 // by interleaving the on-disk byte-stream gaps with the CAS-referenced blobs in
 // offset order. It streams the result: memory use is O(copy buffer), so it never
 // materializes the whole tar.
+//
+// The blobs arrive as one stream over the whole reference table rather than one
+// reader per reference, so a store that can fetch several blobs per request (a
+// [MultiBlobStore]) gets to see the whole list and batch it.
 func writeReconstructed(ctx context.Context, dst io.Writer, stream io.Reader, refs []CASReference, store BlobStore) error {
+	blobs, err := blobStreamFor(ctx, store, blobRequests(refs))
+	if err != nil {
+		return fmt.Errorf("opening CAS blob stream: %w", err)
+	}
+	defer blobs.Close()
+
 	var outputPos uint64
 	for _, r := range refs {
 		// readRefTable already rejects unsorted/overlapping refs; this guard is
@@ -343,16 +353,9 @@ func writeReconstructed(ctx context.Context, dst io.Writer, stream io.Reader, re
 				return fmt.Errorf("copying stream bytes at offset %d (gap %d): %w", outputPos, gap, err)
 			}
 		}
-
-		blobReader, err := store.ReaderForBlob(ctx, r.Digest, int64(r.Size))
-		if err != nil {
-			return fmt.Errorf("fetching blob at offset %d: %w", r.Offset, err)
-		}
-		if _, err := io.CopyN(dst, blobReader, int64(r.Size)); err != nil {
-			blobReader.Close()
+		if _, err := io.CopyN(dst, blobs, int64(r.Size)); err != nil {
 			return fmt.Errorf("reading blob at offset %d: %w", r.Offset, err)
 		}
-		blobReader.Close()
 
 		outputPos = r.Offset + r.Size
 	}
@@ -361,6 +364,15 @@ func writeReconstructed(ctx context.Context, dst io.Writer, stream io.Reader, re
 		return fmt.Errorf("copying remaining stream bytes: %w", err)
 	}
 	return nil
+}
+
+// blobRequests is the blob list of a reference table, in stream order.
+func blobRequests(refs []CASReference) []BlobRequest {
+	requests := make([]BlobRequest, len(refs))
+	for i, r := range refs {
+		requests[i] = BlobRequest{Digest: r.Digest, Size: int64(r.Size)}
+	}
+	return requests
 }
 
 // hashCountWriter forwards writes to an underlying writer while computing a

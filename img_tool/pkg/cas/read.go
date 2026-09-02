@@ -196,44 +196,11 @@ func (c *CAS) ReaderForBlob(ctx context.Context, digest Digest) (io.ReadCloser, 
 }
 
 func (c *CAS) batchReadOne(ctx context.Context, digest Digest) ([]byte, error) {
-	request := &remoteexecution_proto.BatchReadBlobsRequest{
-		InstanceName:   c.instanceName,
-		Digests:        []*remoteexecution_proto.Digest{digest.protoDigest()},
-		DigestFunction: digest.protoDigestFunction(),
-	}
-	r := c.retry.start(fmt.Sprintf("reading blob %s (%d bytes) from the remote cache", digest.hexHash(), digest.SizeBytes))
-	for {
-		data, err := c.peer(r.attempt).batchReadOnce(ctx, request, digest)
-		if err == nil {
-			return data, nil
-		}
-		if giveUp := r.next(ctx, err); giveUp != nil {
-			return nil, fmt.Errorf("failed to read blob: %w", casErr(giveUp))
-		}
-	}
-}
-
-// batchReadOnce is one BatchReadBlobs call for a single blob. A transient
-// per-blob status is returned as a status error, so the retry loop treats it
-// like a transient call-level failure: the spec has BatchReadBlobs report each
-// blob's outcome individually.
-func (c *CAS) batchReadOnce(ctx context.Context, request *remoteexecution_proto.BatchReadBlobsRequest, digest Digest) ([]byte, error) {
-	callCtx, cancel := c.callContext(ctx)
-	defer cancel()
-	resp, err := c.casClient.BatchReadBlobs(callCtx, request)
+	blobs, err := c.batchRead(ctx, []Digest{digest})
 	if err != nil {
 		return nil, err
 	}
-	if len(resp.Responses) != 1 {
-		return nil, errors.New("unexpected number of responses from BatchReadBlobs")
-	}
-	if st := resp.Responses[0].Status; st != nil && st.Code != 0 {
-		return nil, status.ErrorProto(st)
-	}
-	if len(resp.Responses[0].Data) != int(digest.SizeBytes) {
-		return nil, fmt.Errorf("unexpected size of blob data: got %d bytes, expected %d bytes", len(resp.Responses[0].Data), digest.SizeBytes)
-	}
-	return resp.Responses[0].Data, nil
+	return blobs[0], nil
 }
 
 func (c *CAS) streamReadOne(ctx context.Context, digest Digest) (io.ReadCloser, error) {

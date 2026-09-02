@@ -1214,8 +1214,20 @@ type casBlobStore struct {
 	syncer *Syncer
 }
 
+var _ compactstream.MultiBlobStore = (*casBlobStore)(nil)
+
 func (s *casBlobStore) ReaderForBlob(ctx context.Context, digest []byte, size int64) (io.ReadCloser, error) {
 	return s.syncer.casClient.ReaderForBlob(ctx, cas.SHA256(digest, size))
+}
+
+// ReaderForBlobs hands the whole reference table to the CAS client so it reads
+// the small blobs in batches instead of one round trip each.
+func (s *casBlobStore) ReaderForBlobs(ctx context.Context, requests []compactstream.BlobRequest) (io.ReadCloser, error) {
+	digests := make([]cas.Digest, len(requests))
+	for i, request := range requests {
+		digests[i] = cas.SHA256(request.Digest, request.Size)
+	}
+	return s.syncer.casClient.ReaderForBlobs(ctx, digests)
 }
 
 // casDigestFromString parses a "sha256:<hex>" digest string with the given size

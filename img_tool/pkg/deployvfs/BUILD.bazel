@@ -27,6 +27,7 @@ go_library(
 go_test(
     name = "deployvfs_test",
     srcs = [
+        "compactstream_multiblob_test.go",
         "compactstream_test.go",
         "crossmount_test.go",
         "layersource_test.go",

@@ -32,6 +32,11 @@ func (f *fakeSource) ReaderForBlob(context.Context, Digest) (io.ReadCloser, erro
 	return io.NopCloser(strings.NewReader("")), nil
 }
 
+func (f *fakeSource) ReaderForBlobs(context.Context, []Digest) (io.ReadCloser, error) {
+	f.record()
+	return io.NopCloser(strings.NewReader("")), nil
+}
+
 func (f *fakeSource) record() {
 	f.mu.Lock()
 	f.calls++
@@ -61,8 +66,8 @@ func TestPoolDistributesPublicMethods(t *testing.T) {
 	p := newPool(sources)
 
 	ctx := context.Background()
-	// Each iteration issues one of each read method (3 picks); 3 iterations
-	// spread 9 picks evenly across the 3 members.
+	// Each iteration issues one of each read method (4 picks); 3 iterations
+	// spread 12 picks evenly across the 3 members.
 	for range 3 {
 		if _, err := p.FindMissingBlobs(ctx, nil); err != nil {
 			t.Fatal(err)
@@ -75,11 +80,16 @@ func TestPoolDistributesPublicMethods(t *testing.T) {
 			t.Fatal(err)
 		}
 		rc.Close()
+		multi, err := p.ReaderForBlobs(ctx, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		multi.Close()
 	}
 
 	for i, m := range members {
-		if m.calls != 3 {
-			t.Errorf("member %d handled %d calls, want 3", i, m.calls)
+		if m.calls != 4 {
+			t.Errorf("member %d handled %d calls, want 4", i, m.calls)
 		}
 	}
 }

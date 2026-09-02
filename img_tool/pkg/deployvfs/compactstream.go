@@ -274,3 +274,96 @@ func (s *casDirStore) ReaderForBlob(ctx context.Context, digest []byte, size int
 
 	return nil, fmt.Errorf("blob sha256:%s (size %d) not found in input file CAS directory, disk cache, or remote cache", hexDigest, size)
 }
+
+var _ compactstream.MultiBlobStore = (*casDirStore)(nil)
+
+// ReaderForBlobs serves a whole list of CAS references as one stream. Blobs the
+// store has locally are read one file at a time as before; every run of blobs
+// only the remote cache can serve is handed to it in one piece, so it reads them
+// in batches instead of paying a round trip per blob. A compact stream for a
+// layer of many small files is thousands of such references, which is where the
+// difference is felt.
+func (s *casDirStore) ReaderForBlobs(ctx context.Context, requests []compactstream.BlobRequest) (io.ReadCloser, error) {
+	parts := make([]compactstream.BlobStreamPart, 0, len(requests))
+	for _, run := range s.planRuns(requests) {
+		runRequests := requests[run.from:run.to]
+		if !run.remote {
+			for _, request := range runRequests {
+				parts = append(parts, compactstream.BlobStreamPart{
+					Size: request.Size,
+					Open: func() (io.ReadCloser, error) {
+						return s.ReaderForBlob(ctx, request.Digest, request.Size)
+					},
+				})
+			}
+			continue
+		}
+		digests := make([]cas.Digest, len(runRequests))
+		var total int64
+		for i, request := range runRequests {
+			digests[i] = cas.SHA256(request.Digest, request.Size)
+			total += request.Size
+		}
+		parts = append(parts, compactstream.BlobStreamPart{
+			Size: total,
+			Open: func() (io.ReadCloser, error) {
+				return s.casReader.ReaderForBlobs(ctx, digests)
+			},
+		})
+	}
+	return compactstream.NewBlobStream(parts), nil
+}
+
+// blobRun is a run of consecutive requests one source serves.
+type blobRun struct {
+	from, to int
+	remote   bool
+}
+
+// planRuns splits the requests into runs served locally (from the input
+// directory or the disk cache) and runs the remote cache has to serve.
+//
+// Deciding needs a stat per blob, which is cheap next to the round trip it
+// saves, and only the genuinely mixed configuration pays for it: a store with no
+// local directory is one remote run, and a store with no remote cache is one
+// local run. A stale answer costs a misplaced run boundary at worst -- a local
+// blob is read back through ReaderForBlob, which falls through to the remote
+// cache if the file went away in the meantime.
+func (s *casDirStore) planRuns(requests []compactstream.BlobRequest) []blobRun {
+	if len(requests) == 0 {
+		return nil
+	}
+	if s.casReader == nil {
+		return []blobRun{{from: 0, to: len(requests)}}
+	}
+	if s.shaDir == "" && s.diskCachePath == "" {
+		return []blobRun{{from: 0, to: len(requests), remote: true}}
+	}
+	var runs []blobRun
+	for i, request := range requests {
+		remote := !s.hasLocally(request.Digest, request.Size)
+		if n := len(runs); n > 0 && runs[n-1].remote == remote {
+			runs[n-1].to = i + 1
+			continue
+		}
+		runs = append(runs, blobRun{from: i, to: i + 1, remote: remote})
+	}
+	return runs
+}
+
+// hasLocally reports whether the blob can be served without the remote cache. It
+// mirrors the first two steps of ReaderForBlob.
+func (s *casDirStore) hasLocally(digest []byte, size int64) bool {
+	hexDigest := hex.EncodeToString(digest)
+	if s.shaDir != "" {
+		if _, err := os.Stat(filepath.Join(s.shaDir, hexDigest)); err == nil {
+			return true
+		}
+	}
+	if s.diskCachePath != "" {
+		if info, err := os.Stat(diskCacheBlobPath(s.diskCachePath, "sha256:"+hexDigest)); err == nil && info.Size() == size {
+			return true
+		}
+	}
+	return false
+}
