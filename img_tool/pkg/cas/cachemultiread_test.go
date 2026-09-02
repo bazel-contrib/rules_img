@@ -16,8 +16,13 @@ import (
 type batchRecordingBlobs struct {
 	*fakeBlobs
 
-	mu    sync.Mutex
-	lists [][]Digest
+	// hold, when non-nil, keeps every ReaderForBlobs waiting until it is closed,
+	// so a test can see a fetch start before the consumer reads anything.
+	hold chan struct{}
+
+	mu      sync.Mutex
+	lists   [][]Digest
+	started int
 }
 
 func newBatchRecordingBlobs(blobs ...[]byte) *batchRecordingBlobs {
@@ -27,7 +32,17 @@ func newBatchRecordingBlobs(blobs ...[]byte) *batchRecordingBlobs {
 func (b *batchRecordingBlobs) ReaderForBlobs(ctx context.Context, digests []Digest) (io.ReadCloser, error) {
 	b.mu.Lock()
 	b.lists = append(b.lists, slices.Clone(digests))
+	b.started++
+	hold := b.hold
 	b.mu.Unlock()
+
+	if hold != nil {
+		select {
+		case <-hold:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
 
 	var buf bytes.Buffer
 	for _, digest := range digests {
@@ -38,6 +53,14 @@ func (b *batchRecordingBlobs) ReaderForBlobs(ctx context.Context, digests []Dige
 		buf.Write(data)
 	}
 	return io.NopCloser(&buf), nil
+}
+
+// startedLists is how many ReaderForBlobs calls have begun, whether or not they
+// have returned.
+func (b *batchRecordingBlobs) startedLists() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.started
 }
 
 func (b *batchRecordingBlobs) batchLists() [][]Digest {

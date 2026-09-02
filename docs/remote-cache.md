@@ -135,6 +135,27 @@ read straight from disk, and only the gaps between them go to the remote cache.
 Whatever the batch fetches is written into the disk cache on the way through, so
 a later deploy finds it there.
 
+### Reading ahead
+
+Batching alone still leaves the link idle while a layer is written out: fetch a
+batch, write it, fetch the next. So the batches after the one being delivered are
+already in flight, spread across the [connection pool](#connection-pooling), and
+the round trip for the next one is paid while the last is still being read.
+
+Reading ahead costs memory, and the ceiling is shared by every reader in the
+process rather than applied per reader: a deploy reconstructs as many layers at
+once as it has jobs, and a per-reader limit would multiply by the job count on
+exactly the machines where that hurts. A reader holding nothing is always allowed
+one batch, whatever the ceiling says, so a busy deploy slows a reader's read-ahead
+down but never stops it making progress.
+
+| Variable | Effect |
+|----------|--------|
+| `IMG_REAPI_PREFETCH_BYTES` | Prefetched blob data held across the whole process, in bytes (default `67108864`, 64 MiB). `0` turns read-ahead off, leaving one batch in flight at a time |
+
+A blob too large to batch is streamed rather than read ahead: a gRPC stream nobody
+is reading would sit idle until the [idle timeout](#timeouts) tore it down.
+
 ## Connection pooling
 
 A single gRPC connection multiplexes every request onto one TCP connection, which

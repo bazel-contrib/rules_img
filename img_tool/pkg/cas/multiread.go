@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
+	"sync/atomic"
 
 	"google.golang.org/grpc/status"
 
@@ -45,9 +47,11 @@ const batchReadEntryOverhead = 128
 // per blob. Blobs too large to batch are read with ByteStream, one at a time, as
 // before.
 //
-// Reads happen as the returned stream is consumed, so memory stays bounded by
-// one batch (at most MaxBatchTotalSizeBytes) no matter how long the list is.
-// The reader is not safe for concurrent use.
+// Batches are fetched ahead of the consumer, several at a time and spread across
+// the connection pool, so the round trip for the next one is already under way
+// while the last is being read. Memory is bounded by the shared prefetch budget
+// (see [EnvPrefetchBytes]) no matter how long the list is. The reader is not safe
+// for concurrent use.
 func (c *CAS) ReaderForBlobs(ctx context.Context, digests []Digest) (io.ReadCloser, error) {
 	if len(digests) == 0 {
 		return io.NopCloser(bytes.NewReader(nil)), nil
@@ -70,124 +74,58 @@ func (c *CAS) ReaderForBlobs(ctx context.Context, digests []Digest) (io.ReadClos
 			wanted = append(wanted, d)
 		}
 	}
-	return &multiBlobReader{owner: c, ctx: ctx, digests: wanted}, nil
+	return newPrefetchingReader(ctx, &batchSource{owner: c, digests: wanted}, sharedPrefetchBudget), nil
 }
 
-// multiBlobReader delivers a list of blobs as one stream, fetching them in
-// batches as the consumer works through it.
-type multiBlobReader struct {
+// batchSource is a list of blobs read from the remote cache: runs small enough
+// to batch become one BatchReadBlobs request each, and a blob too large for one
+// is streamed on its own.
+type batchSource struct {
 	owner   *CAS
-	ctx     context.Context
 	digests []Digest
 
-	next   int           // index of the next digest to fetch
-	batch  [][]byte      // undelivered blobs of the current batch, in order
-	stream io.ReadCloser // ByteStream read of a blob too large to batch
-	err    error         // sticky: the stream delivers nothing after a failure
+	// batches counts the batches planned so far, which spreads their requests
+	// across the connection pool: prefetching puts several in flight at once, and
+	// a pool exists because one connection caps bulk throughput.
+	batches atomic.Uint64
 }
 
-func (r *multiBlobReader) Read(p []byte) (int, error) {
-	for {
-		if r.err != nil {
-			return 0, r.err
-		}
-		switch {
-		case len(r.batch) > 0:
-			n := copy(p, r.batch[0])
-			r.batch[0] = r.batch[0][n:]
-			if len(r.batch[0]) == 0 {
-				r.batch = r.batch[1:]
-			}
-			return n, nil
-		case r.stream != nil:
-			n, err := r.stream.Read(p)
-			if err == nil {
-				return n, nil
-			}
-			if !errors.Is(err, io.EOF) {
-				r.err = err
-				r.closeStream()
-				return n, r.err
-			}
-			if closeErr := r.closeStream(); closeErr != nil {
-				r.err = closeErr
-			}
-			if n > 0 {
-				return n, nil
-			}
-		case r.next >= len(r.digests):
-			return 0, io.EOF
-		default:
-			if err := r.fill(); err != nil {
-				r.err = err
-				return 0, r.err
-			}
-		}
+var _ chunkSource = (*batchSource)(nil)
+
+func (s *batchSource) count() int { return len(s.digests) }
+
+// plan groups the digests from i onwards into the largest run that fits in one
+// BatchReadBlobs request. Each blob is charged its framing as well as its bytes
+// (see batchReadEntryOverhead), and a blob that does not fit even alone is
+// streamed instead -- which is also what keeps a run from coming out empty.
+func (s *batchSource) plan(i int) chunk {
+	limit := s.owner.capabilities.MaxBatchTotalSizeBytes
+	if s.digests[i].SizeBytes+batchReadEntryOverhead > limit {
+		return chunk{from: i, to: i + 1, bytes: s.digests[i].SizeBytes, streamed: true}
 	}
-}
-
-// fill fetches the next blob or batch of blobs.
-func (r *multiBlobReader) fill() error {
-	digest := r.digests[r.next]
-	if !r.batchable(digest) {
-		stream, err := r.owner.streamReadOne(r.ctx, digest)
-		if err != nil {
-			return err
-		}
-		r.stream = stream
-		r.next++
-		return nil
-	}
-	end := r.batchEnd()
-	blobs, err := r.owner.batchRead(r.ctx, r.digests[r.next:end])
-	if err != nil {
-		return err
-	}
-	r.batch = blobs
-	r.next = end
-	return nil
-}
-
-// batchable reports whether a blob fits in a batch at all, framing included. A
-// blob that does not is read with ByteStream instead. batchEnd relies on this
-// being the same test it applies to the first digest of a run, so that a run is
-// never empty.
-func (r *multiBlobReader) batchable(digest Digest) bool {
-	return digest.SizeBytes+batchReadEntryOverhead <= r.owner.capabilities.MaxBatchTotalSizeBytes
-}
-
-// batchEnd returns the end of the run of digests starting at r.next that fits
-// into one BatchReadBlobs request. Each blob is charged its framing as well as
-// its bytes (see batchReadEntryOverhead). fill only calls it for a digest that
-// is batchable on its own, so the run is never empty.
-func (r *multiBlobReader) batchEnd() int {
-	limit := r.owner.capabilities.MaxBatchTotalSizeBytes
 	var total int64
-	end := r.next
-	for end < len(r.digests) && end-r.next < maxBatchReadDigests {
-		cost := r.digests[end].SizeBytes + batchReadEntryOverhead
-		if cost > limit || total+cost > limit {
+	end := i
+	for end < len(s.digests) && end-i < maxBatchReadDigests {
+		cost := s.digests[end].SizeBytes + batchReadEntryOverhead
+		if total+cost > limit {
 			break
 		}
 		total += cost
 		end++
 	}
-	return end
+	return chunk{from: i, to: end, bytes: total}
 }
 
-func (r *multiBlobReader) closeStream() error {
-	if r.stream == nil {
-		return nil
-	}
-	err := r.stream.Close()
-	r.stream = nil
-	return err
+func (s *batchSource) fetch(ctx context.Context, c chunk) ([][]byte, error) {
+	// peer(0) is this client and peer(n) walks the pool, so concurrent batches
+	// of one stream land on different connections. The mask only keeps the
+	// counter from indexing negatively once it wraps.
+	peer := s.owner.peer(int((s.batches.Add(1) - 1) & math.MaxInt32))
+	return peer.batchRead(ctx, s.digests[c.from:c.to])
 }
 
-func (r *multiBlobReader) Close() error {
-	r.next = len(r.digests)
-	r.batch = nil
-	return r.closeStream()
+func (s *batchSource) open(ctx context.Context, c chunk) (io.ReadCloser, error) {
+	return s.owner.streamReadOne(ctx, s.digests[c.from])
 }
 
 // batchRead reads a run of blobs with a single BatchReadBlobs request and

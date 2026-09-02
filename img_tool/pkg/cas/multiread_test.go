@@ -9,6 +9,7 @@ import (
 	"io"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 
 	"google.golang.org/grpc"
@@ -23,7 +24,9 @@ import (
 type batchCASClient struct {
 	blobs map[string][]byte // hex hash -> content
 
-	requests [][]string // hex hashes per BatchReadBlobs call, in order
+	// mu guards requests: prefetching puts several batches in flight at once.
+	mu       sync.Mutex
+	requests [][]string // hex hashes per BatchReadBlobs call, in arrival order
 	// reorder returns responses in reverse request order, which the spec allows.
 	reorder bool
 	// statusFor overrides the per-blob status of a hash.
@@ -55,7 +58,9 @@ func (c *batchCASClient) BatchReadBlobs(_ context.Context, in *remoteexecution_p
 	for _, d := range in.Digests {
 		asked = append(asked, d.Hash)
 	}
+	c.mu.Lock()
 	c.requests = append(c.requests, asked)
+	c.mu.Unlock()
 
 	var responses []*remoteexecution_proto.BatchReadBlobsResponse_Response
 	for _, d := range in.Digests {
@@ -116,6 +121,27 @@ func digestsOf(c *batchCASClient, blobs [][]byte) []Digest {
 	return digests
 }
 
+// requestSizes returns how many digests each BatchReadBlobs call asked for,
+// largest first. Prefetching runs several batches at once, so the arrival order
+// says nothing; the sizes still do.
+func (c *batchCASClient) requestSizes() []int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	sizes := make([]int, len(c.requests))
+	for i, request := range c.requests {
+		sizes[i] = len(request)
+	}
+	slices.SortFunc(sizes, func(a, b int) int { return b - a })
+	return sizes
+}
+
+// requestCount is how many BatchReadBlobs calls were made.
+func (c *batchCASClient) requestCount() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return len(c.requests)
+}
+
 // readBlobs reads the whole concatenated stream for digests.
 func readBlobs(t *testing.T, c *CAS, digests []Digest) []byte {
 	t.Helper()
@@ -146,8 +172,8 @@ func TestReaderForBlobsBatchesSmallBlobs(t *testing.T) {
 	if want := bytes.Join(blobs, nil); !bytes.Equal(got, want) {
 		t.Fatalf("stream is %d bytes, want %d", len(got), len(want))
 	}
-	if len(client.requests) != 4 {
-		t.Fatalf("made %d BatchReadBlobs requests, want 4", len(client.requests))
+	if client.requestCount() != 4 {
+		t.Fatalf("made %d BatchReadBlobs requests, want 4", client.requestCount())
 	}
 	for i, request := range client.requests {
 		var framed int64
@@ -173,12 +199,13 @@ func TestReaderForBlobsReservesPerBlobFraming(t *testing.T) {
 
 	readBlobs(t, c, digestsOf(client, blobs))
 
-	if len(client.requests) < 2 {
-		t.Fatalf("made %d requests; framing was not charged against the budget", len(client.requests))
+	sizes := client.requestSizes()
+	if len(sizes) < 2 {
+		t.Fatalf("made %d requests; framing was not charged against the budget", len(sizes))
 	}
 	want := int(c.capabilities.MaxBatchTotalSizeBytes / (size + batchReadEntryOverhead))
-	if got := len(client.requests[0]); got != want {
-		t.Fatalf("first request held %d blobs, want %d", got, want)
+	if sizes[0] != want {
+		t.Fatalf("largest request held %d blobs, want %d", sizes[0], want)
 	}
 }
 
@@ -198,8 +225,8 @@ func TestReaderForBlobsStreamsABlobThatOnlyFitsWithoutFraming(t *testing.T) {
 	if !bytes.Equal(got, blob) {
 		t.Fatal("stream does not match the blob")
 	}
-	if len(client.requests) != 0 {
-		t.Fatalf("made %d BatchReadBlobs requests for a blob that does not fit framed", len(client.requests))
+	if client.requestCount() != 0 {
+		t.Fatalf("made %d BatchReadBlobs requests for a blob that does not fit framed", client.requestCount())
 	}
 	if byteStream.conns != 1 {
 		t.Fatalf("opened %d ByteStream reads, want 1", byteStream.conns)
@@ -213,11 +240,12 @@ func TestReaderForBlobsCapsTheDigestCount(t *testing.T) {
 
 	readBlobs(t, c, digestsOf(client, blobs))
 
-	if len(client.requests) != 2 {
-		t.Fatalf("made %d BatchReadBlobs requests, want 2", len(client.requests))
+	sizes := client.requestSizes()
+	if len(sizes) != 2 {
+		t.Fatalf("made %d BatchReadBlobs requests, want 2", len(sizes))
 	}
-	if got := len(client.requests[0]); got != maxBatchReadDigests {
-		t.Fatalf("first request asked for %d digests, want %d", got, maxBatchReadDigests)
+	if sizes[0] != maxBatchReadDigests {
+		t.Fatalf("largest request asked for %d digests, want %d", sizes[0], maxBatchReadDigests)
 	}
 }
 
@@ -237,8 +265,8 @@ func TestReaderForBlobsStreamsLargeBlobs(t *testing.T) {
 	if want := bytes.Join(order, nil); !bytes.Equal(got, want) {
 		t.Fatal("stream does not match the requested blobs in order")
 	}
-	if len(client.requests) != 2 {
-		t.Fatalf("made %d BatchReadBlobs requests, want 2 (one per run of small blobs)", len(client.requests))
+	if client.requestCount() != 2 {
+		t.Fatalf("made %d BatchReadBlobs requests, want 2 (one per run of small blobs)", client.requestCount())
 	}
 	if byteStream.conns != 1 {
 		t.Fatalf("opened %d ByteStream reads, want 1", byteStream.conns)
@@ -272,8 +300,8 @@ func TestReaderForBlobsDeduplicatesWithinARequest(t *testing.T) {
 	if want := bytes.Join(order, nil); !bytes.Equal(got, want) {
 		t.Fatal("a repeated blob was not delivered twice")
 	}
-	if len(client.requests) != 1 {
-		t.Fatalf("made %d requests, want 1", len(client.requests))
+	if client.requestCount() != 1 {
+		t.Fatalf("made %d requests, want 1", client.requestCount())
 	}
 	if got := len(client.requests[0]); got != 2 {
 		t.Fatalf("asked for %d digests, want 2 (the repeat is asked for once)", got)
@@ -292,8 +320,8 @@ func TestReaderForBlobsSkipsEmptyBlobs(t *testing.T) {
 	if want := append(slices.Clone(blobs[0]), blobs[1]...); !bytes.Equal(got, want) {
 		t.Fatal("an empty blob changed the stream")
 	}
-	if len(client.requests) != 1 {
-		t.Fatalf("made %d requests, want 1 (an empty blob must not split the batch)", len(client.requests))
+	if client.requestCount() != 1 {
+		t.Fatalf("made %d requests, want 1 (an empty blob must not split the batch)", client.requestCount())
 	}
 }
 
@@ -304,8 +332,8 @@ func TestReaderForBlobsEmptyList(t *testing.T) {
 	if got := readBlobs(t, c, nil); len(got) != 0 {
 		t.Fatalf("stream = %q, want empty", got)
 	}
-	if len(client.requests) != 0 {
-		t.Fatalf("made %d requests for an empty list", len(client.requests))
+	if client.requestCount() != 0 {
+		t.Fatalf("made %d requests for an empty list", client.requestCount())
 	}
 }
 
@@ -377,8 +405,8 @@ func TestReaderForBlobsReportsAPerBlobStatus(t *testing.T) {
 	if status.Code(errors.Unwrap(err)) != codes.NotFound && !strings.Contains(err.Error(), "no such blob") {
 		t.Fatalf("error = %v, want the NotFound status", err)
 	}
-	if len(client.requests) != 1 {
-		t.Fatalf("made %d requests, want 1 (a cache miss is not retried)", len(client.requests))
+	if client.requestCount() != 1 {
+		t.Fatalf("made %d requests, want 1 (a cache miss is not retried)", client.requestCount())
 	}
 }
 
@@ -430,7 +458,7 @@ func TestReadBlobStillUsesASingleDigestRequest(t *testing.T) {
 	if !bytes.Equal(got, blob) {
 		t.Fatal("ReadBlob returned the wrong content")
 	}
-	if len(client.requests) != 1 || len(client.requests[0]) != 1 {
+	if sizes := client.requestSizes(); len(sizes) != 1 || sizes[0] != 1 {
 		t.Fatalf("requests = %v, want one request for one digest", client.requests)
 	}
 }
