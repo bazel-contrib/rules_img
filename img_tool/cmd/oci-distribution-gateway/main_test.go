@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -583,14 +584,36 @@ func TestLogFileCapturesEverythingTheGatewayLogs(t *testing.T) {
 		t.Errorf("log file = %q, want the earlier run appended to, not truncated", got)
 	}
 
-	// Rotation: the rotator renames the file away, and until the gateway opens the
-	// path again it is writing to something nobody can find.
+	// A reopen with the file still where it was appends to it, rather than
+	// truncating what is already there.
+	sink.reopen()
+	log.Print("after the reopen")
+	if got := readFile(t, path); !strings.Contains(got, "a decision") || !strings.Contains(got, "after the reopen") {
+		t.Errorf("log file after reopen = %q, want it appended to, not truncated", got)
+	}
+}
+
+func TestLogFileReopensAfterRotation(t *testing.T) {
+	// Renaming a file a process holds open is a POSIX move, and it is the one a
+	// log rotator makes. Windows refuses it outright, and never delivers the
+	// SIGHUP that would trigger the reopen either.
+	if runtime.GOOS == "windows" {
+		t.Skip("a rotator cannot rename a file the gateway holds open on Windows")
+	}
+	path := filepath.Join(t.TempDir(), "gateway.log")
+	sink := (&logFlags{file: path}).setup()
+	t.Cleanup(sink.close)
+
+	// The rotator renames the file away, and until the gateway opens the path
+	// again it is writing to something nobody can find.
 	rotated := path + ".1"
+	log.Print("before the rotation")
 	if err := os.Rename(path, rotated); err != nil {
 		t.Fatalf("rotating the log file: %v", err)
 	}
 	sink.reopen()
 	log.Print("after the rotation")
+
 	if got := readFile(t, path); !strings.Contains(got, "after the rotation") {
 		t.Errorf("log file after reopen = %q, want the line logged after the rotation", got)
 	}
