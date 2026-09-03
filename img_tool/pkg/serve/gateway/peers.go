@@ -154,7 +154,7 @@ func NewKubernetesPeers(opts KubernetesPeerOptions) (*KubernetesPeers, error) {
 		slices:    make(map[string][]Peer),
 	}
 	if k.log == nil {
-		k.log = log.New(os.Stderr, "", log.LstdFlags)
+		k.log = log.Default()
 	}
 	if k.scheme == "" {
 		k.scheme = "https"

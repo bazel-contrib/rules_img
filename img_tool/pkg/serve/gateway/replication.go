@@ -361,7 +361,7 @@ func NewCacheReplication(cfg ReplicationConfig) (*CacheReplication, error) {
 		donating:      make(chan struct{}, maxConcurrentDonations),
 	}
 	if r.log == nil {
-		r.log = log.New(os.Stderr, "", log.LstdFlags)
+		r.log = log.Default()
 	}
 	if r.batchSize <= 0 {
 		r.batchSize = defaultReplicationBatchSize

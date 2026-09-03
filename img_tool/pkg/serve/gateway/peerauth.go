@@ -163,7 +163,7 @@ type PeerAuth struct {
 func NewPeerAuth(opts PeerAuthOptions) (*PeerAuth, error) {
 	a := &PeerAuth{opts: opts, log: opts.Logger, stamps: make(map[string]fileStamp)}
 	if a.log == nil {
-		a.log = log.New(os.Stderr, "", log.LstdFlags)
+		a.log = log.Default()
 	}
 	for _, id := range opts.AllowedClientIDs {
 		pattern, err := compileIdentityPattern(id)

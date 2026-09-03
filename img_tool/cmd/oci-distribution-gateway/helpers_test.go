@@ -99,3 +99,12 @@ type testTCPAddr struct {
 func (a *testTCPAddr) addr() net.Addr {
 	return &net.TCPAddr{IP: net.ParseIP(a.ip), Port: a.port}
 }
+
+func readFile(t *testing.T, path string) string {
+	t.Helper()
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading %s: %v", path, err)
+	}
+	return string(contents)
+}

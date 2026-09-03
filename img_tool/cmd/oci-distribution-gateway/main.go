@@ -38,6 +38,10 @@
 // A bare invocation with no subcommand means serving mode, so existing
 // deployments keep working unchanged.
 //
+// The decision the gateway took on every request, along with its reloads and
+// warnings, is logged to stderr, or to the file named by --log-file for a
+// gateway sharing its output with something else.
+//
 // Traffic, blob transfers, and errors are reported as OpenTelemetry metrics,
 // either pushed to a collector over OTLP or scraped from a Prometheus endpoint;
 // see --metrics-exporter and //pkg/serve/telemetry.
@@ -56,6 +60,7 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -206,6 +211,105 @@ func printUsage(flagSet *flag.FlagSet, description, usageLine string, examples [
 	}
 }
 
+// logFlags holds the logging flag both modes accept.
+type logFlags struct {
+	file string
+}
+
+func (f *logFlags) register(flagSet *flag.FlagSet) {
+	flagSet.StringVar(&f.file, "log-file", "", "Append the gateway's log to this file instead of writing it to stderr. Everything the running gateway reports goes there: the decision it took on every request, reload results, warnings, and the startup banner. Created if it does not exist, and reopened on SIGHUP, which is what a log rotator needs after moving it aside.")
+}
+
+// setup points the gateway's logging at --log-file, or leaves it on stderr when
+// the flag is unset. It must be called before anything is logged, and the
+// returned sink must be closed by the caller (and reopened on SIGHUP).
+//
+// One redirection moves every line the process writes, because every part of it
+// logs through the standard logger: the handler's decision log, the forwarder,
+// client authentication, TLS and token reloads, peer discovery, and cache
+// replication. What stays on stderr is the errors that reject the command line
+// itself, which are reported before this is called — a misconfigured gateway
+// still says so where it was started, rather than in a file it may not have been
+// able to create.
+func (f *logFlags) setup() *logSink {
+	if f.file == "" {
+		return nil
+	}
+	sink := &logSink{path: f.file}
+	if err := sink.open(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	return sink
+}
+
+// logSink is the open --log-file. A nil sink is a gateway logging to stderr, so
+// every method has to tolerate one.
+type logSink struct {
+	path string
+
+	mu   sync.Mutex
+	file *os.File
+}
+
+// open opens the log file and makes it the destination of the standard logger,
+// closing whatever this sink had open before.
+func (s *logSink) open() error {
+	file, err := os.OpenFile(s.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return fmt.Errorf("opening --log-file %q: %w", s.path, err)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	previous := s.file
+	s.file = file
+	log.SetOutput(file)
+	if previous != nil {
+		// Reported rather than dropped: close is where a write the kernel deferred
+		// finally fails, so a rotation onto a full disk says so here or nowhere. The
+		// new file is already the destination, so this line lands in it.
+		if err := previous.Close(); err != nil {
+			log.Printf("closing the previous --log-file %q failed, some lines may be missing from it: %v", s.path, err)
+		}
+	}
+	return nil
+}
+
+// reopen re-opens the log file, which is how a rotated log keeps being written:
+// once the rotator has renamed the file, the gateway holds a descriptor to
+// something no one can find any more until the path is opened again.
+//
+// A failure keeps the descriptor already open, so a rotation that goes wrong
+// costs no log lines — the same rule the policy and TLS reloads follow.
+func (s *logSink) reopen() {
+	if s == nil {
+		return
+	}
+	if err := s.open(); err != nil {
+		log.Printf("log file reopen FAILED, keeping the open one: %v", err)
+	}
+}
+
+// close returns logging to stderr and closes the file, so a line written while
+// the process is on its way out does not go to a closed descriptor. A close that
+// fails is reported on stderr, which logging has just gone back to: the file it
+// would otherwise be written to is the one that could not be closed.
+func (s *logSink) close() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.file == nil {
+		return
+	}
+	log.SetOutput(os.Stderr)
+	if err := s.file.Close(); err != nil {
+		log.Printf("closing --log-file %q failed, the last lines may be missing from it: %v", s.path, err)
+	}
+	s.file = nil
+}
+
 // metricsFlags holds the OpenTelemetry flags both modes accept, so the two flag
 // sets and the Prometheus listener are declared in exactly one place.
 type metricsFlags struct {
@@ -279,7 +383,7 @@ func (f *metricsFlags) setup(ctx context.Context, serviceName string) (*telemetr
 			log.Printf("metrics endpoint error: %v", err)
 		}
 	}()
-	fmt.Fprintf(os.Stderr, "oci-distribution-gateway serving metrics on %s/metrics\n", metricsListener.Addr())
+	log.Printf("serving metrics on %s/metrics", metricsListener.Addr())
 	return metrics, metricsServer, flush
 }
 
@@ -321,10 +425,10 @@ func (g *gatewayServer) run() {
 	serveErr := make(chan error, 2)
 	go func() { serveErr <- g.serve() }()
 
-	fmt.Fprintf(os.Stderr, "%s on %s\n", g.banner, g.addr)
+	log.Printf("%s on %s", g.banner, g.addr)
 	if g.peer != nil {
 		go func() { serveErr <- g.peer.serve() }()
-		fmt.Fprintf(os.Stderr, "%s for cache replication peers on %s\n", g.banner, g.peer.addr)
+		log.Printf("%s for cache replication peers on %s", g.banner, g.peer.addr)
 	}
 
 	select {

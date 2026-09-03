@@ -43,6 +43,7 @@ go_test(
         "gateway_test.go",
         "h2_test.go",
         "hardening_test.go",
+        "logger_test.go",
         "memconn_test.go",
         "metrics_test.go",
         "peerauth_resumption_test.go",

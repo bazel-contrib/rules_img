@@ -9,7 +9,7 @@ therefore need no registry credentials of their own.
 See [Authenticating Build Actions](../../../docs/authenticating-build-actions.md#3-oci-distribution-gateway)
 for how build actions are pointed at a gateway. **This README documents running it
 as a service**: its modes, flags, policy file, client authentication, deployment,
-and metrics. One feature has a document of its own — the
+logging, and metrics. One feature has a document of its own — the
 [blob existence cache](blob-existence-cache.md), which is also where replicating it
 between the instances of a serving deployment is described.
 
@@ -110,6 +110,7 @@ gateway would have allowed.
 | `--unix-socket-mode <octal>` | (as created) | `chmod` the socket after binding, e.g. `0660` |
 | `--address <host>`, `--port <n>` | `localhost`, `0` | TCP alternative to `--unix-socket` |
 | `--shutdown-timeout <dur>` | `30s` | How long in-flight transfers may take to finish after a shutdown signal |
+| `--log-file <path>` | stderr | Append the log to this file instead of writing it to stderr. See [Logging](#logging) |
 | `--metrics-*` | off | See [Metrics](#metrics) |
 
 Reloadable material — the policy file, TLS keypairs, CA bundles and token files —
@@ -715,6 +716,43 @@ Kubernetes restartable init sidecar with a startup probe through the chart's
 `extraInitContainers` value. A separate Deployment or DaemonSet would require
 different network or volume plumbing and would expose the unauthenticated
 gateway beyond this private per-Pod socket.
+
+## Logging
+
+The gateway writes its log to stderr. The log contains one line for each request,
+the startup banner, the result of each reload, and all warnings.
+
+To write the log to a file, use `--log-file`:
+
+```bash
+oci-distribution-gateway forward --unix-socket /run/gw.sock \
+  --peer https://oci-gateway.img-gateway.svc:8443 --peer-token-file /var/run/gw/token \
+  --log-file /var/log/rules-img/gateway.log
+```
+
+The gateway makes the file if it does not exist. If the file exists, the gateway
+adds the new lines at the end of it.
+
+Errors in the command line stay on stderr. If the gateway cannot open the log
+file, it writes the error to stderr and stops.
+
+**Rotation.** When the gateway receives `SIGHUP`, it opens the log file again. To
+rotate the log, move the file, then send `SIGHUP` to the gateway. If the gateway
+cannot open the file again, it continues to write to the file it has open.
+
+This `logrotate` configuration does the two steps:
+
+```
+/var/log/rules-img/gateway.log {
+    daily
+    rotate 7
+    compress
+    missingok
+    postrotate
+        kill -HUP $(cat /run/rules-img-gateway.pid)
+    endscript
+}
+```
 
 ## Metrics
 

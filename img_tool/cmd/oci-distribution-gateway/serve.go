@@ -69,6 +69,7 @@ type serveFlags struct {
 	peerClientCAFile                 string
 	allowUnauthenticatedPeerListener bool
 
+	log     logFlags
 	metrics metricsFlags
 }
 
@@ -133,6 +134,7 @@ func (f *serveFlags) register(flagSet *flag.FlagSet) {
 	flagSet.StringVar(&f.peerClientCAFile, "peer-client-ca-file", "", "PEM bundle of CAs whose client certificates the peer listener accepts. Setting it enables mTLS there and requires a certificate for that listener. Defaults to --client-ca-file. This is the flag that lets instances speak mTLS to each other while clients do not.")
 	flagSet.BoolVar(&f.allowUnauthenticatedPeerListener, "dangerously-allow-unauthenticated-peer-listener", false, "Run the peer listener with no client authentication. DANGEROUS: anything able to reach it can insert blob existence facts, and a client that believes a false one skips an upload it still owes.")
 
+	f.log.register(flagSet)
 	f.metrics.register(flagSet)
 }
 
@@ -201,6 +203,11 @@ func serveProcess(ctx context.Context, args []string) {
 			flags.blobCacheMaxMemory, gateway.MinBlobExistenceCacheBytes)
 		os.Exit(1)
 	}
+
+	// From here on the gateway is starting up rather than reading its command
+	// line, so everything it reports goes wherever --log-file points.
+	logging := flags.log.setup()
+	defer logging.close()
 
 	// Resolve the authorization policy. --dangerously-allow-all overrides (and
 	// ignores) any policy file; otherwise a policy file is required.
@@ -402,6 +409,7 @@ func serveProcess(ctx context.Context, args []string) {
 	signal.Notify(hup, syscall.SIGHUP)
 	go func() {
 		for range hup {
+			logging.reopen()
 			if flags.policyFile != "" && !flags.dangerouslyAllowAll {
 				if cp, err := handler.Reload(flags.policyFile); err != nil {
 					log.Printf("policy reload FAILED, keeping previous policy: %v", err)

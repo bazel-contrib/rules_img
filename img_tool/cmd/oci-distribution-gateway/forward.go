@@ -44,6 +44,7 @@ type forwardFlags struct {
 	allowUnauthenticatedText bool
 
 	shutdownTimeout time.Duration
+	log             logFlags
 	metrics         metricsFlags
 }
 
@@ -67,6 +68,7 @@ func (f *forwardFlags) register(flagSet *flag.FlagSet) {
 	flagSet.BoolVar(&f.allowUnauthenticatedText, "dangerously-allow-unauthenticated-clients", false, "Serve a network-reachable address. DANGEROUS: a forwarder authenticates none of its own clients, so anything able to reach it can spend the peer's credential within the peer's policy.")
 
 	flagSet.DurationVar(&f.shutdownTimeout, "shutdown-timeout", 30*time.Second, "How long in-flight requests may take to finish after a shutdown signal. Set this above your longest blob transfer.")
+	f.log.register(flagSet)
 	f.metrics.register(flagSet)
 }
 
@@ -112,6 +114,11 @@ func forwardProcess(ctx context.Context, args []string) {
 		fmt.Fprintln(os.Stderr, "--dangerously-allow-unauthenticated-clients if the address really is private.")
 		os.Exit(1)
 	}
+
+	// From here on the forwarder is starting up rather than reading its command
+	// line, so everything it reports goes wherever --log-file points.
+	logging := flags.log.setup()
+	defer logging.close()
 
 	metrics, metricsServer, flush := flags.metrics.setup(ctx, forwardServiceName)
 	defer flush()
@@ -184,6 +191,7 @@ func forwardProcess(ctx context.Context, args []string) {
 	signal.Notify(hup, syscall.SIGHUP)
 	go func() {
 		for range hup {
+			logging.reopen()
 			if err := peerTLS.Reload(); err != nil {
 				log.Printf("peer TLS material reload FAILED, keeping previous material: %v", err)
 				continue
