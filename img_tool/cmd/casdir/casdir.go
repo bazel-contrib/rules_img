@@ -4,6 +4,9 @@
 // deduplicating identical content. Symlinks and unreadable entries are skipped —
 // they carry no content blob.
 //
+// With --symlink, entries are relative symlinks to the input files instead of
+// copies of their content, so the inputs are not materialized a second time.
+//
 // The resulting directory is used to reconstruct a layer tar from its CAS stream
 // index: each CAS reference (addressed by the sha256 of its content) is resolved
 // by opening <dir>/sha256/<hex>.
@@ -34,6 +37,7 @@ func (s *stringSliceFlag) Set(value string) error {
 func CASDirProcess(_ context.Context, args []string) {
 	var outputDir string
 	var fromFiles stringSliceFlag
+	var useSymlinks bool
 
 	flagSet := flag.NewFlagSet("cas-dir", flag.ExitOnError)
 	flagSet.Usage = func() {
@@ -43,6 +47,7 @@ func CASDirProcess(_ context.Context, args []string) {
 	}
 	flagSet.StringVar(&outputDir, "output", "", "Output directory for the content-addressed store (required)")
 	flagSet.Var(&fromFiles, "from-file", "Path to a newline-delimited file listing input files/directories (repeatable)")
+	flagSet.BoolVar(&useSymlinks, "symlink", false, "Use symlinks instead of copying files")
 
 	if err := flagSet.Parse(args); err != nil {
 		flagSet.Usage()
@@ -64,7 +69,7 @@ func CASDirProcess(_ context.Context, args []string) {
 		inputs = append(inputs, paths...)
 	}
 
-	w := &casWriter{shaDir: filepath.Join(outputDir, "sha256")}
+	w := &casWriter{shaDir: filepath.Join(outputDir, "sha256"), useSymlinks: useSymlinks}
 	if err := os.MkdirAll(w.shaDir, 0o755); err != nil {
 		fmt.Fprintf(os.Stderr, "Error creating output directory: %v\n", err)
 		os.Exit(1)
@@ -78,7 +83,8 @@ func CASDirProcess(_ context.Context, args []string) {
 }
 
 type casWriter struct {
-	shaDir string
+	shaDir      string
+	useSymlinks bool
 }
 
 // addPath adds a file, or every regular file within a directory, to the store.
@@ -110,9 +116,60 @@ func (w *casWriter) addPath(p string) error {
 	return nil
 }
 
-// addFile streams the file once through a hash and a temp file, then renames the
-// temp file to its content-addressed name. Identical content is deduplicated.
+// addFile stores the file under its content-addressed name, either as a relative
+// symlink to it or as a copy of its content.
 func (w *casWriter) addFile(filePath string) error {
+	if w.useSymlinks {
+		return w.linkFile(filePath)
+	}
+	return w.copyFile(filePath)
+}
+
+// linkFile hashes the file's content and places a relative symlink to it at its
+// content-addressed name, so the content is referenced instead of duplicated.
+// The target must be relative: the store is a Bazel tree artifact, and only
+// relative symlinks stay valid wherever the tree is staged (sandbox, remote
+// execution, runfiles tree).
+func (w *casWriter) linkFile(filePath string) error {
+	src, err := os.Open(filePath)
+	if err != nil {
+		return fmt.Errorf("opening %s: %w", filePath, err)
+	}
+	h := sha256.New()
+	_, err = io.Copy(h, src)
+	src.Close()
+	if err != nil {
+		return fmt.Errorf("hashing %s: %w", filePath, err)
+	}
+
+	dest := filepath.Join(w.shaDir, hex.EncodeToString(h.Sum(nil)))
+	if _, err := os.Lstat(dest); err == nil {
+		// Already stored (deduplicated).
+		return nil
+	}
+	target, err := relativeTarget(filePath, dest)
+	if err != nil {
+		return fmt.Errorf("relative path from %s to %s: %w", dest, filePath, err)
+	}
+	return os.Symlink(target, dest)
+}
+
+// relativeTarget returns src as a path relative to the directory holding dst.
+func relativeTarget(src, dst string) (string, error) {
+	absSrc, err := filepath.Abs(src)
+	if err != nil {
+		return "", err
+	}
+	absDst, err := filepath.Abs(dst)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Rel(filepath.Dir(absDst), absSrc)
+}
+
+// copyFile streams the file once through a hash and a temp file, then renames the
+// temp file to its content-addressed name. Identical content is deduplicated.
+func (w *casWriter) copyFile(filePath string) error {
 	src, err := os.Open(filePath)
 	if err != nil {
 		return fmt.Errorf("opening %s: %w", filePath, err)

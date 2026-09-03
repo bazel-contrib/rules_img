@@ -27,7 +27,7 @@ bzl_library(
     visibility = ["//img:__subpackages__"],
     deps = [
         "//img/private/common:build",
-        "@bazel_features//:features",
+        "//img/private/common:tree_symlinks",
     ],
 )
 
@@ -43,6 +43,7 @@ bzl_library(
         "//img:providers",
         "//img/private/common:build",
         "//img/private/common:transitions",
+        "//img/private/common:tree_symlinks",
         "//img/private/common:write_index_json",
         "//img/private/providers:load_config_info",
         "//img/private/providers:oci_layout_settings_info",
@@ -171,6 +172,7 @@ bzl_library(
         "//img/private/common:inherit",
         "//img/private/common:layer_helper",
         "//img/private/common:transitions",
+        "//img/private/common:tree_symlinks",
         "//img/private/config:defs",
         "//img/private/providers:index_info",
         "//img/private/providers:layer_config_info",

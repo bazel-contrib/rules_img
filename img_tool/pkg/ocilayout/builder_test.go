@@ -356,6 +356,52 @@ func TestSparseLayout(t *testing.T) {
 	}
 }
 
+// A sparse layout carries the config and each layer's compact stream as file
+// blobs, so both are symlinked under the link strategy; the generated layer
+// descriptors are always written out.
+func TestSparseLayoutSymlinks(t *testing.T) {
+	manifest, manifestData, _, configHex, layerHex := makeTestManifest()
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config")
+	os.WriteFile(configPath, []byte(`{"architecture":"amd64","os":"linux"}`), 0o644)
+	cstreamPath := filepath.Join(dir, "layer.cstream")
+	os.WriteFile(cstreamPath, []byte("fake compact stream"), 0o644)
+	out := filepath.Join(dir, "sparse")
+
+	cstream := BlobFromPath(cstreamPath)
+	mi := ManifestInput{Manifest: manifest, ManifestData: manifestData, Config: BlobFromPath(configPath)}
+	mi.Layers = []LayerInput{{Descriptor: manifest.Layers[0], CompactStream: &cstream}}
+
+	if err := New(SparseOCILayout()).WithLinkStrategy(true, false).AddManifest(mi).WriteDir(context.Background(), out); err != nil {
+		t.Fatalf("WriteDir: %v", err)
+	}
+
+	for source, linkPath := range map[string]string{
+		configPath:  filepath.Join(out, "blobs/sha256", configHex),
+		cstreamPath: filepath.Join(out, "blobs/sha256", layerHex+".cstream"),
+	} {
+		target, err := os.Readlink(linkPath)
+		if err != nil {
+			t.Fatalf("reading symlink %s: %v", linkPath, err)
+		}
+		if filepath.IsAbs(target) {
+			t.Errorf("symlink target must be relative, got %q", target)
+		}
+		if resolved := filepath.Join(filepath.Dir(linkPath), target); resolved != source {
+			t.Errorf("resolved symlink: got %q want %q", resolved, source)
+		}
+	}
+
+	descriptor := filepath.Join(out, "blobs/sha256", layerHex+".descriptor.json")
+	info, err := os.Lstat(descriptor)
+	if err != nil {
+		t.Fatalf("stat %s: %v", descriptor, err)
+	}
+	if !info.Mode().IsRegular() {
+		t.Errorf("layer descriptor mode: got %v, want a regular file", info.Mode())
+	}
+}
+
 func TestMissingBlobs(t *testing.T) {
 	manifest, manifestData, _, _, _ := makeTestManifest()
 	dir := t.TempDir()
