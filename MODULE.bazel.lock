@@ -420,7 +420,7 @@
     "@@rules_bazel_integration_test+//:extensions.bzl%bazel_binaries": {
       "general": {
         "bzlTransitiveDigest": "XC9nqZ31LIbq8N7cEK+rYa2iXNQLcJ3cyGWw+zPZlc0=",
-        "usagesDigest": "aiS8NG+s1gAm9me/7AbiL9JdAYfxCzzUdYMVOuZtMrk=",
+        "usagesDigest": "aDln9sS6YFdCn5RIVI8UeTGacrIjEvHbT9v4cdo6A90=",
         "recordedInputs": [
           "REPO_MAPPING:rules_bazel_integration_test+,bazel_skylib bazel_skylib+",
           "REPO_MAPPING:rules_bazel_integration_test+,cgrindel_bazel_starlib cgrindel_bazel_starlib+"

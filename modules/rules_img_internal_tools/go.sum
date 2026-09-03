@@ -1,7 +1,7 @@
 github.com/bazel-contrib/bazel-gazelle/v2 v2.0.0-3 h1:Mq3iQ30V39RGCErrbnhHFOAcnxpWTIrk35Pc9guNfOY=
 github.com/bazel-contrib/bazel-gazelle/v2 v2.0.0-3/go.mod h1:B76PjnaM2KyUG8ypV/ePHHDmGbyUNZ2PCEdEQIJISQM=
-github.com/bazel-contrib/rules_img/img_tool v0.3.19 h1:gj9gHOOBsUJU9B8UPke035RNwVcREL/cKxUxYfSCgHs=
-github.com/bazel-contrib/rules_img/img_tool v0.3.19/go.mod h1:4kv3adKhEqVgEiGnQB4aOeWoQm3I9jQIMwhtIYJXWvY=
+github.com/bazel-contrib/rules_img/img_tool v0.3.20 h1:gj9gHOOBsUJU9B8UPke035RNwVcREL/cKxUxYfSCgHs=
+github.com/bazel-contrib/rules_img/img_tool v0.3.20/go.mod h1:4kv3adKhEqVgEiGnQB4aOeWoQm3I9jQIMwhtIYJXWvY=
 github.com/bazelbuild/bazel-gazelle v0.53.0 h1:qNh2WraxM8cjIeHZQ7QPTTSPbkrX9Z0GkhtGbiz1ToE=
 github.com/bazelbuild/bazel-gazelle v0.53.0/go.mod h1:ncMNvFUTYi5NRQ7wVrOmxjKaR0+mvm02lhBt7UOXlVc=
 github.com/bazelbuild/buildtools v0.0.0-20260826221324-7cca172268c7 h1:wMV4VxHlrWIgLL737mKv9kfEGf4ZRpwB6beBTzBM51w=
