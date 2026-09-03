@@ -265,7 +265,12 @@ func (s *logSink) open() error {
 	s.file = file
 	log.SetOutput(file)
 	if previous != nil {
-		previous.Close()
+		// Reported rather than dropped: close is where a write the kernel deferred
+		// finally fails, so a rotation onto a full disk says so here or nowhere. The
+		// new file is already the destination, so this line lands in it.
+		if err := previous.Close(); err != nil {
+			log.Printf("closing the previous --log-file %q failed, some lines may be missing from it: %v", s.path, err)
+		}
 	}
 	return nil
 }
@@ -286,7 +291,9 @@ func (s *logSink) reopen() {
 }
 
 // close returns logging to stderr and closes the file, so a line written while
-// the process is on its way out does not go to a closed descriptor.
+// the process is on its way out does not go to a closed descriptor. A close that
+// fails is reported on stderr, which logging has just gone back to: the file it
+// would otherwise be written to is the one that could not be closed.
 func (s *logSink) close() {
 	if s == nil {
 		return
@@ -297,7 +304,9 @@ func (s *logSink) close() {
 		return
 	}
 	log.SetOutput(os.Stderr)
-	s.file.Close()
+	if err := s.file.Close(); err != nil {
+		log.Printf("closing --log-file %q failed, the last lines may be missing from it: %v", s.path, err)
+	}
 	s.file = nil
 }
 
