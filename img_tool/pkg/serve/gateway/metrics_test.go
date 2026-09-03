@@ -487,7 +487,7 @@ func TestMetricsErrorTypes(t *testing.T) {
 			method:       http.MethodGet,
 			host:         testUpstreamHost,
 			target:       "/v2/app/blobs/sha256:abc",
-			want:         errDNS,
+			want:         errDNSNotFound,
 			wantRegistry: testUpstreamHost,
 		},
 	} {
