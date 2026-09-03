@@ -871,9 +871,38 @@ either: one message carries facts about several.
 
 `error.type` is a fixed set, grouped by who is at fault:
 
-- **network** — `connection_refused`, `connection_reset`, `network_unreachable`,
-  `timeout`, `dns`, `tls`, `tls_certificate`, `network`, `transfer_aborted`,
-  `client_canceled`
+- **network** — split by the stage of the connection that failed, because "the
+  registry was unreachable" is not something you can act on while "the name did
+  not resolve" or "the peer rejected our certificate" is. Each stage keeps a
+  generic member for causes that cannot be placed more precisely:
+  - *resolving the name* — `dns_not_found` (NXDOMAIN: a typo, or a resolver that
+    does not serve that zone), `dns_timeout` (the resolver did not answer; the
+    registry may be fine), `dns`
+  - *reaching the endpoint* — `connection_refused` (the host is up, nothing is
+    listening), `host_unreachable`, `network_unreachable` (no route: this
+    gateway's own networking), `dial_timeout` (packets dropped silently, which
+    is what a firewall looks like), `proxy_connect` (the *proxy* could not be
+    reached — a different address to debug), `local_resource_exhausted` (this
+    process ran out of sockets or file descriptors; raise the limit or find the
+    leak)
+  - *establishing TLS* — `tls_certificate_untrusted` (missing CA bundle or an
+    intercepting proxy), `tls_certificate_expired`, `tls_certificate_hostname`,
+    `tls_certificate`, `tls_client_certificate_rejected` (the far end rejected
+    *ours* — on the forwarding hop, the mTLS peer credential),
+    `tls_plaintext` (the endpoint answered with something that is not TLS,
+    usually a plain HTTP service on an HTTPS port), `tls_handshake_timeout`,
+    `tls`
+  - *on an established connection* — `connection_reset`, `broken_pipe` (we wrote
+    to a connection the other end had closed: on the response path, a client
+    that hung up), `unexpected_eof` (the body stopped short of its
+    Content-Length, so the content is truncated, not merely late),
+    `read_timeout` (the other end stopped sending), `write_timeout` (the other
+    end stopped reading), `http2_goaway` (the peer took the connection away —
+    expected during a rolling restart and under a mesh's max connection age),
+    `http2_stream` (a stream-level error, including `REFUSED_STREAM` from the
+    concurrent-stream limit), `timeout`, `network`
+  - *neither end's fault* — `transfer_aborted` (the copy failed and neither half
+    can be blamed), `client_canceled`
 - **upstream auth** — `upstream_auth` (credential resolution, ping, or token
   exchange), `upstream_unauthorized` (401)
 - **permission denied** — `policy_denied`, `registry_denied`, `mount_denied`
@@ -947,6 +976,17 @@ sum(rate(oci_gateway_blob_existence_cache_replication_dropped_total[5m]))
 # Errors per second by type and registry.
 sum by (error_type, oci_registry) (rate(oci_gateway_errors_total[5m]))
 
+# Which *stage* of the connection is failing? Resolution, reaching the endpoint,
+# TLS, and an established connection are four different on-call responses.
+sum by (error_type) (rate(oci_gateway_errors_total{error_type=~"dns.*"}[5m]))
+sum by (error_type) (rate(oci_gateway_errors_total{error_type=~"connection_refused|.*_unreachable|dial_timeout|proxy_connect"}[5m]))
+sum by (error_type) (rate(oci_gateway_errors_total{error_type=~"tls.*"}[5m]))
+
+# Two of those need no dashboard reading at all — they are always a
+# misconfiguration, never load: this gateway is out of sockets, or the endpoint
+# on the other side is not speaking TLS. Alert on them.
+sum(rate(oci_gateway_errors_total{error_type=~"local_resource_exhausted|tls_plaintext|tls_certificate_expired"}[15m]))
+
 # Requests denied by policy.
 sum by (oci_registry, oci_operation) (rate(oci_gateway_policy_decisions_total{oci_policy_decision="deny"}[5m]))
 
@@ -1005,8 +1045,13 @@ histogram_quantile(0.95, sum by (le) (rate(oci_gateway_forward_peer_duration_sec
 sum by (network_protocol_version) (rate(oci_gateway_forward_peer_duration_seconds_count[5m]))
 
 # 3. Is the hop failing, and whose fault is it?
-#    peer_unauthorized / peer_forbidden mean OUR peer credential is wrong.
-#    connection_refused / tls_certificate mean we cannot reach or trust the peer.
+#    peer_unauthorized / peer_forbidden mean OUR peer credential is wrong, and so
+#    does tls_client_certificate_rejected — the peer refused our certificate
+#    before any HTTP was exchanged.
+#    connection_refused / dial_timeout / tls_certificate_* mean we cannot reach
+#    or trust the peer.
+#    http2_goaway is the peer taking the pinned connection away: a rolling
+#    restart, or a service mesh's max connection age.
 sum by (error_type) (rate(oci_gateway_forward_errors_total[5m]))
 ```
 
