@@ -34,7 +34,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -222,7 +221,7 @@ func New(opts ...Option) *Handler {
 	h := &Handler{
 		keychain: authn.DefaultKeychain,
 		base:     defaultBaseTransport(),
-		log:      log.New(os.Stderr, "", log.LstdFlags),
+		log:      log.Default(),
 		now:      time.Now,
 	}
 	for _, o := range opts {

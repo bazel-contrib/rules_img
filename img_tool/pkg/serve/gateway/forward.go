@@ -103,7 +103,7 @@ func NewForward(cfg ForwardConfig) (*ForwardHandler, error) {
 		log:         cfg.Logger,
 	}
 	if f.log == nil {
-		f.log = log.New(os.Stderr, "", log.LstdFlags)
+		f.log = log.Default()
 	}
 	if f.forwarderID == "" {
 		f.forwarderID, _ = os.Hostname()

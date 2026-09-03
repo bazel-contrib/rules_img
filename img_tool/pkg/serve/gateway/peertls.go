@@ -90,7 +90,7 @@ func NewPeerTLS(opts PeerTLSOptions) (*PeerTLS, error) {
 	}
 	t := &PeerTLS{opts: opts, log: opts.Logger, stamps: make(map[string]fileStamp)}
 	if t.log == nil {
-		t.log = log.New(os.Stderr, "", log.LstdFlags)
+		t.log = log.Default()
 	}
 	if err := t.loadCertificate(); err != nil {
 		return nil, err

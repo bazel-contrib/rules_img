@@ -1,6 +1,7 @@
 package main
 
 import (
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -563,4 +564,48 @@ func TestRejectSelfPeer(t *testing.T) {
 			t.Errorf("rejectSelfPeer(%s) = %v, want error: %v", tc.peer, err, tc.wantErr)
 		}
 	}
+}
+
+func TestLogFileCapturesEverythingTheGatewayLogs(t *testing.T) {
+	// The point of the flag: a sidecar's log goes to a file of its own instead of
+	// into the output of whatever it shares a terminal with. Every part of the
+	// gateway logs through the standard logger, so this one redirection is the
+	// whole mechanism.
+	path := filepath.Join(t.TempDir(), "gateway.log")
+	if err := os.WriteFile(path, []byte("an earlier run\n"), 0o600); err != nil {
+		t.Fatalf("seeding the log file: %v", err)
+	}
+	sink := (&logFlags{file: path}).setup()
+	t.Cleanup(sink.close)
+
+	log.Print("a decision")
+	if got := readFile(t, path); !strings.Contains(got, "an earlier run") || !strings.Contains(got, "a decision") {
+		t.Errorf("log file = %q, want the earlier run appended to, not truncated", got)
+	}
+
+	// Rotation: the rotator renames the file away, and until the gateway opens the
+	// path again it is writing to something nobody can find.
+	rotated := path + ".1"
+	if err := os.Rename(path, rotated); err != nil {
+		t.Fatalf("rotating the log file: %v", err)
+	}
+	sink.reopen()
+	log.Print("after the rotation")
+	if got := readFile(t, path); !strings.Contains(got, "after the rotation") {
+		t.Errorf("log file after reopen = %q, want the line logged after the rotation", got)
+	}
+	if got := readFile(t, rotated); strings.Contains(got, "after the rotation") {
+		t.Errorf("rotated file = %q, want nothing written to it after the reopen", got)
+	}
+}
+
+func TestLogFileUnsetLeavesLoggingOnStderr(t *testing.T) {
+	// The default has to stay exactly what it was: no file, no redirection, and a
+	// nil sink that the deferred close and the SIGHUP reopen both tolerate.
+	sink := (&logFlags{}).setup()
+	if sink != nil {
+		t.Fatalf("setup with no --log-file returned %v, want nil", sink)
+	}
+	sink.reopen()
+	sink.close()
 }
