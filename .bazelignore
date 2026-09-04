@@ -28,6 +28,10 @@ e2e/workspace/bazel-bin
 e2e/workspace/bazel-out
 e2e/workspace/bazel-testlogs
 e2e/workspace/bazel-workspace
+buildah/bazel-bin
+buildah/bazel-buildah
+buildah/bazel-out
+buildah/bazel-testlogs
 img_tool/bazel-bin
 img_tool/bazel-img_tool
 img_tool/bazel-out

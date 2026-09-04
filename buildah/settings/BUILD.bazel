@@ -1,0 +1,20 @@
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag", "string_flag")
+
+bool_flag(
+    name = "verbose",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+)
+
+bool_flag(
+    name = "debug",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+)
+
+# Fallback for buildah_dockerfile targets that set no remote_cache of their own.
+string_flag(
+    name = "default_remote_cache",
+    build_setting_default = "",
+    visibility = ["//visibility:public"],
+)

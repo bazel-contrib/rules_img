@@ -1,0 +1,8 @@
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+
+RUN echo "empty layer"
+
+RUN echo "empty layer"
+
+COPY tests/file2.txt /

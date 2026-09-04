@@ -1,0 +1,6 @@
+common --override_module=rules_img=..
+common --override_module=rules_img_tool=../img_tool
+
+import %workspace%/.bazelrc.common
+
+try-import %workspace%/.bazelrc.user

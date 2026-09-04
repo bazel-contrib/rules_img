@@ -1,0 +1,111 @@
+load("@rules_img//img:image.bzl", "image_manifest")
+load("@rules_img//img:layer.bzl", "image_layer")
+load("//:buildah.bzl", "buildah_dockerfile")
+
+buildah_dockerfile(
+    name = "image",
+    context = [
+        ":file.txt",
+    ],
+    dockerfile = ":Dockerfile",
+    layer_count = 3,
+)
+
+buildah_dockerfile(
+    name = "derived",
+    base = ":image",
+    context = [
+        ":file2.txt",
+    ],
+    dockerfile = ":Dockerfile.derived",
+    layer_count = 3,
+)
+
+buildah_dockerfile(
+    name = "derived_from_pulled",
+    base = "@alpine",
+    context = [
+        ":file2.txt",
+    ],
+    dockerfile = ":Dockerfile.derived",
+    layer_count = 3,
+)
+
+buildah_dockerfile(
+    name = "image_estargz",
+    context = [
+        ":file.txt",
+    ],
+    dockerfile = ":Dockerfile",
+    estargz = True,
+    layer_count = 3,
+)
+
+buildah_dockerfile(
+    name = "derived_estargz",
+    base = ":image_estargz",
+    context = [
+        ":file2.txt",
+    ],
+    dockerfile = ":Dockerfile.derived",
+    estargz = True,
+    layer_count = 3,
+)
+
+image_layer(
+    name = "tar_layer",
+    srcs = {"/file_xxx.txt": ":file.txt"},
+)
+
+image_manifest(
+    name = "image_from_manifest",
+    base = ":image",
+    layers = [":tar_layer"],
+)
+
+buildah_dockerfile(
+    name = "from_image_manifest",
+    base = ":image_from_manifest",
+    context = [
+        ":file2.txt",
+    ],
+    dockerfile = ":Dockerfile.derived",
+    estargz = True,
+    layer_count = 3,
+)
+
+buildah_dockerfile(
+    name = "cached_base",
+    context = [
+        ":file.txt",
+    ],
+    dockerfile = ":Dockerfile",
+    layer_count = 3,
+    remote_cache = "localhost:5000/buildah-cache",
+    tags = ["manual"],
+)
+
+buildah_dockerfile(
+    name = "cached_derived",
+    base = ":cached_base",
+    context = [
+        ":file2.txt",
+    ],
+    dockerfile = ":Dockerfile.derived",
+    layer_count = 3,
+    remote_cache = "localhost:5000/buildah-cache",
+    tags = ["manual"],
+)
+
+filegroup(
+    name = "full",
+    srcs = [
+        ":derived",
+        ":derived_estargz",
+        ":derived_from_pulled",
+        ":from_image_manifest",
+        ":image",
+        ":image_estargz",
+    ],
+    tags = ["manual"],
+)

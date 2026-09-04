@@ -1,0 +1,41 @@
+# write lockfile in this repo.
+# docs: https://bazel.build/reference/command-line-reference#flag--lockfile_mode
+common --lockfile_mode=update
+
+# normalize environment variables for hermeticity and reproducibility
+# docs: https://bazel.build/reference/command-line-reference#flag--incompatible_strict_action_env
+build --incompatible_strict_action_env
+
+# prevent actions from accidentaly depending on the network
+# docs: https://bazel.build/reference/command-line-reference#flag--sandbox_default_allow_network
+build --sandbox_default_allow_network=false
+
+# docs: https://bazel.build/reference/command-line-reference#flag--test_output
+test --test_output=errors
+# docs: https://bazel.build/reference/command-line-reference#flag--test_verbose_timeout_warnings
+test --test_verbose_timeout_warnings
+
+# make Bazel integration tests work on Windows
+# docs: https://bazel.build/reference/command-line-reference#flag--enable_runfiles
+common --enable_runfiles
+# docs: https://bazel.build/reference/command-line-reference#startup_options-flag--windows_enable_symlinks
+startup --windows_enable_symlinks
+
+# ensure correct config_setting visibility
+# docs: https://bazel.build/reference/command-line-reference#build-flag--incompatible_config_setting_private_default_visibility
+build --incompatible_config_setting_private_default_visibility
+
+# enable rule extension API (needed prior to Bazel 8)
+# docs: https://bazel.build/versions/7.4.0/reference/command-line-reference#flag--experimental_rule_extension_api
+build --experimental_rule_extension_api
+
+# enable protobuf toolchain resolution
+# docs: https://bazel.build/reference/command-line-reference#common_options-flag--incompatible_enable_proto_toolchain_resolution
+common --incompatible_enable_proto_toolchain_resolution
+
+# Convenience configs for choosing a destination registry globally, instead of
+# hardcoding `registry = ...` on every image_push/image_load target. Select one
+# with e.g. `bazel run //:push --config=ghcr`.
+# docs: --@rules_img//img/settings:destination_registry=<registry>
+common --@rules_img//img/settings:destination_registry=ttl.sh
+common:ghcr --@rules_img//img/settings:destination_registry=ghcr.io
