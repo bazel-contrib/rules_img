@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"strings"
 	"time"
@@ -71,8 +72,8 @@ func FindContainerdSocket() (string, error) {
 
 	// Add home directory based socket path (e.g. macOS containerd-proxy)
 	// See: https://github.com/bazel-contrib/rules_img/issues/199
-	if homeDir, err := os.UserHomeDir(); err == nil {
-		socketPaths = append(socketPaths, filepath.Join(homeDir, ".docker/run/containerd.sock"))
+	if u, err := user.Current(); err == nil {
+		socketPaths = append(socketPaths, filepath.Join(u.HomeDir, ".docker/run/containerd.sock"))
 	}
 
 	if xdgRuntimeDir := os.Getenv("XDG_RUNTIME_DIR"); xdgRuntimeDir != "" {
