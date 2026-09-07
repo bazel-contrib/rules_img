@@ -109,6 +109,7 @@ image_manifest(
     artifact_type = "application/vnd.rules_img.tools.v1",
     config_media_type = "application/vnd.oci.empty.v1+json",
     layers = [":layer_%s" % platform for platform in _PLATFORMS] + [":layer_prebuilt_lockfile"],
+    omit_platform = True,
 )
 
 [

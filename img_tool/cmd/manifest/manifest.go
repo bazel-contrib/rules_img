@@ -51,6 +51,7 @@ var (
 	artifactType              string
 	subjectDescriptor         string
 	sociIndexDescriptor       string
+	omitPlatform              bool
 )
 
 // inheritFromBase is the sentinel value used by the image_manifest rule to
@@ -103,6 +104,7 @@ func ManifestProcess(_ context.Context, args []string) {
 	flagSet.StringVar(&artifactType, "artifact-type", "", `Optional IANA media type of the artifact when the manifest is used for an artifact (e.g. application/vnd.cncf.helm.chart.v1, application/spdx+json).`)
 	flagSet.StringVar(&subjectDescriptor, "subject-descriptor", "", `A JSON file containing the descriptor of the subject manifest or index.`)
 	flagSet.StringVar(&sociIndexDescriptor, "soci-index-descriptor", "", `A JSON file containing the descriptor of this image's SOCI index. Its digest is recorded in the com.amazon.soci.index-digest manifest annotation (SOCI v2), which rewrites the manifest and changes its digest.`)
+	flagSet.BoolVar(&omitPlatform, "omit-platform", false, `Leave the platform out of the manifest descriptor. Use this for manifests that describe an artifact rather than a container image (an ORAS artifact, a Helm chart, ...): they have no platform of their own, so --os/--architecture would fall back to whatever platform the build targeted.`)
 
 	if err := flagSet.Parse(args); err != nil {
 		flagSet.Usage()
@@ -297,13 +299,14 @@ func ManifestProcess(_ context.Context, args []string) {
 		Annotations:  manifest.Annotations,
 	}
 
-	// Only a container image gets platform information. An artifact -- an ORAS
-	// artifact with an empty config, a Helm chart, ... -- has no platform of its
-	// own, and --os/--architecture default to the platform the manifest happens to
-	// be built for. Advertising that in an image index is both wrong (a runtime
+	// A manifest that describes an artifact rather than a container image -- an
+	// ORAS artifact with an empty config, a Helm chart, ... -- has no platform of
+	// its own, and --os/--architecture default to the platform the manifest happens
+	// to be built for. Advertising that in an image index is both wrong (a runtime
 	// may pick the artifact as the image for that platform) and non-reproducible,
-	// because the default depends on the host that ran the build.
-	if api.IsImageConfigMediaType(configMediaType) {
+	// because the default depends on the host that ran the build. Such manifests
+	// ask for --omit-platform; everything else gets its platform.
+	if !omitPlatform {
 		descriptor.Platform = &specv1.Platform{
 			Architecture: architecture,
 			OS:           operatingSystem,
