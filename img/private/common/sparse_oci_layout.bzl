@@ -1,7 +1,6 @@
 """Shared sparse OCI layout builder functions."""
 
 load(":build.bzl", "TOOLCHAIN")
-load(":tree_symlinks.bzl", "use_tree_symlinks")
 
 def build_sparse_oci_layout_for_manifest(ctx, manifest_out, config_out, layers, suffix = ""):
     """Build a sparse OCI layout tree artifact for a single-platform manifest.
@@ -35,7 +34,7 @@ def build_sparse_oci_layout_for_manifest(ctx, manifest_out, config_out, layers, 
             inputs.append(layer.compact_stream)
 
     img_toolchain_info = ctx.toolchains[TOOLCHAIN].imgtoolchaininfo
-    if use_tree_symlinks(img_toolchain_info.tool_exe):
+    if img_toolchain_info.supports_treeartifact_uplevel_symlinks:
         args.add("--symlink")
     ctx.actions.run(
         inputs = inputs,
@@ -82,7 +81,7 @@ def build_sparse_oci_layout_for_index(ctx, index_out, manifests):
                 inputs.append(layer.compact_stream)
 
     img_toolchain_info = ctx.toolchains[TOOLCHAIN].imgtoolchaininfo
-    if use_tree_symlinks(img_toolchain_info.tool_exe):
+    if img_toolchain_info.supports_treeartifact_uplevel_symlinks:
         args.add("--symlink")
     ctx.actions.run(
         inputs = inputs,

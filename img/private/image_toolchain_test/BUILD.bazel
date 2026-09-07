@@ -1,0 +1,16 @@
+load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
+load(":defs.bzl", "image_toolchain_test_suite")
+
+image_toolchain_test_suite(name = "tests")
+
+bzl_library(
+    name = "defs",
+    testonly = True,
+    srcs = ["defs.bzl"],
+    deps = [
+        "//img/private:image_toolchain",
+        "@bazel_features//:features",
+        "@bazel_skylib//lib:unittest",
+        "@bazel_skylib//rules:write_file",
+    ],
+)

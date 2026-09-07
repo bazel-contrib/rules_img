@@ -1,14 +1,13 @@
 """Shared helper to run img oci-layout with optional uplevel symlinks."""
 
 load("//img/private/common:build.bzl", "TOOLCHAIN")
-load("//img/private/common:tree_symlinks.bzl", "use_tree_symlinks")
 
 def run_oci_layout_action(ctx, *, format, output, args, inputs, mnemonic):
     """Run `img oci-layout`, emitting relative symlinks for directory outputs on Bazel >= 7.1.
 
     Directory TreeArtifact outputs use --symlink so that shared base-image blobs
     are symlinked rather than copied into every layout, matching rules_oci's
-    shared-base model (see use_tree_symlinks for when this applies).  Tar outputs
+    shared-base model when the toolchain supports it. Tar outputs
     always embed blobs.
 
     Args:
@@ -22,7 +21,7 @@ def run_oci_layout_action(ctx, *, format, output, args, inputs, mnemonic):
     img_toolchain_info = ctx.toolchains[TOOLCHAIN].imgtoolchaininfo
     tool = img_toolchain_info.tool_exe
 
-    if format == "directory" and use_tree_symlinks(tool):
+    if format == "directory" and img_toolchain_info.supports_treeartifact_uplevel_symlinks:
         args.add("--symlink")
 
     args.add("--output", output.path)

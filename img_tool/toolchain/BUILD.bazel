@@ -14,6 +14,7 @@ package(
 [
     image_toolchain(
         name = "image_toolchain_{}_{}".format(os, arch),
+        exec_os = os,
         tool_exe = "//cmd/img:img_{}_{}".format(os, arch),
     )
     for os, arch in platform_tuples
