@@ -13,6 +13,7 @@ def _prebuilt_toolchain_definition_for_platform(platform_name, tool_target):
     return """
 image_toolchain(
     name = "img_{platform_name}",
+    exec_os = "{exec_os}",
     tool_exe = "{tool_target}",
 )
 
@@ -30,6 +31,7 @@ toolchain(
     toolchain_type = "@rules_img//img:data_toolchain_type",
 )""".format(
         platform_name = platform_name,
+        exec_os = platform_name.split("_")[0],
         tool_target = tool_target,
         constraints = json.encode_indent(platform.constraints, prefix = "    ", indent = "    "),
     )
