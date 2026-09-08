@@ -382,6 +382,29 @@ def _binary_with_runfiles_groups_impl(ctx):
     ctx.actions.write(app, "app-data\n")
     app_rf = ctx.runfiles(files = [app])
 
+    # Two symlinks whose top-level directories tell the two runfiles symlink
+    # conventions apart, neither of which the group's files name:
+    #
+    #   * a root symlink, whose path is relative to the runfiles root, so it puts
+    #     content into a top-level "external_tool" of its own. This is the shape
+    #     @bazel_tools//tools/bash/runfiles arrives in since Bazel 9, where
+    #     runfiles.bash is delivered exclusively as a root symlink.
+    #   * a non-root symlink, whose path is relative to the workspace directory
+    #     inside the runfiles tree, so it puts content under "_main" -- never under
+    #     a top-level "nested_tool". A packager that reads its first segment the
+    #     way it reads a root symlink's writes a link that points nowhere.
+    #
+    # In shared runfiles mode both are reachable only if the symlinks contribute
+    # their directories, and "_main" is then named by the app group's files as
+    # well, so the layer must still hold exactly one link for it.
+    if ctx.attr.symlink_dirs:
+        helper = ctx.actions.declare_file(ctx.label.name + ".helper/helper.sh")
+        ctx.actions.write(helper, "#!/bin/sh\necho helper\n", is_executable = True)
+        app_rf = app_rf.merge(ctx.runfiles(
+            symlinks = {"nested_tool/bin/wrap.sh": helper},
+            root_symlinks = {"external_tool/bin/helper.sh": helper},
+        ))
+
     # The two content forms an entry may carry are both exercised on purpose: the
     # stdlib group hands over its depset of File directly (the files-only form) and
     # the app group hands over a runfiles object (the general form). A packager must
@@ -418,6 +441,14 @@ binary_with_runfiles_groups = rule(
     doc = "Executable fixture providing RunfilesGroupInfo with two ranked runfiles groups (stdlib, app).",
     attrs = {
         "binary": attr.label(allow_single_file = True, cfg = "target"),
+        "symlink_dirs": attr.bool(
+            default = False,
+            doc = """Whether to add runfiles symlinks under directories that hold no files.
+
+Such a directory is invisible to a packager that derives the runfiles tree from
+the groups' files alone. A root symlink and a non-root symlink are added
+together, because the two carry their paths in different namespaces.""",
+        ),
         "executable_group": attr.bool(
             default = False,
             doc = """Whether to name the app group as the RunfilesGroupInfo executable_group.

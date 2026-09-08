@@ -67,6 +67,14 @@ binary_with_runfiles_groups(
     binary = ":script_sh",
 )
 
+# Same, plus runfiles symlinks under directories that hold no files, so the
+# runfiles tree can only be complete if symlinks contribute their directories.
+binary_with_runfiles_groups(
+    name = "runfiles_groups_symlink_dir_tool",
+    binary = ":script_sh",
+    symlink_dirs = True,
+)
+
 # Same, but naming the app group as the executable_group: layer_from_binary then
 # folds the executable and its supporting files into that group's layer instead of
 # emitting a separate binary layer.
