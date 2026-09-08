@@ -190,26 +190,45 @@ func TestForwardRetriesRejectedAuthenticationOnlyOnce(t *testing.T) {
 	}
 }
 
-func TestForwardDoesNotReplayRequestBody(t *testing.T) {
-	keychain := &rotatingKeychain{}
-	upstream := &expiringAuthUpstream{rejectedStatus: http.StatusForbidden, acceptedPassword: "token-2"}
-	h := newAuthRefreshHandler(t, keychain, upstream)
+// TestForwardReplaysOnlyABodyItKept pins the bound on the auth retry: the
+// gateway sends a request a second time only when it still has the bytes to send
+// (see replay.go), and never resends a body it merely streamed.
+func TestForwardReplaysOnlyABodyItKept(t *testing.T) {
+	t.Run("kept", func(t *testing.T) {
+		keychain := &rotatingKeychain{}
+		upstream := &expiringAuthUpstream{rejectedStatus: http.StatusForbidden, acceptedPassword: "token-2"}
+		h := newAuthRefreshHandler(t, keychain, upstream)
 
-	resp := doBody(h, http.MethodPut, testUpstreamHost, "/v2/app/manifests/latest", `{"schemaVersion":2}`)
-	if resp.StatusCode != http.StatusForbidden {
-		t.Fatalf("status = %d, want 403", resp.StatusCode)
-	}
-	if upstream.attempts != 1 {
-		t.Fatalf("upstream attempts = %d, want 1", upstream.attempts)
-	}
+		resp := doBody(h, http.MethodPut, testUpstreamHost, "/v2/app/manifests/latest", `{"schemaVersion":2}`)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status = %d, want 200", resp.StatusCode)
+		}
+		if upstream.attempts != 2 {
+			t.Fatalf("upstream attempts = %d, want 2", upstream.attempts)
+		}
+	})
 
-	resp = doBody(h, http.MethodPut, testUpstreamHost, "/v2/app/manifests/latest", "")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status with refreshed auth = %d, want 200", resp.StatusCode)
-	}
-	if keychain.resolutions != 2 {
-		t.Fatalf("keychain resolutions = %d, want 2", keychain.resolutions)
-	}
+	t.Run("streamed", func(t *testing.T) {
+		keychain := &rotatingKeychain{}
+		upstream := &expiringAuthUpstream{rejectedStatus: http.StatusForbidden, acceptedPassword: "token-2"}
+		h := newAuthRefreshHandler(t, keychain, upstream)
+
+		resp := doBody(h, http.MethodPut, testUpstreamHost, "/v2/app/manifests/latest", strings.Repeat("x", maxReplayableBody+1))
+		if resp.StatusCode != http.StatusForbidden {
+			t.Fatalf("status = %d, want 403", resp.StatusCode)
+		}
+		if upstream.attempts != 1 {
+			t.Fatalf("upstream attempts = %d, want 1", upstream.attempts)
+		}
+
+		resp = doBody(h, http.MethodPut, testUpstreamHost, "/v2/app/manifests/latest", "")
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status with refreshed auth = %d, want 200", resp.StatusCode)
+		}
+		if keychain.resolutions != 2 {
+			t.Fatalf("keychain resolutions = %d, want 2", keychain.resolutions)
+		}
+	})
 }
 
 func TestAuthCacheStaleHandleDoesNotInvalidateReplacement(t *testing.T) {
