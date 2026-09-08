@@ -131,6 +131,15 @@ def _resolve_runfiles_config(ctx, path_in_image, has_runfiles_groups):
             runfiles_symlink_path = None,
         )
 
+def _default_metadata_args(ctx):
+    """The --default-metadata flag, as image_layer passes it.
+
+    A fresh list per call because each layer builds its own argument list.
+    """
+    if not ctx.attr.default_metadata:
+        return []
+    return ["--default-metadata", ctx.attr.default_metadata]
+
 def _find_executable_group_index(ordered_groups, executable_group):
     """Find the index of the group named by executable_group, if any."""
     if executable_group == None:
@@ -215,7 +224,7 @@ def _create_grouped_layers(ctx, settings, exe, path_in_image, ordered_groups, ru
 
     for i, entry in enumerate(ordered_groups):
         layer_name = "{}_{}".format(ctx.attr.name, i)
-        extra_args = []
+        extra_args = _default_metadata_args(ctx)
 
         # The group's contents as a runfiles object. A group whose content is a bare
         # depset of File (the files-only form) is lifted here, yielding empty
@@ -266,7 +275,7 @@ def _create_grouped_layers(ctx, settings, exe, path_in_image, ordered_groups, ru
 
     if executable_group_index < 0:
         bin_layer_name = "{}_{}".format(ctx.attr.name, len(ordered_groups))
-        bin_extra_args = []
+        bin_extra_args = _default_metadata_args(ctx)
         bin_extra_inputs = []
         _append_binary_args(ctx, exe, path_in_image, ordered_groups, default_info.default_runfiles, runfiles_config, content_prefix, bin_extra_args, bin_extra_inputs, default_info.files)
 
@@ -370,7 +379,7 @@ def _layer_from_binary_impl(ctx):
         executable_group_index = _find_executable_group_index(ordered_groups, resolved.executable_group)
         result = _create_grouped_layers(ctx, settings, exe, path_in_image, ordered_groups, runfiles_config, executable_group_index)
     else:
-        extra_args = []
+        extra_args = _default_metadata_args(ctx)
         extra_inputs = []
 
         default_info = ctx.attr.binary[DefaultInfo]
@@ -611,6 +620,14 @@ Possible settings:
 """,
             default = "auto",
             values = ["auto", "shared", "private"],
+        ),
+        "default_metadata": attr.string(
+            default = "",
+            doc = """JSON-encoded default metadata to apply to all files in the layers.
+Can include fields like mode, uid, gid, uname, gname, mtime, and pax_records.
+
+Accepts the same value as image_layer's attribute of the same name, so
+img/layer.bzl's file_metadata() builds it.""",
         ),
         "layer_budget": attr.int(
             default = 0,
