@@ -121,6 +121,15 @@ def _prebuilt_img_tool_repo_impl(rctx):
         content = """exports_files(["img.exe"])""",
     )
 
+    if hasattr(rctx, "repo_metadata"):
+        # `fetch_tool` refuses to download without a digest to verify against,
+        # so the contents of this repo are a pure function of its attributes.
+        # Saying so allows participating in the repo contents cache.
+        return rctx.repo_metadata(reproducible = True)
+
+    # only to make buildifier happy
+    return None
+
 prebuilt_img_tool_repo = repository_rule(
     implementation = _prebuilt_img_tool_repo_impl,
     attrs = LOCKFILE_ATTRS,
