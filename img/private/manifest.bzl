@@ -512,6 +512,8 @@ def _image_manifest_impl(ctx):
     args.add("--architecture", arch)
     if variant != "":
         args.add("--variant", variant)
+    if ctx.attr.omit_platform:
+        args.add("--omit-platform")
     for layer in layers:
         inputs.append(layer.metadata)
     args.add_all(layers, format_each = "--layer-from-metadata=%s", map_each = _to_layer_arg, expand_directories = False)
@@ -816,6 +818,34 @@ image_manifest(
 ```
 """,
             providers = [platform_common.PlatformInfo],
+        ),
+        "omit_platform": attr.bool(
+            doc = """Leave the platform out of this manifest's descriptor.
+
+By default, the descriptor advertises the platform the manifest was built for, which is what
+lets an `image_index` pick the right manifest per platform.
+
+Set this for a manifest that describes an artifact rather than a container image -- an ORAS
+artifact, a Helm chart, an SBOM. Such a manifest has no platform of its own, so the descriptor
+would fall back to whatever platform the build happened to target (the host platform, unless
+`platform` is set). In an index, that is both misleading -- a runtime may resolve the index to
+the artifact instead of the image -- and non-reproducible, since the index digest then depends
+on the machine that ran the build.
+
+Only the descriptor is affected: the image config still records its os and architecture.
+
+Example:
+```python
+image_manifest(
+    name = "sbom",
+    artifact_type = "application/spdx+json",
+    config_media_type = "application/vnd.oci.empty.v1+json",
+    layers = [":sbom_layer"],
+    omit_platform = True,
+)
+```
+""",
+            default = False,
         ),
         "user": attr.string(
             doc = """The username or UID which is a platform-specific structure that allows specific control over which user the process run as.
