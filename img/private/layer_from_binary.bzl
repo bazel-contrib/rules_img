@@ -131,6 +131,26 @@ def _resolve_runfiles_config(ctx, path_in_image, has_runfiles_groups):
             runfiles_symlink_path = None,
         )
 
+def _extract_symlink_top_level_dir(entry):
+    """Extract the top-level directory name from a runfiles symlink entry.
+
+    The counterpart of _extract_runfiles_top_level_dir for the symlinks and
+    root_symlinks members of a runfiles object, whose paths are strings rather
+    than Files. A root symlink's path is relative to the runfiles root, so its
+    first segment is the directory that needs a link.
+    """
+    path = entry.path
+    if path.startswith("../"):
+        path = path[3:]
+    slash_pos = path.find("/")
+    first = path[:slash_pos] if slash_pos > 0 else path
+
+    # As in _extract_runfiles_top_level_dir: the repo mapping manifest is placed
+    # explicitly rather than through the symlink tree.
+    if first == "_repo_mapping":
+        return None
+    return first
+
 def _find_executable_group_index(ordered_groups, executable_group):
     """Find the index of the group named by executable_group, if any."""
     if executable_group == None:
@@ -173,6 +193,14 @@ def _append_binary_args(ctx, exe, path_in_image, ordered_groups, runfiles, runfi
         symlink_args.set_param_file_format("multiline")
         symlink_args.use_param_file("--symlink-pairs-from-file=%s", use_always = True)
         symlink_args.add_all(all_runfiles, map_each = _extract_runfiles_top_level_dir, format_each = "{}\0{}\0%s".format(symlink_prefix, rel_content), uniquify = True, expand_directories = False)
+
+        # Directories contributed only by a symlink or root symlink, which the
+        # files above cannot account for. uniquify applies per add_all call, so a
+        # directory named by both a file and a symlink is emitted twice; the
+        # repeated pair is a no-op.
+        group_runfiles = [runfiles_groups.runfiles(ctx, entry) for entry in ordered_groups]
+        all_symlinks = depset(transitive = [rf.root_symlinks for rf in group_runfiles] + [rf.symlinks for rf in group_runfiles])
+        symlink_args.add_all(all_symlinks, map_each = _extract_symlink_top_level_dir, format_each = "{}\0{}\0%s".format(symlink_prefix, rel_content), uniquify = True, expand_directories = False)
         extra_args.append(symlink_args)
 
     if runfiles:
