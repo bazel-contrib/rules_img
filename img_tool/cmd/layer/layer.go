@@ -245,15 +245,18 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 		symlinkFlags = append(symlinkFlags, symlinkOpsFromParamFile...)
 	}
 
-	// read the symlinkPairsFromFile parameter file and create a list of operations
+	// read the symlinkPairsFromFile parameter files and create a list of
+	// operations, dropping the repeats that dedupeSymlinks explains.
+	var symlinkPairOps symlinks
 	for _, paramFile := range symlinkPairsFromFiles {
 		symlinkOpsFromParamFile, err := readSymlinkPairsParamFile(paramFile)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error reading symlink pairs parameter file: %v\n", err)
 			os.Exit(1)
 		}
-		symlinkFlags = append(symlinkFlags, symlinkOpsFromParamFile...)
+		symlinkPairOps = append(symlinkPairOps, symlinkOpsFromParamFile...)
 	}
+	symlinkFlags = append(symlinkFlags, dedupeSymlinks(symlinkPairOps)...)
 
 	// read the emptyFilesFromFile parameter files and collect paths
 	var emptyFilePaths []string

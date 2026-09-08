@@ -227,3 +227,29 @@ func readSymlinkPairsParamFile(paramFile string) (symlinks, error) {
 	}
 	return links, nil
 }
+
+// dedupeSymlinks drops the exact repeats from a list of symlinks, keeping the
+// first occurrence of each and the order of the rest.
+//
+// The symlink pairs of a shared runfiles tree name one link per top-level
+// directory, and the caller derives that set from several runfiles components
+// (files, symlinks, root symlinks, empty files) that it can only deduplicate one
+// at a time. A directory that more than one component names therefore arrives
+// more than once. The repeat has to collapse here, because the tar writer
+// records every header it is handed: an unfiltered repeat becomes a second,
+// identical entry in the layer.
+//
+// Two links that agree on the name but not on the target are a genuine conflict,
+// not a repeat, and both are kept.
+func dedupeSymlinks(links symlinks) symlinks {
+	seen := make(map[symlink]struct{}, len(links))
+	var unique symlinks
+	for _, link := range links {
+		if _, ok := seen[link]; ok {
+			continue
+		}
+		seen[link] = struct{}{}
+		unique = append(unique, link)
+	}
+	return unique
+}

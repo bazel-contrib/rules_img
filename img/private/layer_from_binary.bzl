@@ -88,14 +88,16 @@ def _normalize_path(path):
         return path[1:]
     return path
 
-def _extract_runfiles_top_level_dir(f):
-    """Extract the top-level directory name from a runfiles file for symlink dedup.
+def _top_level_dir_of_short_path(short_path):
+    """Extract the top-level runfiles directory of a File.short_path-shaped path.
 
-    Used as map_each callback with uniquify=True to produce one symlink entry
-    per unique top-level directory under the runfiles root.
+    An external-repo path starts with "../<repo>/" and keeps the repo name; a
+    main-repo path is repo-relative and lives under "_main". Returns None for the
+    repo mapping manifest, which is placed explicitly rather than through the
+    symlink tree.
     """
-    if f.short_path.startswith("../"):
-        remainder = f.short_path[3:]
+    if short_path.startswith("../"):
+        remainder = short_path[3:]
         slash_pos = remainder.find("/")
         entry = remainder[:slash_pos] if slash_pos > 0 else remainder
     else:
@@ -103,6 +105,23 @@ def _extract_runfiles_top_level_dir(f):
     if entry == "_repo_mapping":
         return None
     return entry
+
+def _extract_runfiles_top_level_dir(f):
+    """Extract the top-level directory name from a runfiles file for symlink dedup.
+
+    Used as map_each callback with uniquify=True to produce one symlink entry
+    per unique top-level directory under the runfiles root.
+    """
+    return _top_level_dir_of_short_path(f.short_path)
+
+def _extract_empty_filename_top_level_dir(empty_filename):
+    """Extract the top-level directory name from a runfiles empty filename.
+
+    runfiles.empty_filenames use the File.short_path convention, which
+    empty_runfile_short_path mirrors when it places them, so the same transform
+    applies.
+    """
+    return _top_level_dir_of_short_path(empty_filename)
 
 def _resolve_runfiles_config(ctx, path_in_image, has_runfiles_groups):
     """Resolve runfiles placement configuration."""
@@ -131,25 +150,33 @@ def _resolve_runfiles_config(ctx, path_in_image, has_runfiles_groups):
             runfiles_symlink_path = None,
         )
 
-def _extract_symlink_top_level_dir(entry):
-    """Extract the top-level directory name from a runfiles symlink entry.
+def _extract_root_symlink_top_level_dir(entry):
+    """Extract the top-level directory name from a runfiles root symlink.
 
-    The counterpart of _extract_runfiles_top_level_dir for the symlinks and
-    root_symlinks members of a runfiles object, whose paths are strings rather
-    than Files. A root symlink's path is relative to the runfiles root, so its
-    first segment is the directory that needs a link.
+    A root symlink's path is relative to the runfiles root -- the convention
+    root_symlinks_arg places it under -- so the first segment is the directory
+    that needs a link. A root symlink at the runfiles root itself has no segment
+    to strip and names its own link.
     """
     path = entry.path
-    if path.startswith("../"):
-        path = path[3:]
     slash_pos = path.find("/")
-    first = path[:slash_pos] if slash_pos > 0 else path
+    first = path[:slash_pos] if slash_pos >= 0 else path
 
-    # As in _extract_runfiles_top_level_dir: the repo mapping manifest is placed
+    # As in _top_level_dir_of_short_path: the repo mapping manifest is placed
     # explicitly rather than through the symlink tree.
     if first == "_repo_mapping":
         return None
     return first
+
+def _main_workspace_dir(_entry):
+    """Return the top-level directory of a non-root runfiles symlink.
+
+    A non-root symlink's path is relative to the workspace directory inside the
+    runfiles tree, not to the runfiles root, and symlinks_arg places it under
+    "_main/" accordingly. Every such entry therefore needs a link for "_main" and
+    for nothing else, whatever its own first segment says.
+    """
+    return "_main"
 
 def _find_executable_group_index(ordered_groups, executable_group):
     """Find the index of the group named by executable_group, if any."""
@@ -169,7 +196,51 @@ def _append_extra_default_files(ctx, default_files, exe, path_in_image, extra_ar
     """
     place_extra_executable_files(ctx, default_files, exe, _normalize_path(path_in_image), extra_args, extra_inputs)
 
-def _append_binary_args(ctx, exe, path_in_image, ordered_groups, runfiles, runfiles_config, content_prefix, extra_args, extra_inputs, default_files):
+def _append_shared_runfiles_symlink_args(ctx, runfiles_config, content_prefix, runfiles_objects, extra_args):
+    """Append the symlink pairs that rebuild the runfiles tree in shared mode.
+
+    In shared mode the content lives under one path for every binary that shares
+    it, and the conventional runfiles path is rebuilt as one symlink per top-level
+    directory that the content occupies. Each runfiles component names its
+    directory by its own convention, so each needs its own map_each: a file and an
+    empty filename by File.short_path, a root symlink relative to the runfiles
+    root, and a non-root symlink relative to the workspace directory under it.
+    Deriving the set from the files alone leaves a directory that only a symlink
+    puts content into with no link at all.
+
+    A directory that more than one component names is emitted once per component,
+    because uniquify works per add_all call. The img tool drops the repeated pair.
+
+    Args:
+        ctx: The rule context.
+        runfiles_config: The struct from _resolve_runfiles_config, in shared mode.
+        content_prefix: The normalized path the runfiles content is placed under.
+        runfiles_objects: The runfiles objects holding that content: one per group,
+            or the binary's own default runfiles as a single-element list.
+        extra_args: List of args objects to append to.
+    """
+    symlink_prefix = _normalize_path(runfiles_config.runfiles_symlink_path)
+    rel_content = "/".join([".."] * (symlink_prefix.count("/") + 1)) + "/" + content_prefix
+    pair_format = "{}\0{}\0%s".format(symlink_prefix, rel_content)
+    symlink_args = ctx.actions.args()
+    symlink_args.set_param_file_format("multiline")
+    symlink_args.use_param_file("--symlink-pairs-from-file=%s", use_always = True)
+    for component, map_each in [
+        ([rf.files for rf in runfiles_objects], _extract_runfiles_top_level_dir),
+        ([rf.root_symlinks for rf in runfiles_objects], _extract_root_symlink_top_level_dir),
+        ([rf.symlinks for rf in runfiles_objects], _main_workspace_dir),
+        ([rf.empty_filenames for rf in runfiles_objects], _extract_empty_filename_top_level_dir),
+    ]:
+        symlink_args.add_all(
+            depset(transitive = component),
+            map_each = map_each,
+            format_each = pair_format,
+            uniquify = True,
+            expand_directories = False,
+        )
+    extra_args.append(symlink_args)
+
+def _append_binary_args(ctx, exe, path_in_image, group_runfiles, runfiles_config, content_prefix, extra_args, extra_inputs, default_files):
     """Append binary executable, symlinks, and repo mapping args to a layer."""
     binary_args = ctx.actions.args()
     binary_args.set_param_file_format("multiline")
@@ -177,38 +248,8 @@ def _append_binary_args(ctx, exe, path_in_image, ordered_groups, runfiles, runfi
     binary_args.add_all([exe], map_each = files_arg, format_each = "{}\0%s".format(_normalize_path(path_in_image)), expand_directories = False)
     extra_args.append(binary_args)
 
-    if runfiles:
-        symlink_add_args = ctx.actions.args()
-        symlink_add_args.set_param_file_format("multiline")
-        symlink_add_args.use_param_file("--add-from-file=%s", use_always = True)
-        symlink_add_args.add_all(runfiles.symlinks, map_each = symlinks_arg, format_each = "{}/%s".format(content_prefix))
-        symlink_add_args.add_all(runfiles.root_symlinks, map_each = root_symlinks_arg, format_each = "{}/%s".format(content_prefix))
-        extra_args.append(symlink_add_args)
-
     if runfiles_config.shared:
-        all_runfiles = depset(transitive = [runfiles_groups.files(entry) for entry in ordered_groups])
-        symlink_prefix = _normalize_path(runfiles_config.runfiles_symlink_path)
-        rel_content = "/".join([".."] * (symlink_prefix.count("/") + 1)) + "/" + content_prefix
-        symlink_args = ctx.actions.args()
-        symlink_args.set_param_file_format("multiline")
-        symlink_args.use_param_file("--symlink-pairs-from-file=%s", use_always = True)
-        symlink_args.add_all(all_runfiles, map_each = _extract_runfiles_top_level_dir, format_each = "{}\0{}\0%s".format(symlink_prefix, rel_content), uniquify = True, expand_directories = False)
-
-        # Directories contributed only by a symlink or root symlink, which the
-        # files above cannot account for. uniquify applies per add_all call, so a
-        # directory named by both a file and a symlink is emitted twice; the
-        # repeated pair is a no-op.
-        group_runfiles = [runfiles_groups.runfiles(ctx, entry) for entry in ordered_groups]
-        all_symlinks = depset(transitive = [rf.root_symlinks for rf in group_runfiles] + [rf.symlinks for rf in group_runfiles])
-        symlink_args.add_all(all_symlinks, map_each = _extract_symlink_top_level_dir, format_each = "{}\0{}\0%s".format(symlink_prefix, rel_content), uniquify = True, expand_directories = False)
-        extra_args.append(symlink_args)
-
-    if runfiles:
-        symlink_inputs = []
-        symlink_inputs.extend([se.target_file for se in runfiles.symlinks.to_list()])
-        symlink_inputs.extend([se.target_file for se in runfiles.root_symlinks.to_list()])
-        if len(symlink_inputs) > 0:
-            extra_inputs.append(depset(symlink_inputs))
+        _append_shared_runfiles_symlink_args(ctx, runfiles_config, content_prefix, group_runfiles, extra_args)
 
     repo_mapping_manifest = get_repo_mapping_manifest(ctx.attr.binary)
     if repo_mapping_manifest != None:
@@ -227,10 +268,10 @@ def _append_binary_args(ctx, exe, path_in_image, ordered_groups, runfiles, runfi
 def _create_grouped_layers(ctx, settings, exe, path_in_image, ordered_groups, runfiles_config, executable_group_index):
     """Create multiple layers from RunfilesGroupInfo groups.
 
-    Each runfiles group becomes its own layer. The binary executable, runfiles
-    symlinks, and repo-mapping manifest are either merged into the group marked
-    as executable_group, or appended as a separate layer if no group carries
-    that annotation.
+    Each runfiles group becomes its own layer. The binary executable, the links
+    that rebuild the runfiles tree in shared mode, and the repo-mapping manifest
+    are either merged into the group marked as executable_group, or appended as a
+    separate layer if no group carries that annotation.
     """
     all_layers = []
     all_outs = []
@@ -241,16 +282,19 @@ def _create_grouped_layers(ctx, settings, exe, path_in_image, ordered_groups, ru
     default_info = ctx.attr.binary[DefaultInfo]
     content_prefix = _normalize_path(runfiles_config.runfiles_content_path)
 
-    for i, entry in enumerate(ordered_groups):
+    # Every group's contents as a runfiles object, resolved once and shared by the
+    # per-group layers and the binary layer. A group whose content is a bare depset
+    # of File (the files-only form) is lifted here, yielding empty
+    # symlink/root_symlink/empty_filename depsets, so both content forms are placed
+    # by the same code below. entry.content itself is opaque and must not be read
+    # directly.
+    all_group_runfiles = [runfiles_groups.runfiles(ctx, entry) for entry in ordered_groups]
+
+    for i in range(len(ordered_groups)):
         layer_name = "{}_{}".format(ctx.attr.name, i)
         extra_args = []
 
-        # The group's contents as a runfiles object. A group whose content is a bare
-        # depset of File (the files-only form) is lifted here, yielding empty
-        # symlink/root_symlink/empty_filename depsets, so both content forms are
-        # placed by the same code below. entry.content itself is opaque and must not
-        # be read directly.
-        group_runfiles = runfiles_groups.runfiles(ctx, entry)
+        group_runfiles = all_group_runfiles[i]
         extra_inputs = [group_runfiles.files]
 
         add_args = ctx.actions.args()
@@ -279,7 +323,7 @@ def _create_grouped_layers(ctx, settings, exe, path_in_image, ordered_groups, ru
         extra_args.append(empty_args)
 
         if i == executable_group_index:
-            _append_binary_args(ctx, exe, path_in_image, ordered_groups, None, runfiles_config, content_prefix, extra_args, extra_inputs, default_info.files)
+            _append_binary_args(ctx, exe, path_in_image, all_group_runfiles, runfiles_config, content_prefix, extra_args, extra_inputs, default_info.files)
 
         layer_info, out, metadata, compact_stream, mtree, ztoc = create_tar_single_layer(ctx, settings, layer_name, extra_args, extra_inputs)
         all_layers.append(layer_info)
@@ -296,7 +340,14 @@ def _create_grouped_layers(ctx, settings, exe, path_in_image, ordered_groups, ru
         bin_layer_name = "{}_{}".format(ctx.attr.name, len(ordered_groups))
         bin_extra_args = []
         bin_extra_inputs = []
-        _append_binary_args(ctx, exe, path_in_image, ordered_groups, default_info.default_runfiles, runfiles_config, content_prefix, bin_extra_args, bin_extra_inputs, default_info.files)
+
+        # DefaultInfo.default_runfiles is deliberately not placed here. Per the
+        # RunfilesGroupInfo completeness invariant the groups' union equals it
+        # component by component, so the loop above has already written every
+        # file, symlink, root symlink and empty file. Placing the binary's
+        # runfiles again would write the symlinked content a second time, into a
+        # layer above the group that owns it.
+        _append_binary_args(ctx, exe, path_in_image, all_group_runfiles, runfiles_config, content_prefix, bin_extra_args, bin_extra_inputs, default_info.files)
 
         layer_info, out, metadata, compact_stream, mtree, ztoc = create_tar_single_layer(ctx, settings, bin_layer_name, bin_extra_args, bin_extra_inputs)
         all_layers.append(layer_info)
@@ -473,13 +524,7 @@ def _layer_from_binary_impl(ctx):
                     extra_args.append(empty_args)
 
                 if runfiles_config.shared and runfiles:
-                    symlink_prefix = _normalize_path(runfiles_config.runfiles_symlink_path)
-                    rel_content = "/".join([".."] * (symlink_prefix.count("/") + 1)) + "/" + content_prefix
-                    symlink_args = ctx.actions.args()
-                    symlink_args.set_param_file_format("multiline")
-                    symlink_args.use_param_file("--symlink-pairs-from-file=%s", use_always = True)
-                    symlink_args.add_all(runfiles.files, map_each = _extract_runfiles_top_level_dir, format_each = "{}\0{}\0%s".format(symlink_prefix, rel_content), uniquify = True, expand_directories = False)
-                    extra_args.append(symlink_args)
+                    _append_shared_runfiles_symlink_args(ctx, runfiles_config, content_prefix, [runfiles], extra_args)
 
                 repo_mapping_manifest = get_repo_mapping_manifest(ctx.attr.binary)
                 if repo_mapping_manifest != None:

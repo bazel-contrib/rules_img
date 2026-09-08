@@ -4,9 +4,13 @@ load("//tests/layering:defs.bzl", "layer_contents_test")
 # gazelle:exclude_from_release
 
 # In shared runfiles mode the binary's runfiles tree is rebuilt as one symlink
-# per top-level directory. A directory contributed only by a runfiles symlink --
-# here "external_tool", which holds no files of its own -- has to get its link
-# too, or its content sits under the shared path with nothing pointing at it.
+# per top-level directory. A directory contributed only by a runfiles symlink has
+# to get its link too, or its content sits under the shared path with nothing
+# pointing at it. The fixture contributes two such directories, one per symlink
+# namespace: "external_tool" through a root symlink, which is relative to the
+# runfiles root, and "_main" through a non-root symlink, which is relative to the
+# workspace directory under it. "_main" also holds files, so the goldens pin that
+# the layer carries exactly one link for it.
 layer_from_binary(
     name = "layer",
     binary = "//tests/layering/testcases:runfiles_groups_symlink_dir_tool",
@@ -23,4 +27,23 @@ layer_contents_test(
         "app.ndjson",
         "binary.ndjson",
     ],
+)
+
+# The same binary and the same shared mode, but through the single-layer path: a
+# layer_budget of 1 leaves no layer for a group, so the rule packages
+# DefaultInfo.default_runfiles as a whole instead of the groups. That path builds
+# the same set of links from its own code, so it needs the same coverage.
+layer_from_binary(
+    name = "ungrouped_layer",
+    binary = "//tests/layering/testcases:runfiles_groups_symlink_dir_tool",
+    layer_budget = 1,
+    path = "/app/bin/launcher",
+    runfiles_sharing_mode = "shared",
+)
+
+layer_contents_test(
+    name = "ungrouped_test",
+    size = "small",
+    layer = ":ungrouped_layer",
+    manifests = ["ungrouped.ndjson"],
 )

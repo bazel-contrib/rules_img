@@ -34,6 +34,7 @@ go_test(
     name = "layer_test",
     srcs = [
         "layer_test.go",
+        "paramfile_test.go",
         "placement_test.go",
     ],
     embed = [":layer"],
