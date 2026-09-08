@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"net/http/httptrace"
@@ -89,6 +90,9 @@ type ForwardHandler struct {
 	log         *log.Logger
 	metrics     *metrics
 	proxy       *httputil.ReverseProxy
+	// replay rations the memory spent on keeping request bodies resendable; see
+	// replay.go.
+	replay *replayBudget
 }
 
 // NewForward constructs a [ForwardHandler].
@@ -101,6 +105,7 @@ func NewForward(cfg ForwardConfig) (*ForwardHandler, error) {
 		credential:  cfg.Credential,
 		forwarderID: cfg.ForwarderID,
 		log:         cfg.Logger,
+		replay:      newReplayBudget(replayBudgetBytes),
 	}
 	if f.log == nil {
 		f.log = log.Default()
@@ -152,6 +157,9 @@ type forwardState struct {
 	// gatewayError is the peer's X-rules_img-Gateway-Error, set only when the peer
 	// itself rejected us rather than passing a registry's answer back.
 	gatewayError string
+	// replay is the request body, kept so the hop can be retried; nil when the
+	// body streams. [ForwardHandler.rewrite] puts it on the outbound request.
+	replay []byte
 }
 
 type forwardStateKey struct{}
@@ -182,6 +190,21 @@ func (f *ForwardHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	obs.peer = f.peer.Host
 
 	state := &forwardState{obs: obs, cls: cls, started: time.Now()}
+
+	// Keep a copy of a body short enough to hold, so the transport can send the
+	// request again on a fresh connection when the peer drains the one it is on.
+	// A rolling update of the serving deployment is exactly that, and it is a far
+	// more frequent event than a registry restart. See replay.go.
+	replay, releaseReplay, err := replayableBody(r, f.replay)
+	defer releaseReplay()
+	if err != nil {
+		obs.fail(r.Context(), transferErrorType(err))
+		f.log.Printf("%s %q -> 400: reading the request body: %v", r.Method, r.URL.EscapedPath(), err)
+		writeOCIError(w, http.StatusBadRequest, "UNKNOWN", "this gateway could not read the request body")
+		return
+	}
+	state.replay = replay
+
 	if f.credential != nil {
 		token, err := f.credential(r.Context())
 		if err != nil {
@@ -251,6 +274,7 @@ func stateFrom(r *http.Request) *forwardState {
 // rewrite turns an inbound request into the request sent to the peer.
 func (f *ForwardHandler) rewrite(pr *httputil.ProxyRequest) {
 	pr.SetURL(f.peer)
+	state := stateFrom(pr.Out)
 
 	// Restore the query byte-for-byte. ReverseProxy re-encodes RawQuery through
 	// url.ParseQuery/url.Values.Encode before Rewrite is called whenever it sees a
@@ -264,7 +288,7 @@ func (f *ForwardHandler) rewrite(pr *httputil.ProxyRequest) {
 	// Never let a build action's Authorization header be mistaken for (or shadow)
 	// our peer credential. Delete before setting, in that order.
 	pr.Out.Header.Del("Authorization")
-	if state := stateFrom(pr.Out); state != nil && state.credential != "" {
+	if state != nil && state.credential != "" {
 		pr.Out.Header.Set("Authorization", "Bearer "+state.credential)
 	}
 
@@ -282,6 +306,17 @@ func (f *ForwardHandler) rewrite(pr *httputil.ProxyRequest) {
 	// Expect: 100-continue was already answered by net/http on the first read of
 	// the body, so forwarding it would only make the peer wait for nothing.
 	pr.Out.Header.Del("Expect")
+
+	// Hand the transport a body it can rewind, so a peer draining the connection
+	// mid-request costs a retry rather than the request. ReverseProxy clones the
+	// inbound body, which is a stream that ServeHTTP has already read into
+	// state.replay; without this swap the outbound request would carry the
+	// exhausted original. See replay.go.
+	if state != nil && state.replay != nil {
+		body := state.replay
+		pr.Out.Body = replayBody(body)
+		pr.Out.GetBody = func() (io.ReadCloser, error) { return replayBody(body), nil }
+	}
 
 	// X-rules_img-Original-Host is passed through untouched, and deliberately not
 	// resolved first: the peer must see byte-for-byte what a single-hop gateway
