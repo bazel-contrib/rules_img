@@ -1,0 +1,26 @@
+load("@rules_img//img:layer.bzl", "layer_from_binary")
+load("//tests/layering:defs.bzl", "layer_contents_test")
+
+# gazelle:exclude_from_release
+
+# In shared runfiles mode the binary's runfiles tree is rebuilt as one symlink
+# per top-level directory. A directory contributed only by a runfiles symlink --
+# here "external_tool", which holds no files of its own -- has to get its link
+# too, or its content sits under the shared path with nothing pointing at it.
+layer_from_binary(
+    name = "layer",
+    binary = "//tests/layering/testcases:runfiles_groups_symlink_dir_tool",
+    path = "/app/bin/launcher",
+    runfiles_sharing_mode = "shared",
+)
+
+layer_contents_test(
+    name = "test",
+    size = "small",
+    layer = ":layer",
+    manifests = [
+        "stdlib.ndjson",
+        "app.ndjson",
+        "binary.ndjson",
+    ],
+)

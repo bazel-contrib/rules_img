@@ -382,6 +382,18 @@ def _binary_with_runfiles_groups_impl(ctx):
     ctx.actions.write(app, "app-data\n")
     app_rf = ctx.runfiles(files = [app])
 
+    # A root symlink whose top-level directory holds no files of its own. Nothing
+    # in the group's files names "external_tool", so in shared runfiles mode it
+    # is only reachable if the symlink itself contributes the directory. This is
+    # the shape @bazel_tools//tools/bash/runfiles arrives in since Bazel 9, where
+    # runfiles.bash is delivered exclusively as a root symlink.
+    if ctx.attr.root_symlink:
+        helper = ctx.actions.declare_file(ctx.label.name + ".helper/helper.sh")
+        ctx.actions.write(helper, "#!/bin/sh\necho helper\n", is_executable = True)
+        app_rf = app_rf.merge(
+            ctx.runfiles(root_symlinks = {"external_tool/bin/helper.sh": helper}),
+        )
+
     # The two content forms an entry may carry are both exercised on purpose: the
     # stdlib group hands over its depset of File directly (the files-only form) and
     # the app group hands over a runfiles object (the general form). A packager must
@@ -418,6 +430,13 @@ binary_with_runfiles_groups = rule(
     doc = "Executable fixture providing RunfilesGroupInfo with two ranked runfiles groups (stdlib, app).",
     attrs = {
         "binary": attr.label(allow_single_file = True, cfg = "target"),
+        "root_symlink": attr.bool(
+            default = False,
+            doc = """Whether to add a root symlink under a directory that has no files.
+
+Such a directory is invisible to a packager that derives the runfiles tree from
+the groups' files alone.""",
+        ),
         "executable_group": attr.bool(
             default = False,
             doc = """Whether to name the app group as the RunfilesGroupInfo executable_group.
