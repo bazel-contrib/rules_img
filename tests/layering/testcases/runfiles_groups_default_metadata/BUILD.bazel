@@ -1,0 +1,28 @@
+load("@rules_img//img:layer.bzl", "file_metadata", "layer_from_binary")
+load("//tests/layering:defs.bzl", "layer_contents_test")
+
+# gazelle:exclude_from_release
+
+# default_metadata on the grouped path: it has to reach every group's layer and
+# the separate binary layer, not just the first one.
+layer_from_binary(
+    name = "layer",
+    binary = "//tests/layering/testcases:runfiles_groups_tool",
+    default_metadata = file_metadata(
+        gid = 1000,
+        mode = "0644",
+        uid = 1000,
+    ),
+    path = "/app/bin/launcher",
+)
+
+layer_contents_test(
+    name = "test",
+    size = "small",
+    layer = ":layer",
+    manifests = [
+        "stdlib.ndjson",
+        "app.ndjson",
+        "binary.ndjson",
+    ],
+)

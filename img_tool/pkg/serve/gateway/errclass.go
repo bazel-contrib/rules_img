@@ -437,12 +437,13 @@ func authErrorType(err error) string {
 	return errUpstreamAuth
 }
 
-// transferErrorType classifies a failure that happened while streaming a
-// response body to the client. io.Copy cannot say whether the upstream read or
-// the client write failed, so an unrecognized cause is reported as an aborted
-// transfer rather than guessed at. The classifier does distinguish the two most
-// common recognizable halves: a broken pipe is a client that hung up, and an
-// unexpected EOF is an upstream that stopped short of its Content-Length.
+// transferErrorType classifies a failure that happened while streaming a body:
+// a response on its way to the client, or a request body being read from one.
+// io.Copy cannot say whether the upstream read or the client write failed, so an
+// unrecognized cause is reported as an aborted transfer rather than guessed at.
+// The classifier does distinguish the two most common recognizable halves: a
+// broken pipe is a client that hung up, and an unexpected EOF is a body that
+// stopped short of its Content-Length.
 func transferErrorType(err error) string {
 	if t := transportErrorType(err); t != errTypeUnknown {
 		return t

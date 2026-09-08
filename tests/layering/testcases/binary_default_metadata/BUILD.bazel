@@ -1,0 +1,27 @@
+load("@rules_img//img:layer.bzl", "file_metadata", "layer_from_binary")
+load("//tests/layering:defs.bzl", "layer_contents_test")
+
+# gazelle:exclude_from_release
+
+# default_metadata on the non-grouped path: every entry the rule places carries
+# the requested ownership and mode instead of the tool's defaults, which is what
+# lets a container that does not run as root write inside its own runfiles tree.
+layer_from_binary(
+    name = "layer",
+    binary = "//tests/layering/testcases:tool",
+    default_metadata = file_metadata(
+        gid = 1000,
+        gname = "devs",
+        mode = "0644",
+        uid = 1000,
+        uname = "alice",
+    ),
+    path = "/app/bin/launcher",
+)
+
+layer_contents_test(
+    name = "test",
+    size = "small",
+    layer = ":layer",
+    manifests = ["expected.ndjson"],
+)

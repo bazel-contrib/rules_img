@@ -26,6 +26,7 @@
 package gateway
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -129,6 +130,10 @@ type Handler struct {
 	now func() time.Time
 
 	cache authCache
+
+	// replay rations the memory spent on keeping request bodies resendable; see
+	// replay.go.
+	replay *replayBudget
 }
 
 // Option configures a [Handler].
@@ -223,6 +228,7 @@ func New(opts ...Option) *Handler {
 		base:     defaultBaseTransport(),
 		log:      log.Default(),
 		now:      time.Now,
+		replay:   newReplayBudget(replayBudgetBytes),
 	}
 	for _, o := range opts {
 		o(h)
@@ -770,6 +776,18 @@ func (h *Handler) forward(obs *observation, w http.ResponseWriter, r *http.Reque
 		action = transport.PushScope
 	}
 
+	// Keep a copy of a body short enough to hold, so the request can be sent
+	// again: by the HTTP/2 transport when the upstream drains the connection out
+	// from under it, and by the retry below when the upstream rejects a token
+	// that has expired. See replay.go.
+	replay, releaseReplay, err := replayableBody(r, h.replay)
+	if err != nil {
+		h.writeError(obs, w, r, http.StatusBadRequest, "UNKNOWN", transferErrorType(err),
+			fmt.Sprintf("reading the request body: %v", err))
+		return
+	}
+	defer releaseReplay()
+
 	// Preserve the exact request URI (path + query) as received.
 	upstreamURL := repo.Scheme() + "://" + repo.RegistryStr() + r.URL.RequestURI()
 	var resp *http.Response
@@ -782,9 +800,16 @@ func (h *Handler) forward(obs *observation, w http.ResponseWriter, r *http.Reque
 			return
 		}
 
-		body := r.Body
-		if attempt > 0 {
+		var body io.Reader
+		switch {
+		case replay != nil:
+			// A *bytes.Reader is what makes http.NewRequest fill in GetBody, which is
+			// the point of keeping the copy: the transport rewinds the body itself.
+			body = bytes.NewReader(replay)
+		case attempt > 0:
 			body = http.NoBody
+		default:
+			body = r.Body
 		}
 		outReq, err := http.NewRequestWithContext(r.Context(), r.Method, upstreamURL, body)
 		if err != nil {
@@ -814,9 +839,11 @@ func (h *Handler) forward(obs *observation, w http.ResponseWriter, r *http.Reque
 
 		if attempt == 0 && (resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden) {
 			h.cache.invalidate(auth)
-			// Incoming request bodies are streams and cannot be replayed. A zero
-			// Content-Length is the server-side guarantee that no bytes were consumed.
-			if r.ContentLength == 0 {
+			// Incoming request bodies are streams and cannot be replayed unless the
+			// gateway kept a copy of one. A zero Content-Length is the server-side
+			// guarantee that there were no bytes to consume; a copy is the guarantee
+			// that the second attempt sends the same ones.
+			if r.ContentLength == 0 || replay != nil {
 				_ = resp.Body.Close()
 				continue
 			}
