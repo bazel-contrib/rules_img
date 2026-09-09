@@ -1,4 +1,4 @@
-load("@rules_go//go:def.bzl", "go_library")
+load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "pull",
@@ -10,8 +10,17 @@ go_library(
         "//pkg/gateway",
         "//pkg/registryopts",
         "//pkg/transport/cachedblob",
+        "@com_github_containerd_platforms//:platforms",
         "@com_github_google_go_containerregistry//pkg/name",
         "@com_github_google_go_containerregistry//pkg/v1:pkg",
         "@com_github_google_go_containerregistry//pkg/v1/remote",
+        "@com_github_opencontainers_image_spec//specs-go/v1:specs-go",
     ],
+)
+
+go_test(
+    name = "pull_test",
+    srcs = ["pull_test.go"],
+    embed = [":pull"],
+    deps = ["@com_github_google_go_containerregistry//pkg/v1:pkg"],
 )

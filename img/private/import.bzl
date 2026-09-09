@@ -239,9 +239,11 @@ def _image_import_impl(ctx):
         providers.append(_build_manifest_info(ctx, ctx.attr.digest))
     elif media_type in [MEDIA_TYPE_INDEX, DOCKER_MANIFEST_LIST_V2]:
         # this is a multi-platform index
+        omitted = {digest: None for digest in ctx.attr.omitted_manifests}
         manifests = [
             _build_manifest_info(ctx, manifest["digest"], descriptor = manifest, index_position = position, platform = manifest.get("platform"))
             for (position, manifest) in enumerate(root_blob.get("manifests", []))
+            if manifest["digest"] not in omitted
         ]
         index_descriptor_file = ctx.actions.declare_file(ctx.attr.name + "_index_descriptor.json")
         index_descriptor = dict(
@@ -267,6 +269,13 @@ image_import = rule(
         "data": attr.string_dict(),
         "files": attr.string_keyed_label_dict(
             allow_files = True,
+        ),
+        "omitted_manifests": attr.string_list(
+            doc = """Digests of index children that were intentionally not fetched.
+
+A platform-filtered pull downloads only some children of an image index, but stores the
+index blob verbatim, so it keeps referring to all of them. Listing the skipped digests here
+makes them be ignored; any other missing blob is still an error.""",
         ),
         "registries": attr.string_list(
             doc = "List of registry mirrors used to pull the image.",

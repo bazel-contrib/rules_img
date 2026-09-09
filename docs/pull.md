@@ -9,8 +9,8 @@ Public API for pulling base container images.
 <pre>
 load("@rules_img//img:pull.bzl", "pull")
 
-pull(<a href="#pull-name">name</a>, <a href="#pull-credential_helper">credential_helper</a>, <a href="#pull-digest">digest</a>, <a href="#pull-docker_config_path">docker_config_path</a>, <a href="#pull-downloader">downloader</a>, <a href="#pull-layer_handling">layer_handling</a>, <a href="#pull-registries">registries</a>,
-     <a href="#pull-registry">registry</a>, <a href="#pull-repository">repository</a>, <a href="#pull-tag">tag</a>, <a href="#pull-unsafe_allow_tag_without_digest">unsafe_allow_tag_without_digest</a>)
+pull(<a href="#pull-name">name</a>, <a href="#pull-credential_helper">credential_helper</a>, <a href="#pull-digest">digest</a>, <a href="#pull-docker_config_path">docker_config_path</a>, <a href="#pull-downloader">downloader</a>, <a href="#pull-layer_handling">layer_handling</a>, <a href="#pull-platforms">platforms</a>,
+     <a href="#pull-registries">registries</a>, <a href="#pull-registry">registry</a>, <a href="#pull-repository">repository</a>, <a href="#pull-tag">tag</a>, <a href="#pull-unsafe_allow_tag_without_digest">unsafe_allow_tag_without_digest</a>)
 </pre>
 
 Pulls a container image from a registry using shallow pulling.
@@ -36,6 +36,9 @@ pull(
 The `digest` parameter is recommended for reproducible builds. If omitted, the rule
 will resolve the tag to a digest at fetch time and print a warning.
 
+By default, all child manifests of a multi-platform image index are downloaded. Use the
+`platforms` attribute to restrict the pull to the platforms you build for.
+
 **ATTRIBUTES**
 
 
@@ -47,6 +50,7 @@ will resolve the tag to a digest at fetch time and print a warning.
 | <a id="pull-docker_config_path"></a>docker_config_path |  Path to Docker-compatible registry authentication config.<br><br>If omitted, the pull tool inherits `$REGISTRY_AUTH_FILE` when present.   | String | optional |  `""`  |
 | <a id="pull-downloader"></a>downloader |  The tool to use for downloading manifests and blobs.<br><br>**Available options:**<br><br>* **`img_tool`** (default): Uses the `img` tool for all downloads.<br><br>* **`bazel`**: Uses Bazel's native HTTP capabilities for downloading manifests and blobs.   | String | optional |  `"img_tool"`  |
 | <a id="pull-layer_handling"></a>layer_handling |  Strategy for handling image layers.<br><br>This attribute controls when and how layer data is fetched from the registry.<br><br>**Available strategies:**<br><br>* **`shallow`** (default): Layer data is fetched only if needed during push operations,   but is not available during the build. This is the most efficient option for images   that are only used as base images for pushing.<br><br>* **`eager`**: Layer data is fetched in the repository rule and is always available.   This ensures layers are accessible in build actions but is inefficient as all layers   are downloaded regardless of whether they're needed. Use this for base images that   need to be read or inspected during the build.<br><br>* **`lazy`**: Layer data is downloaded in a build action when requested. This provides   access to layers during builds while avoiding unnecessary downloads, but requires   network access during the build phase. **EXPERIMENTAL:** Use at your own risk.   | String | optional |  `"shallow"`  |
+| <a id="pull-platforms"></a>platforms |  Platforms to download from a multi-platform image index.<br><br>Each entry is an `"os/architecture"` or `"os/architecture/variant"` string (e.g. `["linux/amd64", "linux/arm64"]`). Platforms are normalized before they are compared, so `"linux/arm64"` also matches an index entry declaring `arm64` with variant `v8`.<br><br>If omitted (the default), every child manifest of the index is downloaded. Since a registry counts each child manifest as a separate pull, restricting the list to the platforms you actually build for can cut a cold fetch of a typical multi-arch base image from tens of requests to a handful. Attestation manifests (which buildkit publishes with the platform `unknown/unknown`) are dropped unless `"unknown/unknown"` is listed explicitly.<br><br>Fetching fails if a requested platform has no matching manifest in the index. The attribute has no effect when pulling a single-platform image (the digest refers to that manifest, so there is nothing to skip).<br><br>**Note:** the index blob is stored verbatim, so it keeps listing every platform while only the selected children are available locally. A filtered image is meant to be used as a base image; pushing or loading its unmodified index is not supported.   | List of strings | optional |  `[]`  |
 | <a id="pull-registries"></a>registries |  List of mirror registries to try in order.<br><br>These registries will be tried in order before the primary registry. Useful for corporate environments with registry mirrors or air-gapped setups.   | List of strings | optional |  `[]`  |
 | <a id="pull-registry"></a>registry |  Primary registry to pull from (e.g., "index.docker.io", "gcr.io").<br><br>If not specified, defaults to Docker Hub. Can be overridden by entries in registries list.   | String | optional |  `""`  |
 | <a id="pull-repository"></a>repository |  The image repository within the registry (e.g., "library/ubuntu", "my-project/my-image").<br><br>For Docker Hub, official images use "library/" prefix (e.g., "library/ubuntu").   | String | required |  |

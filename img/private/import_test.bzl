@@ -137,6 +137,21 @@ def _imports_attestation_manifests_test_impl(ctx):
 
 _imports_attestation_manifests_test = analysistest.make(_imports_attestation_manifests_test_impl)
 
+def _skips_omitted_manifests_test_impl(ctx):
+    env = analysistest.begin(ctx)
+    index_info = analysistest.target_under_test(env)[ImageIndexInfo]
+
+    # A platform-filtered pull downloads only some children, but stores the index blob
+    # verbatim. The omitted children are skipped instead of failing on their missing blobs.
+    platforms = [
+        "{}/{}".format(manifest.os, manifest.architecture)
+        for manifest in index_info.manifests
+    ]
+    asserts.equals(env, ["linux/amd64"], platforms)
+    return analysistest.end(env)
+
+_skips_omitted_manifests_test = analysistest.make(_skips_omitted_manifests_test_impl)
+
 def import_test_suite(name):
     """Declare image_import analysis tests.
 
@@ -173,7 +188,34 @@ def import_test_suite(name):
         target_under_test = ":" + subject,
     )
 
+    # Everything an amd64-only pull would have fetched: the index, and the amd64 child.
+    omitted = [_ARM64_MANIFEST_DIGEST, _ATTESTATION_MANIFEST_DIGEST]
+    filtered_digests = [
+        _INDEX_DIGEST,
+        _AMD64_MANIFEST_DIGEST,
+        _AMD64_CONFIG_DIGEST,
+    ]
+    filtered_subject = name + "_filtered_subject"
+    image_import(
+        name = filtered_subject,
+        digest = _INDEX_DIGEST,
+        data = {digest: _BLOBS[digest] for digest in filtered_digests},
+        files = {digest: blob_files[digest] for digest in filtered_digests},
+        omitted_manifests = omitted,
+        registries = ["registry.example.com"],
+        repository = "example/image",
+        tag = "latest",
+        tags = ["manual"],
+    )
+
+    filtered_test = name + "_skips_omitted_manifests_test"
+    _skips_omitted_manifests_test(
+        name = filtered_test,
+        size = "small",
+        target_under_test = ":" + filtered_subject,
+    )
+
     native.test_suite(
         name = name,
-        tests = [":" + test],
+        tests = [":" + test, ":" + filtered_test],
     )

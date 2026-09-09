@@ -15,9 +15,11 @@ import (
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/gateway"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/registryopts"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/transport/cachedblob"
+	"github.com/containerd/platforms"
 	"github.com/google/go-containerregistry/pkg/name"
 	registryv1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
 func PullProcess(ctx context.Context, args []string) {
@@ -25,6 +27,7 @@ func PullProcess(ctx context.Context, args []string) {
 	var repository string
 	var outputDir string
 	var registries stringSliceFlag
+	var requestedPlatforms stringSliceFlag
 	var layerHandling string
 	var concurrency int
 	var airgapped bool
@@ -37,6 +40,7 @@ func PullProcess(ctx context.Context, args []string) {
 		examples := []string{
 			"img pull --reference sha256:abc123... --repository myapp --output ./outdir",
 			"img pull --reference sha256:abc123... --repository myapp --registry docker.io",
+			"img pull --reference sha256:abc123... --repository myapp --platform linux/amd64",
 		}
 		fmt.Fprintf(flagSet.Output(), "\nExamples:\n")
 		for _, example := range examples {
@@ -48,6 +52,7 @@ func PullProcess(ctx context.Context, args []string) {
 	flagSet.StringVar(&repository, "repository", "", "Repository name of the image (required)")
 	flagSet.StringVar(&outputDir, "output", ".", "Output directory to save the downloaded image to")
 	flagSet.Var(&registries, "registry", "Registry to use (can be specified multiple times, defaults to docker.io)")
+	flagSet.Var(&requestedPlatforms, "platform", "Platform to download from an image index as os/arch[/variant] (can be specified multiple times, defaults to all platforms)")
 	flagSet.StringVar(&layerHandling, "layer-handling", "shallow", "Method used for handling layer data. \"eager\" causes layer data to be materialized.")
 	flagSet.IntVar(&concurrency, "j", 10, "Number of concurrent download workers")
 	flagSet.BoolVar(&airgapped, "airgapped", false, "Enable airgapped mode (only use local cached blobs, no network access)")
@@ -69,6 +74,13 @@ func PullProcess(ctx context.Context, args []string) {
 	}
 	if outputDir == "" {
 		fmt.Fprintf(os.Stderr, "Error: --output must be a valid path\n")
+		flagSet.Usage()
+		os.Exit(1)
+	}
+
+	platformMatchers, err := parsePlatforms(requestedPlatforms)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		flagSet.Usage()
 		os.Exit(1)
 	}
@@ -102,7 +114,7 @@ func PullProcess(ctx context.Context, args []string) {
 	// Try each registry until success
 	var lastErr error
 	for _, registry := range registries {
-		err := pullFromRegistry(ctx, registry, repository, reference, digest, store, transport, layerHandling, concurrency)
+		err := pullFromRegistry(ctx, registry, repository, reference, digest, store, transport, layerHandling, concurrency, platformMatchers)
 		lastErr = err
 		if err == nil {
 			return
@@ -169,7 +181,7 @@ func (wp *workerPool) wait() {
 	close(wp.results)
 }
 
-func pullFromRegistry(ctx context.Context, registry, repository, tag, digest string, store *blobstore.Store, transport http.RoundTripper, layerHandling string, concurrency int) error {
+func pullFromRegistry(ctx context.Context, registry, repository, tag, digest string, store *blobstore.Store, transport http.RoundTripper, layerHandling string, concurrency int, platformMatchers []platforms.Matcher) error {
 	desc, err := downloadManifest(registry, repository, tag, digest, store, transport)
 	if err != nil {
 		return fmt.Errorf("downloading manifest: %w", err)
@@ -189,7 +201,7 @@ func pullFromRegistry(ctx context.Context, registry, repository, tag, digest str
 		if err != nil {
 			return fmt.Errorf("getting index from descriptor: %w", err)
 		}
-		layers, err = downloadIndex(ctx, index, store, concurrency)
+		layers, err = downloadIndex(ctx, index, store, concurrency, platformMatchers)
 		if err != nil {
 			return fmt.Errorf("downloading index: %w", err)
 		}
@@ -245,18 +257,61 @@ type manifestResult struct {
 	err    error
 }
 
-func downloadIndex(ctx context.Context, index registryv1.ImageIndex, store *blobstore.Store, concurrency int) ([]registryv1.Layer, error) {
-	manifests, err := index.IndexManifest()
+// parsePlatforms turns "os/arch[/variant]" specs into strict matchers. An empty list
+// means "no filter": every child of an index is downloaded.
+func parsePlatforms(specs []string) ([]platforms.Matcher, error) {
+	matchers := make([]platforms.Matcher, 0, len(specs))
+	for _, spec := range specs {
+		platform, err := platforms.Parse(spec)
+		if err != nil {
+			return nil, fmt.Errorf("parsing platform %q: %w", spec, err)
+		}
+		// OnlyStrict, not Only: asking for linux/amd64 must not also match linux/386.
+		matchers = append(matchers, platforms.OnlyStrict(platform))
+	}
+	return matchers, nil
+}
+
+// filterManifests keeps the index children matching any of the matchers. Children without
+// platform information (and attestation manifests, which declare unknown/unknown) cannot
+// match, so they are dropped as soon as a filter is set.
+func filterManifests(descriptors []registryv1.Descriptor, matchers []platforms.Matcher) []registryv1.Descriptor {
+	if len(matchers) == 0 {
+		return descriptors
+	}
+	filtered := make([]registryv1.Descriptor, 0, len(descriptors))
+	for _, desc := range descriptors {
+		if desc.Platform == nil {
+			continue
+		}
+		candidate := ocispec.Platform{
+			OS:           desc.Platform.OS,
+			Architecture: desc.Platform.Architecture,
+			Variant:      desc.Platform.Variant,
+		}
+		for _, matcher := range matchers {
+			if matcher.Match(candidate) {
+				filtered = append(filtered, desc)
+				break
+			}
+		}
+	}
+	return filtered
+}
+
+func downloadIndex(ctx context.Context, index registryv1.ImageIndex, store *blobstore.Store, concurrency int, platformMatchers []platforms.Matcher) ([]registryv1.Layer, error) {
+	indexManifest, err := index.IndexManifest()
 	if err != nil {
 		return nil, fmt.Errorf("getting index manifest: %w", err)
 	}
+	descriptors := filterManifests(indexManifest.Manifests, platformMatchers)
 
-	jobs := make(chan manifestJob, len(manifests.Manifests))
-	results := make(chan manifestResult, len(manifests.Manifests))
+	jobs := make(chan manifestJob, len(descriptors))
+	results := make(chan manifestResult, len(descriptors))
 
 	numWorkers := concurrency
-	if numWorkers > len(manifests.Manifests) {
-		numWorkers = len(manifests.Manifests)
+	if numWorkers > len(descriptors) {
+		numWorkers = len(descriptors)
 	}
 
 	var wg sync.WaitGroup
@@ -277,7 +332,7 @@ func downloadIndex(ctx context.Context, index registryv1.ImageIndex, store *blob
 		}()
 	}
 
-	for i, desc := range manifests.Manifests {
+	for i, desc := range descriptors {
 		jobs <- manifestJob{index: index, desc: desc, store: store, i: i}
 	}
 	close(jobs)

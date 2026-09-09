@@ -4,6 +4,7 @@ load("@bazel_skylib//lib:sets.bzl", "sets")
 load("@img_toolchain//:defs.bzl", "tool_for_repository_os")
 load("//img/private:manifest_media_type.bzl", "get_media_type")
 load("//img/private/platforms:constraints.bzl", "map_os_arch_to_constraints")
+load("//img/private/platforms:matching.bzl", "format_platform", "matching_spec_indices", "parse_platform_spec")
 load("//img/private/platforms:platforms.bzl", "has_constraint_setting")
 load(
     ":download.bzl",
@@ -17,6 +18,10 @@ load(":registry.bzl", "get_registries")
 
 def _pull_impl(rctx):
     """Pull an image from a registry and generate a BUILD file."""
+
+    # Parse the platform filter before any network access, so a typo fails fast.
+    platform_specs = [parse_platform_spec(spec) for spec in rctx.attr.platforms]
+
     have_valid_digest = True
     if len(rctx.attr.digest) != 71:
         have_valid_digest = False
@@ -49,6 +54,7 @@ def _pull_impl(rctx):
             rctx,
             tool_path = tool_path,
             reference = reference,
+            platforms = rctx.attr.platforms,
         )
 
     manifest_kwargs = dict(
@@ -76,6 +82,14 @@ def _pull_impl(rctx):
     layer_digests = sets.make()
     platforms_set = sets.make()
 
+    # Children of the index that are not downloaded, either because the platform filter
+    # rejected them or because they are not image manifests at all. The index blob is used
+    # verbatim (the digest pin refers to it), so it keeps referring to them and image_import
+    # has to be told to skip them instead of failing on the missing blob.
+    omitted_manifests = []
+    available_platforms = []
+    matched_specs = [False] * len(platform_specs)
+
     # download all manifests and configs
     for manifest_index in manifests:
         if manifest_index.get("mediaType") in [MEDIA_TYPE_INDEX, DOCKER_MANIFEST_LIST_V2]:
@@ -84,13 +98,25 @@ def _pull_impl(rctx):
                 manifest_index["digest"],
             ))
         if not manifest_index.get("mediaType") in [MEDIA_TYPE_MANIFEST, DOCKER_MANIFEST_V2]:
+            omitted_manifests.append(manifest_index["digest"])
             continue
         if is_index:
+            platform = manifest_index.get("platform", {})
+            if len(platform_specs) > 0:
+                formatted_platform = format_platform(platform)
+                if formatted_platform not in available_platforms:
+                    available_platforms.append(formatted_platform)
+                matching = matching_spec_indices(platform, platform_specs)
+                if len(matching) == 0:
+                    omitted_manifests.append(manifest_index["digest"])
+                    continue
+                for index in matching:
+                    matched_specs[index] = True
+
             manifest_info = _download_manifest_rctx(rctx, downloader = rctx.attr.downloader, reference = manifest_index["digest"])
             data[manifest_info.digest] = manifest_info.data
 
             # Extract platform from index manifest entry
-            platform = manifest_index.get("platform", {})
             if platform:
                 os = platform.get("os", "")
                 arch = platform.get("architecture", "")
@@ -112,6 +138,21 @@ def _pull_impl(rctx):
 
         for layer in manifest.get("layers", []):
             sets.insert(layer_digests, layer["digest"])
+
+    if is_index:
+        unmatched = [
+            rctx.attr.platforms[index]
+            for index in range(len(platform_specs))
+            if not matched_specs[index]
+        ]
+        if len(unmatched) > 0:
+            fail("""image index {reference} of {repository} has no manifest for platform(s) {unmatched}.
+Available platforms: {available}""".format(
+                reference = reference,
+                repository = rctx.attr.repository,
+                unmatched = ", ".join(['"{}"'.format(spec) for spec in unmatched]),
+                available = ", ".join(available_platforms),
+            ))
 
     files = {
         digest: "//:blobs/{}".format(digest.replace("sha256:", "sha256/"))
@@ -201,6 +242,7 @@ image_import(
     digest = {digest},
     data = {data},
     files = {files},
+    omitted_manifests = {omitted_manifests},
     registries = {registries},
     repository = {repository},
     tag = {tag},
@@ -252,6 +294,11 @@ image_load(
                 prefix = "    ",
                 indent = "    ",
             ),
+            omitted_manifests = json.encode_indent(
+                omitted_manifests,
+                prefix = "    ",
+                indent = "    ",
+            ),
             registries = json.encode_indent(
                 registries,
                 prefix = "    ",
@@ -299,6 +346,9 @@ pull(
 
 The `digest` parameter is recommended for reproducible builds. If omitted, the rule
 will resolve the tag to a digest at fetch time and print a warning.
+
+By default, all child manifests of a multi-platform image index are downloaded. Use the
+`platforms` attribute to restrict the pull to the platforms you build for.
 """,
     attrs = {
         "registry": attr.string(
@@ -328,6 +378,27 @@ While required, it's recommended to also specify a digest for reproducible build
 
 When specified, the image is pulled by digest instead of tag, ensuring reproducible
 builds. The digest must be a full SHA256 digest starting with "sha256:".""",
+        ),
+        "platforms": attr.string_list(
+            doc = """Platforms to download from a multi-platform image index.
+
+Each entry is an `"os/architecture"` or `"os/architecture/variant"` string
+(e.g. `["linux/amd64", "linux/arm64"]`). Platforms are normalized before they are compared,
+so `"linux/arm64"` also matches an index entry declaring `arm64` with variant `v8`.
+
+If omitted (the default), every child manifest of the index is downloaded. Since a registry
+counts each child manifest as a separate pull, restricting the list to the platforms you
+actually build for can cut a cold fetch of a typical multi-arch base image from tens of
+requests to a handful. Attestation manifests (which buildkit publishes with the platform
+`unknown/unknown`) are dropped unless `"unknown/unknown"` is listed explicitly.
+
+Fetching fails if a requested platform has no matching manifest in the index. The attribute
+has no effect when pulling a single-platform image (the digest refers to that manifest, so
+there is nothing to skip).
+
+**Note:** the index blob is stored verbatim, so it keeps listing every platform while only
+the selected children are available locally. A filtered image is meant to be used as a base
+image; pushing or loading its unmodified index is not supported.""",
         ),
         "layer_handling": attr.string(
             default = "shallow",
