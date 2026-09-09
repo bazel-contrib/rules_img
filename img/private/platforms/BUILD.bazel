@@ -1,9 +1,12 @@
 load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
+load(":matching_test.bzl", "matching_test_suite")
 load(":platforms.bzl", "PLATFORMS")
 
 package(
     default_visibility = ["//visibility:public"],
 )
+
+matching_test_suite(name = "matching_test")
 
 [
     platform(
@@ -22,6 +25,12 @@ filegroup(
 bzl_library(
     name = "constraints",
     srcs = ["constraints.bzl"],
+)
+
+bzl_library(
+    name = "matching",
+    srcs = ["matching.bzl"],
+    deps = ["//img/private:manifest_media_type"],
 )
 
 bzl_library(

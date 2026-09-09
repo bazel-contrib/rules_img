@@ -241,6 +241,38 @@ image_index(
 )
 ```
 
+#### `pull`
+
+By default, `pull` downloads every child manifest of a multi-platform image index. A registry
+counts each of those as a separate pull, and a typical multi-arch base image ships manifests for
+platforms you never build for, plus one attestation manifest per platform. Use `platforms` to
+restrict the fetch:
+
+```starlark
+pull(
+    name = "debian",
+    digest = "sha256:f6e2cfac5cf956ea044b4bd75e6397b4372ad88fe00908045e9a0d21712ae3ba",
+    platforms = [
+        "linux/amd64",
+        "linux/arm64",
+    ],
+    registry = "index.docker.io",
+    repository = "library/debian",
+)
+```
+
+Entries are `"os/architecture"` or `"os/architecture/variant"` strings, normalized before they are
+compared - `"linux/arm64"` also matches an index entry declaring `arm64` with variant `v8`.
+An entry that names no variant covers every variant of that architecture, so `"linux/amd64"` keeps
+the `amd64/v3` child of an index that has one. Adding `platforms` therefore never changes which
+child a build ends up using - it only drops the platforms you did not list. Name a variant
+(`"linux/amd64/v3"`) to select just that one. Fetching fails if a requested platform is not in the
+index.
+
+The index blob is stored verbatim (the digest pin refers to it), so it keeps listing every
+platform while only the selected children exist locally. Use a filtered image as a base image;
+pushing or loading its unmodified index is not supported.
+
 ### Further Reading
 
 - [Bazel Platforms Documentation](https://bazel.build/extending/platforms)

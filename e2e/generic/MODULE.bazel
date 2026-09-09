@@ -88,6 +88,23 @@ pull(
     tag = "3.23",
 )
 
+# Same image as @alpine, but restricted to the platforms this repository builds for:
+# only the matching child manifests (and their configs) are downloaded.
+pull(
+    name = "alpine_filtered",
+    digest = "sha256:51183f2cfa6320055da30872f211093f9ff1d3cf06f39a0bdb212314c5dc7375",
+    platforms = [
+        "linux/amd64",
+        "linux/arm64",
+    ],
+    registries = [
+        "mirror.gcr.io",
+        "index.docker.io",
+    ],
+    repository = "library/alpine",
+    tag = "3.23",
+)
+
 pull(
     name = "cuda",
     digest = "sha256:198208c45877a84c8fb35a06956e7fbef4ffabfa36f9c82148dc7bac454ba02a",
