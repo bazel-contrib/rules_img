@@ -4,6 +4,7 @@ load("@bazel_skylib//lib:unittest.bzl", "analysistest", "asserts")
 load("@bazel_skylib//rules:write_file.bzl", "write_file")
 load("//img/private:import.bzl", "image_import")
 load("//img/private/providers:index_info.bzl", "ImageIndexInfo")
+load("//img/private/providers:pull_info.bzl", "PullInfo")
 
 # Digests are opaque keys here: nothing verifies that a blob hashes to the digest
 # it is registered under during analysis, so these are readable placeholders.
@@ -137,6 +138,45 @@ def _imports_attestation_manifests_test_impl(ctx):
 
 _imports_attestation_manifests_test = analysistest.make(_imports_attestation_manifests_test_impl)
 
+def _imports_selected_manifests_test_impl(ctx):
+    env = analysistest.begin(ctx)
+    target = analysistest.target_under_test(env)
+    index = target[ImageIndexInfo]
+    asserts.equals(env, ["amd64"], [manifest.architecture for manifest in index.manifests])
+    asserts.equals(env, _INDEX_DIGEST, target[PullInfo].digest)
+    asserts.equals(env, target[DefaultInfo].files.to_list(), [index.index])
+    for action in analysistest.target_actions(env):
+        if action.mnemonic == "SparseOCIIndexLayout":
+            inputs = action.inputs.to_list()
+            asserts.true(env, index.index in inputs)
+            asserts.true(env, index.manifests[0].manifest in inputs)
+            asserts.true(env, index.manifests[0].config in inputs)
+            asserts.false(env, any(["3333" in file.basename or "5555" in file.basename for file in inputs]))
+        for output in action.outputs.to_list():
+            if output.basename.endswith("_index_descriptor.json"):
+                descriptor = json.decode(action.content)
+                asserts.equals(env, _INDEX_DIGEST, descriptor["digest"])
+                asserts.equals(env, len(_INDEX), descriptor["size"])
+    return analysistest.end(env)
+
+_imports_selected_manifests_test = analysistest.make(_imports_selected_manifests_test_impl)
+
+def _missing_selected_data_test_impl(ctx):
+    env = analysistest.begin(ctx)
+    asserts.expect_failure(env, ctx.attr.message)
+    return analysistest.end(env)
+
+_missing_selected_data_test = analysistest.make(
+    _missing_selected_data_test_impl,
+    expect_failure = True,
+    attrs = {"message": attr.string()},
+)
+
+def _sparse_layout_impl(ctx):
+    return [DefaultInfo(files = depset([ctx.attr.image[ImageIndexInfo].sparse_oci_layout]))]
+
+_sparse_layout = rule(implementation = _sparse_layout_impl, attrs = {"image": attr.label(providers = [ImageIndexInfo])})
+
 def import_test_suite(name):
     """Declare image_import analysis tests.
 
@@ -173,7 +213,33 @@ def import_test_suite(name):
         target_under_test = ":" + subject,
     )
 
+    tests = [":" + test]
+    selected_blobs = [_INDEX_DIGEST, _AMD64_MANIFEST_DIGEST, _AMD64_CONFIG_DIGEST]
+    for case, omitted, message in [
+        ("selected", None, None),
+        ("missing_manifest", _AMD64_MANIFEST_DIGEST, "missing blob for digest: " + _AMD64_MANIFEST_DIGEST),
+        ("missing_config", _AMD64_CONFIG_DIGEST, "missing blob for config digest: " + _AMD64_CONFIG_DIGEST),
+    ]:
+        subject = name + "_" + case + "_subject"
+        image_import(
+            name = subject,
+            digest = _INDEX_DIGEST,
+            selected_manifest_digests = [_AMD64_MANIFEST_DIGEST],
+            data = {digest: _BLOBS[digest] for digest in selected_blobs if digest != omitted},
+            files = {digest: blob_files[digest] for digest in selected_blobs if digest != omitted},
+            registries = ["registry.example.com"],
+            repository = "example/image",
+            tags = ["manual"],
+        )
+        test = name + "_" + case
+        if message:
+            _missing_selected_data_test(name = test, size = "small", target_under_test = ":" + subject, message = message)
+        else:
+            _imports_selected_manifests_test(name = test, size = "small", target_under_test = ":" + subject)
+            _sparse_layout(name = name + "_selected_sparse_layout", image = ":" + subject, tags = ["manual"])
+        tests.append(":" + test)
+
     native.test_suite(
         name = name,
-        tests = [":" + test],
+        tests = tests,
     )

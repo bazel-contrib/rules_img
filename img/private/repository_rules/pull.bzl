@@ -15,8 +15,53 @@ load(
 )
 load(":registry.bzl", "get_registries")
 
-def _pull_impl(rctx):
+def _parse_platforms(platforms):
+    requested = {}
+    for platform in platforms:
+        parts = platform.split("/")
+        if len(parts) not in [2, 3] or any([
+            not part or any([char not in "abcdefghijklmnopqrstuvwxyz0123456789_.-" for char in part.elems()])
+            for part in parts
+        ]):
+            fail("invalid platform '{}': expected os/architecture[/variant]".format(platform))
+        requested[platform] = parts
+    return requested
+
+def _matches_platform(parts, platform):
+    if not platform or parts[0] != platform.get("os") or parts[1] != platform.get("architecture"):
+        return False
+    variant = platform.get("variant", "")
+    if platform.get("architecture") == "arm64" and not variant:
+        variant = "v8"
+    return len(parts) == 2 or parts[2] == variant
+
+def _select_manifests(manifests, requested):
+    selected = []
+    matched = {}
+    for manifest in manifests:
+        matches = [name for name, parts in requested.items() if _matches_platform(parts, manifest.get("platform"))]
+        if matches:
+            selected.append(manifest)
+            matched.update({name: True for name in matches})
+    missing = [name for name in requested if name not in matched]
+    if missing:
+        fail("requested platforms not found in image: {}".format(", ".join(missing)))
+    return selected
+
+def _prefetch(rctx, reference):
+    tool = tool_for_repository_os(rctx)
+    _download_with_tool(rctx, tool_path = rctx.path(tool), reference = reference)
+
+_DOWNLOADS = struct(
+    manifest = _download_manifest_rctx,
+    blob = _download_blob,
+    layers = _download_layers,
+    prefetch = _prefetch,
+)
+
+def _pull_impl(rctx, downloads = _DOWNLOADS):
     """Pull an image from a registry and generate a BUILD file."""
+    requested = _parse_platforms(rctx.attr.platforms)
     have_valid_digest = True
     if len(rctx.attr.digest) != 71:
         have_valid_digest = False
@@ -40,23 +85,17 @@ def _pull_impl(rctx):
     if len(reference) == 0:
         fail("either digest or tag must be specified")
 
-    if rctx.attr.downloader == "img_tool":
+    if rctx.attr.downloader == "img_tool" and not requested:
         # pre-download all files using the img tool
         # here if requested
-        tool = tool_for_repository_os(rctx)
-        tool_path = rctx.path(tool)
-        _download_with_tool(
-            rctx,
-            tool_path = tool_path,
-            reference = reference,
-        )
+        downloads.prefetch(rctx, reference = reference)
 
     manifest_kwargs = dict(
         canonical_id = rctx.attr.repository + ((":" + rctx.attr.tag) if rctx.attr.tag else ("@" + digest)),
     )
     if rctx.attr.registry == "docker.io":
         print("Specified docker.io as registry. Did you mean \"index.docker.io\"?")  # buildifier: disable=print
-    root_blob_info = _download_manifest_rctx(rctx, downloader = rctx.attr.downloader, reference = reference, **manifest_kwargs)
+    root_blob_info = downloads.manifest(rctx, downloader = rctx.attr.downloader, reference = reference, **manifest_kwargs)
     data = {root_blob_info.digest: root_blob_info.data}
     root_blob = json.decode(root_blob_info.data)
     media_type = get_media_type(root_blob)
@@ -65,6 +104,8 @@ def _pull_impl(rctx):
     if media_type in [MEDIA_TYPE_INDEX, DOCKER_MANIFEST_LIST_V2]:
         is_index = True
         manifests = root_blob.get("manifests", [])
+        if requested:
+            manifests = _select_manifests(manifests, requested)
     elif media_type in [MEDIA_TYPE_MANIFEST, DOCKER_MANIFEST_V2]:
         is_index = False
         manifests = [{"mediaType": MEDIA_TYPE_MANIFEST, "digest": digest}]
@@ -76,7 +117,7 @@ def _pull_impl(rctx):
     layer_digests = sets.make()
     platforms_set = sets.make()
 
-    # download all manifests and configs
+    # Download only selected manifests and configs, preserving the root index.
     for manifest_index in manifests:
         if manifest_index.get("mediaType") in [MEDIA_TYPE_INDEX, DOCKER_MANIFEST_LIST_V2]:
             # this is an index referenced by another index - we don't support nested indexes yet
@@ -86,7 +127,7 @@ def _pull_impl(rctx):
         if not manifest_index.get("mediaType") in [MEDIA_TYPE_MANIFEST, DOCKER_MANIFEST_V2]:
             continue
         if is_index:
-            manifest_info = _download_manifest_rctx(rctx, downloader = rctx.attr.downloader, reference = manifest_index["digest"])
+            manifest_info = downloads.manifest(rctx, downloader = rctx.attr.downloader, reference = manifest_index["digest"])
             data[manifest_info.digest] = manifest_info.data
 
             # Extract platform from index manifest entry
@@ -99,12 +140,14 @@ def _pull_impl(rctx):
         else:
             manifest_info = root_blob_info
         manifest = json.decode(manifest_info.data)
-        config_info = _download_blob(rctx, downloader = rctx.attr.downloader, digest = manifest["config"]["digest"], sources = sources)
+        config_info = downloads.blob(rctx, downloader = rctx.attr.downloader, digest = manifest["config"]["digest"], sources = sources)
         data[config_info.digest] = config_info.data
 
         # Extract platform from config if not already found
         if not is_index:
             config = json.decode(config_info.data)
+            if requested:
+                _select_manifests([{"platform": config}], requested)
             os = config.get("os", "")
             arch = config.get("architecture", "")
             if os and arch and has_constraint_setting(os, arch):
@@ -122,7 +165,7 @@ def _pull_impl(rctx):
     if rctx.attr.layer_handling == "eager":
         files.update({
             layer.digest: "//:{}".format(layer.path)
-            for layer in _download_layers(rctx, downloader = rctx.attr.downloader, digests = sets.to_list(layer_digests), sources = sources)
+            for layer in downloads.layers(rctx, downloader = rctx.attr.downloader, digests = sets.to_list(layer_digests), sources = sources)
         })
     elif rctx.attr.layer_handling == "lazy":
         files.update({
@@ -201,6 +244,7 @@ image_import(
     digest = {digest},
     data = {data},
     files = {files},
+    selected_manifest_digests = {selected_manifest_digests},
     registries = {registries},
     repository = {repository},
     tag = {tag},
@@ -242,6 +286,7 @@ image_load(
             maybe_lazy_layer_download = maybe_lazy_layer_download,
             name = repr(name),
             digest = repr(digest),
+            selected_manifest_digests = repr([manifest["digest"] for manifest in manifests] if is_index and requested else []),
             data = json.encode_indent(
                 data,
                 prefix = "    ",
@@ -329,6 +374,24 @@ While required, it's recommended to also specify a digest for reproducible build
 When specified, the image is pulled by digest instead of tag, ensuring reproducible
 builds. The digest must be a full SHA256 digest starting with "sha256:".""",
         ),
+        "platforms": attr.string_list(
+            doc = """Platforms to download, in `os/architecture[/variant]` form, such as `[\"linux/amd64\", \"linux/arm64/v8\"]`.
+
+Omitting this attribute or setting it to `[]` downloads all platforms, including
+attestations. Without a variant, a platform matches every variant of that OS and
+architecture. An explicit variant matches exactly; ARM64 with no declared variant
+is treated as `v8`. Every requested platform must match or the pull fails.
+
+For indexes, selection uses descriptor platform metadata before downloading child
+manifests or configs. Entries without platform metadata are skipped;
+`unknown/unknown` attestations are included only when explicitly requested.
+For single-manifest images, the config is downloaded to check the platform.
+
+Filtering applies to both downloaders and all layer-handling strategies. The
+original index and pinned digest are preserved, with only the selected children
+available locally. Omit this attribute when every blob of the original index is
+needed, for example to copy the complete image to another registry.""",
+        ),
         "layer_handling": attr.string(
             default = "shallow",
             values = ["shallow", "eager", "lazy"],
@@ -392,3 +455,6 @@ MEDIA_TYPE_INDEX = "application/vnd.oci.image.index.v1+json"
 DOCKER_MANIFEST_LIST_V2 = "application/vnd.docker.distribution.manifest.list.v2+json"
 MEDIA_TYPE_MANIFEST = "application/vnd.oci.image.manifest.v1+json"
 DOCKER_MANIFEST_V2 = "application/vnd.docker.distribution.manifest.v2+json"
+
+# Exercise the repository implementation with a recording context in tests.
+pull_test = struct(implementation = _pull_impl)

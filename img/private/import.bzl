@@ -242,6 +242,7 @@ def _image_import_impl(ctx):
         manifests = [
             _build_manifest_info(ctx, manifest["digest"], descriptor = manifest, index_position = position, platform = manifest.get("platform"))
             for (position, manifest) in enumerate(root_blob.get("manifests", []))
+            if not ctx.attr.selected_manifest_digests or manifest["digest"] in ctx.attr.selected_manifest_digests
         ]
         index_descriptor_file = ctx.actions.declare_file(ctx.attr.name + "_index_descriptor.json")
         index_descriptor = dict(
@@ -265,6 +266,9 @@ image_import = rule(
     attrs = {
         "digest": attr.string(),
         "data": attr.string_dict(),
+        "selected_manifest_digests": attr.string_list(
+            doc = "Internal pull selection: import only these index children. Empty imports all children; the root index stays unchanged.",
+        ),
         "files": attr.string_keyed_label_dict(
             allow_files = True,
         ),
