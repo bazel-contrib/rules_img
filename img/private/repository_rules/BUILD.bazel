@@ -16,6 +16,7 @@ bzl_library(
         "//img/private:manifest_media_type",
         "//img/private/platforms",
         "//img/private/platforms:constraints",
+        "//img/private/platforms:matching",
         "@bazel_skylib//lib:sets",
         "@img_toolchain//:defs",
     ],

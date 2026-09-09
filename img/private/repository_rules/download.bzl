@@ -491,13 +491,15 @@ def download_layers(rctx, downloader, digests, sources):
             layer.waiter.wait()
     return [downloaded_layer for downloaded_layer in downloaded_layers]
 
-def download_with_tool(rctx, *, tool_path, reference):
+def download_with_tool(rctx, *, tool_path, reference, platforms = []):
     """Download an image using the img tool.
 
     Args:
         rctx: Repository context.
         tool_path: The path to the img tool to use for downloading.
         reference: The image reference to download.
+        platforms: Optional list of "os/architecture[/variant]" strings. If non-empty, only
+                   matching children of an image index are downloaded.
 
     Returns:
         A struct containing manifest and layers of the downloaded image.
@@ -509,7 +511,7 @@ def download_with_tool(rctx, *, tool_path, reference):
         "--reference=" + reference,
         "--repository=" + rctx.attr.repository,
         "--layer-handling=" + rctx.attr.layer_handling,
-    ] + ["--registry=" + r for r in registries]
+    ] + ["--registry=" + r for r in registries] + ["--platform=" + p for p in platforms]
     result = rctx.execute(args, environment = auth_environment(rctx), quiet = False)
     if result.return_code != 0:
         fail("img tool failed with exit code {} and message {}".format(result.return_code, result.stderr))
