@@ -739,11 +739,7 @@ func targetsIncludeReferrers(targets []string) bool {
 }
 
 func checkCrossMountSource(targetRegistry string, sourceRegistry string, sourceRepository string) *api.CrossMountSource {
-	if targetRegistry == sourceRegistry && (crossMountStrategy == "same_registry" || crossMountStrategy == "cross_registry") {
-		return &api.CrossMountSource{Repository: sourceRepository}
-	}
-
-	if crossMountStrategy == "cross_registry" {
+	if crossMountStrategy == "cross_registry" || (crossMountStrategy == "same_registry" && targetRegistry == sourceRegistry) {
 		return &api.CrossMountSource{Registry: sourceRegistry, Repository: sourceRepository}
 	}
 
