@@ -4,6 +4,7 @@ load("@bazel_skylib//lib:sets.bzl", "sets")
 load("@img_toolchain//:defs.bzl", "tool_for_repository_os")
 load("//img/private:manifest_media_type.bzl", "get_media_type", manifest_kind = "kind")
 load("//img/private/repository_rules:download.bzl", "auth_environment", "download_manifest")
+load("//img/private/repository_rules:repo_names.bzl", "blob_label", "lazy_blob_label", "manifest_blob_label")
 
 def pull_tag_to_struct(tag):
     """Convert a pull tag to a struct for easier attribute access.
@@ -306,7 +307,7 @@ def collect_blobs_to_create(oci_ref_graph, images_by_digest):
             file_blobs[config_digest] = True
 
         # Determine layer handling for this manifest
-        layer_handling = _get_layer_handling_for_manifest(
+        layer_handling = get_layer_handling_for_manifest(
             digest,
             oci_ref_graph,
             images_by_digest,
@@ -324,7 +325,7 @@ def collect_blobs_to_create(oci_ref_graph, images_by_digest):
 
     return (manifest_blobs, file_blobs, lazy_file_blobs)
 
-def _get_layer_handling_for_manifest(manifest_digest, oci_ref_graph, images_by_digest):
+def get_layer_handling_for_manifest(manifest_digest, oci_ref_graph, images_by_digest):
     """Find the layer_handling setting for a manifest.
 
     Args:
@@ -347,66 +348,77 @@ def _get_layer_handling_for_manifest(manifest_digest, oci_ref_graph, images_by_d
 
     return "shallow"  # Default
 
-def build_image_files_dict(digest, oci_ref_graph, layer_handling):
-    """Build the files dict mapping digests to blob repo labels for a specific image.
+def build_manifest_files_dict(digest, oci_ref_graph, layer_handling):
+    """Build the files dict of a single manifest: its own blob, its config and its layers.
 
     Args:
-        digest: Root digest of the image
-        oci_ref_graph: OCI reference graph
-        layer_handling: Layer handling mode ("shallow", "eager", or "lazy")
+        digest: Digest of the manifest.
+        oci_ref_graph: OCI reference graph.
+        layer_handling: Layer handling mode ("shallow", "eager", or "lazy").
 
     Returns:
-        Dictionary of digest -> label string for referenced blobs
+        Dictionary of digest -> label string for the blobs of this manifest.
     """
-    files = {}
+    if digest not in oci_ref_graph:
+        fail("Digest '{}' not found in OCI reference graph.".format(digest))
+    entry = oci_ref_graph[digest]
+    if entry["kind"] != "manifest":
+        fail("Digest '{}' is a(n) {}, not an image manifest. Nested indexes are not supported.".format(digest, entry["kind"]))
 
+    files = {digest: manifest_blob_label(digest)}
+
+    config_digest = entry.get("config")
+    if config_digest:
+        files[config_digest] = blob_label(config_digest)
+
+    for layer_digest in entry.get("layers", []):
+        if layer_handling == "eager":
+            files[layer_digest] = blob_label(layer_digest)
+        elif layer_handling == "lazy":
+            files[layer_digest] = lazy_blob_label(layer_digest)
+
+    return files
+
+def build_root_files_dict(digest, oci_ref_graph, layer_handling):
+    """Build the files dict of a pulled image, as read by its image repository.
+
+    An image repository only reads the root blob of the image. The blobs of the child
+    manifests of an index belong to their own repositories, so that a build never fetches the
+    platforms it does not use. A single-platform image has no children, so its repository
+    holds the config and the layers itself.
+
+    Args:
+        digest: Root digest of the image.
+        oci_ref_graph: OCI reference graph.
+        layer_handling: Layer handling mode ("shallow", "eager", or "lazy").
+
+    Returns:
+        Dictionary of digest -> label string for referenced blobs.
+    """
     if digest not in oci_ref_graph:
         fail("Digest '{}' not found in OCI reference graph.".format(digest))
 
-    # Add the root manifest/index
-    blob_repo = "blob_{}".format(digest.replace("sha256:", "").replace(":", "_"))
-    files[digest] = "@{}//:manifest.json".format(blob_repo)
+    if oci_ref_graph[digest]["kind"] == "index":
+        return {digest: manifest_blob_label(digest)}
 
+    return build_manifest_files_dict(digest, oci_ref_graph, layer_handling)
+
+def index_children(digest, oci_ref_graph):
+    """List the child manifests of a pulled image, if it is an index.
+
+    Args:
+        digest: Root digest of the image.
+        oci_ref_graph: OCI reference graph.
+
+    Returns:
+        List of child manifest digests, empty for a single-platform image.
+    """
+    if digest not in oci_ref_graph:
+        fail("Digest '{}' not found in OCI reference graph.".format(digest))
     entry = oci_ref_graph[digest]
-
-    # Determine if we should include layer files and which repo prefix to use
-    include_layers = layer_handling in ["eager", "lazy"]
-    layer_repo_prefix = "lazy" if layer_handling == "lazy" else "blob"
-
-    if entry["kind"] == "manifest":
-        # Single-platform manifest: add config and optionally layers
-        config_digest = entry.get("config")
-        if config_digest:
-            blob_repo = "blob_{}".format(config_digest.replace("sha256:", "").replace(":", "_"))
-            files[config_digest] = "@{}//:blob".format(blob_repo)
-
-        if include_layers:
-            for layer_digest in entry.get("layers", []):
-                blob_repo = "{}_{}".format(layer_repo_prefix, layer_digest.replace("sha256:", "").replace(":", "_"))
-                files[layer_digest] = "@{}//:blob".format(blob_repo)
-
-    elif entry["kind"] == "index":
-        # Multi-platform index: add all child manifests, their configs, and optionally their layers
-        for child_digest in entry.get("manifests", []):
-            # Add child manifest
-            blob_repo = "blob_{}".format(child_digest.replace("sha256:", "").replace(":", "_"))
-            files[child_digest] = "@{}//:manifest.json".format(blob_repo)
-
-            # Add child manifest's config and optionally layers
-            if child_digest in oci_ref_graph:
-                child_entry = oci_ref_graph[child_digest]
-                if child_entry["kind"] == "manifest":
-                    child_config_digest = child_entry.get("config")
-                    if child_config_digest:
-                        blob_repo = "blob_{}".format(child_config_digest.replace("sha256:", "").replace(":", "_"))
-                        files[child_config_digest] = "@{}//:blob".format(blob_repo)
-
-                    if include_layers:
-                        for layer_digest in child_entry.get("layers", []):
-                            blob_repo = "{}_{}".format(layer_repo_prefix, layer_digest.replace("sha256:", "").replace(":", "_"))
-                            files[layer_digest] = "@{}//:blob".format(blob_repo)
-
-    return files
+    if entry["kind"] != "index":
+        return []
+    return entry.get("manifests", [])
 
 def build_reverse_blob_mappings(oci_ref_graph, images_by_digest):
     """Build reverse mappings from blobs to top-level images that reference them.

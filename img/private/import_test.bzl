@@ -2,7 +2,7 @@
 
 load("@bazel_skylib//lib:unittest.bzl", "analysistest", "asserts")
 load("@bazel_skylib//rules:write_file.bzl", "write_file")
-load("//img/private:import.bzl", "image_import")
+load("//img/private:import.bzl", "image_import", "image_index_import")
 load("//img/private/providers:index_info.bzl", "ImageIndexInfo")
 
 # Digests are opaque keys here: nothing verifies that a blob hashes to the digest
@@ -152,6 +152,43 @@ def _skips_omitted_manifests_test_impl(ctx):
 
 _skips_omitted_manifests_test = analysistest.make(_skips_omitted_manifests_test_impl)
 
+def _descriptors(env):
+    """Returns the written descriptor JSON, keyed by output basename."""
+    descriptors = {}
+    for action in analysistest.target_actions(env):
+        for output in action.outputs.to_list():
+            if output.basename.endswith("_descriptor.json"):
+                descriptors[output.basename] = json.decode(action.content)
+    return descriptors
+
+def _composes_index_from_manifest_targets_test_impl(ctx):
+    env = analysistest.begin(ctx)
+    target_under_test = analysistest.target_under_test(env)
+    index_info = target_under_test[ImageIndexInfo]
+
+    # Every child of the index is part of it, in index order, including the attestation.
+    platforms = [
+        "{}/{}".format(manifest.os, manifest.architecture)
+        for manifest in index_info.manifests
+    ]
+    asserts.equals(env, ["linux/amd64", "linux/arm64", "unknown/unknown"], platforms)
+
+    # The index blob is used verbatim, so its digest is preserved.
+    asserts.equals(env, index_info.index, target_under_test[DefaultInfo].files.to_list()[0])
+
+    # Each child descriptor is the entry of the index, not one derived from the child's own
+    # manifest and config: only the index knows the annotations of a child.
+    prefix = target_under_test.label.name
+    descriptors = _descriptors(env)
+    asserts.equals(
+        env,
+        json.decode(_INDEX)["manifests"][2],
+        descriptors.get(prefix + "_2_descriptor.json"),
+    )
+    return analysistest.end(env)
+
+_composes_index_from_manifest_targets_test = analysistest.make(_composes_index_from_manifest_targets_test_impl)
+
 def import_test_suite(name):
     """Declare image_import analysis tests.
 
@@ -215,7 +252,44 @@ def import_test_suite(name):
         target_under_test = ":" + filtered_subject,
     )
 
+    # An index composed of one target per child manifest, as the images module extension
+    # creates it: the children live in their own repositories and are fetched on demand.
+    children = {}
+    for digest in [_AMD64_MANIFEST_DIGEST, _ARM64_MANIFEST_DIGEST, _ATTESTATION_MANIFEST_DIGEST]:
+        config_digest = json.decode(_BLOBS[digest])["config"]["digest"]
+        child = "{}_child_{}".format(name, digest.removeprefix("sha256:")[:4])
+        image_import(
+            name = child,
+            digest = digest,
+            data = {digest: _BLOBS[digest], config_digest: _BLOBS[config_digest]},
+            files = {digest: blob_files[digest], config_digest: blob_files[config_digest]},
+            registries = ["registry.example.com"],
+            repository = "example/image",
+            tags = ["manual"],
+        )
+        children[digest] = ":" + child
+
+    composed_subject = name + "_composed_subject"
+    image_index_import(
+        name = composed_subject,
+        digest = _INDEX_DIGEST,
+        index = blob_files[_INDEX_DIGEST],
+        index_json = _INDEX,
+        manifests = children,
+        registries = ["registry.example.com"],
+        repository = "example/image",
+        tag = "latest",
+        tags = ["manual"],
+    )
+
+    composed_test = name + "_composes_index_from_manifest_targets_test"
+    _composes_index_from_manifest_targets_test(
+        name = composed_test,
+        size = "small",
+        target_under_test = ":" + composed_subject,
+    )
+
     native.test_suite(
         name = name,
-        tests = [":" + test, ":" + filtered_test],
+        tests = [":" + test, ":" + filtered_test, ":" + composed_test],
     )

@@ -1,7 +1,7 @@
 """Unit tests for platform spec parsing and index child selection."""
 
 load("@bazel_skylib//lib:unittest.bzl", "asserts", "unittest")
-load("//img/private/platforms:matching.bzl", "format_platform", "matching_spec_indices", "parse_platform_spec", "select_index_children")
+load("//img/private/platforms:matching.bzl", "format_platform", "index_platform_groups", "matching_spec_indices", "parse_platform_spec", "select_index_children")
 
 _MANIFEST = "application/vnd.oci.image.manifest.v1+json"
 _INDEX = "application/vnd.oci.image.index.v1+json"
@@ -231,6 +231,43 @@ def _select_non_image_children_test_impl(ctx):
 
 _select_non_image_children_test = unittest.make(_select_non_image_children_test_impl)
 
+def _index_platform_groups_test_impl(ctx):
+    env = unittest.begin(ctx)
+
+    children = [
+        _child("sha256:amd64", _platform("linux", "amd64")),
+        _child("sha256:arm64", _platform("linux", "arm64", "v8")),
+        _child("sha256:armv6", _platform("linux", "arm", "v6")),
+        _child("sha256:armv7", _platform("linux", "arm", "v7")),
+        _child("sha256:attestation", _platform("unknown", "unknown")),
+        _child("sha256:no_platform"),
+        _child("sha256:exotic", _platform("plan9", "amd64")),
+    ]
+    groups = index_platform_groups(children, "sha256:index")
+
+    asserts.equals(
+        env,
+        {
+            "linux_amd64": ["sha256:amd64"],
+            "linux_arm": ["sha256:armv6", "sha256:armv7"],
+            "linux_arm64": ["sha256:arm64"],
+        },
+        groups,
+        "children are grouped by os/architecture, variants of one architecture together",
+    )
+
+    # An architecture alias ends up under the name of the constraint it maps to.
+    asserts.equals(
+        env,
+        {"linux_amd64": ["sha256:alias"]},
+        index_platform_groups([_child("sha256:alias", _platform("linux", "x86_64"))], "sha256:index"),
+        "an architecture alias is normalized",
+    )
+
+    return unittest.end(env)
+
+_index_platform_groups_test = unittest.make(_index_platform_groups_test_impl)
+
 def matching_test_suite(name):
     """Declare the platform matching unit tests.
 
@@ -245,4 +282,5 @@ def matching_test_suite(name):
         _select_index_children_test,
         _select_unmatched_test,
         _select_non_image_children_test,
+        _index_platform_groups_test,
     )

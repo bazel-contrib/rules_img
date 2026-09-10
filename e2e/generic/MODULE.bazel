@@ -169,8 +169,25 @@ images.pull(
     ],
     repository = "library/nginx",
 )
+
+# The linux/amd64 child of the nginx index above, pulled by digest: a single-platform image,
+# which the extension exposes with the same two targets as a multi-platform one.
+images.pull(
+    name = "nginx_amd64",
+    digest = "sha256:7e034cabf67d95246a996a3b92ad1c49c20d81526c9d7ba982aead057a0606e8",
+    registries = [
+        "mirror.gcr.io",
+        "index.docker.io",
+    ],
+    repository = "library/nginx",
+)
 images.settings(
     hub_repo = "enabled",
     image_repos = "enabled",
 )
-use_repo(images, "rules_img_images.bzl", nginx = "img_029d4461bd98f124e531380505ceea2072418fdf28752aa73b7b273ba3048903")
+use_repo(
+    images,
+    "rules_img_images.bzl",
+    nginx = "img_029d4461bd98f124e531380505ceea2072418fdf28752aa73b7b273ba3048903",
+    nginx_amd64 = "img_7e034cabf67d95246a996a3b92ad1c49c20d81526c9d7ba982aead057a0606e8",
+)

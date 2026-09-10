@@ -30,7 +30,25 @@ bzl_library(
 bzl_library(
     name = "matching",
     srcs = ["matching.bzl"],
-    deps = ["//img/private:manifest_media_type"],
+    deps = [
+        ":platforms",
+        "//img/private:manifest_media_type",
+    ],
+)
+
+bzl_library(
+    name = "match",
+    srcs = ["match.bzl"],
+)
+
+bzl_library(
+    name = "platform_select",
+    srcs = ["platform_select.bzl"],
+    deps = [
+        ":match",
+        "//img:providers",
+        "//img/private/config:defs",
+    ],
 )
 
 bzl_library(

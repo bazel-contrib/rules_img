@@ -5,7 +5,7 @@ load("@rules_img//img:image.bzl", "image_index", "image_manifest", "image_optimi
 load("@rules_img//img:layer.bzl", "file_metadata", "image_layer")
 load("@rules_img//img:multi_deploy.bzl", "multi_deploy")
 load("@rules_img//img:push.bzl", "image_push")
-load("@rules_img_images.bzl", "image")
+load("@rules_img_images.bzl", "image", "original")
 load("@rules_pkg//pkg:tar.bzl", "pkg_tar")
 load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
 load(":bzl/binary_with_runfiles_symlinks.bzl", "binary_with_runfiles_symlinks")
@@ -88,7 +88,25 @@ pkg_tar(
 
 image_manifest(
     name = "image_with_empty_uncompressed_tar_layer",
+    # The manifest of the target platform. Only that platform of the nginx index is fetched.
     base = image("nginx"),
+    layers = [":empty_tar"],
+)
+
+# The pulled image as it is: the index with every platform, and no target_compatible_with,
+# so it builds on any host.
+build_test(
+    name = "pulled_image_original_test",
+    targets = [
+        original("nginx"),
+        original("nginx_amd64"),
+    ],
+)
+
+# A single-platform pull: ":image" is the manifest itself, for the one platform it has.
+image_manifest(
+    name = "image_with_single_platform_base",
+    base = image("nginx_amd64"),
     layers = [":empty_tar"],
 )
 

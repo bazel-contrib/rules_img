@@ -6,7 +6,7 @@ load("//img/private/common:layer_helper.bzl", "build_layer_mtree", "image_mtree_
 load("//img/private/common:sparse_oci_layout.bzl", "build_sparse_oci_layout_for_index", "build_sparse_oci_layout_for_manifest")
 load("//img/private/common:transitions.bzl", "reset_platform_transition")
 load("//img/private/providers:index_info.bzl", "ImageIndexInfo")
-load("//img/private/providers:manifest_info.bzl", "ImageManifestInfo")
+load("//img/private/providers:manifest_info.bzl", "ImageManifestInfo", MANIFEST_FIELDS = "FIELDS")
 load("//img/private/providers:pull_info.bzl", "PullInfo")
 load("//img/private/providers:single_layer_info.bzl", "SingleLayerInfo")
 load(":manifest_media_type.bzl", "get_media_type")
@@ -301,6 +301,96 @@ makes them be ignored; any other missing blob is still an error.""",
         "_mtree_image_layout": attr.label(
             default = Label("//img/settings:mtree_image_layout"),
             providers = [BuildSettingInfo],
+        ),
+    },
+    cfg = reset_platform_transition,
+    toolchains = [TOOLCHAIN],
+)
+
+def _with_descriptor(info, descriptor):
+    """Copy an ImageManifestInfo, replacing its descriptor."""
+    fields = {field: getattr(info, field, None) for field in MANIFEST_FIELDS}
+    fields["descriptor"] = descriptor
+    return ImageManifestInfo(**fields)
+
+def _image_index_import_impl(ctx):
+    index = json.decode(ctx.attr.index_json)
+    media_type = get_media_type(index)
+    if not media_type in [MEDIA_TYPE_INDEX, DOCKER_MANIFEST_LIST_V2]:
+        fail("invalid mediaType in index: {}".format(media_type))
+
+    # Rebuild each child provider with the descriptor of the index entry that refers to it.
+    # The child target only knows its own manifest and config, so its descriptor lacks
+    # whatever the index entry adds (annotations, artifactType, the platform of an
+    # attestation manifest). The index blob is used verbatim, so its entries are the truth.
+    manifests = []
+    for (position, entry) in enumerate(index.get("manifests", [])):
+        digest = entry.get("digest")
+        if not digest in ctx.attr.manifests:
+            fail("missing manifest target for digest: {}".format(digest))
+        descriptor = ctx.actions.declare_file(ctx.attr.name + "_{}_descriptor.json".format(position))
+        ctx.actions.write(descriptor, json.encode(entry))
+        manifests.append(_with_descriptor(ctx.attr.manifests[digest][ImageManifestInfo], descriptor))
+
+    index_descriptor_file = ctx.actions.declare_file(ctx.attr.name + "_index_descriptor.json")
+    ctx.actions.write(index_descriptor_file, json.encode(dict(
+        mediaType = media_type,
+        size = len(ctx.attr.index_json),
+        digest = ctx.attr.digest,
+    )))
+
+    return [
+        DefaultInfo(files = depset([ctx.file.index])),
+        PullInfo(
+            registries = ctx.attr.registries,
+            repository = ctx.attr.repository,
+            tag = ctx.attr.tag,
+            digest = ctx.attr.digest,
+        ),
+        ImageIndexInfo(
+            descriptor = index_descriptor_file,
+            index = ctx.file.index,
+            manifests = manifests,
+            sparse_oci_layout = build_sparse_oci_layout_for_index(ctx, ctx.file.index, manifests),
+        ),
+    ]
+
+image_index_import = rule(
+    implementation = _image_index_import_impl,
+    doc = """Imports an OCI image index whose child manifests are separate targets.
+
+Unlike `image_import`, which embeds every manifest and config of an index, this rule composes
+the index from per-manifest targets. That allows the child manifests of a pulled image to live
+in their own repositories, so a build only fetches the platforms it uses.
+
+The index blob is used verbatim, keeping the digest of the pulled image intact.""",
+    attrs = {
+        "digest": attr.string(
+            mandatory = True,
+            doc = "Digest of the image index.",
+        ),
+        "index": attr.label(
+            mandatory = True,
+            allow_single_file = True,
+            doc = "The raw image index blob.",
+        ),
+        "index_json": attr.string(
+            mandatory = True,
+            doc = "Contents of the image index blob, so its entries are known in the analysis phase.",
+        ),
+        "manifests": attr.string_keyed_label_dict(
+            mandatory = True,
+            providers = [ImageManifestInfo],
+            doc = "Maps the digest of every child manifest of the index to the target importing it.",
+        ),
+        "registries": attr.string_list(
+            doc = "List of registry mirrors used to pull the image.",
+        ),
+        "repository": attr.string(
+            doc = "Repository name of the image.",
+        ),
+        "tag": attr.string(
+            doc = "Tag of the image.",
         ),
     },
     cfg = reset_platform_transition,

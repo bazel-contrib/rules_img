@@ -14,6 +14,7 @@ a variant, and where the fallback vector does not end at the variant-less entry
 """
 
 load("//img/private:manifest_media_type.bzl", "kind")
+load(":platforms.bzl", "has_constraint_setting")
 
 def _normalize_os(os):
     os = os.lower()
@@ -60,7 +61,17 @@ def _normalize_arch(architecture, variant):
         return ("arm", variant)
     return (architecture, variant)
 
-def _normalize_platform(os, architecture, variant):
+def normalize_platform(os, architecture, variant):
+    """Normalize an os/architecture/variant triple, mirroring containerd.
+
+    Args:
+        os: The OS, as found in an OCI platform object.
+        architecture: The architecture, as found in an OCI platform object.
+        variant: The variant, as found in an OCI platform object (may be empty).
+
+    Returns:
+        struct with the normalized os, architecture and variant.
+    """
     (architecture, variant) = _normalize_arch(architecture, variant)
     return struct(
         os = _normalize_os(os),
@@ -84,7 +95,7 @@ def parse_platform_spec(spec):
     parts = spec.split("/")
     if len(parts) < 2 or len(parts) > 3 or not all([len(part) > 0 for part in parts]):
         fail("""invalid platform "{}": expected "os/architecture" or "os/architecture/variant" (e.g. "linux/amd64")""".format(spec))
-    normalized = _normalize_platform(parts[0], parts[1], parts[2] if len(parts) == 3 else "")
+    normalized = normalize_platform(parts[0], parts[1], parts[2] if len(parts) == 3 else "")
     return struct(
         spec = spec,
         os = normalized.os,
@@ -108,7 +119,7 @@ def matching_spec_indices(platform, specs):
     if not os or not architecture:
         # An entry without a platform cannot be selected by a filter.
         return []
-    candidate = _normalize_platform(os, architecture, platform.get("variant", ""))
+    candidate = normalize_platform(os, architecture, platform.get("variant", ""))
     return [
         index
         for (index, spec) in enumerate(specs)
@@ -189,3 +200,38 @@ def select_index_children(children, specs):
         unmatched = [spec.spec for (index, spec) in enumerate(specs) if not matched[index]],
         available = available,
     )
+
+def index_platform_groups(children, reference):
+    """Group the children of an image index by the Bazel platform they can be selected for.
+
+    Children that no Bazel platform can match are left out: attestation manifests (which
+    buildkit publishes with the platform `unknown/unknown`), entries without a platform, and
+    platforms rules_img has no constraint values for. They are part of the index, but never
+    the base image of a build.
+
+    Args:
+        children: The "manifests" list of an index blob.
+        reference: The image the index belongs to, for error messages.
+
+    Returns:
+        Dict of "goos_goarch" to the digests of the children declaring that os/architecture.
+        An os/architecture with more than one child has one entry per variant.
+    """
+    groups = {}
+    for child in children:
+        digest = child.get("digest")
+        if not digest:
+            fail("child manifest of {} has no digest".format(reference))
+        if kind(child.get("mediaType")) == "index":
+            # Matches the behavior of the pull repository rule.
+            fail("image index referenced another index ({}). Nested indexes are not supported.".format(digest))
+        platform = child.get("platform", {})
+        os = platform.get("os", "")
+        architecture = platform.get("architecture", "")
+        if not os or not architecture:
+            continue
+        normalized = normalize_platform(os, architecture, platform.get("variant", ""))
+        if not has_constraint_setting(normalized.os, normalized.architecture):
+            continue
+        groups.setdefault("{}_{}".format(normalized.os, normalized.architecture), []).append(digest)
+    return groups

@@ -1,80 +1,35 @@
 """Repository rule for creating image repos from pulled blobs."""
 
-load("@bazel_skylib//lib:sets.bzl", "sets")
-load("//img/private/platforms:constraints.bzl", "map_os_arch_to_constraints")
+load("//img/private/platforms:matching.bzl", "index_platform_groups", "normalize_platform")
 load("//img/private/platforms:platforms.bzl", "has_constraint_setting")
+load(":repo_names.bzl", "manifest_target_label")
 
-def _image_repo_impl(rctx):
-    """Create an image repository from pulled blob repositories."""
+_INCOMPATIBLE = str(Label("//img/base:incompatible"))
 
-    # Build the data dict by reading config and manifest from files
-    data = {}
-    platforms_set = sets.make()
+def _read_blob(rctx, digest):
+    """Read a blob from the repository it was pulled into."""
+    if digest not in rctx.attr.files:
+        fail("Digest {} not found in files.".format(digest))
+    return rctx.read(rctx.path(rctx.attr.files[digest]))
 
-    # Read the root manifest/index
-    root_digest = rctx.attr.digest
-    if root_digest not in rctx.attr.files:
-        fail("Root digest {} not found in files.".format(root_digest))
-    manifest_label = rctx.attr.files[root_digest]
-    manifest_path = rctx.path(manifest_label)
-    data[root_digest] = rctx.read(manifest_path)
+def _files_str(files):
+    """Render the files dict of the repository as a BUILD file attribute value."""
+    entries = [
+        "        {}: \"{}\",".format(repr(digest), str(label))
+        for (digest, label) in files.items()
+    ]
+    return "{\n" + "\n".join(entries) + "\n    }"
 
-    # Parse the root blob to determine if it's a manifest or index
-    root_content = json.decode(data[root_digest])
-    is_index = "manifests" in root_content
+def _select_str(arms, default):
+    """Render a select() with a fixed default arm."""
+    entries = [
+        "        {}: {},".format(repr(condition), repr(value))
+        for (condition, value) in arms
+    ]
+    entries.append("        {}: {},".format(repr("//conditions:default"), repr(default)))
+    return "select({\n" + "\n".join(entries) + "\n    })"
 
-    if is_index:
-        # This is an index, read all child manifests and their configs
-        for child_manifest in root_content.get("manifests", []):
-            child_digest = child_manifest.get("digest")
-            if not child_digest:
-                continue
-
-            # Extract platform from index manifest entry
-            platform = child_manifest.get("platform", {})
-            if platform:
-                os = platform.get("os", "")
-                arch = platform.get("architecture", "")
-                if os and arch and has_constraint_setting(os, arch):
-                    sets.insert(platforms_set, "{}_{}".format(os, arch))
-
-            if child_digest not in rctx.attr.files:
-                fail("Child manifest digest {} not found in files.".format(child_digest))
-
-            child_label = rctx.attr.files[child_digest]
-            child_path = rctx.path(child_label)
-            data[child_digest] = rctx.read(child_path)
-
-            # Read the child manifest's config
-            child_content = json.decode(data[child_digest])
-            child_config_digest = child_content.get("config", {}).get("digest")
-            if child_config_digest:
-                if child_config_digest not in rctx.attr.files:
-                    fail("Config digest {} not found in files.".format(child_config_digest))
-                child_config_label = rctx.attr.files[child_config_digest]
-                child_config_path = rctx.path(child_config_label)
-                data[child_config_digest] = rctx.read(child_config_path)
-    else:
-        # This is a single-platform manifest, read its config
-        config_digest = root_content.get("config", {}).get("digest")
-        if config_digest:
-            if config_digest not in rctx.attr.files:
-                fail("Config digest {} not found in files.".format(config_digest))
-            config_label = rctx.attr.files[config_digest]
-            config_path = rctx.path(config_label)
-            data[config_digest] = rctx.read(config_path)
-
-            # Extract platform from config
-            config = json.decode(data[config_digest])
-            os = config.get("os", "")
-            arch = config.get("architecture", "")
-            if os and arch and has_constraint_setting(os, arch):
-                sets.insert(platforms_set, "{}_{}".format(os, arch))
-
-    # Build target_compatible_with based on discovered platforms
-    target_compatible_with = map_os_arch_to_constraints(sets.to_list(platforms_set))
-
-    # Construct purl for package_metadata
+def _purl(rctx):
     identifier = rctx.attr.digest
     if not identifier:
         identifier = rctx.attr.tag
@@ -82,17 +37,120 @@ def _image_repo_impl(rctx):
     decoded_registries = json.decode(rctx.attr.registries)
     if len(decoded_registries) == 1:
         purl += "?repository_url={}".format(decoded_registries[0])
+    return purl
 
-    # Generate the BUILD file that creates the image_import
-    # Convert files dict to a string representation for the BUILD file
-    files_strs = []
-    for digest, label in rctx.attr.files.items():
-        files_strs.append("        {}: \"{}\",".format(repr(digest), str(label)))
-    files_str = "{\n" + "\n".join(files_strs) + "\n}"
+def _index_build_file(rctx, index_data, index):
+    """Generate the BUILD file of an image whose root blob is an index."""
+    manifests = {
+        child["digest"]: manifest_target_label(child["digest"])
+        for child in index.get("manifests", [])
+        if "digest" in child
+    }
+    groups = index_platform_groups(index.get("manifests", []), rctx.attr.digest)
 
-    rctx.file(
-        "BUILD.bazel",
-        content = """# This file was generated by the images module extension.
+    arms = []
+    fan_ins = []
+    for key in sorted(groups.keys()):
+        digests = groups[key]
+        condition = "@rules_img//img/constraints:{}".format(key)
+        if len(digests) == 1:
+            arms.append((condition, manifest_target_label(digests[0])))
+            continue
+
+        # Several manifests for one os/architecture: Bazel constraints don't model
+        # containerd's variant fallback, so the choice between them is made in the analysis
+        # phase. Only the manifests of this one os/architecture are fetched for it.
+        name = "image_{}".format(key)
+        fan_ins.append("""
+image_platform_select(
+    name = "{name}",
+    manifests = {manifests},
+    visibility = ["//visibility:private"],
+)
+""".format(
+            name = name,
+            manifests = json.encode_indent(
+                [manifest_target_label(digest) for digest in digests],
+                prefix = "    ",
+                indent = "    ",
+            ),
+        ))
+        arms.append((condition, ":" + name))
+
+    loads = [
+        (str(Label("@package_metadata//rules:package_metadata.bzl")), "package_metadata"),
+        (str(Label("//img/private:import.bzl")), "image_index_import"),
+    ]
+    if fan_ins:
+        loads.append((str(Label("//img/private/platforms:platform_select.bzl")), "image_platform_select"))
+
+    return """# This file was generated by the images module extension.
+{loads}
+
+package_metadata(
+    name = "package_metadata",
+    purl = {purl},
+    visibility = ["//:__subpackages__"],
+)
+
+image_index_import(
+    name = "original",
+    digest = {digest},
+    index = "{index_label}",
+    index_json = {index_json},
+    manifests = {manifests},
+    registries = {registries},
+    repository = {repository},
+    tag = {tag},
+    visibility = ["//visibility:public"],
+)
+{fan_ins}
+alias(
+    name = "image",
+    actual = {actual},
+    visibility = ["//visibility:public"],
+)
+""".format(
+        loads = "\n".join(["load({}, {})".format(repr(path), repr(name)) for (path, name) in loads]),
+        purl = repr(_purl(rctx)),
+        digest = repr(rctx.attr.digest),
+        index_label = str(rctx.attr.files[rctx.attr.digest]),
+        index_json = json.encode(index_data),
+        manifests = _files_str(manifests),
+        registries = rctx.attr.registries,
+        repository = repr(rctx.attr.repository),
+        tag = repr(rctx.attr.tag) if rctx.attr.tag else "None",
+        fan_ins = "".join(fan_ins),
+        actual = _select_str(arms, _INCOMPATIBLE),
+    )
+
+def _manifest_build_file(rctx, manifest_data, manifest):
+    """Generate the BUILD file of an image whose root blob is a single manifest."""
+    data = {rctx.attr.digest: manifest_data}
+
+    config_digest = manifest.get("config", {}).get("digest")
+    platform_key = None
+    if config_digest:
+        data[config_digest] = _read_blob(rctx, config_digest)
+        config = json.decode(data[config_digest])
+        os = config.get("os", "")
+        architecture = config.get("architecture", "")
+        if os and architecture:
+            normalized = normalize_platform(os, architecture, config.get("variant", ""))
+            if has_constraint_setting(normalized.os, normalized.architecture):
+                platform_key = "{}_{}".format(normalized.os, normalized.architecture)
+
+    if platform_key == None:
+        # Without a platform there is nothing to select on, and nothing to be incompatible
+        # with either.
+        actual = repr(":original")
+    else:
+        actual = _select_str(
+            [("@rules_img//img/constraints:{}".format(platform_key), ":original")],
+            _INCOMPATIBLE,
+        )
+
+    return """# This file was generated by the images module extension.
 load("@package_metadata//rules:package_metadata.bzl", "package_metadata")
 load("@rules_img//img/private:import.bzl", "image_import")
 
@@ -103,27 +161,49 @@ package_metadata(
 )
 
 image_import(
-    name = "image",
+    name = "original",
     digest = {digest},
     data = {data},
     files = {files},
     registries = {registries},
     repository = {repository},
     tag = {tag},
-    target_compatible_with = {target_compatible_with},
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "image",
+    actual = {actual},
     visibility = ["//visibility:public"],
 )
 """.format(
-            digest = repr(rctx.attr.digest),
-            data = json.encode(data),
-            files = files_str,
-            purl = repr(purl),
-            registries = rctx.attr.registries,
-            repository = repr(rctx.attr.repository),
-            tag = repr(rctx.attr.tag) if rctx.attr.tag else "None",
-            target_compatible_with = target_compatible_with,
-        ),
+        purl = repr(_purl(rctx)),
+        digest = repr(rctx.attr.digest),
+        data = json.encode_indent(data, prefix = "    ", indent = "    "),
+        files = _files_str(rctx.attr.files),
+        registries = rctx.attr.registries,
+        repository = repr(rctx.attr.repository),
+        tag = repr(rctx.attr.tag) if rctx.attr.tag else "None",
+        actual = actual,
     )
+
+def _image_repo_impl(rctx):
+    """Create an image repository from pulled blob repositories.
+
+    This repository is the entry point of a pulled image. It only ever reads the root blob of
+    the image, so that fetching it does not pull in the manifests, configs and layers of
+    platforms the build never asks for. The per-platform manifests of an index live in their
+    own repositories (see manifest_repo) and are referenced by label.
+    """
+    root_data = _read_blob(rctx, rctx.attr.digest)
+    root_content = json.decode(root_data)
+
+    if "manifests" in root_content:
+        build_file = _index_build_file(rctx, root_data, root_content)
+    else:
+        build_file = _manifest_build_file(rctx, root_data, root_content)
+
+    rctx.file("BUILD.bazel", content = build_file)
     rctx.file("REPO.bazel", """\
 repo(
     default_package_metadata = ["//:package_metadata"],
@@ -136,7 +216,14 @@ image_repo = repository_rule(
 
 This repository rule is used by the images module extension to create
 image repositories that reference blob repositories for manifests, configs,
-and layers.""",
+and layers.
+
+It creates two targets:
+
+* `:original` imports the image exactly as it was pulled, as an index or as a single manifest.
+  It has no `target_compatible_with`, so it can be pushed or loaded from any host.
+* `:image` is the single manifest matching the target platform, selected without fetching the
+  other platforms. It is incompatible with target platforms the image has no manifest for.""",
     attrs = {
         "digest": attr.string(
             mandatory = True,
@@ -144,7 +231,11 @@ and layers.""",
         ),
         "files": attr.string_keyed_label_dict(
             mandatory = True,
-            doc = "Dict of digest -> label for blob files.",
+            doc = """Dict of digest -> label for blob files.
+
+Only blobs that this repository reads or refers to: the root blob, and for a single-platform
+image also its config and layers. Labels of a repository rule are fetched eagerly, so listing
+the blobs of other platforms here would defeat the lazy per-platform fetching.""",
         ),
         "registries": attr.string(
             mandatory = True,
@@ -156,6 +247,83 @@ and layers.""",
         ),
         "tag": attr.string(
             doc = "The image tag (optional).",
+        ),
+    },
+)
+
+def _manifest_repo_impl(rctx):
+    """Create a repository importing a single manifest of a pulled image index."""
+    manifest_data = _read_blob(rctx, rctx.attr.digest)
+    manifest = json.decode(manifest_data)
+    if "manifests" in manifest:
+        fail("image index referenced another index ({}). Nested indexes are not supported.".format(rctx.attr.digest))
+
+    data = {rctx.attr.digest: manifest_data}
+    config_digest = manifest.get("config", {}).get("digest")
+    if config_digest:
+        data[config_digest] = _read_blob(rctx, config_digest)
+
+    rctx.file("BUILD.bazel", content = """# This file was generated by the images module extension.
+load("@package_metadata//rules:package_metadata.bzl", "package_metadata")
+load("@rules_img//img/private:import.bzl", "image_import")
+
+package_metadata(
+    name = "package_metadata",
+    purl = {purl},
+    visibility = ["//:__subpackages__"],
+)
+
+# Deliberately without target_compatible_with: the image repository referring to this manifest
+# decides which target platforms it is selected for.
+image_import(
+    name = "image",
+    digest = {digest},
+    data = {data},
+    files = {files},
+    registries = {registries},
+    repository = {repository},
+    visibility = ["//visibility:public"],
+)
+""".format(
+        purl = repr(_purl(rctx)),
+        digest = repr(rctx.attr.digest),
+        data = json.encode_indent(data, prefix = "    ", indent = "    "),
+        files = _files_str(rctx.attr.files),
+        registries = rctx.attr.registries,
+        repository = repr(rctx.attr.repository),
+    ))
+    rctx.file("REPO.bazel", """\
+repo(
+    default_package_metadata = ["//:package_metadata"],
+)
+""")
+
+manifest_repo = repository_rule(
+    implementation = _manifest_repo_impl,
+    doc = """Creates a repository for a single child manifest of a pulled image index.
+
+Splitting the children of an index into one repository each is what makes a pulled multi-platform
+image lazy: a build fetches the manifest, config and layers of the platform it builds for, and
+of no other.""",
+    attrs = {
+        "digest": attr.string(
+            mandatory = True,
+            doc = "The digest of the manifest.",
+        ),
+        "files": attr.string_keyed_label_dict(
+            mandatory = True,
+            doc = "Dict of digest -> label for the blobs of this manifest (manifest, config and layers).",
+        ),
+        "registries": attr.string(
+            mandatory = True,
+            doc = "JSON-encoded list of registries.",
+        ),
+        "repository": attr.string(
+            mandatory = True,
+            doc = "The image repository name.",
+        ),
+        "tag": attr.string(
+            doc = "The image tag (optional). Only used for the package metadata.",
         ),
     },
 )

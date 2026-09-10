@@ -9,6 +9,7 @@ bzl_library(
     deps = [
         "//img/private:manifest_media_type",
         "//img/private/repository_rules:download",
+        "//img/private/repository_rules:repo_names",
     ],
 )
 
@@ -20,6 +21,7 @@ bzl_library(
         ":images_helpers",
         "//img/private/repository_rules:image_repo",
         "//img/private/repository_rules:pull_blob",
+        "//img/private/repository_rules:repo_names",
         "@bazel_skylib//lib:sets",
     ],
 )

@@ -46,7 +46,7 @@ Access pulled images in BUILD files using the generated helper. The `name` attri
 is optional - if not specified, use the `repository` value to reference the image:
 
 ```starlark
-load("@rules_img_images.bzl", "image")
+load("@rules_img_images.bzl", "image", "original")
 
 image_manifest(
     name = "my_app",
@@ -59,7 +59,25 @@ image_manifest(
     base = image("distroless/base"),  # References the repository
     ...
 )
+
+# Push the pulled image unaltered, with all of its platforms.
+image_push(
+    name = "mirror_ubuntu",
+    image = original("ubuntu"),
+    ...
+)
 ```
+
+Every pulled image exposes two targets:
+
+* `image(...)` (`@repo//:image`) is the single manifest for the target platform. It is chosen
+  with a `select()`, so a build only downloads the manifest, config and layers of the platform
+  it builds for. For a target platform the image has no manifest for, it is incompatible, and
+  targets depending on it are skipped instead of failing.
+* `original(...)` (`@repo//:original`) is the image exactly as it was pulled - an index with
+  all of its platforms, or a single manifest - keeping its digest. It has no
+  `target_compatible_with`, so it can be pushed or loaded from any host, and it requires the
+  blobs of every platform.
 
 The extension creates deduplicated blob repositories, so pulling multiple images
 from the same base only downloads shared layers once. The `digest` parameter is

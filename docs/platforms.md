@@ -273,6 +273,38 @@ The index blob is stored verbatim (the digest pin refers to it), so it keeps lis
 platform while only the selected children exist locally. Use a filtered image as a base image;
 pushing or loading its unmodified index is not supported.
 
+#### `images.pull`
+
+The [`images` module extension](extensions.md#images) does the same narrowing without a filter,
+and per build instead of per fetch. Every pulled image exposes two targets:
+
+```starlark
+load("@rules_img_images.bzl", "image", "original")
+
+image_manifest(
+    name = "app",
+    base = image("debian"),  # the manifest for the target platform
+    layers = [":app_layer"],
+)
+
+image_push(
+    name = "mirror",
+    image = original("debian"),  # the index, with every platform, as pulled
+    repository = "my-org/debian",
+)
+```
+
+`image(...)` resolves to the child manifest of the target platform through a `select()` on the
+os and architecture constraints, so a build downloads the manifest, config and layers of the
+platform it builds for, and of no other. Under a multi-platform `image_index`, each platform of
+the split resolves its own child. When the index has several manifests for one os/architecture
+(such as `linux/arm/v6` and `linux/arm/v7`), the choice between those - and only those - is made
+in the analysis phase, with the same variant fallback as the `base` attribute.
+
+For a target platform the index has no manifest for, `image(...)` is incompatible: targets
+depending on it are skipped by wildcard builds instead of failing. `original(...)` has no such
+constraint and can be built from any host, but it requires every platform of the image.
+
 ### Further Reading
 
 - [Bazel Platforms Documentation](https://bazel.build/extending/platforms)
