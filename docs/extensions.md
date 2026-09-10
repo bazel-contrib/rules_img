@@ -61,6 +61,35 @@ image_manifest(
 )
 ```
 
+`image(name)` now returns a single manifest selected for the consumer's target
+platform, or an incompatible target if no manifest matches. Selection honors
+`--platforms`, `image_manifest(platform = ...)`, and `image_index(platforms = ...)`.
+
+To preserve and reupload the complete original index (including attestations), or
+to load an image regardless of the build platform, use `original_image(name)`:
+
+```starlark
+load("@rules_img_images.bzl", "image", "original_image")
+
+image_push(
+    name = "reupload",
+    image = original_image("ubuntu"),
+    repository = "my-mirror/ubuntu",
+)
+```
+
+For direct repository access, use `:image` for selection and `:original` for the
+unmodified index or manifest. Existing callers that relied on `image()` returning
+an index should migrate to `original_image()`.
+
+The extension stores the OCI reference graph and platform metadata in
+`MODULE.bazel.lock` facts on Bazel versions that support facts. Initial discovery
+fetches manifests and standalone-image platform metadata, but never layers.
+With complete facts, extension evaluation does not fetch image metadata, and
+building `image(name)` fetches only the selected manifest's dependencies.
+Building `original_image(name)` makes all original children available. Without
+facts support, metadata discovery repeats when the extension is reevaluated.
+
 The extension creates deduplicated blob repositories, so pulling multiple images
 from the same base only downloads shared layers once. The `digest` parameter is
 required for reproducibility.
@@ -78,7 +107,7 @@ required for reproducibility.
 | :------------- | :------------- | :------------- | :------------- | :------------- |
 | <a id="images.pull-name"></a>name |  Friendly name for the image (e.g., 'ubuntu', 'distroless-base').<br><br>This name is used to reference the image in your code via the `image()` helper function. If not specified, defaults to the repository name.   | <a href="https://bazel.build/concepts/labels#target-names">Name</a> | optional |  `""`  |
 | <a id="images.pull-digest"></a>digest |  The image digest for reproducible pulls (e.g., "sha256:abc123...").<br><br>When specified, the image is pulled by digest instead of tag, ensuring reproducible builds. The digest must be a full SHA256 digest starting with "sha256:".   | String | optional |  `""`  |
-| <a id="images.pull-layer_handling"></a>layer_handling |  Strategy for handling image layers.<br><br>This attribute controls when and how layer data is fetched from the registry.<br><br>**Available strategies:**<br><br>* **`shallow`** (default): Layer data is fetched only if needed during push operations,   but is not available during the build. This is the most efficient option for images   that are only used as base images for pushing.<br><br>* **`eager`**: Layer data is fetched in the repository rule and is always available.   This ensures layers are accessible in build actions but is inefficient as all layers   are downloaded regardless of whether they're needed. Use this for base images that   need to be read or inspected during the build.<br><br>* **`lazy`**: Layer data is downloaded in a build action when requested. This provides   access to layers during builds while avoiding unnecessary downloads, but requires   network access during the build phase. **EXPERIMENTAL:** Use at your own risk.   | String | optional |  `"shallow"`  |
+| <a id="images.pull-layer_handling"></a>layer_handling |  Strategy for handling image layers.<br><br>This attribute controls when and how layer data is fetched from the registry.<br><br>**Available strategies:**<br><br>* **`shallow`** (default): Layer data is fetched only if needed during push operations,   but is not available during the build. This is the most efficient option for images   that are only used as base images for pushing.<br><br>* **`eager`**: Layer data is fetched in the repository rule and is always available.   Layers are accessible in build actions for the selected image; unselected   platforms do not fetch layers. Building the original index fetches every   child's layers. Use this when inspecting layers during the build.<br><br>* **`lazy`**: Layer data is downloaded in a build action when requested. This provides   access to layers during builds while avoiding unnecessary downloads, but requires   network access during the build phase. **EXPERIMENTAL:** Use at your own risk.   | String | optional |  `"shallow"`  |
 | <a id="images.pull-registries"></a>registries |  List of mirror registries to try in order.<br><br>These registries will be tried in order before the primary registry. Useful for corporate environments with registry mirrors or air-gapped setups.   | List of strings | optional |  `[]`  |
 | <a id="images.pull-registry"></a>registry |  Primary registry to pull from (e.g., "index.docker.io", "gcr.io").<br><br>If not specified, defaults to Docker Hub. Can be overridden by entries in registries list.   | String | optional |  `""`  |
 | <a id="images.pull-repository"></a>repository |  The image repository within the registry (e.g., "library/ubuntu", "my-project/my-image").<br><br>For Docker Hub, official images use "library/" prefix (e.g., "library/ubuntu").   | String | required |  |

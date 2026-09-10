@@ -3,7 +3,7 @@
 load("@bazel_skylib//lib:sets.bzl", "sets")
 load("@img_toolchain//:defs.bzl", "tool_for_repository_os")
 load("//img/private:manifest_media_type.bzl", "get_media_type", manifest_kind = "kind")
-load("//img/private/repository_rules:download.bzl", "auth_environment", "download_manifest")
+load("//img/private/repository_rules:download.bzl", "auth_environment", "download_blob", "download_manifest")
 
 def pull_tag_to_struct(tag):
     """Convert a pull tag to a struct for easier attribute access.
@@ -202,7 +202,14 @@ def check_facts_for_manifest(facts, digest):
     Returns:
         ref_graph_entry or None if not cached
     """
-    return facts.get("oci_ref_graph@{}".format(digest))
+    entry = facts.get("oci_ref_graph_v2@{}".format(digest))
+    if entry == None:
+        return None
+    if entry.get("kind") == "manifest" and entry.get("config") and type(entry.get("layers")) == "list":
+        return entry
+    if entry.get("kind") == "index" and type(entry.get("manifests")) == "list" and type(entry.get("descriptors")) == "list" and len(entry["manifests"]) == len(entry["descriptors"]):
+        return entry
+    return None
 
 def download_and_parse_manifest(ctx, digest, img, facts, downloader, credential_helper = None, docker_config_path = None):
     """Download a manifest and parse it into ref graph entry.
@@ -225,19 +232,7 @@ def download_and_parse_manifest(ctx, digest, img, facts, downloader, credential_
     sources = get_sources_from_image(img)
 
     if cached_ref_graph_entry != None:
-        # Structure is cached, but we still need to download the blob
-        # download_manifest will use its own blob caching
-        blob_info = download_manifest(
-            ctx,
-            downloader = downloader,
-            reference = digest,
-            sha256 = digest[7:],
-            have_valid_digest = True,
-            sources = sources,
-            credential_helper = credential_helper,
-            docker_config_path = docker_config_path,
-        )
-        return (cached_ref_graph_entry, blob_info.data)
+        return (cached_ref_graph_entry, None)
 
     # Download and parse manifest
     blob_info = download_manifest(
@@ -269,6 +264,7 @@ def download_and_parse_manifest(ctx, digest, img, facts, downloader, credential_
             if "digest" in layer
         ]
     elif kind == "index":
+        ref_graph_entry["descriptors"] = manifest.get("manifests", [])
         ref_graph_entry["manifests"] = [
             m.get("digest")
             for m in manifest.get("manifests", [])
@@ -295,57 +291,17 @@ def collect_blobs_to_create(oci_ref_graph, images_by_digest):
     for digest in oci_ref_graph.keys():
         manifest_blobs[digest] = True
 
-    # Add configs and conditionally add layers
-    for digest, ref_graph_entry in oci_ref_graph.items():
-        if ref_graph_entry["kind"] != "manifest":
-            continue
-
-        # Add config blob
-        config_digest = ref_graph_entry.get("config")
-        if config_digest:
-            file_blobs[config_digest] = True
-
-        # Determine layer handling for this manifest
-        layer_handling = _get_layer_handling_for_manifest(
-            digest,
-            oci_ref_graph,
-            images_by_digest,
-        )
-
-        # Create blob repos for layers based on handling strategy
-        if layer_handling == "eager":
-            for layer_digest in ref_graph_entry.get("layers", []):
-                file_blobs[layer_digest] = True
-        elif layer_handling == "lazy":
-            for layer_digest in ref_graph_entry.get("layers", []):
-                lazy_file_blobs[layer_digest] = True
-
-        # If shallow, don't add layers
+    for digest, img in images_by_digest.items():
+        files = build_image_files_dict(digest, oci_ref_graph, img.layer_handling)
+        for blob_digest, label in files.items():
+            if blob_digest in manifest_blobs:
+                continue
+            if label.startswith("@lazy_"):
+                lazy_file_blobs[blob_digest] = True
+            else:
+                file_blobs[blob_digest] = True
 
     return (manifest_blobs, file_blobs, lazy_file_blobs)
-
-def _get_layer_handling_for_manifest(manifest_digest, oci_ref_graph, images_by_digest):
-    """Find the layer_handling setting for a manifest.
-
-    Args:
-        manifest_digest: Digest of the manifest
-        oci_ref_graph: OCI reference graph
-        images_by_digest: Dictionary of images by digest
-
-    Returns:
-        Layer handling string ("shallow", "eager", or "lazy")
-    """
-
-    # Check if this manifest is a top-level image or referenced by an index
-    for top_digest, top_img in images_by_digest.items():
-        if manifest_digest == top_digest:
-            return top_img.layer_handling
-        elif top_digest in oci_ref_graph:
-            top_entry = oci_ref_graph[top_digest]
-            if top_entry["kind"] == "index" and manifest_digest in top_entry.get("manifests", []):
-                return top_img.layer_handling
-
-    return "shallow"  # Default
 
 def build_image_files_dict(digest, oci_ref_graph, layer_handling):
     """Build the files dict mapping digests to blob repo labels for a specific image.
@@ -495,36 +451,8 @@ def build_facts_to_store(oci_ref_graph):
     """
     facts_to_store = {}
     for digest in oci_ref_graph:
-        facts_to_store["oci_ref_graph@{}".format(digest)] = oci_ref_graph[digest]
+        facts_to_store["oci_ref_graph_v2@{}".format(digest)] = oci_ref_graph[digest]
     return facts_to_store
-
-def reachable_facts_to_dict(images_by_digest, facts):
-    """Extract reachable facts for top-level images into a dictionary.
-
-    Args:
-        images_by_digest: Dictionary mapping digest to image struct
-        facts: Facts dictionary from previous extension evaluation
-
-    Returns:
-        Dictionary of reachable facts for top-level images
-    """
-    reachable_facts = {}
-    children = sets.make()
-    for digest in images_by_digest.keys():
-        fact_key = "oci_ref_graph@{}".format(digest)
-        if fact_key in facts:
-            reachable_facts[fact_key] = facts[fact_key]
-            if facts[fact_key]["kind"] == "index":
-                for child_digest in facts[fact_key].get("manifests", []):
-                    sets.insert(children, child_digest)
-
-    # Now also include all reachable child manifests
-    for child_digest in sets.to_list(children):
-        fact_key = "oci_ref_graph@{}".format(child_digest)
-        if fact_key in facts:
-            reachable_facts[fact_key] = facts[fact_key]
-
-    return reachable_facts
 
 def normalize_repository_name(name, repository):
     """Normalize a friendly name and repository into a valid Bazel repository name.
@@ -587,10 +515,37 @@ def sync_oci_ref_graph(ctx, images_by_digest, facts, downloader, credential_help
     ctx.report_progress("Syncing OCI reference graph...")
     oci_ref_graph = {}
 
+    # Discover roots first so newly added indexes can reuse existing child facts.
+    for digest, img in images_by_digest.items():
+        entry, _ = download_and_parse_manifest(
+            ctx,
+            digest,
+            img,
+            facts,
+            downloader,
+            credential_helper = credential_helper,
+            docker_config_path = docker_config_path,
+        )
+        oci_ref_graph[digest] = entry
+    known = build_facts_to_store(oci_ref_graph)
+    complete = True
+    for entry in oci_ref_graph.values():
+        if entry["kind"] == "index":
+            for child_digest in entry["manifests"]:
+                child = check_facts_for_manifest(known, child_digest) or check_facts_for_manifest(facts, child_digest)
+                if child != None:
+                    if child["kind"] != "manifest":
+                        fail("Nested image indexes are not supported: " + child_digest)
+                    known["oci_ref_graph_v2@" + child_digest] = child
+                else:
+                    complete = False
+    if complete:
+        return {key.removeprefix("oci_ref_graph_v2@"): value for key, value in known.items()}
+
     # Use the img tool to prefetch the full OCI ref graph in parallel
     if downloader == "img_tool":
         # Prepare facts JSON (convert facts to a format expected by the tool)
-        facts_json_content = json.encode(reachable_facts_to_dict(images_by_digest, facts))
+        facts_json_content = json.encode(known)
         ctx.file("facts_input.json", facts_json_content)
 
         # Prepare images JSON (convert images_by_digest to JSON)
@@ -639,40 +594,29 @@ def sync_oci_ref_graph(ctx, images_by_digest, facts, downloader, credential_help
 
         # Parse updated facts into oci_ref_graph
         for key, value in updated_facts.items():
-            if key.startswith("oci_ref_graph@"):
-                digest = key.removeprefix("oci_ref_graph@")
+            if key.startswith("oci_ref_graph_v2@"):
+                digest = key.removeprefix("oci_ref_graph_v2@")
                 oci_ref_graph[digest] = value
         return oci_ref_graph
 
     # Fallback to sequential downloading for "bazel" downloader
-    # Download top-level manifests/indexes
-    for digest, img in images_by_digest.items():
-        ref_graph_entry, _manifest_data = download_and_parse_manifest(
-            ctx,
-            digest,
-            img,
-            facts,
-            downloader,
-            credential_helper = credential_helper,
-            docker_config_path = docker_config_path,
-        )
-        oci_ref_graph[digest] = ref_graph_entry
-
     # Download child manifests referenced by indexes
     manifest_to_download_from_index = {}
     for parent_digest, ref_graph_entry in oci_ref_graph.items():
         if ref_graph_entry["kind"] == "index":
             for child_digest in ref_graph_entry["manifests"]:
                 if child_digest not in oci_ref_graph:
-                    manifest_to_download_from_index[child_digest] = parent_digest
+                    if child_digest in manifest_to_download_from_index:
+                        manifest_to_download_from_index[child_digest] = merge_pull_attrs(manifest_to_download_from_index[child_digest], images_by_digest[parent_digest], other_is_root = False)
+                    else:
+                        manifest_to_download_from_index[child_digest] = images_by_digest[parent_digest]
 
-    for digest, index_digest in manifest_to_download_from_index.items():
-        img = images_by_digest[index_digest]
+    for digest, img in manifest_to_download_from_index.items():
         ref_graph_entry, _manifest_data = download_and_parse_manifest(
             ctx,
             digest,
             img,
-            facts,
+            known,
             downloader,
             credential_helper = credential_helper,
             docker_config_path = docker_config_path,
@@ -683,3 +627,38 @@ def sync_oci_ref_graph(ctx, images_by_digest, facts, downloader, credential_help
 
     ctx.report_progress("OCI reference graph synced with {} entries.".format(len(oci_ref_graph)))
     return oci_ref_graph
+
+def discover_root_platforms(ctx, images, graph, facts, downloader, credential_helper = None, docker_config_path = None):
+    """Read standalone manifest platforms once, independently of graph discovery.
+
+    Args:
+        ctx: Module extension context.
+        images: Top-level images keyed by digest.
+        graph: Discovered OCI reference graph.
+        facts: Previously persisted facts, accessed by key.
+        downloader: Downloader implementation to use.
+        credential_helper: Optional credential helper override.
+        docker_config_path: Optional Docker authentication config override.
+
+    Returns:
+        Digest-keyed platform facts for standalone images.
+    """
+    stored = {}
+    for digest, img in images.items():
+        if graph[digest]["kind"] != "manifest":
+            continue
+        key = "image_platform_v1@" + digest
+        platform = facts.get(key)
+        if platform == None:
+            config = download_blob(
+                ctx,
+                downloader = downloader,
+                digest = graph[digest]["config"],
+                sources = get_sources_from_image(img),
+                credential_helper = credential_helper,
+                docker_config_path = docker_config_path,
+            )
+            data = json.decode(config.data)
+            platform = {field: data.get(field, "") for field in ["os", "architecture", "variant"]}
+        stored[key] = platform
+    return stored

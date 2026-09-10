@@ -1,8 +1,9 @@
 """Module extension for pulling container images."""
 
 load("@bazel_skylib//lib:sets.bzl", "sets")
-load("//img/private/extensions:images_helpers.bzl", "build_facts_to_store", "build_image_files_dict", "build_reverse_blob_mappings", "collect_blobs_to_create", "get_merged_sources_from_images", "get_registries_from_image", "merge_pull_attrs", "normalize_repository_name", "pull_tag_to_struct", "sync_oci_ref_graph")
+load("//img/private/extensions:images_helpers.bzl", "build_facts_to_store", "build_image_files_dict", "build_reverse_blob_mappings", "collect_blobs_to_create", "discover_root_platforms", "get_merged_sources_from_images", "get_registries_from_image", "merge_pull_attrs", "normalize_repository_name", "pull_tag_to_struct", "sync_oci_ref_graph")
 load("//img/private/repository_rules:image_repo.bzl", "image_repo")
+load("//img/private/repository_rules:image_router.bzl", "image_router")
 load("//img/private/repository_rules:pull_blob.bzl", "pull_blob_file", "pull_manifest_blob")
 
 def _images_impl(ctx):
@@ -14,7 +15,7 @@ def _images_impl(ctx):
     digest_visibility = {}
     root_module_images_by_name = {}
 
-    # oci_ref_graph contains mapping from oci image manifets / indices to their referenced blobs
+    # oci_ref_graph maps OCI manifests / indexes to their referenced blobs
     # manifest: digest -> {"kind": "manifest", "config": "sha256:...", "layers": ["sha256:...", ...]}
     # index: digest -> {"kind": "index", "manifests": ["sha256:...", ...]}
     oci_ref_graph = {}
@@ -75,6 +76,16 @@ def _images_impl(ctx):
     oci_ref_graph = sync_oci_ref_graph(
         ctx,
         images_by_digest,
+        facts,
+        downloader,
+        credential_helper = credential_helper,
+        docker_config_path = docker_config_path,
+    )
+
+    platform_facts = discover_root_platforms(
+        ctx,
+        images_by_digest,
+        oci_ref_graph,
         facts,
         downloader,
         credential_helper = credential_helper,
@@ -148,21 +159,49 @@ def _images_impl(ctx):
             docker_config_path = docker_config_path,
         )
 
-    # Create image repositories for each top-level image
+    # Routers contain only labels and selection metadata. Import repositories are
+    # fetched separately, after the consumer's target platform chooses a branch.
     for digest, img in images_by_digest.items():
-        repo_name = "img_{}".format(digest.replace("sha256:", ""))
-
-        # Build files dict with only referenced blobs for this image
-        files = build_image_files_dict(digest, oci_ref_graph, img.layer_handling)
-
-        # Create the image repository
-        image_repo(
-            name = repo_name,
-            digest = digest,
-            files = files,
+        suffix = digest.removeprefix("sha256:")
+        common = dict(
             registries = json.encode(get_registries_from_image(img)),
             repository = img.repository,
-            tag = img.tag if hasattr(img, "tag") else None,
+            tag = getattr(img, "tag", None),
+        )
+        original_repo = "original_" + suffix
+        image_repo(
+            name = original_repo,
+            digest = digest,
+            files = build_image_files_dict(digest, oci_ref_graph, img.layer_handling),
+            **common
+        )
+        entry = oci_ref_graph[digest]
+        children = []
+        if entry["kind"] == "index":
+            descriptors = entry["descriptors"]
+            for position, descriptor in enumerate(descriptors):
+                child_digest = descriptor["digest"]
+                if oci_ref_graph[child_digest]["kind"] != "manifest":
+                    fail("Nested image indexes are not supported: " + child_digest)
+
+                # Position preserves distinct descriptors referencing the same digest.
+                child_repo = "manifest_{}_{}".format(suffix, position)
+                image_repo(
+                    name = child_repo,
+                    digest = child_digest,
+                    descriptor = json.encode(descriptor),
+                    files = build_image_files_dict(child_digest, oci_ref_graph, img.layer_handling),
+                    **common
+                )
+                children.append("@{}//:image".format(child_repo))
+        else:
+            descriptors = [{"digest": digest, "platform": platform_facts["image_platform_v1@" + digest]}]
+            children.append("@{}//:image".format(original_repo))
+        image_router(
+            name = "img_" + suffix,
+            descriptors = json.encode(descriptors),
+            children = children,
+            original = "@{}//:image".format(original_repo),
         )
 
     # Create hub repository for convenient image access
@@ -190,7 +229,7 @@ def _images_impl(ctx):
         "reproducible": True,
     }
     if hasattr(ctx, "facts"):
-        kwargs["facts"] = build_facts_to_store(oci_ref_graph)
+        kwargs["facts"] = dict(build_facts_to_store(oci_ref_graph), **platform_facts)
     return ctx.extension_metadata(**kwargs)
 
 def _create_hub_repo_impl(rctx):
@@ -220,14 +259,14 @@ This file is auto-generated by the images module extension (@rules_img//img:exte
 
 _IMAGES = {}
 
-def image(name):
-    """Get the target for a pulled container image.
+def _image_repo(name):
+    """Get the repository for a pulled container image.
 
     Args:
         name: The friendly name of the image (e.g., "ubuntu:22.04", "distroless/cc")
 
     Returns:
-        The label of the image target
+        The image repository name
     """
     module_name = native.module_name()
     module_version = native.module_version()
@@ -240,8 +279,18 @@ def image(name):
         available_names = ", ".join(sorted(_IMAGES[module_name][module_version].keys()))
         fail("Image name '{{}}' not found in module '{{}}' version '{{}}'. Available names: {{}}".format(name, module_name, module_version, available_names))
 
-    repo = _IMAGES[module_name][module_version][name]
-    return Label("@{{}}//:image".format(repo))
+    return _IMAGES[module_name][module_version][name]
+
+def image(name):
+    """Return the manifest selected for the consumer's target platform.
+
+    An unsupported platform selects an incompatible image.
+    """
+    return Label("@{{}}//:image".format(_image_repo(name)))
+
+def original_image(name):
+    """Return the original index or manifest, without platform constraints."""
+    return Label("@{{}}//:original".format(_image_repo(name)))
 
 '''.format(json.encode_indent(images, indent = "    "))
 
@@ -317,9 +366,9 @@ This attribute controls when and how layer data is fetched from the registry.
   that are only used as base images for pushing.
 
 * **`eager`**: Layer data is fetched in the repository rule and is always available.
-  This ensures layers are accessible in build actions but is inefficient as all layers
-  are downloaded regardless of whether they're needed. Use this for base images that
-  need to be read or inspected during the build.
+  Layers are accessible in build actions for the selected image; unselected
+  platforms do not fetch layers. Building the original index fetches every
+  child's layers. Use this when inspecting layers during the build.
 
 * **`lazy`**: Layer data is downloaded in a build action when requested. This provides
   access to layers during builds while avoiding unnecessary downloads, but requires
@@ -434,6 +483,35 @@ image_manifest(
     ...
 )
 ```
+
+`image(name)` now returns a single manifest selected for the consumer's target
+platform, or an incompatible target if no manifest matches. Selection honors
+`--platforms`, `image_manifest(platform = ...)`, and `image_index(platforms = ...)`.
+
+To preserve and reupload the complete original index (including attestations), or
+to load an image regardless of the build platform, use `original_image(name)`:
+
+```starlark
+load("@rules_img_images.bzl", "image", "original_image")
+
+image_push(
+    name = "reupload",
+    image = original_image("ubuntu"),
+    repository = "my-mirror/ubuntu",
+)
+```
+
+For direct repository access, use `:image` for selection and `:original` for the
+unmodified index or manifest. Existing callers that relied on `image()` returning
+an index should migrate to `original_image()`.
+
+The extension stores the OCI reference graph and platform metadata in
+`MODULE.bazel.lock` facts on Bazel versions that support facts. Initial discovery
+fetches manifests and standalone-image platform metadata, but never layers.
+With complete facts, extension evaluation does not fetch image metadata, and
+building `image(name)` fetches only the selected manifest's dependencies.
+Building `original_image(name)` makes all original children available. Without
+facts support, metadata discovery repeats when the extension is reevaluated.
 
 The extension creates deduplicated blob repositories, so pulling multiple images
 from the same base only downloads shared layers once. The `digest` parameter is

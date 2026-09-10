@@ -10,6 +10,7 @@ load("//img/private/common:inherit.bzl", "INHERIT_FROM_BASE")
 load("//img/private/common:layer_helper.bzl", "allow_tar_files", "build_image_mtree", "calculate_layer_info", "extension_to_compression", "image_layer_mtrees", "image_layer_ztocs")
 load("//img/private/common:transitions.bzl", "normalize_layer_transition", "single_platform_transition")
 load("//img/private/config:defs.bzl", "TargetPlatformInfo")
+load("//img/private/platforms:selection.bzl", "platform_vector")
 load("//img/private/providers:index_info.bzl", "ImageIndexInfo")
 load("//img/private/providers:layer_config_info.bzl", "ImageLayerConfigInfo")
 load("//img/private/providers:layers_info.bzl", "LayersInfo")
@@ -24,127 +25,6 @@ load("//img/private/providers:stamp_setting_info.bzl", "StampSettingInfo")
 def _to_layer_arg(layer):
     """Convert a layer to a command line argument."""
     return layer.metadata.path
-
-def _platform_vector(os, architecture, variant):
-    """Generate an ordered vector of compatible platforms (best to worst).
-
-    Based on containerd's platformVector logic:
-    https://github.com/containerd/platforms/blob/2e51fd9435bd985e1753954b24f4b0453f4e4767/compare.go#L64
-
-    Args:
-        os: Operating system
-        architecture: CPU architecture
-        variant: Platform variant (may be empty)
-
-    Returns:
-        List of platform dicts in preference order (best match first)
-    """
-    base_platform = {
-        "os": os,
-        "architecture": architecture,
-        "variant": variant,
-    }
-    vector = [base_platform]
-
-    # AMD64: Parse variant as integer and create fallback chain
-    if architecture == "amd64" and variant != "":
-        # Try to parse variant like "v3" -> 3
-        if variant.startswith("v"):
-            variant_num_str = variant[1:]  # Remove "v" prefix
-            if variant_num_str.isdigit():
-                amd64_version = int(variant_num_str)
-                if amd64_version > 1:
-                    # Add fallback variants: v3 -> v2, v1
-                    for v in range(amd64_version - 1, 0, -1):
-                        vector.append({
-                            "os": os,
-                            "architecture": architecture,
-                            "variant": "v" + str(v),
-                        })
-
-        # Add base amd64 (no variant) as final fallback
-        vector.append({
-            "os": os,
-            "architecture": architecture,
-            "variant": "",
-        })
-
-        # ARM 32-bit: Parse variant as integer and create fallback chain
-    elif architecture == "arm" and variant != "":
-        if variant.startswith("v"):
-            variant_num_str = variant[1:]
-            if variant_num_str.isdigit():
-                arm_version = int(variant_num_str)
-                if arm_version > 5:
-                    # Add fallback variants: v7 -> v6, v5
-                    for v in range(arm_version - 1, 4, -1):
-                        vector.append({
-                            "os": os,
-                            "architecture": architecture,
-                            "variant": "v" + str(v),
-                        })
-
-        # ARM64: Complex fallback with v8.x and v9.x support
-    elif architecture == "arm64":
-        # ARM64 variant defaults to v8 (already normalized by TargetPlatformInfo)
-        effective_variant = variant if variant != "" else "v8"
-
-        # Simplified arm64 variant support
-        # Full implementation would need arm64variantToVersion map from containerd
-        # For now, support basic v8 and v9 variants
-        if effective_variant == "v8" or effective_variant.startswith("v8."):
-            # v8.x can fall back to lower v8.y versions
-            if effective_variant.startswith("v8."):
-                # Parse v8.5 -> major=8, minor=5
-                parts = effective_variant[1:].split(".")  # "8.5" -> ["8", "5"]
-                if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
-                    minor = int(parts[1])
-
-                    # Add fallback from v8.5 -> v8.4 -> ... -> v8.0 -> v8
-                    for m in range(minor - 1, -1, -1):
-                        if m == 0:
-                            vector.append({
-                                "os": os,
-                                "architecture": architecture,
-                                "variant": "v8",
-                            })
-                        else:
-                            vector.append({
-                                "os": os,
-                                "architecture": architecture,
-                                "variant": "v8." + str(m),
-                            })
-        elif effective_variant == "v9" or effective_variant.startswith("v9."):
-            # v9.x can fall back to lower v9.y, then to v8.x
-            if effective_variant.startswith("v9."):
-                parts = effective_variant[1:].split(".")
-                if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
-                    minor = int(parts[1])
-
-                    # Add v9 fallbacks
-                    for m in range(minor - 1, -1, -1):
-                        if m == 0:
-                            vector.append({
-                                "os": os,
-                                "architecture": architecture,
-                                "variant": "v9",
-                            })
-                        else:
-                            vector.append({
-                                "os": os,
-                                "architecture": architecture,
-                                "variant": "v9." + str(m),
-                            })
-
-            # v9.x falls back to v8.5+ (per containerd mapping)
-            # Simplified: just fall back to v8
-            vector.append({
-                "os": os,
-                "architecture": architecture,
-                "variant": "v8",
-            })
-
-    return vector
 
 def _platform_matches_exact(wanted_platform, manifest):
     """Check if the wanted platform exactly matches the manifest platform.
@@ -192,10 +72,10 @@ def select_base(ctx):
     variant_wanted = ctx.attr._os_cpu[TargetPlatformInfo].variant
 
     # Generate platform vector (ordered from best to worst match)
-    platform_vector = _platform_vector(os_wanted, arch_wanted, variant_wanted)
+    preferred_platforms = platform_vector(os_wanted, arch_wanted, variant_wanted)
 
     # Try each platform in the vector (best match first)
-    for wanted_platform in platform_vector:
+    for wanted_platform in preferred_platforms:
         for manifest in ctx.attr.base[ImageIndexInfo].manifests:
             if _platform_matches_exact(wanted_platform, manifest):
                 return manifest

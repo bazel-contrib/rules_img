@@ -30,10 +30,11 @@ type ImageInfo struct {
 
 // RefGraphEntry represents a manifest or index in the OCI reference graph
 type RefGraphEntry struct {
-	Kind      string   `json:"kind"`
-	Config    string   `json:"config,omitempty"`
-	Layers    []string `json:"layers,omitempty"`
-	Manifests []string `json:"manifests,omitempty"`
+	Kind        string                   `json:"kind"`
+	Config      string                   `json:"config,omitempty"`
+	Layers      []string                 `json:"layers"`
+	Manifests   []string                 `json:"manifests"`
+	Descriptors []map[string]interface{} `json:"descriptors"`
 }
 
 // ManifestDownloadJob represents a job to download a manifest
@@ -127,21 +128,22 @@ func SyncOCIRefGraphProcess(ctx context.Context, args []string) {
 	}
 
 	// Phase 2: Download child manifests referenced by indexes
-	childJobs := make([]ManifestDownloadJob, 0)
+	childImages := make(map[string]ImageInfo)
 	for parentDigest, refGraphEntry := range ociRefGraph {
 		if refGraphEntry.Kind == "index" {
 			parentImg := imagesByDigest[parentDigest]
 			for _, childDigest := range refGraphEntry.Manifests {
 				if _, exists := ociRefGraph[childDigest]; !exists {
-					childJobs = append(childJobs, ManifestDownloadJob{
-						Digest: childDigest,
-						Img:    parentImg, // Use parent image's sources
-					})
+					childImages[childDigest] = mergeSources(childImages[childDigest], parentImg)
 				}
 			}
 		}
 	}
 
+	childJobs := make([]ManifestDownloadJob, 0, len(childImages))
+	for digest, img := range childImages {
+		childJobs = append(childJobs, ManifestDownloadJob{Digest: digest, Img: img})
+	}
 	if len(childJobs) > 0 {
 		childResults := downloadManifestsParallel(childJobs, facts)
 		for _, result := range childResults {
@@ -160,7 +162,7 @@ func SyncOCIRefGraphProcess(ctx context.Context, args []string) {
 	// Build updated facts with oci_ref_graph entries
 	updatedFacts := make(Facts)
 	for digest, refGraphEntry := range ociRefGraph {
-		key := fmt.Sprintf("oci_ref_graph@%s", digest)
+		key := fmt.Sprintf("oci_ref_graph_v2@%s", digest)
 		updatedFacts[key] = refGraphEntry
 	}
 
@@ -226,13 +228,13 @@ func downloadAndParseManifest(digest string, img ImageInfo, facts Facts) Manifes
 	}
 
 	// Check if structure is cached in facts
-	factKey := fmt.Sprintf("oci_ref_graph@%s", digest)
+	factKey := fmt.Sprintf("oci_ref_graph_v2@%s", digest)
 	if cachedEntry, ok := facts[factKey]; ok {
 		// Try to convert cached entry to RefGraphEntry
 		cachedJSON, err := json.Marshal(cachedEntry)
 		if err == nil {
 			var refGraphEntry RefGraphEntry
-			if err := json.Unmarshal(cachedJSON, &refGraphEntry); err == nil {
+			if err := json.Unmarshal(cachedJSON, &refGraphEntry); err == nil && validRefGraphEntry(refGraphEntry) {
 				result.RefGraphEntry = refGraphEntry
 				return result
 			}
@@ -264,7 +266,7 @@ func downloadAndParseManifest(digest string, img ImageInfo, facts Facts) Manifes
 	}
 
 	// Build ref graph entry
-	refGraphEntry := RefGraphEntry{Kind: kind}
+	refGraphEntry := RefGraphEntry{Kind: kind, Layers: []string{}, Manifests: []string{}, Descriptors: []map[string]interface{}{}}
 	if kind == "manifest" {
 		if config, ok := manifest["config"].(map[string]interface{}); ok {
 			if configDigest, ok := config["digest"].(string); ok {
@@ -284,6 +286,7 @@ func downloadAndParseManifest(digest string, img ImageInfo, facts Facts) Manifes
 		if manifests, ok := manifest["manifests"].([]interface{}); ok {
 			for _, m := range manifests {
 				if mMap, ok := m.(map[string]interface{}); ok {
+					refGraphEntry.Descriptors = append(refGraphEntry.Descriptors, mMap)
 					if mDigest, ok := mMap["digest"].(string); ok {
 						refGraphEntry.Manifests = append(refGraphEntry.Manifests, mDigest)
 					}
@@ -294,6 +297,18 @@ func downloadAndParseManifest(digest string, img ImageInfo, facts Facts) Manifes
 
 	result.RefGraphEntry = refGraphEntry
 	return result
+}
+
+// validRefGraphEntry rejects incomplete facts so they can be rediscovered.
+func validRefGraphEntry(entry RefGraphEntry) bool {
+	switch entry.Kind {
+	case "manifest":
+		return entry.Config != "" && entry.Layers != nil
+	case "index":
+		return entry.Manifests != nil && entry.Descriptors != nil && len(entry.Manifests) == len(entry.Descriptors)
+	default:
+		return false
+	}
 }
 
 // downloadManifestFromSources downloads a manifest trying each source in order
@@ -357,4 +372,27 @@ func manifestKind(mediaType string) string {
 	default:
 		return "unknown"
 	}
+}
+
+// mergeSources combines all locations serving a shared child without mutating parents.
+func mergeSources(a, b ImageInfo) ImageInfo {
+	sources := make(map[string][]string)
+	for _, image := range []ImageInfo{a, b} {
+		for repository, registries := range image.Sources {
+			for _, registry := range registries {
+				found := false
+				for _, existing := range sources[repository] {
+					if registry == existing {
+						found = true
+						break
+					}
+				}
+				if !found {
+					sources[repository] = append(sources[repository], registry)
+				}
+			}
+		}
+	}
+	a.Sources = sources
+	return a
 }

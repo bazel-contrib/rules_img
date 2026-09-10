@@ -171,6 +171,7 @@ bzl_library(
         "//img/private/common:layer_helper",
         "//img/private/common:transitions",
         "//img/private/config:defs",
+        "//img/private/platforms:selection",
         "//img/private/providers:index_info",
         "//img/private/providers:layer_config_info",
         "//img/private/providers:layers_info",

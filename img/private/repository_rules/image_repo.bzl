@@ -1,15 +1,10 @@
 """Repository rule for creating image repos from pulled blobs."""
 
-load("@bazel_skylib//lib:sets.bzl", "sets")
-load("//img/private/platforms:constraints.bzl", "map_os_arch_to_constraints")
-load("//img/private/platforms:platforms.bzl", "has_constraint_setting")
-
 def _image_repo_impl(rctx):
     """Create an image repository from pulled blob repositories."""
 
     # Build the data dict by reading config and manifest from files
     data = {}
-    platforms_set = sets.make()
 
     # Read the root manifest/index
     root_digest = rctx.attr.digest
@@ -29,14 +24,6 @@ def _image_repo_impl(rctx):
             child_digest = child_manifest.get("digest")
             if not child_digest:
                 continue
-
-            # Extract platform from index manifest entry
-            platform = child_manifest.get("platform", {})
-            if platform:
-                os = platform.get("os", "")
-                arch = platform.get("architecture", "")
-                if os and arch and has_constraint_setting(os, arch):
-                    sets.insert(platforms_set, "{}_{}".format(os, arch))
 
             if child_digest not in rctx.attr.files:
                 fail("Child manifest digest {} not found in files.".format(child_digest))
@@ -63,16 +50,6 @@ def _image_repo_impl(rctx):
             config_label = rctx.attr.files[config_digest]
             config_path = rctx.path(config_label)
             data[config_digest] = rctx.read(config_path)
-
-            # Extract platform from config
-            config = json.decode(data[config_digest])
-            os = config.get("os", "")
-            arch = config.get("architecture", "")
-            if os and arch and has_constraint_setting(os, arch):
-                sets.insert(platforms_set, "{}_{}".format(os, arch))
-
-    # Build target_compatible_with based on discovered platforms
-    target_compatible_with = map_os_arch_to_constraints(sets.to_list(platforms_set))
 
     # Construct purl for package_metadata
     identifier = rctx.attr.digest
@@ -110,7 +87,7 @@ image_import(
     registries = {registries},
     repository = {repository},
     tag = {tag},
-    target_compatible_with = {target_compatible_with},
+    descriptor = {descriptor},
     visibility = ["//visibility:public"],
 )
 """.format(
@@ -121,7 +98,7 @@ image_import(
             registries = rctx.attr.registries,
             repository = repr(rctx.attr.repository),
             tag = repr(rctx.attr.tag) if rctx.attr.tag else "None",
-            target_compatible_with = target_compatible_with,
+            descriptor = repr(rctx.attr.descriptor),
         ),
     )
     rctx.file("REPO.bazel", """\
@@ -138,6 +115,7 @@ This repository rule is used by the images module extension to create
 image repositories that reference blob repositories for manifests, configs,
 and layers.""",
     attrs = {
+        "descriptor": attr.string(doc = "Original index descriptor for a selected child, encoded as JSON."),
         "digest": attr.string(
             mandatory = True,
             doc = "The root digest (manifest or index) of the image.",

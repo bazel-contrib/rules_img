@@ -236,7 +236,13 @@ def _image_import_impl(ctx):
     ]
     if media_type in [MEDIA_TYPE_MANIFEST, DOCKER_MANIFEST_V2]:
         # this is a single-platform manifest
-        providers.append(_build_manifest_info(ctx, ctx.attr.digest))
+        descriptor = json.decode(ctx.attr.descriptor) if ctx.attr.descriptor else None
+        providers.append(_build_manifest_info(
+            ctx,
+            ctx.attr.digest,
+            descriptor = descriptor,
+            platform = descriptor.get("platform") if descriptor else None,
+        ))
     elif media_type in [MEDIA_TYPE_INDEX, DOCKER_MANIFEST_LIST_V2]:
         # this is a multi-platform index
         omitted = {digest: None for digest in ctx.attr.omitted_manifests}
@@ -266,6 +272,7 @@ image_import = rule(
     implementation = _image_import_impl,
     attrs = {
         "digest": attr.string(),
+        "descriptor": attr.string(doc = "Original index descriptor for a selected child, encoded as JSON."),
         "data": attr.string_dict(),
         "files": attr.string_keyed_label_dict(
             allow_files = True,
