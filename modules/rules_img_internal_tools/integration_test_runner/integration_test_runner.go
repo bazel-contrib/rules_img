@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 
 	"github.com/bazelbuild/rules_go/go/runfiles"
@@ -295,7 +297,73 @@ func runBazelCommands(bazel, workspaceDir string, startup []string) error {
 	if err := runBazel(bazel, workspaceDir, startup, nil, "test", append([]string{"test", "//..."}, metadataFlag...)...); err != nil {
 		return err
 	}
+	// Last, because it changes --platforms and would otherwise throw away the analysis cache
+	// the steps above just filled.
+	return lazyImagesPhase(bazel, workspaceDir, startup)
+}
+
+// lazyImagesPhase checks that depending on a pulled multi-platform image really only reaches the
+// platform being built for.
+//
+// Nothing about a build fails when that stops holding - it just quietly downloads every platform
+// of every pulled image again - so the only way to notice is to look at the dependency graph. The
+// check is specific to the `generic` workspace, which pulls @nginx (a 7-platform index, with an
+// attestation manifest per platform) through the images module extension; other workspaces skip
+// it.
+func lazyImagesPhase(bazel, workspaceDir string, startup []string) error {
+	const label = "@nginx//:image"
+	if !targetExists(bazel, workspaceDir, startup, label) {
+		fmt.Println("\nno " + label + " in this workspace; skipping lazy image phase")
+		return nil
+	}
+
+	args := append(append([]string{}, startup...),
+		"cquery", "--platforms=//platform:linux_amd64", "--output=label", "deps("+label+")")
+	fmt.Printf("\nrunning lazy images $ bazel %s\n", strings.Join(args, " "))
+	cmd := exec.Command(bazel, args...)
+	cmd.Dir = workspaceDir
+	cmd.Stderr = os.Stderr
+	output, err := cmd.Output()
+	if err != nil {
+		return fmt.Errorf("bazel lazy images cquery failed: %v", err)
+	}
+
+	children := map[string]bool{}
+	for _, line := range strings.Split(string(output), "\n") {
+		if indexOfRepo(line, "orig_") >= 0 {
+			return fmt.Errorf("%s depends on the unmodified index, which pulls in every platform: %s", label, line)
+		}
+		index := indexOfRepo(line, "m_")
+		if index < 0 {
+			continue
+		}
+		repo := line[index:]
+		if end := strings.Index(repo, "//"); end >= 0 {
+			repo = repo[:end]
+		}
+		children[repo] = true
+	}
+	if len(children) != 1 {
+		return fmt.Errorf("%s reached %d child manifests of the index, want exactly 1: %v",
+			label, len(children), slices.Sorted(maps.Keys(children)))
+	}
+	fmt.Printf("lazy images: %s reaches exactly one child manifest (%s)\n", label, slices.Sorted(maps.Keys(children))[0])
 	return nil
+}
+
+// indexOfRepo locates a repository of the images module extension whose name starts with prefix.
+//
+// Canonical repository names separate their parts with `~` up to Bazel 7 and with `+` from Bazel 8
+// on, and this suite runs against both. Matching only one spelling would not fail loudly on the
+// other - it would find no child repositories at all, which reads as a broken assertion, while the
+// `orig_` guard would silently never fire.
+func indexOfRepo(line, prefix string) int {
+	for _, separator := range []string{"+", "~"} {
+		if index := strings.Index(line, separator+"images"+separator+prefix); index >= 0 {
+			return index
+		}
+	}
+	return -1
 }
 
 func absolutifyEnvVars() error {
