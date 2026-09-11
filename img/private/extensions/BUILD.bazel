@@ -1,6 +1,7 @@
 """Build definitions for module extensions."""
 
 load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
+load(":images_helpers_test.bzl", "images_helpers_test_suite")
 
 bzl_library(
     name = "images_helpers",
@@ -9,6 +10,8 @@ bzl_library(
     deps = [
         "//img/private:manifest_media_type",
         "//img/private/repository_rules:download",
+        "//img/private/repository_rules:repo_names",
+        "@bazel_skylib//lib:sets",
     ],
 )
 
@@ -19,7 +22,9 @@ bzl_library(
     deps = [
         ":images_helpers",
         "//img/private/repository_rules:image_repo",
+        "//img/private/repository_rules:image_router",
         "//img/private/repository_rules:pull_blob",
+        "//img/private/repository_rules:repo_names",
         "@bazel_skylib//lib:sets",
     ],
 )
@@ -29,3 +34,5 @@ filegroup(
     srcs = glob(["**"]),
     visibility = ["//img/private/release:__subpackages__"],
 )
+
+images_helpers_test_suite(name = "images_helpers_test")

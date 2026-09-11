@@ -273,6 +273,44 @@ The index blob is stored verbatim (the digest pin refers to it), so it keeps lis
 platform while only the selected children exist locally. Use a filtered image as a base image;
 pushing or loading its unmodified index is not supported.
 
+#### `images.pull`
+
+The [`images` module extension](extensions.md#images) narrows the same way without a filter, and
+per build instead of per fetch. Every pulled image offers two targets:
+
+```starlark
+load("@rules_img_images.bzl", "image", "original_image")
+
+image_manifest(
+    name = "app",
+    base = image("debian"),  # the manifest for the target platform
+    layers = [":app_layer"],
+)
+
+image_push(
+    name = "mirror",
+    image = original_image("debian"),  # the index, with every platform, as pulled
+    repository = "my-org/debian",
+)
+```
+
+`image(...)` resolves to the child manifest of the target platform through a `select()` on the os,
+architecture and variant constraints, so a build downloads the manifest, config and layers of the
+platform it builds for, and of no other. The `select()` reproduces the same choice `select_base`
+makes for an index that was fetched whole, including containerd's variant fallback: on a
+`linux/amd64` target with no microarchitecture level, an index offering only `amd64/v3` has no
+usable manifest, while one offering plain `amd64` does. Under a multi-platform `image_index`, each
+platform of the split resolves its own child.
+
+For a target platform the index has no manifest for, `image(...)` is incompatible: wildcard builds
+skip whatever depends on it instead of failing. `original_image(...)` carries no such constraint
+and builds on any host, but it requires every platform of the image.
+
+An index entry that declares no `platform` (the field is optional) is still selectable: the
+extension reads its platform from the manifest's config, as an index fetched whole does. An
+attestation manifest, which buildkit publishes with the platform `unknown/unknown`, is never
+selected - it stays part of `original_image(...)` and of nothing else.
+
 ### Further Reading
 
 - [Bazel Platforms Documentation](https://bazel.build/extending/platforms)

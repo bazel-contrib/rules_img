@@ -177,7 +177,7 @@ def _check_existing_blob(rctx, digest, wait_and_read = True):
         waiter = None,
     )
 
-def download_blob(rctx, *, downloader, digest, sources, wait_and_read = True, output = None, **kwargs):
+def download_blob(rctx, *, downloader, digest, sources, wait_and_read = True, output = None, credential_helper = None, docker_config_path = None, timeout = None, **kwargs):
     """Download a blob from a container registry using the specified downloader.
 
     Args:
@@ -188,6 +188,10 @@ def download_blob(rctx, *, downloader, digest, sources, wait_and_read = True, ou
         wait_and_read: If True, wait for the download to complete and read the data.
                        If False, return a waiter that can be used to wait for the download.
         output: Optional output path for the downloaded blob. If not specified, defaults to "blobs/sha256/<sha256>".
+        credential_helper: Optional credential helper path to pass to the img tool.
+        docker_config_path: Optional Docker-compatible auth config path to pass to the img tool.
+        timeout: Optional timeout in seconds for the img tool execution. Ignored by the
+                 "bazel" downloader, which cannot be given a timeout from a repository rule.
         **kwargs: Additional arguments.
 
     Returns:
@@ -241,7 +245,15 @@ def download_blob(rctx, *, downloader, digest, sources, wait_and_read = True, ou
             "--source={}".format(source)
             for source in sources_list
         ]
-        result = rctx.execute(args, environment = auth_environment(rctx), **execute_kwargs(rctx))
+        result = rctx.execute(
+            args,
+            environment = auth_environment(
+                rctx,
+                credential_helper = credential_helper,
+                docker_config_path = docker_config_path,
+            ),
+            **execute_kwargs(rctx, timeout)
+        )
         if result.return_code != 0:
             fail("Failed to download blob: {}{}".format(result.stdout, result.stderr))
     else:

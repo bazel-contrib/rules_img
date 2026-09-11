@@ -23,6 +23,7 @@ bzl_library(
         "//img/private/common:layer_helper",
         "//img/private/common:layout_blob",
         "//img/private/common:sparse_oci_layout",
+        "//img/private/platforms:match",
         "@bazel_skylib//rules:common_settings",
     ],
 )
@@ -196,6 +197,7 @@ bzl_library(
         "//img/private/common:layout_blob",
         "//img/private/common:transitions",
         "//img/private/config:defs",
+        "//img/private/platforms:match",
         "//img/private/providers:index_info",
         "//img/private/providers:layer_config_info",
         "//img/private/providers:layers_info",

@@ -5,4 +5,11 @@ import %workspace%/.bazelrc.common
 # provide no groups and every image collapses to a single layer.
 common --@rules_runfiles_group//runfiles_group:enabled=true
 
+# The platform the lazy images phase of the integration test runner cqueries
+# @nginx//:image for. It lives here, next to the package it names, rather than on
+# the runner's command line: the bazel binary of that suite is a launcher that goes
+# through bash on Windows, where a leading `//` in an argument is an escape and
+# arrives as a single `/`, so Bazel never sees the label at all.
+cquery:lazy_images --platforms=//platform:linux_amd64
+
 try-import %workspace%/.bazelrc.user
