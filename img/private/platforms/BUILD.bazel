@@ -1,12 +1,18 @@
 load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
+load(":match_test.bzl", "match_test_suite")
 load(":matching_test.bzl", "matching_test_suite")
 load(":platforms.bzl", "PLATFORMS")
+load(":selection_test.bzl", "selection_test_suite")
 
 package(
     default_visibility = ["//visibility:public"],
 )
 
 matching_test_suite(name = "matching_test")
+
+match_test_suite(name = "match_test")
+
+selection_test_suite(name = "selection_test")
 
 [
     platform(
@@ -36,4 +42,23 @@ bzl_library(
 bzl_library(
     name = "platforms",
     srcs = ["platforms.bzl"],
+)
+
+bzl_library(
+    name = "tables",
+    srcs = ["tables.bzl"],
+)
+
+bzl_library(
+    name = "match",
+    srcs = ["match.bzl"],
+)
+
+bzl_library(
+    name = "selection",
+    srcs = ["selection.bzl"],
+    deps = [
+        ":match",
+        ":tables",
+    ],
 )

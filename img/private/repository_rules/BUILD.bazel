@@ -47,10 +47,31 @@ bzl_library(
     srcs = ["image_repo.bzl"],
     visibility = ["//img:__subpackages__"],
     deps = [
-        "//img/private/platforms",
-        "//img/private/platforms:constraints",
-        "@bazel_skylib//lib:sets",
+        ":package_metadata",
+        "//img/private/platforms:selection",
     ],
+)
+
+bzl_library(
+    name = "image_router",
+    srcs = ["image_router.bzl"],
+    visibility = ["//img:__subpackages__"],
+    deps = [
+        ":package_metadata",
+        "//img/private/platforms:selection",
+    ],
+)
+
+bzl_library(
+    name = "package_metadata",
+    srcs = ["package_metadata.bzl"],
+    visibility = ["//img:__subpackages__"],
+)
+
+bzl_library(
+    name = "repo_names",
+    srcs = ["repo_names.bzl"],
+    visibility = ["//img:__subpackages__"],
 )
 
 bzl_library(

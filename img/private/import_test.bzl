@@ -4,6 +4,7 @@ load("@bazel_skylib//lib:unittest.bzl", "analysistest", "asserts")
 load("@bazel_skylib//rules:write_file.bzl", "write_file")
 load("//img/private:import.bzl", "image_import")
 load("//img/private/providers:index_info.bzl", "ImageIndexInfo")
+load("//img/private/providers:manifest_info.bzl", "ImageManifestInfo")
 
 # Digests are opaque keys here: nothing verifies that a blob hashes to the digest
 # it is registered under during analysis, so these are readable placeholders.
@@ -87,6 +88,17 @@ _INDEX = json.encode(dict(
     ],
 ))
 
+# What the images module extension hands a repository importing one child of an index. Its
+# platform declares a microarchitecture level the manifest's own config does not mention, and it
+# carries annotations that exist nowhere but in the index.
+_VARIANT_DESCRIPTOR = dict(
+    mediaType = "application/vnd.oci.image.manifest.v1+json",
+    digest = _AMD64_MANIFEST_DIGEST,
+    size = 1,
+    platform = dict(architecture = "amd64", os = "linux", variant = "v3"),
+    annotations = {"org.opencontainers.image.ref.name": "kept"},
+)
+
 _BLOBS = {
     _INDEX_DIGEST: _INDEX,
     _AMD64_MANIFEST_DIGEST: _image_manifest(_AMD64_CONFIG_DIGEST),
@@ -136,6 +148,51 @@ def _imports_attestation_manifests_test_impl(ctx):
     return analysistest.end(env)
 
 _imports_attestation_manifests_test = analysistest.make(_imports_attestation_manifests_test_impl)
+
+def _descriptors(env):
+    """Returns the written descriptor JSON, keyed by output basename."""
+    descriptors = {}
+    for action in analysistest.target_actions(env):
+        for output in action.outputs.to_list():
+            if output.basename.endswith("_descriptor.json"):
+                descriptors[output.basename] = json.decode(action.content)
+    return descriptors
+
+def _imports_child_with_descriptor_test_impl(ctx):
+    env = analysistest.begin(ctx)
+    target_under_test = analysistest.target_under_test(env)
+    manifest_info = target_under_test[ImageManifestInfo]
+
+    # What the index says about a child outranks what can be derived from the child alone. Here
+    # the config declares no variant at all, so losing the descriptor would make this manifest
+    # look usable on a baseline amd64 target.
+    asserts.equals(env, "linux", manifest_info.os)
+    asserts.equals(env, "amd64", manifest_info.architecture)
+    asserts.equals(env, "v3", manifest_info.variant)
+
+    # The descriptor is written exactly as the index had it. Nothing else records the
+    # annotations of a child, or its media type when its manifest omits its own.
+    asserts.equals(
+        env,
+        _VARIANT_DESCRIPTOR,
+        _descriptors(env).get(target_under_test.label.name + "_descriptor.json"),
+    )
+    return analysistest.end(env)
+
+_imports_child_with_descriptor_test = analysistest.make(_imports_child_with_descriptor_test_impl)
+
+def _child_descriptor_without_platform_test_impl(ctx):
+    env = analysistest.begin(ctx)
+    manifest_info = analysistest.target_under_test(env)[ImageManifestInfo]
+
+    # `platform` is optional in an index descriptor. A child that omits it is still a perfectly
+    # usable image, described by its config.
+    asserts.equals(env, "linux", manifest_info.os)
+    asserts.equals(env, "arm64", manifest_info.architecture)
+    asserts.equals(env, "v8", manifest_info.variant, "arm64 defaults to v8")
+    return analysistest.end(env)
+
+_child_descriptor_without_platform_test = analysistest.make(_child_descriptor_without_platform_test_impl)
 
 def _skips_omitted_manifests_test_impl(ctx):
     env = analysistest.begin(ctx)
@@ -215,7 +272,56 @@ def import_test_suite(name):
         target_under_test = ":" + filtered_subject,
     )
 
+    # One child manifest of the index, imported on its own, as the images module extension
+    # creates it for the platform a build selects.
+    child_digests = [_AMD64_MANIFEST_DIGEST, _AMD64_CONFIG_DIGEST]
+    child_subject = name + "_child_subject"
+    image_import(
+        name = child_subject,
+        digest = _AMD64_MANIFEST_DIGEST,
+        descriptor = json.encode(_VARIANT_DESCRIPTOR),
+        data = {digest: _BLOBS[digest] for digest in child_digests},
+        files = {digest: blob_files[digest] for digest in child_digests},
+        registries = ["registry.example.com"],
+        repository = "example/image",
+        tag = "latest",
+        tags = ["manual"],
+    )
+
+    child_test = name + "_imports_child_with_descriptor_test"
+    _imports_child_with_descriptor_test(
+        name = child_test,
+        size = "small",
+        target_under_test = ":" + child_subject,
+    )
+
+    platformless_digests = [_ARM64_MANIFEST_DIGEST, _ARM64_CONFIG_DIGEST]
+    platformless_subject = name + "_platformless_child_subject"
+    image_import(
+        name = platformless_subject,
+        digest = _ARM64_MANIFEST_DIGEST,
+        descriptor = json.encode(json.decode(_INDEX)["manifests"][1]),
+        data = {digest: _BLOBS[digest] for digest in platformless_digests},
+        files = {digest: blob_files[digest] for digest in platformless_digests},
+        registries = ["registry.example.com"],
+        repository = "example/image",
+        tag = "latest",
+        tags = ["manual"],
+    )
+
+    platformless_test = name + "_child_descriptor_without_platform_test"
+    _child_descriptor_without_platform_test(
+        name = platformless_test,
+        size = "small",
+        target_under_test = ":" + platformless_subject,
+    )
+
     native.test_suite(
         name = name,
-        tests = [":" + test, ":" + filtered_test],
+        tests = [
+            ":" + test,
+            ":" + filtered_test,
+            ":" + child_test,
+            ":" + platformless_test,
+        ],
     )

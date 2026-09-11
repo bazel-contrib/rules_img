@@ -5,7 +5,7 @@ load("@rules_img//img:image.bzl", "image_index", "image_manifest", "image_optimi
 load("@rules_img//img:layer.bzl", "file_metadata", "image_layer")
 load("@rules_img//img:multi_deploy.bzl", "multi_deploy")
 load("@rules_img//img:push.bzl", "image_push")
-load("@rules_img_images.bzl", "image")
+load("@rules_img_images.bzl", "image", "original_image")
 load("@rules_pkg//pkg:tar.bzl", "pkg_tar")
 load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
 load(":bzl/binary_with_runfiles_symlinks.bzl", "binary_with_runfiles_symlinks")
@@ -88,8 +88,40 @@ pkg_tar(
 
 image_manifest(
     name = "image_with_empty_uncompressed_tar_layer",
+    # The manifest of the target platform. Only that platform of the nginx index is fetched.
     base = image("nginx"),
     layers = [":empty_tar"],
+)
+
+# A single-platform pull: `image()` is the one manifest it has, `original_image()` is the same
+# manifest without a platform constraint.
+image_manifest(
+    name = "image_with_single_platform_base",
+    base = image("nginx_amd64"),
+    layers = [":empty_tar"],
+)
+
+# Each platform of a split resolves its own child of the pulled index.
+image_index(
+    name = "index_over_pulled_base",
+    manifests = [":image_with_empty_uncompressed_tar_layer"],
+    platforms = [
+        "//platform:linux_amd64",
+        "//platform:linux_arm64",
+    ],
+)
+
+# All of these build on any host: `original_image()` carries no platform constraint, and each
+# platform of the index resolves its own child of the pulled image under its own transition.
+# `:image_with_empty_uncompressed_tar_layer` and `:image_with_single_platform_base` are left out
+# on purpose - nginx has no manifest for a macOS host, so they are correctly incompatible there.
+build_test(
+    name = "pulled_image_tests",
+    targets = [
+        ":index_over_pulled_base",
+        original_image("nginx"),
+        original_image("nginx_amd64"),
+    ],
 )
 
 # Edge case: Source directory
@@ -736,6 +768,7 @@ image_push(
 build_test(
     name = "all_tests",
     targets = [
+        ":pulled_image_tests",
         ":layer_tests",
         ":manifest_tests",
         ":index_tests",

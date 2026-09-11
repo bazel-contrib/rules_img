@@ -46,7 +46,7 @@ Access pulled images in BUILD files using the generated helper. The `name` attri
 is optional - if not specified, use the `repository` value to reference the image:
 
 ```starlark
-load("@rules_img_images.bzl", "image")
+load("@rules_img_images.bzl", "image", "original_image")
 
 image_manifest(
     name = "my_app",
@@ -59,7 +59,34 @@ image_manifest(
     base = image("distroless/base"),  # References the repository
     ...
 )
+
+# Mirror the pulled image unaltered, with every platform it has.
+image_push(
+    name = "mirror_ubuntu",
+    image = original_image("ubuntu"),
+    repository = "my-org/ubuntu",
+)
 ```
+
+Every pulled image offers two targets:
+
+* `image(...)` (`@repo//:image`) is the single manifest for the target platform, chosen with a
+  `select()`. A build downloads the manifest, config and layers of the platform it builds for,
+  and of no other. Selection honors `--platforms`, `image_manifest(platform = ...)` and
+  `image_index(platforms = ...)`. For a target platform the image has no manifest for, the target
+  is incompatible, so wildcard builds skip whatever depends on it instead of failing.
+* `original_image(...)` (`@repo//:original`) is the image exactly as it was pulled - an index with
+  all of its platforms, or a single manifest - keeping its digest and its attestations. It has no
+  platform constraint, so it can be pushed or loaded from any host, and it requires the blobs of
+  every platform.
+
+Callers that used `image(...)` to push or load a whole index need `original_image(...)` instead.
+
+The reference graph of the pulled images and the platforms they offer are recorded in
+`MODULE.bazel.lock` as facts, on Bazel versions that support them. Discovering them fetches
+manifests, and the configs of index entries that declare no platform, but never layers. Once they
+are recorded, evaluating the extension fetches nothing at all and does not need the pull tool.
+Without facts support, discovery repeats whenever the extension is reevaluated.
 
 The extension creates deduplicated blob repositories, so pulling multiple images
 from the same base only downloads shared layers once. The `digest` parameter is
@@ -78,7 +105,7 @@ required for reproducibility.
 | :------------- | :------------- | :------------- | :------------- | :------------- |
 | <a id="images.pull-name"></a>name |  Friendly name for the image (e.g., 'ubuntu', 'distroless-base').<br><br>This name is used to reference the image in your code via the `image()` helper function. If not specified, defaults to the repository name.   | <a href="https://bazel.build/concepts/labels#target-names">Name</a> | optional |  `""`  |
 | <a id="images.pull-digest"></a>digest |  The image digest for reproducible pulls (e.g., "sha256:abc123...").<br><br>When specified, the image is pulled by digest instead of tag, ensuring reproducible builds. The digest must be a full SHA256 digest starting with "sha256:".   | String | optional |  `""`  |
-| <a id="images.pull-layer_handling"></a>layer_handling |  Strategy for handling image layers.<br><br>This attribute controls when and how layer data is fetched from the registry.<br><br>**Available strategies:**<br><br>* **`shallow`** (default): Layer data is fetched only if needed during push operations,   but is not available during the build. This is the most efficient option for images   that are only used as base images for pushing.<br><br>* **`eager`**: Layer data is fetched in the repository rule and is always available.   This ensures layers are accessible in build actions but is inefficient as all layers   are downloaded regardless of whether they're needed. Use this for base images that   need to be read or inspected during the build.<br><br>* **`lazy`**: Layer data is downloaded in a build action when requested. This provides   access to layers during builds while avoiding unnecessary downloads, but requires   network access during the build phase. **EXPERIMENTAL:** Use at your own risk.   | String | optional |  `"shallow"`  |
+| <a id="images.pull-layer_handling"></a>layer_handling |  Strategy for handling image layers.<br><br>This attribute controls when and how layer data is fetched from the registry.<br><br>**Available strategies:**<br><br>* **`shallow`** (default): Layer data is fetched only if needed during push operations,   but is not available during the build. This is the most efficient option for images   that are only used as base images for pushing.<br><br>* **`eager`**: Layer data is fetched in the repository rule and is always available.   Layers are accessible in build actions, for the manifest the target platform selects;   the layers of other platforms are not downloaded. Building the original index does   download every platform's layers. Use this for base images that need to be read or   inspected during the build.<br><br>* **`lazy`**: Layer data is downloaded in a build action when requested. This provides   access to layers during builds while avoiding unnecessary downloads, but requires   network access during the build phase. **EXPERIMENTAL:** Use at your own risk.   | String | optional |  `"shallow"`  |
 | <a id="images.pull-registries"></a>registries |  List of mirror registries to try in order.<br><br>These registries will be tried in order before the primary registry. Useful for corporate environments with registry mirrors or air-gapped setups.   | List of strings | optional |  `[]`  |
 | <a id="images.pull-registry"></a>registry |  Primary registry to pull from (e.g., "index.docker.io", "gcr.io").<br><br>If not specified, defaults to Docker Hub. Can be overridden by entries in registries list.   | String | optional |  `""`  |
 | <a id="images.pull-repository"></a>repository |  The image repository within the registry (e.g., "library/ubuntu", "my-project/my-image").<br><br>For Docker Hub, official images use "library/" prefix (e.g., "library/ubuntu").   | String | required |  |

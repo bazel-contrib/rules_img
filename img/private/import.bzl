@@ -5,6 +5,7 @@ load("//img/private/common:build.bzl", "TOOLCHAIN")
 load("//img/private/common:layer_helper.bzl", "build_layer_mtree", "image_mtree_or_none", "media_type_is_tar")
 load("//img/private/common:sparse_oci_layout.bzl", "build_sparse_oci_layout_for_index", "build_sparse_oci_layout_for_manifest")
 load("//img/private/common:transitions.bzl", "reset_platform_transition")
+load("//img/private/platforms:match.bzl", "normalized_variant")
 load("//img/private/providers:index_info.bzl", "ImageIndexInfo")
 load("//img/private/providers:manifest_info.bzl", "ImageManifestInfo")
 load("//img/private/providers:pull_info.bzl", "PullInfo")
@@ -138,7 +139,7 @@ def _write_manifest_descriptor(ctx, digest, manifest, platform, descriptor = Non
     ctx.actions.write(out, json.encode(descriptor))
     return out
 
-def _build_manifest_info(ctx, digest, descriptor = None, index_position = None, platform = None):
+def _build_manifest_info(ctx, digest, descriptor = None, index_position = None):
     if not digest in ctx.attr.data:
         fail("missing blob for digest: " + digest)
     manifest = json.decode(ctx.attr.data[digest])
@@ -150,21 +151,24 @@ def _build_manifest_info(ctx, digest, descriptor = None, index_position = None, 
         fail("missing blob for config digest: " + config_digest)
     config = json.decode(ctx.attr.data[config_digest])
 
-    # Extract platform information
-    if platform == None:
+    # The platform is whatever the descriptor of the index entry pointing at this manifest says.
+    # Derived here rather than passed in, so the descriptor written out below and the platform
+    # reported to `select_base` can never disagree. The field is optional, and an index may carry
+    # an empty platform object, which says nothing about the manifest either; both fall back to
+    # the config. The routing the images module extension generates makes the same choice, and
+    # the two have to agree on which manifest is for which platform.
+    platform = descriptor.get("platform") if descriptor else None
+    if not platform:
         platform = dict(
             architecture = config.get("architecture", "unknown"),
             os = config.get("os", "unknown"),
             variant = config.get("variant", ""),
         )
 
-    # Extract variant from platform dict
-    variant = platform.get("variant", "")
-
-    # ARM64 defaults to v8 variant
-    # See: https://github.com/containerd/platforms/blob/2e51fd9435bd985e1753954b24f4b0453f4e4767/platforms.go#L290
-    if platform.get("architecture") == "arm64" and variant == "":
-        variant = "v8"
+    variant = normalized_variant(
+        platform.get("architecture", "unknown"),
+        platform.get("variant", ""),
+    )
 
     layers = []
 
@@ -235,13 +239,16 @@ def _image_import_impl(ctx):
         ),
     ]
     if media_type in [MEDIA_TYPE_MANIFEST, DOCKER_MANIFEST_V2]:
-        # this is a single-platform manifest
-        providers.append(_build_manifest_info(ctx, ctx.attr.digest))
+        # this is a single-platform manifest. When it was imported out of an index, the
+        # descriptor of the index entry pointing at it is what the index says about it, and
+        # takes precedence over what can be derived from the manifest itself.
+        descriptor = json.decode(ctx.attr.descriptor) if ctx.attr.descriptor else None
+        providers.append(_build_manifest_info(ctx, ctx.attr.digest, descriptor = descriptor))
     elif media_type in [MEDIA_TYPE_INDEX, DOCKER_MANIFEST_LIST_V2]:
         # this is a multi-platform index
         omitted = {digest: None for digest in ctx.attr.omitted_manifests}
         manifests = [
-            _build_manifest_info(ctx, manifest["digest"], descriptor = manifest, index_position = position, platform = manifest.get("platform"))
+            _build_manifest_info(ctx, manifest["digest"], descriptor = manifest, index_position = position)
             for (position, manifest) in enumerate(root_blob.get("manifests", []))
             if manifest["digest"] not in omitted
         ]
@@ -266,6 +273,15 @@ image_import = rule(
     implementation = _image_import_impl,
     attrs = {
         "digest": attr.string(),
+        "descriptor": attr.string(
+            doc = """The descriptor of the index entry referring to this manifest, as JSON.
+
+Set when a single manifest is imported out of an image index. It carries what only the index
+knows: the manifest's platform, its annotations, and its media type, which a manifest that omits
+its own `mediaType` field does not carry. The `platform` field is optional in the OCI spec; when
+it is absent, the platform is derived from the manifest's config, as for an index imported
+whole.""",
+        ),
         "data": attr.string_dict(),
         "files": attr.string_keyed_label_dict(
             allow_files = True,

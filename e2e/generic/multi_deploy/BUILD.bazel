@@ -3,7 +3,9 @@ load("@rules_img//img:push.bzl", "image_push")
 
 image_push(
     name = "nginx",
-    image = "@nginx//:image",
+    # Mirror the pulled image unaltered: ":original" is the index with every platform it has,
+    # while "@nginx//:image" is only the manifest of the target platform.
+    image = "@nginx//:original",
     # Set the destination registry per-image here, or globally in .bazelrc via
     # --@rules_img//img/settings:destination_registry=docker.acme.tld
     # registry = "docker.acme.tld",
