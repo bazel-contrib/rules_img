@@ -147,12 +147,16 @@ def _image_push_impl(ctx):
     sign_settings = [signing.config_info] if signing != None else []
     plugin_runfiles = add_sign_setting_symlinks(root_symlinks, sign_settings)
 
+    # Keep the embedded request path below the launcher's 256-byte argument limit.
+    request_runfile = "{}request.json".format(root_symlinks_prefix)
+    root_symlinks[request_runfile] = deploy_metadata
+
     pusher = ctx.actions.declare_file(ctx.label.name + ".exe")
     deploy_tool_info = ctx.attr.deploy_tool[DeployToolInfo] if ctx.attr.deploy_tool != None else ctx.attr._deploy_tool[DeployToolInfo]
     embedded_args, transformed_args = launcher.args_from_entrypoint(executable_file = deploy_tool_info.img_deploy_exe)
     embedded_args.extend(["deploy", "--runfiles-root-symlinks-prefix", root_symlinks_prefix, "--request-file"])
-    embedded_args, transformed_args = launcher.append_runfile(
-        file = deploy_metadata,
+    embedded_args, transformed_args = launcher.append_raw_transformed_arg(
+        arg = request_runfile,
         embedded_args = embedded_args,
         transformed_args = transformed_args,
     )
