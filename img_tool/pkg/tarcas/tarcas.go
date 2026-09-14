@@ -123,6 +123,14 @@ func (c *CAS[HM]) writeHeaderAndData(hdr *tar.Header, data io.Reader, contentDig
 	var buf bytes.Buffer
 	tw := tar.NewWriter(&buf)
 
+	// Record explicitly defined directories before synthesizing parent directories. Most explicit directory headers
+	// pass through `writeHeaderOrDefer`, which already does this, but arifact roots are written directly through
+	// this function. Without registering the root first, the code below mistakenly registers a directory root as its own
+	// parent, causing duplicate entries to be written to the layer tarball.
+	if hdr.Typeflag == tar.TypeDir {
+		c.dirs[dirKey(hdr.Name)] = struct{}{}
+	}
+
 	// Create parent directory entries if enabled
 	if c.createParentDirectories {
 		var parents []string
