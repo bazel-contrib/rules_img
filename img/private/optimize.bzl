@@ -54,9 +54,11 @@ def _check_layer_blob(ctx, layer, manifest_position, layer_position):
     location = "layer[{}]".format(layer_position)
     if manifest_position != None:
         location = "manifest[{}].{}".format(manifest_position, location)
-    fail("""image_optimize requires all layer blobs to be available, but {} in {} is shallow.
+    fail("""image_optimize requires all layer blobs to be available, but {} in {} has no blob.
 
-This rule intentionally does not download missing base-image layers. If the image comes from image_pull, configure that pull to materialize layers eagerly before optimizing it.""".format(location, ctx.attr.image.label))
+This rule intentionally does not download missing base-image layers. If the image comes from image_pull, configure that pull to materialize layers eagerly before optimizing it.
+
+If the layer instead comes from a local rule built with experimental_compact_layers enabled, build with "--@rules_img//img/settings:experimental_compact_layers_materialize_blob=enabled" to reconstruct the real blob on demand.""".format(location, ctx.attr.image.label))
 
 def _optimize_layer(ctx, layer, settings, manifest_position, layer_position):
     _check_layer_blob(ctx, layer, manifest_position, layer_position)

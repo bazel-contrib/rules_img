@@ -256,6 +256,7 @@ def resolve_layer_settings(ctx):
 
     compact_layers = ctx.attr._experimental_compact_layers[BuildSettingInfo].value == "enabled"
     compact_layers_inline_threshold = ctx.attr._experimental_compact_layers_inline_threshold[BuildSettingInfo].value
+    compact_layers_materialize_blob = ctx.attr._experimental_compact_layers_materialize_blob[BuildSettingInfo].value == "enabled"
 
     return struct(
         compression = compression,
@@ -266,6 +267,7 @@ def resolve_layer_settings(ctx):
         out_ext = out_ext,
         compact_layers = compact_layers,
         compact_layers_inline_threshold = compact_layers_inline_threshold,
+        compact_layers_materialize_blob = compact_layers_materialize_blob,
         soci = soci_enabled,
         soci_span_size = soci_span_size,
     )
@@ -367,9 +369,33 @@ def create_tar_single_layer(ctx, settings, name, extra_args = [], extra_inputs =
     else:
         mtree_out = build_layer_mtree(ctx, name, compact_stream = compact_stream_out)
 
+    # Optionally add a lazy action that reconstructs the real blob from the
+    # compact stream, so SingleLayerInfo.blob is populated even in compact
+    # mode. Bazel only runs this action if some requested target actually
+    # consumes the resulting File (e.g. oci_layout). See docs/compact-stream.md.
+    reconstructed_blob = None
+    if settings.compact_layers and settings.compact_layers_materialize_blob:
+        reconstructed_blob = ctx.actions.declare_file(name + settings.out_ext)
+        ctx.actions.run(
+            outputs = [reconstructed_blob],
+            inputs = [compact_stream_out, layer_input_files_cas],
+            executable = img_toolchain_info.tool_exe,
+            arguments = [
+                "compact-stream",
+                "reconstruct",
+                "--compact-stream",
+                compact_stream_out.path,
+                "--cas-dir",
+                layer_input_files_cas.path,
+                "--output",
+                reconstructed_blob.path,
+            ],
+            mnemonic = "LayerReconstruct",
+        )
+
     return (
         SingleLayerInfo(
-            blob = out,
+            blob = out if out else reconstructed_blob,
             metadata = metadata_out,
             media_type = settings.media_type,
             estargz = settings.estargz,

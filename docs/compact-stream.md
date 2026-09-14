@@ -12,6 +12,7 @@ and using them, and the byte-level specification of the on-disk format:
 - **Using compact layers:** [Enabling in a Bazel build](#enabling-in-a-bazel-build) ·
   [What this means in practice](#what-this-means-in-practice) ·
   [Usage (CLI)](#usage) ·
+  [Materializing the blob on demand](#materializing-the-blob-on-demand) ·
   [Reconstructing a layer](#reconstructing-a-layer-from-a-compact-stream) ·
   [Inspecting a compact stream](#inspecting-a-compact-stream-without-reconstruction) ·
   [FAQ](#faq)
@@ -369,6 +370,51 @@ emitted). This eliminates CAS lookups during reconstruction for small files.
 The byte stream is zstd-compressed by default. The original compression
 metadata is automatically derived from the layer's compression settings.
 
+## Materializing the blob on demand
+
+Compact layers alone are incompatible with any consumer that needs a real
+layer tar `File` — `oci_layout` (and `image_manifest`/`image_index`),
+`image_load`'s docker-save tarball, and `image_optimize` all require
+`SingleLayerInfo.blob`, which is `None` for a compact-stream layer. Building
+one of these targets over a compact layer fails with a missing-blobs error.
+
+Set `experimental_compact_layers_materialize_blob=enabled` (alongside
+`experimental_compact_layers=enabled`) to fix this:
+
+```
+common --@rules_img//img/settings:experimental_compact_layers=enabled
+common --@rules_img//img/settings:experimental_compact_layers_materialize_blob=enabled
+```
+
+Like `experimental_compact_layers` itself, this is a build-wide flag, not a
+per-image setting: once enabled, every compact-stream layer built in that
+invocation gains the extra action described below, not just the ones feeding
+into an `oci_layout`/docker-save/`image_optimize` target. When both flags are
+enabled, every layer rule adds one more action that reconstructs the real
+layer blob from its compact stream and the layer's content-addressed input
+directory (the same `img compact-stream reconstruct` step described
+[below](#reconstructing-a-layer-from-a-compact-stream)), and populates
+`SingleLayerInfo.blob` with the result. `oci_layout`, docker-save,
+`image_index`, and `image_optimize` then work with compact layers exactly as
+they would with materialized ones.
+
+**The cost.** Declaring the action is cheap and does not by itself change what
+gets built: like any Bazel action, it only runs if a requested target actually
+consumes the reconstructed `File`, so building just the `.cstream` (or
+pushing/loading the image, which reconstructs the bytes its own way — see the
+FAQ entry below) does not trigger it. But when it *does* run, it is genuine
+additional work on top of what compact layers were introduced to avoid:
+reconstructing the full layer tar so it can be materialized as its own cached
+artifact. This is independent of, and additional to, the reconstruction the
+push and load tools already do in-process when they need the same bytes:
+asking for a materialized `oci_layout` *and* pushing the same image lazily
+reconstructs the layer tar twice, once for each consumer, since they are
+separate action graph nodes with no way to share the in-memory result. If only
+some images in a build need `oci_layout`/docker-save/`image_optimize` output
+while others only need to be pushed, weigh whether the always-on build-wide
+cost is worth it, or whether it's cheaper to build those two kinds of targets
+with different flag values in separate `bazel build` invocations.
+
 ## Reconstructing a layer from a compact stream
 
 CAS references are addressed by the sha256 of their content, so reconstruction
@@ -461,6 +507,14 @@ exactly once: when the layer is pushed or loaded. And the recomputation is cheap
 streaming a layer is an I/O-bound task, and modern CPUs reconstruct and (re)compress
 a data stream far faster than it can be uploaded to a registry or written to disk,
 so the extra CPU work is essentially hidden behind the transfer it accompanies.
+
+With [`experimental_compact_layers_materialize_blob`](#materializing-the-blob-on-demand)
+enabled, there is a third place this can happen: a cached Bazel action that
+writes the reconstructed tar to disk as its own artifact, so that `oci_layout`,
+docker-save, and `image_optimize` have a real blob to consume. That action is
+independent of the push/load reconstruction above — building a materialized
+output and pushing the same image in the same invocation reconstructs the
+layer twice, not once.
 
 **What if a layer consists of many small files?**
 

@@ -44,7 +44,9 @@ func (e *MissingBlobsError) Error() string {
 		}
 		return fmt.Sprintf(
 			`Missing layer blobs %s
-%q output group requested with shallow base image. You probably want to add the "layer_handling" attribute to the pull rule of your base image (choose "lazy" or "eager", but NOT "shallow").
+%q output group requested with shallow base image, or with a local layer built with experimental_compact_layers enabled.
+If this is a shallow base image, you probably want to add the "layer_handling" attribute to the pull rule of your base image (choose "lazy" or "eager", but NOT "shallow").
+If this is a local compact-stream layer, build with "--@rules_img//img/settings:experimental_compact_layers_materialize_blob=enabled" to reconstruct the real blob on demand.
 If you explicitly want to opt in to %s with missing blobs, use the "--@rules_img//img/settings:shallow_oci_layout=i_know_what_i_am_doing" flag.
 `,
 			strings.Join(e.MissingBlobs, ", "),

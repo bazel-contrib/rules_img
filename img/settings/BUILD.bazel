@@ -295,6 +295,20 @@ int_flag(
     visibility = ["//visibility:public"],
 )
 
+# When enabled together with experimental_compact_layers, layer rules add a
+# lazy action that reconstructs the real layer blob from its compact stream,
+# populating SingleLayerInfo.blob so oci_layout and similar consumers work.
+# See docs/compact-stream.md.
+string_flag(
+    name = "experimental_compact_layers_materialize_blob",
+    build_setting_default = "disabled",
+    values = [
+        "enabled",
+        "disabled",
+    ],
+    visibility = ["//visibility:public"],
+)
+
 # Push image blobs (and optionally manifests) at build time, wired as a Bazel
 # validation action. See docs.
 string_flag(
