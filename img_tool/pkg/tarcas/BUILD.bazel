@@ -25,6 +25,7 @@ go_test(
         "inspect_test.go",
         "reconstruct_integration_test.go",
         "reconstruct_test.go",
+        "store_streaming_test.go",
     ],
     embed = [":tarcas"],
     deps = [
