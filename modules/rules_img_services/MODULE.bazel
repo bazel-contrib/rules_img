@@ -8,6 +8,12 @@ bazel_dep(name = "rules_img_private", version = "0.0.1")
 bazel_dep(name = "rules_img_signer_cosign", version = "0.0.1")
 bazel_dep(name = "rules_img_tool", version = "0.3.21")
 
+# This workspace is a separate root module, so rules_img's dev-only SDK
+# selection does not apply. Select the SDK here as well, including for Gazelle
+# dependency fetches, which otherwise use rules_go's older default SDK.
+go_sdk = use_extension("@rules_go//go:extensions.bzl", "go_sdk")
+go_sdk.download(version = "1.27.1")  # Keep in sync with the root MODULE.bazel.
+
 register_toolchains("@rules_img_tool//toolchain:all")
 
 http_file = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_file")
