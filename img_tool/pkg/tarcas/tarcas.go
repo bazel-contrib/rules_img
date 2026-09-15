@@ -377,10 +377,47 @@ func (c *CAS[HM]) WriteRegularDeduplicated(hdr *tar.Header, r io.Reader) error {
 	return c.writeHeaderOrDefer(&header, nil, nil)
 }
 
+// hashRewindable hashes r and rewinds it to the offset it started at, so the
+// content is streamed twice instead of held in memory. Reports false when r
+// cannot be rewound, leaving the caller to buffer it.
+//
+// Tree artifact files reach the CAS through treeartifact.TreeArtifactFS, whose
+// files embed *os.File and so satisfy io.Seeker. Buffering those cost more than
+// twice the size of the largest file in the tree: a 4 GiB blob inside a tree
+// artifact drove the layer action past 16 GiB resident.
+func hashRewindable(h hash.Hash, r io.Reader) (int64, bool, error) {
+	seeker, ok := r.(io.Seeker)
+	if !ok {
+		return 0, false, nil
+	}
+	start, err := seeker.Seek(0, io.SeekCurrent)
+	if err != nil {
+		// A reader may implement Seek and still refuse to report a position.
+		// Buffering is always correct, so fall back rather than fail.
+		return 0, false, nil
+	}
+	n, err := io.Copy(h, r)
+	if err != nil {
+		return n, false, err
+	}
+	if _, err := seeker.Seek(start, io.SeekStart); err != nil {
+		return n, false, err
+	}
+	return n, true, nil
+}
+
 func (c *CAS[HM]) Store(r io.Reader, intendedPath string) (string, []byte, int64, error) {
 	var helper HM
-	var buf bytes.Buffer
 	h := helper.New()
+	if n, rewound, err := hashRewindable(h, r); err != nil {
+		return "", nil, n, err
+	} else if rewound {
+		hash := h.Sum(nil)
+		contentPath, err := c.StoreKnownHashAndSize(r, hash, n, intendedPath)
+		return contentPath, hash, n, err
+	}
+
+	var buf bytes.Buffer
 	n, err := io.Copy(io.MultiWriter(h, &buf), r)
 	if err != nil {
 		return "", nil, n, err
@@ -426,8 +463,16 @@ func (c *CAS[HM]) storeKnownHashAndSize(r io.Reader, hash []byte, size int64, in
 func (c *CAS[HM]) StoreNode(r io.Reader, hdr *tar.Header) (linkPath string, blobHash []byte, size int64, err error) {
 	// TODO: cache content hashing in vfs
 	var helper HM
-	var buf bytes.Buffer
 	h := helper.New()
+	if n, rewound, err := hashRewindable(h, r); err != nil {
+		return "", nil, n, err
+	} else if rewound {
+		blobHash = h.Sum(nil)
+		linkPath, err = c.StoreNodeKnownHash(r, hdr, blobHash)
+		return linkPath, blobHash, n, err
+	}
+
+	var buf bytes.Buffer
 	n, err := io.Copy(io.MultiWriter(h, &buf), r)
 	if err != nil {
 		return "", nil, n, err
