@@ -42,19 +42,76 @@ func (r Recorder) WithMetadata(metadata MetadataProvider) Recorder {
 	return r
 }
 
+// ImportTar records every entry of a tar file into the layer.
+//
+// When deduplicating, the archive is read twice: once to digest every regular
+// entry, once to stream those entries into the layer. The digest of an entry
+// decides whether it is written as a CAS object or as a hardlink to one, so it
+// has to be known before the entry is written -- and a tar stream cannot be
+// rewound. Digesting in an earlier pass is what keeps this from having to hold
+// each entry in memory, which would cost as much as the largest file in the
+// archive.
 func (r Recorder) ImportTar(tarFile string) error {
-	file, err := os.Open(tarFile)
+	if !r.deduplicate {
+		return r.importTarEntries(tarFile, nil)
+	}
+
+	digests, err := r.digestTarEntries(tarFile)
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	return r.importTarEntries(tarFile, digests)
+}
 
-	input, err := fileopener.CompressionReader(file)
+// tarEntryDigest is the content digest of one regular tar entry, recorded by
+// the digest pass for the write pass to consume.
+type tarEntryDigest struct {
+	size   int64
+	digest []byte
+}
+
+// digestTarEntries reads the archive and returns the content digest of every
+// regular entry, in the order the entries appear.
+func (r Recorder) digestTarEntries(tarFile string) ([]tarEntryDigest, error) {
+	tr, closeStream, err := openTarStream(tarFile)
+	if err != nil {
+		return nil, err
+	}
+	defer closeStream()
+
+	var digests []tarEntryDigest
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		if hdr.Typeflag != tar.TypeReg {
+			continue
+		}
+		hasher := r.tf.ContentHasher()
+		size, err := io.Copy(hasher, tr)
+		if err != nil {
+			return nil, fmt.Errorf("digesting %s: %w", hdr.Name, err)
+		}
+		digests = append(digests, tarEntryDigest{size: size, digest: hasher.Sum(nil)})
+	}
+	return digests, nil
+}
+
+// importTarEntries writes every entry of the archive into the layer. When
+// deduplicating, digests must hold one digest per regular entry, in the order
+// digestTarEntries recorded them.
+func (r Recorder) importTarEntries(tarFile string, digests []tarEntryDigest) error {
+	tr, closeStream, err := openTarStream(tarFile)
 	if err != nil {
 		return err
 	}
+	defer closeStream()
 
-	tr := tar.NewReader(input)
+	var seen int
 	for {
 		hdr, err := tr.Next()
 		if err == io.EOF {
@@ -64,23 +121,69 @@ func (r Recorder) ImportTar(tarFile string) error {
 			return err
 		}
 
-		if hdr.Typeflag == tar.TypeReg {
-			var err error
-			if r.deduplicate {
-				err = r.tf.WriteRegularDeduplicated(hdr, tr)
-			} else {
-				err = r.tf.WriteRegular(hdr, tr)
-			}
-			if err != nil {
-				return fmt.Errorf("failed to write regular file %s: %w", hdr.Name, err)
-			}
-		} else {
+		if hdr.Typeflag != tar.TypeReg {
 			if err := r.tf.WriteHeader(hdr); err != nil {
 				return err
 			}
+			continue
+		}
+
+		if !r.deduplicate {
+			if err := r.tf.WriteRegular(hdr, tr); err != nil {
+				return fmt.Errorf("failed to write regular file %s: %w", hdr.Name, err)
+			}
+			continue
+		}
+
+		// A mismatch here means the archive changed underneath us between the
+		// two passes, which would otherwise store content under the digest of
+		// whatever used to be in its place.
+		if seen >= len(digests) {
+			return fmt.Errorf("%s gained entries between the digest and write passes", tarFile)
+		}
+		entry := digests[seen]
+		seen++
+		if entry.size != hdr.Size {
+			return fmt.Errorf("%s changed between the digest and write passes: %s is %d bytes, was %d", tarFile, hdr.Name, hdr.Size, entry.size)
+		}
+		if err := r.tf.WriteRegularDeduplicatedKnownHash(hdr, tr, entry.digest); err != nil {
+			return fmt.Errorf("failed to write regular file %s: %w", hdr.Name, err)
 		}
 	}
+	if seen != len(digests) {
+		return fmt.Errorf("%s lost entries between the digest and write passes", tarFile)
+	}
 	return nil
+}
+
+// openTarStream opens a tar file, transparently decompressing it. The returned
+// function releases the decompressor -- zstd's owns worker goroutines, and the
+// archive is opened once per pass -- and closes the file.
+func openTarStream(tarFile string) (*tar.Reader, func(), error) {
+	file, err := os.Open(tarFile)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	compression, err := fileopener.LearnCompressionAlgorithm(file)
+	if err != nil {
+		file.Close()
+		return nil, nil, err
+	}
+	input, err := fileopener.CompressionReaderWithFormat(file, compression)
+	if err != nil {
+		file.Close()
+		return nil, nil, err
+	}
+
+	closeStream := func() { file.Close() }
+	if decompressor, ok := input.(io.Closer); ok && compression != api.Uncompressed {
+		closeStream = func() {
+			decompressor.Close()
+			file.Close()
+		}
+	}
+	return tar.NewReader(input), closeStream, nil
 }
 
 func (r Recorder) RegularFileFromPath(filePath, target string) error {

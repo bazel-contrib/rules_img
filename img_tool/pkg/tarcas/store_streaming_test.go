@@ -140,3 +140,52 @@ func TestStoreSeekableMatchesBuffered(t *testing.T) {
 		t.Error("no tar entries written")
 	}
 }
+
+// TestWriteRegularDeduplicatedKnownHashMatchesBuffered pins the known-hash path
+// to the hashing one: given the digest the hashing path would have computed,
+// the two must produce the same tar. The entries cover a blob-eligible header, a
+// header carrying metadata (which is stored as a node instead), and a duplicate
+// of each, so both the first-occurrence and the hardlink outcomes are compared.
+func TestWriteRegularDeduplicatedKnownHashMatchesBuffered(t *testing.T) {
+	blobContent := bytes.Repeat([]byte("blob"), 4096)
+	nodeContent := bytes.Repeat([]byte("node"), 4096)
+
+	entries := []struct {
+		hdr     *tar.Header
+		content []byte
+	}{
+		{&tar.Header{Typeflag: tar.TypeReg, Name: "blob", Size: int64(len(blobContent)), Mode: 0o755}, blobContent},
+		{&tar.Header{Typeflag: tar.TypeReg, Name: "blob-copy", Size: int64(len(blobContent)), Mode: 0o755}, blobContent},
+		{&tar.Header{Typeflag: tar.TypeReg, Name: "node", Size: int64(len(nodeContent)), Mode: 0o644, Uid: 1000}, nodeContent},
+		{&tar.Header{Typeflag: tar.TypeReg, Name: "node-copy", Size: int64(len(nodeContent)), Mode: 0o644, Uid: 1000}, nodeContent},
+	}
+
+	write := func(knownHash bool) []byte {
+		t.Helper()
+		var tarBuf bytes.Buffer
+		appender, err := compress.TarAppenderFactory("sha256", "none", false, &tarBuf)
+		if err != nil {
+			t.Fatal(err)
+		}
+		c := New[SHA256Helper](appender)
+		for _, entry := range entries {
+			if knownHash {
+				digest := sha256.Sum256(entry.content)
+				err = c.WriteRegularDeduplicatedKnownHash(entry.hdr, bytes.NewReader(entry.content), digest[:])
+			} else {
+				err = c.WriteRegularDeduplicated(entry.hdr, bytes.NewReader(entry.content))
+			}
+			if err != nil {
+				t.Fatalf("writing %s (knownHash=%t): %v", entry.hdr.Name, knownHash, err)
+			}
+		}
+		if err := c.Close(); err != nil {
+			t.Fatal(err)
+		}
+		return tarBuf.Bytes()
+	}
+
+	if !bytes.Equal(write(true), write(false)) {
+		t.Error("known-hash and hashing paths produced different tars")
+	}
+}
