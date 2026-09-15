@@ -332,17 +332,7 @@ func (c *CAS[HM]) WriteRegularFromPathDeduplicated(hdr *tar.Header, filePath str
 		return storeErr
 	}
 
-	if linkPath == hdr.Name {
-		// If we were writing to the CAS object itself,
-		// we don't need to write a hardlink.
-		return nil
-	}
-
-	header := cloneTarHeader(hdr)
-	header.Typeflag = tar.TypeLink
-	header.Linkname = linkPath
-	header.Size = 0
-	return c.writeHeaderOrDefer(&header, nil, nil)
+	return c.linkToFirstOccurrence(hdr, linkPath)
 }
 
 func (c *CAS[HM]) WriteRegularDeduplicated(hdr *tar.Header, r io.Reader) error {
@@ -365,6 +355,43 @@ func (c *CAS[HM]) WriteRegularDeduplicated(hdr *tar.Header, r io.Reader) error {
 	if sz != hdr.Size {
 		return fmt.Errorf("expected file of size %d, got %d", hdr.Size, sz)
 	}
+	return c.linkToFirstOccurrence(hdr, linkPath)
+}
+
+// WriteRegularDeduplicatedKnownHash records a regular file whose content
+// digest the caller already knows, streaming r straight into the tar.
+//
+// The digest is what decides whether an entry becomes a CAS object or a
+// hardlink to one, so it has to be known before anything is written. A caller
+// reading from a source it cannot rewind -- a tar stream, say -- would
+// otherwise have to hold the whole entry in memory to hash it first; this lets
+// it digest the content in an earlier pass instead. r must yield exactly
+// hdr.Size bytes hashing to blobHash.
+func (c *CAS[HM]) WriteRegularDeduplicatedKnownHash(hdr *tar.Header, r io.Reader, blobHash []byte) error {
+	if hdr.Typeflag != tar.TypeReg {
+		return fmt.Errorf("WriteRegularDeduplicatedKnownHash called with non-regular header: %s", hdr.Name)
+	}
+
+	var linkPath string
+	var storeErr error
+
+	if isBlobTarHeader(hdr) {
+		linkPath, storeErr = c.storeKnownHashAndSize(r, blobHash, hdr.Size, hdr.Name)
+	} else {
+		linkPath, storeErr = c.storeNodeKnownHash(r, hdr, blobHash)
+	}
+	if storeErr != nil {
+		return storeErr
+	}
+
+	return c.linkToFirstOccurrence(hdr, linkPath)
+}
+
+// linkToFirstOccurrence records the hardlink that stands in for an entry whose
+// content was already stored elsewhere in the tar. Storing an entry that turns
+// out to be the first occurrence writes it as a regular file at its own path,
+// and no hardlink is needed.
+func (c *CAS[HM]) linkToFirstOccurrence(hdr *tar.Header, linkPath string) error {
 	if linkPath == hdr.Name {
 		// If we were writing to the CAS object itself,
 		// we don't need to write a hardlink.
@@ -375,6 +402,14 @@ func (c *CAS[HM]) WriteRegularDeduplicated(hdr *tar.Header, r io.Reader) error {
 	header.Linkname = linkPath
 	header.Size = 0
 	return c.writeHeaderOrDefer(&header, nil, nil)
+}
+
+// ContentHasher returns a new hasher for the CAS's hash algorithm, so callers
+// that have to digest content before handing it over (see
+// WriteRegularDeduplicatedKnownHash) produce digests this CAS accepts.
+func (c *CAS[HM]) ContentHasher() hash.Hash {
+	var helper HM
+	return helper.New()
 }
 
 // hashRewindable hashes r and rewinds it to the offset it started at, so the

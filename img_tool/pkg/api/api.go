@@ -2,6 +2,7 @@ package api
 
 import (
 	"archive/tar"
+	"hash"
 	"io"
 	"io/fs"
 	"iter"
@@ -195,6 +196,9 @@ const (
 type CAS interface {
 	Import(CASStateSupplier) error
 	Export(CASStateExporter) error
+	// ContentHasher returns a new hasher for the CAS's hash algorithm, for
+	// callers that have to digest content before handing it over.
+	ContentHasher() hash.Hash
 	Store(r io.Reader, intendedPath string) (linkPath string, blobHash []byte, blobSize int64, err error)
 	StoreKnownHashAndSize(r io.Reader, blobHash []byte, size int64, intendedPath string) (linkPath string, err error)
 	StoreNode(r io.Reader, hdr *tar.Header) (linkPath string, blobHash []byte, size int64, err error)
@@ -225,6 +229,7 @@ type TarWriter interface {
 	WriteHeader(hdr *tar.Header) error
 	WriteRegular(hdr *tar.Header, r io.Reader) error
 	WriteRegularDeduplicated(hdr *tar.Header, r io.Reader) error
+	WriteRegularDeduplicatedKnownHash(hdr *tar.Header, r io.Reader, blobHash []byte) error
 	WriteRegularFromPath(hdr *tar.Header, filePath string) error
 	WriteRegularFromPathDeduplicated(hdr *tar.Header, filePath string) error
 }

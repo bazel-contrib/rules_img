@@ -1,4 +1,4 @@
-load("@rules_go//go:def.bzl", "go_library")
+load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "tree",
@@ -10,5 +10,16 @@ go_library(
         "//pkg/fileopener",
         "//pkg/tree/runfiles",
         "//pkg/tree/treeartifact",
+    ],
+)
+
+go_test(
+    name = "tree_test",
+    srcs = ["import_tar_test.go"],
+    embed = [":tree"],
+    deps = [
+        "//pkg/api",
+        "//pkg/compress",
+        "//pkg/tarcas",
     ],
 )
