@@ -63,7 +63,11 @@ def _add_manifest_compact_streams(manifest_index, manifest_info, args, inputs):
     for layer_index, layer in enumerate(manifest_info.layers):
         if layer.compact_stream == None:
             continue
-        args.add("--layer-compact-stream", "{},{}={}".format(manifest_index, layer_index, layer.compact_stream.path))
+        args.add_all(
+            "--layer-compact-stream",
+            [layer.compact_stream],
+            format_each = "{},{}=%s".format(manifest_index, layer_index),
+        )
         inputs.append(layer.compact_stream)
         if layer.layer_input_files_cas != None:
             inputs.append(layer.layer_input_files_cas)
@@ -145,7 +149,7 @@ def compute_push_metadata(
     args.add("deploy-metadata")
     args.add("--command", "push")
     args.add("--strategy", strategy)
-    args.add("--configuration-file", configuration_json.path)
+    args.add("--configuration-file", configuration_json)
     if blob_repository:
         args.add("--blob-repository", blob_repository)
     if forbid_layer_push:
@@ -162,7 +166,7 @@ def compute_push_metadata(
 
     if destination_file != None:
         inputs.append(destination_file)
-        args.add("--destination-file", destination_file.path)
+        args.add("--destination-file", destination_file)
 
     if pull_info != None:
         if pull_info.registries:
@@ -178,21 +182,21 @@ def compute_push_metadata(
 
     if cross_mount_from != None:
         inputs.append(cross_mount_from.deploy_manifest)
-        args.add("--cross-mount-from-manifest-path", cross_mount_from.deploy_manifest.path)
+        args.add("--cross-mount-from-manifest-path", cross_mount_from.deploy_manifest)
 
     if manifest_info != None:
-        args.add("--root-path", manifest_info.manifest.path)
+        args.add("--root-path", manifest_info.manifest)
         args.add("--root-kind", "manifest")
-        args.add("--manifest-path", "0=" + manifest_info.manifest.path)
+        args.add_all("--manifest-path", [manifest_info.manifest], format_each = "0=%s")
         inputs.append(manifest_info.manifest)
 
     if index_info != None:
-        args.add("--root-path", index_info.index.path)
+        args.add("--root-path", index_info.index)
         args.add("--root-kind", "index")
         for i, manifest in enumerate(index_info.manifests):
-            args.add("--manifest-path", "{}={}".format(i, manifest.manifest.path))
+            args.add_all("--manifest-path", [manifest.manifest], format_each = "{}=%s".format(i))
         for child_index, tag_file in manifest_tags_expanded:
-            args.add("--manifest-tag-file", "{}={}".format(child_index, tag_file.path))
+            args.add_all("--manifest-tag-file", [tag_file], format_each = "{}=%s".format(child_index))
             inputs.append(tag_file)
         inputs.append(index_info.index)
         inputs.extend([manifest.manifest for manifest in index_info.manifests])
@@ -204,7 +208,7 @@ def compute_push_metadata(
         soci_children = soci_deploy_children(index_info.manifests)
         for offset, child in enumerate(soci_children):
             manifest_index = len(index_info.manifests) + offset
-            args.add("--manifest-path", "{}={}".format(manifest_index, child.manifest.path))
+            args.add_all("--manifest-path", [child.manifest], format_each = "{}=%s".format(manifest_index))
             inputs.append(child.manifest)
 
     layer_sources_file = _write_layer_sources_file(
@@ -215,7 +219,7 @@ def compute_push_metadata(
     )
     if layer_sources_file != None:
         inputs.append(layer_sources_file)
-        args.add("--layer-sources-file", layer_sources_file.path)
+        args.add("--layer-sources-file", layer_sources_file)
 
     # For the bes strategy, compact-stream layers are reconstructed by the syncer
     # from the CAS, so record each .cstream and pull its input files into the CAS.
@@ -226,15 +230,15 @@ def compute_push_metadata(
         ref_manifest_info = referrer.manifest_info
         ref_index_info = referrer.index_info
         if ref_manifest_info != None:
-            args.add("--referrer-root-path", "{}={}".format(ref_idx, ref_manifest_info.manifest.path))
+            args.add_all("--referrer-root-path", [ref_manifest_info.manifest], format_each = "{}=%s".format(ref_idx))
             args.add("--referrer-root-kind", "{}=manifest".format(ref_idx))
-            args.add("--referrer-manifest-path", "{},0={}".format(ref_idx, ref_manifest_info.manifest.path))
+            args.add_all("--referrer-manifest-path", [ref_manifest_info.manifest], format_each = "{},0=%s".format(ref_idx))
             inputs.append(ref_manifest_info.manifest)
         elif ref_index_info != None:
-            args.add("--referrer-root-path", "{}={}".format(ref_idx, ref_index_info.index.path))
+            args.add_all("--referrer-root-path", [ref_index_info.index], format_each = "{}=%s".format(ref_idx))
             args.add("--referrer-root-kind", "{}=index".format(ref_idx))
             for i, manifest in enumerate(ref_index_info.manifests):
-                args.add("--referrer-manifest-path", "{},{}={}".format(ref_idx, i, manifest.manifest.path))
+                args.add_all("--referrer-manifest-path", [manifest.manifest], format_each = "{},{}=%s".format(ref_idx, i))
             inputs.append(ref_index_info.index)
             inputs.extend([manifest.manifest for manifest in ref_index_info.manifests])
 
@@ -243,7 +247,7 @@ def compute_push_metadata(
     # runfiles. The config file itself is added to runfiles by the calling rule.
     if signing != None:
         inputs.append(signing.config_info.config_file)
-        args.add("--sign-setting-file", signing.config_info.config_file.path)
+        args.add("--sign-setting-file", signing.config_info.config_file)
         if signing.best_effort:
             args.add("--sign-best-effort")
         for target in signing.targets:
@@ -271,6 +275,7 @@ def compute_push_metadata(
         executable = img_toolchain_info.tool_exe,
         arguments = push_metadata_args,
         mnemonic = "PushMetadata",
+        execution_requirements = {"supports-path-mapping": "1"},
     )
     return metadata_out, layer_hints_file
 
@@ -350,15 +355,15 @@ def merge_deploy_manifests(ctx, *, deploy_infos, push_strategy = "auto", load_st
     layer_hints_out = None
     if layer_hints_files:
         for f in layer_hints_files:
-            args.add("--layer-hints-input", f.path)
+            args.add("--layer-hints-input", f)
         layer_hints_out = ctx.actions.declare_file(ctx.label.name + ".deploy_merged.layer_hints")
-        args.add("--layer-hints-output", layer_hints_out.path)
+        args.add("--layer-hints-output", layer_hints_out)
 
     for info in deploy_infos:
-        args.add(info.metadata.path)
+        args.add(info.metadata)
 
     metadata_out = ctx.actions.declare_file(ctx.label.name + ".deploy_merged.json")
-    args.add(metadata_out.path)
+    args.add(metadata_out)
 
     outputs = [metadata_out]
     if layer_hints_out != None:
@@ -408,7 +413,7 @@ def compute_load_metadata(
     args.add("deploy-metadata")
     args.add("--command", "load")
     args.add("--strategy", strategy)
-    args.add("--configuration-file", configuration_json.path)
+    args.add("--configuration-file", configuration_json)
 
     if pull_info != None:
         if pull_info.registries:
@@ -421,16 +426,16 @@ def compute_load_metadata(
             args.add("--original-digest", pull_info.digest)
 
     if manifest_info != None:
-        args.add("--root-path", manifest_info.manifest.path)
+        args.add("--root-path", manifest_info.manifest)
         args.add("--root-kind", "manifest")
-        args.add("--manifest-path", "0=" + manifest_info.manifest.path)
+        args.add_all("--manifest-path", [manifest_info.manifest], format_each = "0=%s")
         inputs.append(manifest_info.manifest)
 
     if index_info != None:
-        args.add("--root-path", index_info.index.path)
+        args.add("--root-path", index_info.index)
         args.add("--root-kind", "index")
         for i, manifest in enumerate(index_info.manifests):
-            args.add("--manifest-path", "{}={}".format(i, manifest.manifest.path))
+            args.add_all("--manifest-path", [manifest.manifest], format_each = "{}=%s".format(i))
         inputs.append(index_info.index)
         inputs.extend([manifest.manifest for manifest in index_info.manifests])
 
@@ -442,7 +447,7 @@ def compute_load_metadata(
     )
     if layer_sources_file != None:
         inputs.append(layer_sources_file)
-        args.add("--layer-sources-file", layer_sources_file.path)
+        args.add("--layer-sources-file", layer_sources_file)
 
     outputs = []
     layer_hints_file = layer_hints_for_deploy_metadata(
@@ -590,19 +595,19 @@ def build_time_push_actions(
             args = ctx.actions.args()
             args.add("push")
             args.add("blob")
-            args.add("--configuration-file", configuration_json.path)
-            args.add("--metadata", layer.metadata.path)
+            args.add("--configuration-file", configuration_json)
+            args.add("--metadata", layer.metadata)
             if blob_repository:
                 args.add("--blob-repository", blob_repository)
             args.add("--mode", mode)
-            args.add("--output", result.path)
+            args.add("--output", result)
             inputs = [configuration_json, layer.metadata]
             if layer.blob != None:
-                args.add("--blob", layer.blob.path)
+                args.add("--blob", layer.blob)
                 inputs.append(layer.blob)
             elif layer.compact_stream != None and layer.layer_input_files_cas != None:
-                args.add("--compact-stream", layer.compact_stream.path)
-                args.add("--cas-dir", layer.layer_input_files_cas.path)
+                args.add("--compact-stream", layer.compact_stream)
+                args.add_all("--cas-dir", [layer.layer_input_files_cas], expand_directories = False)
                 inputs.append(layer.compact_stream)
                 inputs.append(layer.layer_input_files_cas)
             else:
@@ -633,13 +638,13 @@ def build_time_push_actions(
             ztoc_args = ctx.actions.args()
             ztoc_args.add("push")
             ztoc_args.add("blob")
-            ztoc_args.add("--configuration-file", configuration_json.path)
-            ztoc_args.add("--blob", ztoc_layer.blob.path)
+            ztoc_args.add("--configuration-file", configuration_json)
+            ztoc_args.add("--blob", ztoc_layer.blob)
             ztoc_args.add("--media-type", "application/octet-stream")
             if blob_repository:
                 ztoc_args.add("--blob-repository", blob_repository)
             ztoc_args.add("--mode", mode)
-            ztoc_args.add("--output", result.path)
+            ztoc_args.add("--output", result)
             ztoc_run_kwargs = dict(
                 inputs = [configuration_json, ztoc_layer.blob],
                 outputs = [result],
@@ -667,12 +672,12 @@ def build_time_push_actions(
         config_args = ctx.actions.args()
         config_args.add("push")
         config_args.add("blob")
-        config_args.add("--configuration-file", configuration_json.path)
-        config_args.add("--blob", manifest.config.path)
+        config_args.add("--configuration-file", configuration_json)
+        config_args.add("--blob", manifest.config)
         if blob_repository:
             config_args.add("--blob-repository", blob_repository)
         config_args.add("--mode", mode)
-        config_args.add("--output", config_result.path)
+        config_args.add("--output", config_result)
         config_run_kwargs = dict(
             inputs = [configuration_json, manifest.config],
             outputs = [config_result],
@@ -718,12 +723,12 @@ def build_time_push_actions(
     args = ctx.actions.args()
     args.add("push")
     args.add("manifest")
-    args.add("--request-file", deploy_metadata.path)
-    args.add("--oci-layout", sparse_layout.path)
+    args.add("--request-file", deploy_metadata)
+    args.add_all("--oci-layout", [sparse_layout], expand_directories = False)
     if manifest_repository:
         args.add("--manifest-repository", manifest_repository)
     args.add("--mode", mode)
-    args.add("--marker", marker.path)
+    args.add("--marker", marker)
     args.add_all(layer_results, before_each = "--layer-result")
     manifest_run_kwargs = dict(
         inputs = [deploy_metadata, sparse_layout] + layer_results,
