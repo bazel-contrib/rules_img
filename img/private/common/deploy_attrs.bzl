@@ -395,7 +395,10 @@ remote execution pool. Setting it to `{}` removes the `requires-network` marker.
 
 Only consulted when push at build time is active (see `push_at_build_time`).
 """,
-        default = {"requires-network": "1"},
+        default = {
+            "requires-network": "1",
+            "supports-path-mapping": "1",
+        },
     ),
     _push_at_build_time_settings = attr.label(
         default = Label("//img/private/settings:push_at_build_time"),
