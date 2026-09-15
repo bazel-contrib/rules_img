@@ -241,6 +241,14 @@ common --@rules_img//img/settings:experimental_compact_layers=enabled
 # 0 to disable inlining. Only has an effect when compact layers are enabled.
 common --@rules_img//img/settings:experimental_compact_layers_inline_threshold=4096
 
+# [Experimental] When compact layers are enabled, also add a lazy action to
+# every layer rule that reconstructs the real layer blob from its compact
+# stream. This populates SingleLayerInfo.blob, so oci_layout, docker-save,
+# image_index and image_optimize work with compact layers too. The action only
+# runs if a requested target actually needs the blob -- see the "Materializing
+# the blob on demand" section of docs/compact-stream.md for the added cost.
+common --@rules_img//img/settings:experimental_compact_layers_materialize_blob=enabled
+
 # Path prefix for entries in the layer `mtree` output group. "./" makes every
 # entry an unambiguous full-path entry (recommended); "" emits bare tar paths and
 # gives directory entries a trailing "/" so they still parse as full-path entries.
