@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"hash"
 	"io"
+	"math"
 
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/compress"
 )
@@ -16,6 +17,9 @@ type BlobStore interface {
 	ReaderForBlob(ctx context.Context, digest []byte, size int64) (io.ReadCloser, error)
 }
 
+// Reconstruct rebuilds the original compressed stream from index and store.
+// If index implements io.ReaderAt, a compressed-stream mismatch also reports
+// the SHA-256 digest and size of the complete index, calculated only on failure.
 func Reconstruct(ctx context.Context, index io.Reader, store BlobStore, output io.Writer) error {
 	header, err := ReadHeader(index)
 	if err != nil {
@@ -115,9 +119,21 @@ func Reconstruct(ctx context.Context, index io.Reader, store BlobStore, output i
 	if verifier != nil {
 		gotDigest := verifier.h.Sum(nil)
 		if verifier.n != int64(header.CompressedStreamSize) || !bytes.Equal(gotDigest, header.CompressedStreamDigest) {
-			return fmt.Errorf("reconstructed compressed stream mismatch: expected a compressed stream with digest %s and size %d, but reconstructed a stream with digest %s and size %d",
+			mismatch := fmt.Errorf("reconstructed compressed stream mismatch: expected a compressed stream with digest %s and size %d, but reconstructed a stream with digest %s and size %d",
 				hex.EncodeToString(header.CompressedStreamDigest), header.CompressedStreamSize,
 				hex.EncodeToString(gotDigest), verifier.n)
+			// Reread the complete cstream only on mismatch, without changing the
+			// input's position or adding hashing overhead to successful builds.
+			reader, ok := index.(io.ReaderAt)
+			if !ok {
+				return fmt.Errorf("%w; cstream digest and size unavailable: input does not support rereading", mismatch)
+			}
+			h := sha256.New()
+			size, err := io.Copy(h, io.NewSectionReader(reader, 0, math.MaxInt64))
+			if err != nil {
+				return fmt.Errorf("%w; cstream digest and size unavailable: %v", mismatch, err)
+			}
+			return fmt.Errorf("%w; cstream file has SHA-256 digest %x and size %d", mismatch, h.Sum(nil), size)
 		}
 	}
 

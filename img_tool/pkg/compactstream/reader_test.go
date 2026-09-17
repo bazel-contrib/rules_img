@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"testing"
 )
@@ -287,5 +288,83 @@ func TestReconstructEndPaddingValidatedByDigest(t *testing.T) {
 	noPad := sha256.Sum256(stream)
 	if err := Reconstruct(context.Background(), build(noPad[:], uint64(len(stream))), mapBlobStore{}, io.Discard); err == nil {
 		t.Fatal("expected failure when recorded digest omits end padding")
+	}
+}
+
+type diagnosticReader struct {
+	*bytes.Reader
+	readAtCalls int
+	err         error
+}
+
+func (r *diagnosticReader) ReadAt(p []byte, off int64) (int, error) {
+	r.readAtCalls++
+	if r.err != nil {
+		return 0, r.err
+	}
+	return r.Reader.ReadAt(p, off)
+}
+
+func TestReconstructCstreamDiagnostics(t *testing.T) {
+	payload := []byte("reconstructed content")
+	digest := sha256.Sum256(payload)
+	for _, mismatch := range []string{"none", "digest", "size"} {
+		t.Run(mismatch, func(t *testing.T) {
+			var buf bytes.Buffer
+			w := NewWriter(&buf, HashAlgoSHA256, sha256.Size, StreamCompressionZstd, OriginalCompressionInfo{}, 0)
+			if err := w.WriteStreamBytes(payload); err != nil {
+				t.Fatal(err)
+			}
+			wantDigest, wantSize := digest, uint64(len(payload))
+			switch mismatch {
+			case "digest":
+				wantDigest[0] ^= 0xff
+			case "size":
+				wantSize++
+			}
+			if err := w.SetCompressedStreamInfo(wantDigest[:], wantSize); err != nil {
+				t.Fatal(err)
+			}
+			if err := w.Close(); err != nil {
+				t.Fatal(err)
+			}
+			index := buf.Bytes()
+			info := fmt.Sprintf("cstream file has SHA-256 digest %x and size %d", sha256.Sum256(index), len(index))
+			check := func(r io.Reader, diagnostic string) {
+				t.Helper()
+				err := Reconstruct(context.Background(), r, mapBlobStore{}, io.Discard)
+				if mismatch == "none" {
+					if err != nil {
+						t.Fatal(err)
+					}
+					return
+				}
+				original := fmt.Sprintf("expected a compressed stream with digest %x and size %d, but reconstructed a stream with digest %x and size %d", wantDigest, wantSize, digest, len(payload))
+				if err == nil || !strings.Contains(err.Error(), original) || !strings.Contains(err.Error(), diagnostic) {
+					t.Fatalf("expected mismatch with %q and %q, got %v", original, diagnostic, err)
+				}
+			}
+			r := &diagnosticReader{Reader: bytes.NewReader(index)}
+			check(r, info)
+			if (r.readAtCalls == 0) != (mismatch == "none") {
+				t.Fatalf("unexpected diagnostic reads: %d", r.readAtCalls)
+			}
+			check(&diagnosticReader{Reader: bytes.NewReader(index), err: fmt.Errorf("diagnostic read failed")}, "cstream digest and size unavailable: diagnostic read failed")
+			check(bytes.NewBuffer(index), "cstream digest and size unavailable: input does not support rereading")
+
+			// Exercise the file-backed input used by reconstruction commands.
+			f, err := os.CreateTemp(t.TempDir(), "*.cstream")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer f.Close()
+			if _, err := f.Write(index); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := f.Seek(0, io.SeekStart); err != nil {
+				t.Fatal(err)
+			}
+			check(f, info)
+		})
 	}
 }
