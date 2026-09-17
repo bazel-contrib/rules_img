@@ -1,9 +1,11 @@
 // Package registryopts centralizes the go-containerregistry remote.Options that
 // the img tool enforces for every registry operation: multi-keychain
-// authentication, a patient retry backoff, a transport routed through the
-// oci-distribution-gateway (when one is configured) that honors a registry's
-// Retry-After header, accounts for how many requests are in flight and sends a
-// blob mount without go-cr's origin parameter, and a default concurrency.
+// authentication, a patient retry backoff and predicate (extended to also
+// retry HTTP/2 stream resets, which go-cr's own default predicate misses), a
+// transport routed through the oci-distribution-gateway (when one is
+// configured) that honors a registry's Retry-After header, accounts for how
+// many requests are in flight and sends a blob mount without go-cr's origin
+// parameter, and a default concurrency.
 //
 // Callers assemble options through a small builder so the enforced defaults live
 // in one place while still allowing per-call additions and overrides:
@@ -24,14 +26,18 @@ package registryopts
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
+	"errors"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/google/go-containerregistry/pkg/name"
@@ -162,6 +168,7 @@ func Default() *Options {
 	opts := []remote.Option{
 		registry.WithAuthFromMultiKeychain(),
 		RetryBackoffOption(),
+		RetryPredicateOption(),
 		remote.WithJobs(DefaultJobs),
 	}
 	if Insecure() {
@@ -323,6 +330,84 @@ func RetryBackoff() remote.Backoff {
 // Pusher/Puller (remote.Reuse) are ignored.
 func RetryBackoffOption() remote.Option {
 	return remote.WithRetryBackoff(RetryBackoff())
+}
+
+// RetryPredicateOption returns the go-cr remote.Option that installs
+// [retryPredicate] in place of go-cr's own default. Like [RetryBackoffOption],
+// it must be supplied when a Pusher/Puller is first constructed, since options
+// attached to a reused Pusher/Puller (remote.Reuse) are ignored.
+func RetryPredicateOption() remote.Option {
+	return remote.WithRetryPredicate(retryPredicate)
+}
+
+// retryPredicate decides whether go-cr should retry a registry request. It
+// reimplements go-cr's own default predicate (network errors that either
+// implement Temporary() or are one of a handful of sentinel errors) and adds
+// one more case go-cr misses entirely: an HTTP/2 stream reset such as
+// "stream error: stream ID N; INTERNAL_ERROR; received from peer", which we
+// have seen a registry send back on a blob-upload PATCH.
+//
+// That error is per-stream, not per-connection: the server tore down this one
+// request without closing the underlying connection, typically because a
+// pooled HTTP/2 stream raced the server reclaiming it. Go's http2.StreamError
+// implements neither Temporary() nor any of go-cr's sentinel errors, so
+// without this it is never retried. It is safe to retry here for the same
+// reason a plain TCP reset already is: the resumable upload protocol behind
+// our PATCH chunk requests tracks progress server-side by offset, so
+// re-issuing the request (which go-cr does, rebuilding the body from
+// GetBody) resumes cleanly.
+//
+// We deliberately re-run go-cr's own checks (rather than only adding the
+// http2 case) because remote.WithRetryPredicate replaces go-cr's default
+// outright instead of extending it.
+func retryPredicate(err error) bool {
+	if isTemporary(err) ||
+		errors.Is(err, io.ErrUnexpectedEOF) ||
+		errors.Is(err, io.EOF) ||
+		errors.Is(err, syscall.EPIPE) ||
+		errors.Is(err, syscall.ECONNRESET) ||
+		errors.Is(err, net.ErrClosed) ||
+		isHTTP2StreamError(err) {
+		return true
+	}
+	return false
+}
+
+// isTemporary mirrors go-cr's internal retry.IsTemporary: true if err
+// implements Temporary() and it returns true, ignoring a context deadline
+// (which retrying cannot fix).
+func isTemporary(err error) bool {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	type temporary interface{ Temporary() bool }
+	te, ok := err.(temporary)
+	return ok && te.Temporary()
+}
+
+// http2StreamError structurally mirrors the unexported
+// net/http/internal/http2.StreamError so [isHTTP2StreamError] can recognize
+// one via errors.As without importing an internal package (which Go's module
+// boundary forbids from outside net/http). That type implements a custom As
+// method specifically to support this: its doc comment says it "permits
+// converting a StreamError into a x/net/http2.StreamError", matching purely
+// by field name/order and convertibility, which our identically-shaped struct
+// satisfies too. If the standard library ever changes StreamError's fields,
+// this simply stops matching (isHTTP2StreamError returns false) rather than
+// failing to compile.
+type http2StreamError struct {
+	StreamID uint32
+	Code     uint32
+	Cause    error
+}
+
+func (http2StreamError) Error() string { return "http2 stream error" }
+
+// isHTTP2StreamError reports whether err is (or wraps) an HTTP/2 stream-level
+// reset, as opposed to a connection-level failure.
+func isHTTP2StreamError(err error) bool {
+	var se http2StreamError
+	return errors.As(err, &se)
 }
 
 // WrapRetryAfter wraps base so that a rate-limit response carrying a
