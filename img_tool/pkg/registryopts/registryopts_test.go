@@ -3,12 +3,17 @@ package registryopts
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -48,25 +53,25 @@ func newRequest(t *testing.T, ctx context.Context) *http.Request {
 
 func TestDefaultOptionsAndOverrides(t *testing.T) {
 	base := Default()
-	if got := len(base.Remote()); got != 3 {
-		t.Fatalf("Default() has %d options, want 3 (auth, retry, jobs)", got)
+	if got := len(base.Remote()); got != 4 {
+		t.Fatalf("Default() has %d options, want 4 (auth, retry backoff, retry predicate, jobs)", got)
 	}
 
 	// With is immutable: branching does not mutate the receiver.
 	branched := base.With(remote.WithUserAgent("a"), remote.WithUserAgent("b"))
-	if got := len(base.Remote()); got != 3 {
-		t.Fatalf("Default() mutated by With: len=%d, want 3", got)
+	if got := len(base.Remote()); got != 4 {
+		t.Fatalf("Default() mutated by With: len=%d, want 4", got)
 	}
-	if got := len(branched.Remote()); got != 5 {
-		t.Fatalf("With(x,y) len=%d, want 5", got)
+	if got := len(branched.Remote()); got != 6 {
+		t.Fatalf("With(x,y) len=%d, want 6", got)
 	}
 
 	// WithJobs(<=0) is a no-op (go-cr rejects WithJobs(0)); positive appends one.
-	if got := len(base.WithJobs(0).Remote()); got != 3 {
-		t.Fatalf("WithJobs(0) changed length to %d, want 3", got)
+	if got := len(base.WithJobs(0).Remote()); got != 4 {
+		t.Fatalf("WithJobs(0) changed length to %d, want 4", got)
 	}
-	if got := len(base.WithJobs(8).Remote()); got != 4 {
-		t.Fatalf("WithJobs(8) length %d, want 4", got)
+	if got := len(base.WithJobs(8).Remote()); got != 5 {
+		t.Fatalf("WithJobs(8) length %d, want 5", got)
 	}
 
 	// Push/Pull add a transport on top of the defaults.
@@ -74,15 +79,15 @@ func TestDefaultOptionsAndOverrides(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Push() error: %v", err)
 	}
-	if got := len(push.Remote()); got != 4 {
-		t.Fatalf("Push() has %d options, want 4 (defaults + transport)", got)
+	if got := len(push.Remote()); got != 5 {
+		t.Fatalf("Push() has %d options, want 5 (defaults + transport)", got)
 	}
 	pull, err := Pull()
 	if err != nil {
 		t.Fatalf("Pull() error: %v", err)
 	}
-	if got := len(pull.Remote()); got != 4 {
-		t.Fatalf("Pull() has %d options, want 4", got)
+	if got := len(pull.Remote()); got != 5 {
+		t.Fatalf("Pull() has %d options, want 5", got)
 	}
 }
 
@@ -220,12 +225,12 @@ func TestBaseTransportInsecure(t *testing.T) {
 // enforced defaults (no explicit transport) still get the insecure transport.
 func TestDefaultInsecureInstallsTransport(t *testing.T) {
 	setInsecureForTest(t, true)
-	if got := len(Default().Remote()); got != 4 {
-		t.Fatalf("Default() with insecure on has %d options, want 4 (auth, retry, jobs, transport)", got)
+	if got := len(Default().Remote()); got != 5 {
+		t.Fatalf("Default() with insecure on has %d options, want 5 (auth, retry backoff, retry predicate, jobs, transport)", got)
 	}
 	SetInsecure(false)
-	if got := len(Default().Remote()); got != 3 {
-		t.Fatalf("Default() with insecure off has %d options, want 3", got)
+	if got := len(Default().Remote()); got != 4 {
+		t.Fatalf("Default() with insecure off has %d options, want 4", got)
 	}
 }
 
@@ -302,6 +307,97 @@ func TestRetryBackoffDefaultsAndEnv(t *testing.T) {
 	b = RetryBackoff()
 	if b.Duration != defaultRetryBaseDelay || b.Cap != defaultRetryMaxDelay {
 		t.Fatalf("invalid durations = dur %v cap %v, want defaults", b.Duration, b.Cap)
+	}
+}
+
+// fakeStreamError stands in for the real, unexported
+// net/http/internal/http2.StreamError: same field shape (name, order, and
+// convertibility), and the same custom As method (copied verbatim from the
+// standard library, see errors.go's StreamError.As) that lets an unrelated,
+// differently-named struct in another package be populated via errors.As. It
+// lets the test exercise exactly the mechanism [isHTTP2StreamError] relies on
+// without needing to import net/http/internal/http2 (which Go's module
+// boundary forbids from outside net/http) or open a real HTTP/2 connection.
+type fakeStreamError struct {
+	StreamID uint32
+	Code     uint32
+	Cause    error
+}
+
+func (e fakeStreamError) Error() string {
+	return fmt.Sprintf("stream error: stream ID %d; %v", e.StreamID, e.Code)
+}
+
+func (e fakeStreamError) As(target any) bool {
+	dst := reflect.ValueOf(target).Elem()
+	dstType := dst.Type()
+	if dstType.Kind() != reflect.Struct {
+		return false
+	}
+	src := reflect.ValueOf(e)
+	srcType := src.Type()
+	numField := srcType.NumField()
+	if dstType.NumField() != numField {
+		return false
+	}
+	for i := range numField {
+		sf := srcType.Field(i)
+		df := dstType.Field(i)
+		if sf.Name != df.Name || !sf.Type.ConvertibleTo(df.Type) {
+			return false
+		}
+	}
+	for i := range numField {
+		df := dst.Field(i)
+		df.Set(src.Field(i).Convert(df.Type()))
+	}
+	return true
+}
+
+func TestIsHTTP2StreamError(t *testing.T) {
+	streamErr := fakeStreamError{StreamID: 141, Code: 2 /* INTERNAL_ERROR */, Cause: errors.New("received from peer")}
+
+	// As it actually arrives from a PATCH: wrapped by *net.OpError (the
+	// "readfrom tcp ...:" prefix) inside a *url.Error (the "Patch \"...\":" prefix).
+	wrapped := &url.Error{
+		Op:  "Patch",
+		URL: "http://localhost:54524/v2/repo/blobs/uploads/123",
+		Err: &net.OpError{Op: "readfrom", Err: streamErr},
+	}
+
+	if !isHTTP2StreamError(wrapped) {
+		t.Fatalf("isHTTP2StreamError(%v) = false, want true", wrapped)
+	}
+	if !retryPredicate(wrapped) {
+		t.Fatalf("retryPredicate(%v) = false, want true", wrapped)
+	}
+
+	if isHTTP2StreamError(errors.New("connection refused")) {
+		t.Fatalf("isHTTP2StreamError on an unrelated error = true, want false")
+	}
+}
+
+func TestRetryPredicateStillCoversGoCRDefaults(t *testing.T) {
+	if !retryPredicate(io.EOF) {
+		t.Fatalf("retryPredicate(io.EOF) = false, want true")
+	}
+	if !retryPredicate(io.ErrUnexpectedEOF) {
+		t.Fatalf("retryPredicate(io.ErrUnexpectedEOF) = false, want true")
+	}
+	if !retryPredicate(syscall.ECONNRESET) {
+		t.Fatalf("retryPredicate(syscall.ECONNRESET) = false, want true")
+	}
+	if !retryPredicate(syscall.EPIPE) {
+		t.Fatalf("retryPredicate(syscall.EPIPE) = false, want true")
+	}
+	if !retryPredicate(net.ErrClosed) {
+		t.Fatalf("retryPredicate(net.ErrClosed) = false, want true")
+	}
+	if retryPredicate(context.DeadlineExceeded) {
+		t.Fatalf("retryPredicate(context.DeadlineExceeded) = true, want false")
+	}
+	if retryPredicate(errors.New("some unrelated error")) {
+		t.Fatalf("retryPredicate(unrelated error) = true, want false")
 	}
 }
 
