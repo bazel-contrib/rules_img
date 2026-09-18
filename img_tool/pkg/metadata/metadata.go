@@ -14,8 +14,11 @@ import (
 // WriteLayerMetadata writes layer metadata in the format expected by SingleLayerInfo provider.
 // The format includes: diff_id, mediaType, digest, size, annotations, and history.
 //
-// When history is empty, a synthetic single entry {created_by: "history missing"} is
-// written so every layer carries at least a created_by marker.
+// A nil history means "no history was supplied", so a synthetic single entry
+// {created_by: "history missing"} is written to keep every layer's created_by
+// marker non-empty. Callers that want a layer with no history entries at all
+// (as opposed to a missing one) pass a non-nil empty slice, which is written
+// through verbatim.
 func WriteLayerMetadata(
 	diffID string,
 	mediaType string,
@@ -38,7 +41,7 @@ func WriteLayerMetadata(
 		}
 	}
 
-	if len(history) == 0 {
+	if history == nil {
 		history = api.LayerHistory("")
 	}
 

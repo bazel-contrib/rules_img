@@ -77,7 +77,7 @@ func LayerProcess(ctx context.Context, args []string) {
 		}
 		os.Exit(1)
 	}
-	flagSet.StringVar(&layerHistory, "history", "", `Optional created_by string recorded in the layer's history (e.g. "bazel build //pkg:target"). Defaults to a "history missing" marker.`)
+	flagSet.StringVar(&layerHistory, "history", api.MissingHistoryMarker, `Optional created_by string recorded in the layer's history (e.g. "bazel build //pkg:target"). Omitting the flag is equivalent to passing the missing-history marker; passing it with an empty value ("--history=") omits the history entry entirely.`)
 	flagSet.Var(&addFiles, "add", `Add a file to the image layer. The parameter is a string of the form <path_in_image>=<file> where <path_in_image> is the path in the image and <file> is the path in the host filesystem.`)
 	flagSet.Var(&addFromFile, "add-from-file", `Add all files listed in the parameter file to the image layer. The parameter file is usually written by Bazel.
 The file contains one line per file, where each line contains a path in the image and a path in the host filesystem, separated by a a null byte and a single character indicating the type of the file.
@@ -636,9 +636,15 @@ func writeLayer(recorder tree.Recorder, addFiles addFiles, importTars importTars
 }
 
 func writeMetadata(history string, compressionAlgorithm api.CompressionAlgorithm, useEstargz bool, mediaTypeOverride string, annotations map[string]string, compressorState api.AppenderState, outputFile io.Writer) error {
-	// Record the created_by history from the user-provided --history; a missing
-	// value becomes "history missing" (LayerHistory).
-	layerHistory := api.LayerHistory(history)
+	// An empty --history asks for a layer with no history entries at all;
+	// omitting the flag defaults to MissingHistoryMarker, which falls
+	// through to the non-empty case below like any other value.
+	var layerHistory []api.History
+	if history == "" {
+		layerHistory = []api.History{}
+	} else {
+		layerHistory = api.LayerHistory(history)
+	}
 	var mediaType string
 	if mediaTypeOverride != "" {
 		mediaType = mediaTypeOverride

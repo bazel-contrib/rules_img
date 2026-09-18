@@ -1,11 +1,14 @@
 load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
 load("//img/private:download_blobs_test.bzl", "download_blobs_test_suite")
 load("//img/private:import_test.bzl", "import_test_suite")
+load("//img/private:layer_history_test.bzl", "layer_history_test_suite")
 load("//img/private:tar_layer_materialize_blob_test.bzl", "tar_layer_materialize_blob_test_suite")
 
 download_blobs_test_suite(name = "download_blobs_test")
 
 import_test_suite(name = "import_test")
+
+layer_history_test_suite(name = "layer_history_test")
 
 tar_layer_materialize_blob_test_suite(name = "tar_layer_materialize_blob_test")
 
@@ -62,6 +65,7 @@ bzl_library(
         "//img:providers",
         "//img/private/common:build",
         "//img/private/common:layer_attrs",
+        "//img/private/common:layer_helper",
         "//img/private/common:tar_layer",
         "//img/private/providers:layers_info",
     ],
