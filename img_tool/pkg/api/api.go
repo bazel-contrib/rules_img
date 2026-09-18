@@ -86,13 +86,17 @@ type History struct {
 	EmptyLayer bool `json:"empty_layer,omitempty"`
 }
 
+// MissingHistoryMarker is recorded as a layer's created_by when no history
+// was provided, so every layer carries at least a created_by entry.
+const MissingHistoryMarker = "history missing"
+
 // LayerHistory returns the history for a layer whose creating command is
 // createdBy (e.g. "bazel build //pkg:target", assembled by the caller). When
-// createdBy is empty (no --history was provided), it records a "history missing"
-// marker so every layer carries at least a created_by entry.
+// createdBy is empty (no --history was provided), it records the
+// MissingHistoryMarker.
 func LayerHistory(createdBy string) []History {
 	if createdBy == "" {
-		createdBy = "history missing"
+		createdBy = MissingHistoryMarker
 	}
 	return []History{{CreatedBy: createdBy}}
 }

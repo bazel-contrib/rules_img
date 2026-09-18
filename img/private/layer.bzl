@@ -2,6 +2,7 @@
 
 load("//img/private/common:build.bzl", "TOOLCHAINS")
 load("//img/private/common:layer_attrs.bzl", "layer_attrs")
+load("//img/private/common:layer_helper.bzl", "history_attr")
 load(
     "//img/private/common:tar_layer.bzl",
     "create_tar_layer",
@@ -204,6 +205,7 @@ Can include fields like mode, uid, gid, uname, gname, mtime, and pax_records."""
 The path should match the path in the image (the key in srcs attribute).
 Metadata specified here overrides any defaults from default_metadata.""",
         ),
+        "history": history_attr(),
     } | layer_attrs.common,
     toolchains = TOOLCHAINS,
     provides = [LayersInfo],

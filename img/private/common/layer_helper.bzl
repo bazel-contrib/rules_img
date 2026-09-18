@@ -77,6 +77,45 @@ def layer_history(name):
     """
     return "bazel build " + name
 
+# Sentinel default for the `history` attribute: distinguishes "unset" from an
+# explicit `history = []`, mirroring INHERIT_FROM_BASE in //img/private/common:inherit.bzl.
+_HISTORY_ATTR_DEFAULT = ["<default bazel build history>"]
+
+def history_attr():
+    """Returns an overridable `history` attribute for a layer-producing rule."""
+    return attr.string_list(
+        default = _HISTORY_ATTR_DEFAULT,
+        doc = """\
+Overrides the `created_by` history entry recorded for this layer.
+
+By default the layer records one entry, "bazel build <label>", so two layers
+with identical contents but different labels have different config digests.
+`history = []` records no history entry, so identical contents give identical
+config digests regardless of label. A single-element list is recorded verbatim.
+The img tool records at most one history entry per layer, so longer lists are
+rejected.
+""",
+    )
+
+def layer_history_args(ctx):
+    """Returns the `["--history", value]` argv fragment for the img tool.
+
+    Rules without a `history` attribute get the default "bazel build <label>"
+    entry automatically.
+
+    Args:
+        ctx: Rule context.
+
+    Returns:
+        Two-element list: `["--history", value]`.
+    """
+    history = getattr(ctx.attr, "history", _HISTORY_ATTR_DEFAULT)
+    if history == _HISTORY_ATTR_DEFAULT:
+        return ["--history", layer_history(layer_name(ctx.label))]
+    if len(history) > 1:
+        fail("history supports at most one entry (the img tool records a single --history value); got {}".format(history))
+    return ["--history", history[0] if history else ""]
+
 def compression_tuning_args(ctx, compression, estargz):
     """Compression tuning arguments for img tools based on build mode.
 

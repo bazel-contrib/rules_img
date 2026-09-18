@@ -3,7 +3,7 @@
 load("@bazel_skylib//lib:paths.bzl", "paths")
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("//img/private/common:build.bzl", "TOOLCHAIN")
-load("//img/private/common:layer_helper.bzl", "build_layer_mtree", "compression_tuning_args", "layer_history", "layer_name")
+load("//img/private/common:layer_helper.bzl", "build_layer_mtree", "compression_tuning_args", "layer_history_args")
 load("//img/private/providers:layers_info.bzl", "LayersInfo")
 load("//img/private/providers:single_layer_info.bzl", "SingleLayerInfo")
 
@@ -306,7 +306,7 @@ def create_tar_single_layer(ctx, settings, name, extra_args = [], extra_inputs =
     if settings.soci and settings.compression == "gzip" and out != None:
         ztoc_out = ctx.actions.declare_file(name + settings.out_ext + ".ztoc")
 
-    args = ["layer", "--history", layer_history(layer_name(ctx.label)), "--metadata", metadata_out.path, "--format", settings.compression]
+    args = ["layer"] + layer_history_args(ctx) + ["--metadata", metadata_out.path, "--format", settings.compression]
     if ctx.attr.media_type:
         args.extend(["--media-type", ctx.attr.media_type])
     args.extend(compression_tuning_args(ctx, settings.compression, settings.estargz))
