@@ -434,8 +434,10 @@ def _layer_from_binary_impl(ctx):
     )
     runfiles_config = _resolve_runfiles_config(ctx, path_in_image, has_runfiles_groups)
 
+    # A None working_dir carries no opinion: image_manifest then keeps the base
+    # image's working directory unless its own working_dir attr is set.
     working_dir = None
-    if ctx.attr.include_runfiles:
+    if ctx.attr.include_runfiles and ctx.attr.infer_working_dir:
         effective_runfiles_path = runfiles_config.runfiles_symlink_path if runfiles_config.shared else runfiles_config.runfiles_content_path
         abs_rf = effective_runfiles_path if effective_runfiles_path.startswith("/") else "/" + effective_runfiles_path
         working_dir = "{}/_main".format(abs_rf)
@@ -579,6 +581,8 @@ image with Dockerfile-like semantics.
 The binary's `args` attribute becomes the image `cmd`, its `env` attribute (or
 RunEnvironmentInfo provider) becomes `env`, and the binary path becomes the `entrypoint`.
 When include_runfiles is True (default), the working directory is set to the runfiles root.
+Set `infer_working_dir = False` to leave the working directory unset, so the base image's
+working directory (or image_manifest's own `working_dir` attribute) applies instead.
 
 In addition to the executable and its runfiles, any other default outputs of the binary
 target (the rest of `DefaultInfo.files`) are copied into the layer, each placed at the same
@@ -701,6 +705,21 @@ Can include fields like mode, uid, gid, uname, gname, mtime, and pax_records.
 
 Accepts the same value as image_layer's attribute of the same name, so
 img/layer.bzl's file_metadata() builds it.""",
+        ),
+        "infer_working_dir": attr.bool(
+            default = True,
+            doc = """\
+Whether to infer the image's working directory from the binary's runfiles tree.
+
+When True (default) and `include_runfiles` is True, `ImageLayerConfigInfo.working_dir`
+is set to the main workspace directory inside the runfiles tree
+(e.g. "/_main/cmd/server/server_/server.runfiles/_main"), which is the directory a
+binary launched through the runfiles convention expects to run in.
+
+When False, `ImageLayerConfigInfo.working_dir` is None, which carries no opinion:
+`image_manifest` then keeps the base image's working directory, unless its own
+`working_dir` attribute is set explicitly.
+""",
         ),
         "layer_budget": attr.int(
             default = 0,

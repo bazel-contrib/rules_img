@@ -2,10 +2,10 @@ load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
 load("@bazel_skylib//rules:write_file.bzl", "write_file")
 load("@rules_img//img:convert.bzl", "image_index_from_oci_layout", "image_manifest_from_oci_layout")
 load("@rules_img//img:image.bzl", "image_index", "image_manifest", "image_optimize")
-load("@rules_img//img:layer.bzl", "file_metadata", "image_layer")
+load("@rules_img//img:layer.bzl", "file_metadata", "image_layer", "layer_from_binary")
 load("@rules_img//img:media_types.bzl", "GZIP_LAYER")
 load("@rules_img//img:test.bzl", "image_structure_test")
-load(":defs.bzl", "mtree_config_output_groups")
+load(":defs.bzl", "mtree_config_output_groups", "simple_binary")
 
 # gazelle:exclude_from_release
 
@@ -224,6 +224,73 @@ image_structure_test(
     configs = ["failing.yaml"],
     image = ":hello",
     tags = ["manual"],
+)
+
+# working_dir precedence between a base image, a layer's ImageLayerConfigInfo and
+# the image_manifest attribute. The base (`:hello`) sets /app, and
+# layer_from_binary infers a runfiles working directory unless told not to.
+simple_binary(
+    name = "launcher",
+    binary = ":tool_sh",
+    data = [":hello_txt"],
+)
+
+layer_from_binary(
+    name = "launcher_layer",
+    binary = ":launcher",
+    path = "/opt/launcher",
+    runfiles_sharing_mode = "private",
+)
+
+layer_from_binary(
+    name = "launcher_layer_no_infer",
+    binary = ":launcher",
+    infer_working_dir = False,
+    path = "/opt/launcher",
+    runfiles_sharing_mode = "private",
+)
+
+# Inferred: the layer's working_dir wins over the base image's /app.
+image_manifest(
+    name = "launcher_inferred_workdir",
+    base = ":hello",
+    layers = [":launcher_layer"],
+)
+
+image_structure_test(
+    name = "launcher_inferred_workdir_test",
+    size = "small",
+    configs = ["inferred_workdir.yaml"],
+    image = ":launcher_inferred_workdir",
+)
+
+# Not inferred: the layer carries no opinion, so the base image's /app is kept.
+image_manifest(
+    name = "launcher_base_workdir",
+    base = ":hello",
+    layers = [":launcher_layer_no_infer"],
+)
+
+image_structure_test(
+    name = "launcher_base_workdir_test",
+    size = "small",
+    configs = ["base_workdir.yaml"],
+    image = ":launcher_base_workdir",
+)
+
+# An explicit attribute wins over both.
+image_manifest(
+    name = "launcher_explicit_workdir",
+    base = ":hello",
+    layers = [":launcher_layer_no_infer"],
+    working_dir = "/explicit",
+)
+
+image_structure_test(
+    name = "launcher_explicit_workdir_test",
+    size = "small",
+    configs = ["explicit_workdir.yaml"],
+    image = ":launcher_explicit_workdir",
 )
 
 bzl_library(

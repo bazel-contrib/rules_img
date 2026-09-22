@@ -18,3 +18,29 @@ mtree_config_output_groups = rule(
 `mtree` and `oci_image_config` output groups (and provides nothing else), to
 exercise the output-group source of the image_structure_test aspect.""",
 )
+
+def _simple_binary_impl(ctx):
+    exe = ctx.actions.declare_file("{}/bin/launcher".format(ctx.label.name))
+    ctx.actions.symlink(
+        output = exe,
+        target_file = ctx.file.binary,
+        is_executable = True,
+    )
+    return [DefaultInfo(
+        executable = exe,
+        files = depset([exe]),
+        runfiles = ctx.runfiles(files = ctx.files.data),
+    )]
+
+simple_binary = rule(
+    implementation = _simple_binary_impl,
+    attrs = {
+        "binary": attr.label(allow_single_file = True, mandatory = True),
+        "data": attr.label_list(allow_files = True),
+    },
+    executable = True,
+    doc = """Minimal executable fixture with runfiles, for layer_from_binary.
+
+Used to exercise the ImageLayerConfigInfo the layer contributes to an image's
+config; the executable is never run.""",
+)
