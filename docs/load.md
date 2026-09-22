@@ -221,6 +221,9 @@ Performance notes:
   into containerd for better performance if the containerd socket is accessible.
 - For older Docker versions, falls back to `docker image load` which requires building
   a tar file (slower and limited to single-platform images)
+- If `DOCKER_HOST` points at a daemon that is not reachable through a local socket
+  (`tcp://`, `ssh://`, ...), the local containerd is skipped and `docker image load`
+  is used, since that daemon does not read this machine's containerd content store
 - The `--platform` flag filters which platforms are loaded from multi-platform images
 - The `tar` daemon streams a unified OCI+Docker tar to stdout without loading into any daemon
 - The `containerization` daemon uses Apple's Containerization framework via `container image load`

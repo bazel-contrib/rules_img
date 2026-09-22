@@ -137,19 +137,32 @@ func (l *loader) LoadAll(ctx context.Context, ops []api.IndexedLoadDeployOperati
 		// Note: podman and generic operations don't need containerd, so we don't track them
 	}
 
+	// Upgrading a docker load to a direct containerd write is only correct when
+	// the docker daemon shares this machine's containerd content store. When
+	// DOCKER_HOST points somewhere else, the image would land in a store that
+	// daemon never reads.
+	upgradeDockerLoads := hasDocker
+	if hasDocker {
+		if host, remote := docker.RemoteDaemonHost(); remote {
+			upgradeDockerLoads = false
+			fmt.Fprintf(os.Stderr, "\033[33mNOTE:\033[0m DOCKER_HOST=%s points at a non-local Docker daemon.\n", host)
+			fmt.Fprintln(os.Stderr, "Using 'docker load' instead of loading into the local containerd, so the image reaches that daemon.")
+		}
+	}
+
 	// try to connect to containerd once (but not for podman/generic-only loads)
 	var client *containerd.Client
-	needsContainerd := hasContainerd || hasDocker
+	needsContainerd := hasContainerd || upgradeDockerLoads
 	if needsContainerd {
 		var err error
-		client, err = l.connect(ctx, "containerd", hasDocker)
+		client, err = l.connect(ctx, "containerd", upgradeDockerLoads)
 		if err == nil {
 			defer client.Close()
 		}
 	}
 
 	for _, op := range ops {
-		if l.haveContainerd && op.Daemon == "docker" {
+		if l.haveContainerd && upgradeDockerLoads && op.Daemon == "docker" {
 			// upgrade docker loads to containerd loads if possible
 			op.Daemon = "containerd"
 		}
