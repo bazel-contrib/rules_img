@@ -488,10 +488,11 @@ def _image_manifest_impl(ctx):
 
     # entrypoint, cmd, and working_dir support three states, distinguished by the
     # INHERIT_FROM_BASE sentinel (which is also their default value):
-    #   * left at the sentinel default -> defer to a non-empty layer-provided config
-    #     value if any, otherwise forward the sentinel so the tool inherits from the
-    #     base. (An empty layer value carries no opinion and inherits, matching the
-    #     historical behavior.)
+    #   * left at the sentinel default -> defer to a layer-provided config value if
+    #     any, otherwise forward the sentinel so the tool inherits from the base.
+    #     entrypoint and cmd treat an empty layer value as carrying no opinion, and
+    #     inherit, matching the historical behavior; for working_dir only None
+    #     carries no opinion, so a layer can deliberately clear the base value.
     #   * explicitly set (including to an empty value) -> forward verbatim, so an
     #     empty value unsets the field and a value containing the sentinel expands
     #     the base value in place (see img/private/common/inherit.bzl).
@@ -504,7 +505,7 @@ def _image_manifest_impl(ctx):
     else:
         effective_cmd = ctx.attr.cmd
     if ctx.attr.working_dir == INHERIT_FROM_BASE:
-        effective_working_dir = layer_working_dir if layer_working_dir else INHERIT_FROM_BASE
+        effective_working_dir = layer_working_dir if layer_working_dir != None else INHERIT_FROM_BASE
     else:
         effective_working_dir = ctx.attr.working_dir
 

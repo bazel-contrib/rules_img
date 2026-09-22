@@ -9,7 +9,7 @@ FIELDS = dict(
     entrypoint = "List of strings to be used as the entrypoint field in the image config (or None).",
     cmd = "List of strings to be used as the Cmd field of the image (or None).",
     env = "Environment variables that shall be added to the image config (or None).",
-    working_dir = "WorkingDir in the image config (or None).",
+    working_dir = "WorkingDir in the image config, or None to carry no opinion (the base image's working directory is kept).",
 )
 
 ImageLayerConfigInfo = provider(

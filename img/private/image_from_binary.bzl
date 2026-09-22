@@ -5,7 +5,7 @@ load("//img/private:index.bzl", "image_index")
 load("//img/private:layer_from_binary.bzl", "layer_from_binary")
 load("//img/private:manifest.bzl", "image_manifest")
 
-def _image_from_binary_impl(name, binary, path, include_runfiles, layer_budget, layers, kind, platforms, visibility, tags, **kwargs):
+def _image_from_binary_impl(name, binary, path, include_runfiles, infer_working_dir, layer_budget, layers, kind, platforms, visibility, tags, **kwargs):
     tags = (tags or [])
     intermediate_tags = [] + tags
     if "manual" not in intermediate_tags:
@@ -15,6 +15,7 @@ def _image_from_binary_impl(name, binary, path, include_runfiles, layer_budget, 
         binary = binary,
         path = path,
         include_runfiles = include_runfiles,
+        infer_working_dir = infer_working_dir,
         layer_budget = layer_budget,
         visibility = visibility,
         tags = intermediate_tags,
@@ -50,12 +51,13 @@ def _image_from_binary_impl(name, binary, path, include_runfiles, layer_budget, 
             **index_extra_kwargs
         )
 
-def _image_from_binary_legacy(*, name, binary, path = "", include_runfiles = True, layer_budget = 0, layers = [], kind = "auto", platforms = [], visibility = None, tags = None, **kwargs):
+def _image_from_binary_legacy(*, name, binary, path = "", include_runfiles = True, infer_working_dir = True, layer_budget = 0, layers = [], kind = "auto", platforms = [], visibility = None, tags = None, **kwargs):
     _image_from_binary_impl(
         name = name,
         binary = binary,
         path = path,
         include_runfiles = include_runfiles,
+        infer_working_dir = infer_working_dir,
         layer_budget = layer_budget,
         layers = layers,
         kind = kind,
@@ -77,7 +79,8 @@ image configuration:
 - **entrypoint** is set to the binary's path inside the image
 - **cmd** is populated from the binary's `args` attribute
 - **env** is populated from the binary's `env` attribute (or RunEnvironmentInfo provider)
-- **working_dir** is set to the binary's runfiles root
+- **working_dir** is set to the binary's runfiles root (unless `infer_working_dir = False`,
+  which keeps the base image's working directory)
 
 If the binary provides RunfilesGroupInfo (from rules_runfiles_group), the runfiles are split
 into separate layers based on the groups. This allows for better caching: stable layers
@@ -169,6 +172,19 @@ Whether to include runfiles for the binary target.
 When True (default), the binary's runfiles tree is included and the working directory
 is set to the runfiles root. Set to False for statically linked binaries that don't
 need runfiles.
+""",
+        ),
+        "infer_working_dir": attr.bool(
+            default = True,
+            doc = """\
+Whether to infer the image's working directory from the binary's runfiles tree.
+
+When True (default) and `include_runfiles` is True, the working directory is set to the
+main workspace directory inside the runfiles tree, which is where a binary launched
+through the runfiles convention expects to run.
+
+When False, the binary layer contributes no working directory, so the base image's
+working directory is kept unless the `working_dir` attribute is set explicitly.
 """,
         ),
         "layer_budget": attr.int(
