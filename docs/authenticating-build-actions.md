@@ -33,8 +33,11 @@ The registry permissions differ per operation:
   - `blobs` — writes only to `/v2/<repo>/blobs/` (blob uploads: every layer and
     the config). A credential that may upload blobs but may not read them or write
     manifests is sufficient (see the multi-tenant note in [Push Strategies](push-strategies.md#blobs-at-build-time-manifest-afterwards-blobs)).
-  - `blobs_and_manifests` — additionally writes `/v2/<repo>/manifests/<ref>` (the
-    config, manifest, and tags), so it also needs manifest write access.
+  - `blobs_and_manifests` — additionally writes `/v2/<repo>/manifests/<digest>`
+    (the config and manifest(s), by digest only), so it also needs manifest write
+    access.
+  - `all` — additionally writes the tags (`/v2/<repo>/manifests/<tag>`), so the
+    credential may also move a tag to new content.
 
 ## How rules_img resolves credentials
 

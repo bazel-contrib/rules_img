@@ -230,7 +230,7 @@ when signing is enabled (see `sign`).
         doc = """Whether image content is pushed to the registry *during the build*.
 
 Push at build time wires extra `PushImage` build actions (one per blob, plus a
-manifest push in `blobs_and_manifests` mode) that upload directly to the registry
+manifest push unless the content is `blobs`) that upload directly to the registry
 as a Bazel validation action. See
 [push at build time](/docs/push-strategies.md#push-at-build-time).
 
@@ -252,13 +252,16 @@ try to cross-mount from a staging repository nothing was pushed to.
 - **`auto`** (default): defer to the global `--@rules_img//img/settings:push_at_build_time_content` flag.
 - **`blobs`**: push only the layer blobs and the config blob. Manifests/tags are
   written afterwards by `image_push` / `multi_deploy`.
-- **`blobs_and_manifests`**: push the blobs plus the config and manifest(s)/tags,
-  so the image is fully present in the registry when the build finishes.
+- **`blobs_and_manifests`**: push the blobs plus the config and manifest(s), but
+  only by digest: no tag is written at build time, so tagging stays with
+  `image_push` / `multi_deploy`.
+- **`all`**: push the blobs plus the config and manifest(s)/tags, so the image is
+  fully present in the registry (and tagged) when the build finishes.
 
 Only consulted when push at build time is active (see `push_at_build_time`).
 """,
         default = "auto",
-        values = ["auto", "blobs", "blobs_and_manifests"],
+        values = ["auto", "blobs", "blobs_and_manifests", "all"],
     ),
     push_at_build_time_blob_repository = attr.string(
         doc = """Staging repository for build-time blob uploads and cross-mounting.
@@ -281,10 +284,11 @@ recorded in the deploy manifest even when this is set.
     push_at_build_time_manifest_repository = attr.string(
         doc = """Repository the build-time manifest push writes manifest(s)/config to.
 
-When non-empty and `push_at_build_time_content` is `blobs_and_manifests`, the
-build-time manifest push uploads the manifest(s)/index (and, directly, the
-config) to this repository instead of the image's real repository. This only
-redirects where manifests are written at build time; it does **not** change where
+When non-empty and `push_at_build_time_content` pushes manifests
+(`blobs_and_manifests` or `all`), the build-time manifest push uploads the
+manifest(s)/index (and, directly, the config) to this repository instead of the
+image's real repository. This only redirects where manifests are written at build
+time; it does **not** change where
 layer blobs are cross-mounted from (that is `push_at_build_time_blob_repository`).
 
 Left at its sentinel default, this defers to the global

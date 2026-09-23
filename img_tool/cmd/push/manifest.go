@@ -19,6 +19,7 @@ func manifestProcess(ctx context.Context, args []string) {
 		ociLayouts         stringSliceFlag
 		layerResults       stringSliceFlag
 		manifestRepository string
+		skipTags           bool
 		mode               string
 		markerPath         string
 		jobs               int
@@ -29,6 +30,7 @@ func manifestProcess(ctx context.Context, args []string) {
 	flagSet.Var(&ociLayouts, "oci-layout", "Path to a (sparse) OCI layout with the manifest(s) + config (can be repeated). Required.")
 	flagSet.Var(&layerResults, "layer-result", "Path to a JSON result from `push blob` recording a layer's location for cross-mounting (can be repeated).")
 	flagSet.StringVar(&manifestRepository, "manifest-repository", "", "Repository to upload the manifest(s)/index and config to instead of the operation's own repository. Layer blobs are still cross-mounted from where `push blob` put them (this does not change blob mounting).")
+	flagSet.BoolVar(&skipTags, "skip-tags", false, "Write each manifest/index by digest only, ignoring the tags recorded in the request file. Use when the tags should not exist until a later `img deploy` writes them.")
 	flagSet.StringVar(&mode, "mode", "enabled", "Failure mode: 'best_effort' (log, don't fail build) or 'enabled' (fail build).")
 	flagSet.StringVar(&markerPath, "marker", "", "Path to the marker file to write on success. Required.")
 	flagSet.IntVar(&jobs, "jobs", registryopts.DefaultJobs, "Maximum number of concurrent requests to the destination registry, and of parallel push operations.")
@@ -41,10 +43,10 @@ func manifestProcess(ctx context.Context, args []string) {
 		os.Exit(1)
 	}
 
-	finish(mode, markerPath, nil, pushManifest(ctx, requestFile, []string(ociLayouts), []string(layerResults), manifestRepository, jobs))
+	finish(mode, markerPath, nil, pushManifest(ctx, requestFile, []string(ociLayouts), []string(layerResults), manifestRepository, skipTags, jobs))
 }
 
-func pushManifest(ctx context.Context, requestFile string, ociLayouts, layerResults []string, manifestRepository string, jobs int) error {
+func pushManifest(ctx context.Context, requestFile string, ociLayouts, layerResults []string, manifestRepository string, skipTags bool, jobs int) error {
 	// --jobs is the ceiling on requests in flight to the destination registry.
 	registryopts.LimitConcurrencyToJobs(jobs)
 
@@ -95,6 +97,16 @@ func pushManifest(ctx context.Context, requestFile string, ociLayouts, layerResu
 	}
 	if len(pushOps) == 0 {
 		return fmt.Errorf("no push operations found in request file")
+	}
+	// Push the manifest(s) by digest only: the tags stay unwritten until a later
+	// `img deploy` (or a `content=all` build-time push) writes them, so a build
+	// never moves a tag to content that has not been deployed yet. The uploader
+	// always pushes the digest reference, so dropping the tags leaves the image
+	// fully retrievable by digest.
+	if skipTags {
+		for i := range pushOps {
+			pushOps[i].Tags = nil
+		}
 	}
 
 	uploaderBuilder := push.NewBuilder(vfs).
