@@ -344,8 +344,8 @@ target, it pushes image content to the registry *as part of the build itself*.
 When `push_at_build_time` is enabled, every `image_manifest` / `image_index` that
 has `push_specs`, as well as every `image_push` target, gains extra build actions
 (mnemonic `PushImage`) that upload content directly to the registry: one action
-per image blob (each layer and each config), plus — in `blobs_and_manifests` mode
-— one more action per push that writes the config and manifest(s)/tags. The actions
+per image blob (each layer and each config), plus — unless the content mode is
+`blobs` — one more action per push that writes the config and manifest(s). The actions
 are wired as Bazel [validation actions], so they run whenever the target is built
 (with `--run_validations`, on by default) without sitting on the critical path of
 the target's normal outputs.
@@ -355,19 +355,23 @@ time. The `image_push` targets (or images with `push_specs`) it references still
 push at build time on their own when the setting is enabled; `multi_deploy` does
 not push them a second time.
 
-Two content modes are available, selected with `push_at_build_time_content`:
+Three content modes are available, selected with `push_at_build_time_content`:
 
 - **`blobs`** — every image blob is pushed at build time: one `PushImage` action
   per layer and one per config blob. The manifest(s)/tags are *not* pushed at build
   time; you write them afterwards with `image_push` / `multi_deploy`.
-- **`blobs_and_manifests`** (default) — layers, config, and manifest(s)/tags are
-  all pushed at build time. The image exists in the registry as soon as the build
+- **`blobs_and_manifests`** — layers, config, and manifest(s) are pushed at build
+  time, but only *by digest*: no tag is written. The image is complete and pullable
+  by digest as soon as the build finishes, while the tags stay unchanged until you
+  run `image_push` / `multi_deploy`.
+- **`all`** (default) — layers, config, and manifest(s)/tags are all pushed at
+  build time. The image exists in the registry under its tags as soon as the build
   finishes; no separate push step is required.
 
 [validation actions]: https://bazel.build/extending/rules#validation_actions
 
 ### Diagram
-The two content modes are illustrated below (see [Modes in detail](#modes-in-detail)
+The content modes are illustrated below (see [Modes in detail](#modes-in-detail)
 for the reasoning behind each).
 
 **`blobs`** — all image blobs (layers and the config) are pushed from the build
@@ -376,8 +380,9 @@ cluster at build time; the manifest(s)/tags are pushed afterwards:
 ![Push at build time (blobs)](visuals/push-at-build-time-blobs-light.svg#gh-light-mode-only)
 ![Push at build time (blobs)](visuals/push-at-build-time-blobs-dark.svg#gh-dark-mode-only)
 
-**`blobs_and_manifests`** — the whole image (layers, config, manifest and tags) is
-pushed from the build cluster at build time:
+**`all`** — the whole image (layers, config, manifest and tags) is
+pushed from the build cluster at build time. `blobs_and_manifests` is the same
+picture minus the tag write:
 
 ![Push at build time (blobs and manifests)](visuals/push-at-build-time-all-light.svg#gh-light-mode-only)
 ![Push at build time (blobs and manifests)](visuals/push-at-build-time-all-dark.svg#gh-dark-mode-only)
@@ -412,9 +417,9 @@ common --@rules_img//img/settings:forbid_layer_push=enabled
 
 Optionally push the blobs to a shared staging repository and have the manifest push
 cross-mount them into each image's real repository with
-`--@rules_img//img/settings:push_at_build_time_blob_repository=<repo>`. In
-`blobs_and_manifests` mode you can additionally stage the manifests themselves in a
-separate repository with
+`--@rules_img//img/settings:push_at_build_time_blob_repository=<repo>`. In the
+`blobs_and_manifests` and `all` modes you can additionally stage the manifests
+themselves in a separate repository with
 `--@rules_img//img/settings:push_at_build_time_manifest_repository=<repo>`; this
 only redirects where the build-time manifest push writes the manifest(s) and config
 — the layer blobs are still cross-mounted from the blob repository.
@@ -437,10 +442,26 @@ the manifest and tags are written afterwards with the individual (local) Bazel
 user's own credentials. A leaked or misused build-action credential can then only
 add blobs — it cannot read other tenants' layers or publish images under their tags.
 
-#### Everything at build time (`blobs_and_manifests`)
+#### Untagged manifests at build time (`blobs_and_manifests`)
+A middle ground between the two modes above: the build action pushes every blob
+*and* the manifest(s)/index, but writes them by digest only — no tag is created at
+build time. The complete image is pullable by digest the moment the build finishes,
+yet the tags a deployment reads keep pointing at whatever was deployed last until
+you `bazel run` the `image_push` / `multi_deploy` target.
+
+Use it when the tag is the thing you don't want a build to move: the registry holds
+the content (so the follow-up push only writes tags — it detects the manifests are
+already present and does a `HEAD` instead of an upload), but simply building a
+target never publishes it under a name.
+
+Combine it with `push_at_build_time_manifest_repository` to keep the untagged
+manifests out of the image's real repository as well.
+
+#### Everything at build time (`all`)
 The image is fully pushed by the time the build action finishes — the simplest to
 operate, but harder to reason about: there is no push step to watch, you don't see
-what was pushed, and the image already exists once the build action completes.
+what was pushed, and the image already exists (under its tags) once the build action
+completes.
 
 If you still need the digest and tags afterwards (for example to feed a downstream
 deployment), you can run `image_push` or `multi_deploy` in this mode. They detect
@@ -452,7 +473,7 @@ uploading, and print the resulting digest and tags.
 > [Image Signing](image-signing.md)) is performed by `img deploy` when you
 > `bazel run` an `image_push` / `multi_deploy` target, using the configured signer
 > plugin and your local credentials. So even when the whole image is already in the
-> registry via `blobs_and_manifests`, producing a *signed* image still requires the
+> registry via `all`, producing a *signed* image still requires the
 > `bazel run` deploy step: it detects the content is already present (a lightweight
 > `HEAD` instead of an upload) and then attaches the signature as an OCI referrer.
 
@@ -467,7 +488,7 @@ pulls (`layer_handling`), plus write access:
   [Authenticating Build Actions](authenticating-build-actions.md) for how to give
   pull/push actions their credentials.
 - ❌ Harder to reason about than an explicit push step, especially in
-  `blobs_and_manifests` mode (see above).
+  `all` mode (see above).
 
 ### Setup Guide
 ```bash
@@ -475,8 +496,9 @@ pulls (`layer_handling`), plus write access:
 # green; "enabled" fails the build if a push fails; "disabled" (default) is off.
 common --@rules_img//img/settings:push_at_build_time=enabled
 
-# Choose what to push: "blobs" (all layers and the config) or "blobs_and_manifests" (default).
-common --@rules_img//img/settings:push_at_build_time_content=blobs_and_manifests
+# Choose what to push: "blobs" (all layers and the config), "blobs_and_manifests"
+# (additionally the manifest(s), by digest only) or "all" (default: also the tags).
+common --@rules_img//img/settings:push_at_build_time_content=all
 ```
 
 Then just build the image target — the push happens as a validation action:

@@ -322,14 +322,16 @@ string_flag(
     visibility = ["//visibility:public"],
 )
 
-# Controls what the push-at-build-time actions push: just the layer blobs, or the
-# layer blobs plus the config and manifest(s)/tags (a full push at build time).
+# Controls what the push-at-build-time actions push: just the layer blobs, the
+# layer blobs plus the config and manifest(s) by digest, or additionally the tags
+# (a full push at build time).
 string_flag(
     name = "push_at_build_time_content",
-    build_setting_default = "blobs_and_manifests",
+    build_setting_default = "all",
     values = [
         "blobs",
         "blobs_and_manifests",
+        "all",
     ],
     visibility = ["//visibility:public"],
 )
@@ -344,11 +346,12 @@ string_flag(
     visibility = ["//visibility:public"],
 )
 
-# When non-empty, the push-at-build-time manifest push (content=blobs_and_manifests)
-# uploads the manifest(s)/index (and, directly, the config) to this repository
-# instead of the image's real repository. This only redirects where manifests are
-# written at build time; it does NOT change where layer blobs are mounted from
-# (that is push_at_build_time_blob_repository), since manifests are not cross-mounted.
+# When non-empty, the push-at-build-time manifest push (content=blobs_and_manifests
+# or content=all) uploads the manifest(s)/index (and, directly, the config) to this
+# repository instead of the image's real repository. This only redirects where
+# manifests are written at build time; it does NOT change where layer blobs are
+# mounted from (that is push_at_build_time_blob_repository), since manifests are not
+# cross-mounted.
 string_flag(
     name = "push_at_build_time_manifest_repository",
     build_setting_default = "",

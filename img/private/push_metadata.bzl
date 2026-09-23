@@ -517,11 +517,13 @@ def build_time_push_actions(
     the blob target repository (the staging repository if blob_repository is set,
     else the operation's own repository) and records where it landed in a JSON
     result: one action per layer, plus one per manifest for the config blob. The
-    config actions run in both content modes, so after a build every blob of the
+    config actions run in all content modes, so after a build every blob of the
     image (layers and config) is present in the blob target repository. When
-    content == "blobs_and_manifests", also emits one action that pushes the
-    config + manifest(s), depending on all per-layer results so it runs after them
-    and mounts the layers from where they were pushed.
+    content is not "blobs", also emits one action that pushes the config +
+    manifest(s), depending on all per-layer results so it runs after them and
+    mounts the layers from where they were pushed. That manifest push writes the
+    tags only for content == "all"; "blobs_and_manifests" writes the manifest(s)
+    by digest and leaves tagging to the `bazel run` deploy.
 
     Shared by the push_specs path (`process_deploy_specs`) and the standalone
     `image_push` rule so both push at build time identically.
@@ -536,17 +538,18 @@ def build_time_push_actions(
         index image (in which case index_info must be set).
       index_info: ImageIndexInfo for a multi-manifest index image, or None when
         manifest_info is set.
-      sparse_layout: sparse OCI layout File required when content is
-        "blobs_and_manifests"; None is accepted only for content == "blobs".
+      sparse_layout: sparse OCI layout File required when content is not
+        "blobs"; None is accepted only for content == "blobs".
       mode: push mode string passed to the img tool (e.g. "push").
-      content: either "blobs" (push layer + config blobs only) or
-        "blobs_and_manifests" (push blobs then config+manifest(s)).
+      content: one of "blobs" (push layer + config blobs only),
+        "blobs_and_manifests" (push blobs then config+manifest(s) by digest, no
+        tags) or "all" (same, plus the tags).
       blob_repository: optional staging repository to push blobs (layers and
         config) to before mounting them into the final repository; None means push
         directly.
       manifest_repository: optional repository to upload the manifest(s)/index and
         config to instead of the operation's own repository, used only when
-        content == "blobs_and_manifests". Layer blobs are still cross-mounted from
+        content is not "blobs". Layer blobs are still cross-mounted from
         blob_repository, so this does not change blob mounting.
       gateway: default registry gateway for both push and pull, or None.
       push_gateway: push-specific registry gateway override, or None.
@@ -559,8 +562,8 @@ def build_time_push_actions(
 
     Returns:
       List of Files to place in the `_validation` output group: the per-layer and
-      per-config result JSONs, plus (when content == "blobs_and_manifests") the
-      single manifest marker file.
+      per-config result JSONs, plus (when content is not "blobs") the single
+      manifest marker file.
     """
     img_toolchain_info = ctx.toolchains[TOOLCHAIN].imgtoolchaininfo
     tool = img_toolchain_info.tool_exe
@@ -692,14 +695,14 @@ def build_time_push_actions(
         ctx.actions.run(**config_run_kwargs)
         config_results.append(config_result)
 
-    if content != "blobs_and_manifests":
+    if content == "blobs":
         return layer_results + config_results
 
     if sparse_layout == None:
-        fail(("push_at_build_time with content='blobs_and_manifests' needs the image's " +
+        fail(("push_at_build_time with content='{}' needs the image's " +
               "sparse OCI layout to push the config and manifest(s), but the image referenced " +
               "by '{}' does not provide one (e.g. image_optimize output). Set " +
-              "push_at_build_time_content=blobs, or reference a build-produced image.").format(ctx.label))
+              "push_at_build_time_content=blobs, or reference a build-produced image.").format(content, ctx.label))
 
     # Push config + manifest(s) after all layers, mounting them from where the
     # per-layer actions put them. Use a dedicated eager, push-only deploy manifest
@@ -727,6 +730,12 @@ def build_time_push_actions(
     args.add_all("--oci-layout", [sparse_layout], expand_directories = False)
     if manifest_repository:
         args.add("--manifest-repository", manifest_repository)
+
+    # "blobs_and_manifests" publishes the manifest(s) by digest but leaves the
+    # tags to the `bazel run` deploy, so a build never moves a tag; only "all"
+    # writes them at build time.
+    if content != "all":
+        args.add("--skip-tags")
     args.add("--mode", mode)
     args.add("--marker", marker)
     args.add_all(layer_results, before_each = "--layer-result")
