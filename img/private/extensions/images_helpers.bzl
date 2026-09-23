@@ -3,7 +3,7 @@
 load("@bazel_skylib//lib:sets.bzl", "sets")
 load("@img_toolchain//:defs.bzl", "tool_for_repository_os")
 load("//img/private:manifest_media_type.bzl", "get_media_type", manifest_kind = "kind")
-load("//img/private/repository_rules:download.bzl", "auth_environment", "download_manifest")
+load("//img/private/repository_rules:download.bzl", "auth_environment", "download_manifest", "execute_kwargs")
 
 def pull_tag_to_struct(tag):
     """Convert a pull tag to a struct for easier attribute access.
@@ -204,7 +204,7 @@ def check_facts_for_manifest(facts, digest):
     """
     return facts.get("oci_ref_graph@{}".format(digest))
 
-def download_and_parse_manifest(ctx, digest, img, facts, downloader, credential_helper = None, docker_config_path = None):
+def download_and_parse_manifest(ctx, digest, img, facts, downloader, credential_helper = None, docker_config_path = None, timeout = None):
     """Download a manifest and parse it into ref graph entry.
 
     Args:
@@ -215,6 +215,8 @@ def download_and_parse_manifest(ctx, digest, img, facts, downloader, credential_
         downloader: Downloader to use
         credential_helper: Optional credential helper path to pass to the img tool.
         docker_config_path: Optional Docker-compatible auth config path to pass to the img tool.
+        timeout: Optional timeout in seconds for img tool executions. Ignored by the
+                 "bazel" downloader.
 
     Returns:
         Tuple of (ref_graph_entry, manifest_data_string)
@@ -236,6 +238,7 @@ def download_and_parse_manifest(ctx, digest, img, facts, downloader, credential_
             sources = sources,
             credential_helper = credential_helper,
             docker_config_path = docker_config_path,
+            timeout = timeout,
         )
         return (cached_ref_graph_entry, blob_info.data)
 
@@ -249,6 +252,7 @@ def download_and_parse_manifest(ctx, digest, img, facts, downloader, credential_
         sources = sources,
         credential_helper = credential_helper,
         docker_config_path = docker_config_path,
+        timeout = timeout,
     )
 
     # Parse manifest
@@ -567,7 +571,7 @@ def normalize_repository_name(name, repository):
 
     return normalized
 
-def sync_oci_ref_graph(ctx, images_by_digest, facts, downloader, credential_helper = None, docker_config_path = None):
+def sync_oci_ref_graph(ctx, images_by_digest, facts, downloader, credential_helper = None, docker_config_path = None, timeout = None):
     """Sync the OCI reference graph by downloading manifests.
 
     Uses parallel downloading with the img_tool, or falls back to sequential
@@ -580,6 +584,8 @@ def sync_oci_ref_graph(ctx, images_by_digest, facts, downloader, credential_help
         downloader: Downloader to use ("img_tool" or "bazel")
         credential_helper: Optional credential helper path to pass to the img tool.
         docker_config_path: Optional Docker-compatible auth config path to pass to the img tool.
+        timeout: Optional timeout in seconds for img tool executions. Ignored by the
+                 "bazel" downloader, which cannot be given a timeout from Starlark.
 
     Returns:
         Dictionary mapping digest to ref_graph_entry
@@ -628,6 +634,7 @@ def sync_oci_ref_graph(ctx, images_by_digest, facts, downloader, credential_help
                 credential_helper = credential_helper,
                 docker_config_path = docker_config_path,
             ),
+            **execute_kwargs(ctx, timeout)
         )
 
         if result.return_code != 0:
@@ -655,6 +662,7 @@ def sync_oci_ref_graph(ctx, images_by_digest, facts, downloader, credential_help
             downloader,
             credential_helper = credential_helper,
             docker_config_path = docker_config_path,
+            timeout = timeout,
         )
         oci_ref_graph[digest] = ref_graph_entry
 
@@ -676,6 +684,7 @@ def sync_oci_ref_graph(ctx, images_by_digest, facts, downloader, credential_help
             downloader,
             credential_helper = credential_helper,
             docker_config_path = docker_config_path,
+            timeout = timeout,
         )
         if ref_graph_entry["kind"] != "manifest":
             fail("Expected manifest for digest '{}' but got '{}'.".format(digest, ref_graph_entry["kind"]))

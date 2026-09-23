@@ -430,6 +430,18 @@ If omitted, the pull tool inherits `$IMG_CREDENTIAL_HELPER` (or `$IMG_CREDENTIAL
 
 If omitted, the pull tool inherits `$REGISTRY_AUTH_FILE` when present.""",
         ),
+        "timeout": attr.int(
+            default = 0,
+            doc = """Maximum duration in seconds of each download performed while fetching this repository.
+
+**Only takes effect when `downloader` is `img_tool`**, since it is applied to the `img` tool
+invocations this rule runs. Bazel's own downloader cannot be given a timeout from a repository
+rule, so this attribute is ignored when `downloader` is `bazel` (scale Bazel's built-in HTTP
+timeouts with `--http_timeout_scaling` instead).
+
+Defaults to `0`, which leaves the timeout unset, so Bazel's default for executions in
+repository rules (600 seconds) applies.""",
+        ),
         "unsafe_allow_tag_without_digest": attr.bool(
             default = False,
             doc = """Allow pulling by tag without specifying a digest.

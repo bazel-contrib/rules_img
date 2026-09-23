@@ -28,6 +28,7 @@ def _images_impl(ctx):
     downloader = "img_tool"
     credential_helper = None
     docker_config_path = None
+    timeout = 0
     expose_hub_repo = "auto"
     expose_image_repos = "auto"
     for mod in ctx.modules:
@@ -38,6 +39,7 @@ def _images_impl(ctx):
             downloader = settings.downloader
             credential_helper = settings.credential_helper
             docker_config_path = settings.docker_config_path
+            timeout = settings.timeout
             expose_hub_repo = settings.hub_repo
             expose_image_repos = settings.image_repos
 
@@ -79,6 +81,7 @@ def _images_impl(ctx):
         downloader,
         credential_helper = credential_helper,
         docker_config_path = docker_config_path,
+        timeout = timeout,
     )
 
     # Build reverse mappings from blobs to top-level images for fast lookups
@@ -104,6 +107,7 @@ def _images_impl(ctx):
             downloader = downloader,
             credential_helper = credential_helper,
             docker_config_path = docker_config_path,
+            timeout = timeout,
         )
 
     # Create blob repositories for config/layer blobs (deduplicated, eager)
@@ -125,6 +129,7 @@ def _images_impl(ctx):
             downloader = downloader,
             credential_helper = credential_helper,
             docker_config_path = docker_config_path,
+            timeout = timeout,
         )
 
     # Create blob repositories for lazy layer blobs (deduplicated, lazy)
@@ -146,6 +151,7 @@ def _images_impl(ctx):
             downloader = downloader,
             credential_helper = credential_helper,
             docker_config_path = docker_config_path,
+            timeout = timeout,
         )
 
     # Create image repositories for each top-level image
@@ -366,6 +372,19 @@ If omitted, the pull tool inherits `$IMG_CREDENTIAL_HELPER` (or `$IMG_CREDENTIAL
             doc = """Path to Docker-compatible registry authentication config.
 
 If omitted, the pull tool inherits `$REGISTRY_AUTH_FILE` when present.""",
+        ),
+        "timeout": attr.int(
+            default = 0,
+            doc = """Maximum duration in seconds of each download performed for the pulled images.
+
+**Only takes effect when `downloader` is `img_tool`**, since it is applied to the `img` tool
+invocations run by this extension and by the repositories it creates. Bazel's own downloader
+cannot be given a timeout from Starlark, so this setting is ignored when `downloader` is
+`bazel` (scale Bazel's built-in HTTP timeouts with `--http_timeout_scaling` instead).
+
+Defaults to `0`, which leaves the timeout unset, so Bazel's default for executions in module
+extensions and repository rules (600 seconds) applies. Raise it when pulling large layers over
+a slow connection.""",
         ),
         "image_repos": attr.string(
             default = "auto",

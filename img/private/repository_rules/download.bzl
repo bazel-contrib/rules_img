@@ -53,6 +53,27 @@ def auth_environment(ctx, credential_helper = None, docker_config_path = None):
 
     return env
 
+def execute_kwargs(ctx, timeout = None):
+    """Build optional kwargs for `ctx.execute` invocations of the img tool.
+
+    Only applies to img tool executions. Bazel's own downloader has no way to set a
+    per-download timeout from a repository rule, so the timeout is silently ignored
+    when the "bazel" downloader is used.
+
+    Args:
+        ctx: Repository or module context.
+        timeout: Optional timeout in seconds. Falls back to the context's `timeout`
+                 attribute. A falsy value (the default of `0`) means "don't pass a
+                 timeout", leaving Bazel's own default in place.
+
+    Returns:
+        Dictionary of extra keyword arguments to pass to `ctx.execute`.
+    """
+    timeout = timeout or _configured_attr(ctx, "timeout")
+    if not timeout:
+        return {}
+    return {"timeout": timeout}
+
 _MANIFEST_ACCEPT_HEADERS = {
     "Accept": ",".join([
         "application/vnd.oci.image.index.v1+json",
@@ -114,7 +135,7 @@ def learn_digest_from_tag(rctx, *, tag, downloader, sources):
             "--source={}".format(source)
             for source in sources_list
         ]
-        result = rctx.execute(args, environment = auth_environment(rctx))
+        result = rctx.execute(args, environment = auth_environment(rctx), **execute_kwargs(rctx))
         if result.return_code != 0:
             # Failed to get digest
             fail("Failed to learn digest from tag {}: {}".format(tag, result.stderr))
@@ -213,7 +234,7 @@ def download_blob(rctx, *, downloader, digest, sources, wait_and_read = True, ou
             "--source={}".format(source)
             for source in sources_list
         ]
-        result = rctx.execute(args, environment = auth_environment(rctx))
+        result = rctx.execute(args, environment = auth_environment(rctx), **execute_kwargs(rctx))
         if result.return_code != 0:
             fail("Failed to download blob: {}{}".format(result.stdout, result.stderr))
     else:
@@ -320,7 +341,7 @@ def download_manifest_from_sources(rctx, *, downloader, reference, **kwargs):
         **kwargs
     )
 
-def download_manifest(ctx, *, downloader, reference, sha256, have_valid_digest, sources, credential_helper = None, docker_config_path = None, **kwargs):
+def download_manifest(ctx, *, downloader, reference, sha256, have_valid_digest, sources, credential_helper = None, docker_config_path = None, timeout = None, **kwargs):
     """Download a manifest from a container registry using Bazel's downloader or img tool.
 
     Args:
@@ -332,6 +353,8 @@ def download_manifest(ctx, *, downloader, reference, sha256, have_valid_digest, 
         sources: Sources dict mapping repositories to registries.
         credential_helper: Optional credential helper path to pass to the img tool.
         docker_config_path: Optional Docker-compatible auth config path to pass to the img tool.
+        timeout: Optional timeout in seconds for the img tool execution. Ignored by the
+                 "bazel" downloader, which cannot be given a timeout from a repository rule.
         **kwargs: Additional arguments.
 
     Returns:
@@ -356,6 +379,7 @@ def download_manifest(ctx, *, downloader, reference, sha256, have_valid_digest, 
             sources = sources,
             credential_helper = credential_helper,
             docker_config_path = docker_config_path,
+            timeout = timeout,
         )
 
     if not have_valid_digest:
@@ -415,7 +439,7 @@ def download_manifest_bazel(rctx, *, reference, sha256, have_valid_digest, sourc
         waiter = None,
     )
 
-def download_manifest_img_tool(rctx, *, reference, sha256, have_valid_digest, sources, credential_helper = None, docker_config_path = None):
+def download_manifest_img_tool(rctx, *, reference, sha256, have_valid_digest, sources, credential_helper = None, docker_config_path = None, timeout = None):
     """Download a manifest from a container registry using img tool.
 
     Args:
@@ -426,6 +450,7 @@ def download_manifest_img_tool(rctx, *, reference, sha256, have_valid_digest, so
         sources: Sources dict mapping repositories to registries.
         credential_helper: Optional credential helper path to pass to the img tool.
         docker_config_path: Optional Docker-compatible auth config path to pass to the img tool.
+        timeout: Optional timeout in seconds for the img tool execution.
 
     Returns:
         A struct containing digest, path, and data of the downloaded manifest.
@@ -460,6 +485,7 @@ def download_manifest_img_tool(rctx, *, reference, sha256, have_valid_digest, so
             credential_helper = credential_helper,
             docker_config_path = docker_config_path,
         ),
+        **execute_kwargs(rctx, timeout)
     )
     if result.return_code != 0:
         fail("Failed to download manifest: {}".format(result.stderr))
@@ -512,6 +538,6 @@ def download_with_tool(rctx, *, tool_path, reference, platforms = []):
         "--repository=" + rctx.attr.repository,
         "--layer-handling=" + rctx.attr.layer_handling,
     ] + ["--registry=" + r for r in registries] + ["--platform=" + p for p in platforms]
-    result = rctx.execute(args, environment = auth_environment(rctx), quiet = False)
+    result = rctx.execute(args, environment = auth_environment(rctx), quiet = False, **execute_kwargs(rctx))
     if result.return_code != 0:
         fail("img tool failed with exit code {} and message {}".format(result.return_code, result.stderr))

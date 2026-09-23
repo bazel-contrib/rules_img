@@ -10,7 +10,7 @@ Public API for pulling base container images.
 load("@rules_img//img:pull.bzl", "pull")
 
 pull(<a href="#pull-name">name</a>, <a href="#pull-credential_helper">credential_helper</a>, <a href="#pull-digest">digest</a>, <a href="#pull-docker_config_path">docker_config_path</a>, <a href="#pull-downloader">downloader</a>, <a href="#pull-layer_handling">layer_handling</a>, <a href="#pull-platforms">platforms</a>,
-     <a href="#pull-registries">registries</a>, <a href="#pull-registry">registry</a>, <a href="#pull-repository">repository</a>, <a href="#pull-tag">tag</a>, <a href="#pull-unsafe_allow_tag_without_digest">unsafe_allow_tag_without_digest</a>)
+     <a href="#pull-registries">registries</a>, <a href="#pull-registry">registry</a>, <a href="#pull-repository">repository</a>, <a href="#pull-tag">tag</a>, <a href="#pull-timeout">timeout</a>, <a href="#pull-unsafe_allow_tag_without_digest">unsafe_allow_tag_without_digest</a>)
 </pre>
 
 Pulls a container image from a registry using shallow pulling.
@@ -55,6 +55,7 @@ By default, all child manifests of a multi-platform image index are downloaded. 
 | <a id="pull-registry"></a>registry |  Primary registry to pull from (e.g., "index.docker.io", "gcr.io").<br><br>If not specified, defaults to Docker Hub. Can be overridden by entries in registries list.   | String | optional |  `""`  |
 | <a id="pull-repository"></a>repository |  The image repository within the registry (e.g., "library/ubuntu", "my-project/my-image").<br><br>For Docker Hub, official images use "library/" prefix (e.g., "library/ubuntu").   | String | required |  |
 | <a id="pull-tag"></a>tag |  The image tag to pull (e.g., "latest", "24.04", "v1.2.3").<br><br>While required, it's recommended to also specify a digest for reproducible builds.   | String | optional |  `""`  |
+| <a id="pull-timeout"></a>timeout |  Maximum duration in seconds of each download performed while fetching this repository.<br><br>**Only takes effect when `downloader` is `img_tool`**, since it is applied to the `img` tool invocations this rule runs. Bazel's own downloader cannot be given a timeout from a repository rule, so this attribute is ignored when `downloader` is `bazel` (scale Bazel's built-in HTTP timeouts with `--http_timeout_scaling` instead).<br><br>Defaults to `0`, which leaves the timeout unset, so Bazel's default for executions in repository rules (600 seconds) applies.   | Integer | optional |  `0`  |
 | <a id="pull-unsafe_allow_tag_without_digest"></a>unsafe_allow_tag_without_digest |  Allow pulling by tag without specifying a digest.<br><br>**WARNING:** This is not recommended for reproducible builds as tags can be moved to point to different image versions. Only use this when you're managing reproducibility through other means (e.g., content-based tags).<br><br>When enabled, the rule will resolve the tag to a digest at fetch time and use that digest, but will not fail if no digest is explicitly provided.   | Boolean | optional |  `False`  |
 
 
