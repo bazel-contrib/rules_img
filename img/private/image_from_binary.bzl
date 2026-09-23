@@ -30,6 +30,8 @@ def _image_from_binary_impl(name, binary, path, include_runfiles, infer_working_
         index_extra_kwargs["push_specs"] = kwargs.pop("push_specs")
     if root_kind == "index" and "load_specs" in kwargs:
         index_extra_kwargs["load_specs"] = kwargs.pop("load_specs")
+    if root_kind == "index" and "exec_properties" in kwargs:
+        index_extra_kwargs["exec_properties"] = kwargs["exec_properties"]
 
     manifest_name = name if root_kind == "manifest" else name + ".manifest"
     manifest_platform = None if (root_kind == "index" or len(platforms) == 0) else platforms[0]
