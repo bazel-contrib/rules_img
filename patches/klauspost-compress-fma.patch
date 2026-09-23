@@ -1,0 +1,62 @@
+From 2c13814434dcd46acb5b9004d734358f9573a3ac Mon Sep 17 00:00:00 2001
+From: Malte Poll <1780588+malt3@users.noreply.github.com>
+Date: Fri, 18 Sep 2026 15:33:33 +0100
+Subject: [PATCH] flate: avoid FMA in EstimatedBits for portable rounding
+
+EstimatedBits and mFastLog2 had chained multiply-add expressions
+that the compiler is allowed to contract into fused multiply-adds.
+FMA contraction rounds differently than sequential multiply+add,
+so EstimatedBits previously returned a different result on
+architectures with hardware FMA (e.g. arm64) than on default amd64,
+making EstimatedBits, and the resulting compressed output, GOARCH-dependent.
+
+Fixes https://github.com/klauspost/pgzip/issues/72
+---
+
+diff --git a/flate/token.go b/flate/token.go
+index d0a53391b..d31f6ccb6 100644
+--- a/flate/token.go
++++ b/flate/token.go
+@@ -215,7 +215,11 @@ func mFastLog2(val float32) float32 {
+ 	ux &= -0x7f800001
+ 	ux += 127 << 23
+ 	uval := math.Float32frombits(uint32(ux))
+-	log2 += ((-0.34484843)*uval+2.02466578)*uval - 0.67487759
++
++	p := float32(-0.34484843*uval) + 2.02466578
++	q := float32(p*uval) - 0.67487759
++	log2 += q
++
+ 	return log2
+ }
+ 
+@@ -232,7 +236,8 @@ func (t *tokens) EstimatedBits() int {
+ 		for _, v := range t.litHist[:] {
+ 			if v > 0 {
+ 				n := float32(v)
+-				shannon += atLeastOne(-mFastLog2(n*invTotal)) * n
++				w := float32(atLeastOne(-mFastLog2(n*invTotal)) * n)
++				shannon += w
+ 			}
+ 		}
+ 		// Just add 15 for EOB
+@@ -240,7 +245,8 @@ func (t *tokens) EstimatedBits() int {
+ 		for i, v := range t.extraHist[1 : literalCount-256] {
+ 			if v > 0 {
+ 				n := float32(v)
+-				shannon += atLeastOne(-mFastLog2(n*invTotal)) * n
++				w := float32(atLeastOne(-mFastLog2(n*invTotal)) * n)
++				shannon += w
+ 				bits += int(lengthExtraBits[i&31]) * int(v)
+ 				nMatches += int(v)
+ 			}
+@@ -251,7 +257,8 @@ func (t *tokens) EstimatedBits() int {
+ 		for i, v := range t.offHist[:offsetCodeCount] {
+ 			if v > 0 {
+ 				n := float32(v)
+-				shannon += atLeastOne(-mFastLog2(n*invTotal)) * n
++				w := float32(atLeastOne(-mFastLog2(n*invTotal)) * n)
++				shannon += w
+ 				bits += int(offsetExtraBits[i&31]) * int(v)
+ 			}
+ 		}

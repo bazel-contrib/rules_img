@@ -98,7 +98,14 @@ go_sdk = use_extension(
     "go_sdk",
     dev_dependency = True,
 )
-go_sdk.download(version = "1.27.1")
+go_sdk.download(
+    # https://go-review.googlesource.com/c/go/+/834885: avoid FMA contraction in
+    # compress/flate's EstimatedBits so that compressed layer
+    # bytes don't differ between amd64 and arm64 build hosts.
+    patch_strip = 1,
+    patches = ["//:patches/go-stdlib-fma.patch"],
+    version = "1.27.1",
+)
 go_sdk.nogo(
     includes = [
         "@rules_img//:__subpackages__",
@@ -128,6 +135,15 @@ go_deps.gazelle_override(
 go_deps.gazelle_override(
     directives = ["gazelle:go_generate_proto false"],
     path = "github.com/google/certificate-transparency-go",
+)
+
+# https://github.com/klauspost/compress/pull/1224: avoid FMA contraction in
+# EstimatedBits so that compressed layer bytes don't differ
+# between amd64 and arm64 build hosts.
+go_deps.module_override(
+    patch_strip = 1,
+    patches = ["//:patches/klauspost-compress-fma.patch"],
+    path = "github.com/klauspost/compress",
 )
 
 http_file = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_file")

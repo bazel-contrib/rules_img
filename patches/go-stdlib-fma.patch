@@ -1,0 +1,67 @@
+From a09fcc43e348b63746267e5ef463fc35a6429fd6 Mon Sep 17 00:00:00 2001
+From: Malte Poll <1780588+malt3@users.noreply.github.com>
+Date: Sat, 19 Sep 2026 16:05:44 +0000
+Subject: [PATCH] flate: avoid FMA in EstimatedBits for portable rounding
+
+EstimatedBits and mFastLog2 had chained multiply-add expressions
+that the compiler is allowed to contract into fused multiply-adds.
+FMA contraction rounds differently than sequential multiply+add,
+so EstimatedBits previously returned a different result on
+architectures with hardware FMA (e.g. arm64) than on default amd64,
+making EstimatedBits, and the resulting compressed output, GOARCH-dependent.
+
+See also: https://github.com/klauspost/compress/pull/1224
+Fixes #81589
+
+Change-Id: I5c0ff78094531d1ade4f38aba8ddfcea266d5c33
+GitHub-Last-Rev: 657dd6f80e6bf82d1e0b841f38574b0e24e0f9ab
+GitHub-Pull-Request: golang/go#81591
+---
+
+diff --git a/src/compress/flate/token.go b/src/compress/flate/token.go
+index b87f36f..252d71f 100644
+--- a/src/compress/flate/token.go
++++ b/src/compress/flate/token.go
+@@ -192,7 +192,11 @@
+ 	ux &= -0x7f800001
+ 	ux += 127 << 23
+ 	uval := math.Float32frombits(uint32(ux))
+-	log2 += ((-0.34484843)*uval+2.02466578)*uval - 0.67487759
++
++	p := float32(-0.34484843*uval) + 2.02466578
++	q := float32(p*uval) - 0.67487759
++	log2 += q
++
+ 	return log2
+ }
+ 
+@@ -210,7 +214,8 @@
+ 		for _, v := range t.litHist[:] {
+ 			if v > 0 {
+ 				n := float32(v)
+-				shannon += min(15, max(1, -mFastLog2(n*invTotal))) * n
++				w := float32(min(15, max(1, -mFastLog2(n*invTotal))) * n)
++				shannon += w
+ 			}
+ 		}
+ 		// Just add 15 for EOB
+@@ -218,7 +223,8 @@
+ 		for i, v := range t.extraHist[1 : literalCount-256] {
+ 			if v > 0 {
+ 				n := float32(v)
+-				shannon += min(15, max(1, -mFastLog2(n*invTotal))) * n
++				w := float32(min(15, max(1, -mFastLog2(n*invTotal))) * n)
++				shannon += w
+ 				bits += int(lengthExtraBits[i&31]) * int(v)
+ 				nMatches += int(v)
+ 			}
+@@ -229,7 +235,8 @@
+ 		for i, v := range t.offHist[:offsetCodeCount] {
+ 			if v > 0 {
+ 				n := float32(v)
+-				shannon += min(15, max(1, -mFastLog2(n*invTotal))) * n
++				w := float32(min(15, max(1, -mFastLog2(n*invTotal))) * n)
++				shannon += w
+ 				bits += int(offsetExtraBits[i&31]) * int(v)
+ 			}
+ 		}
