@@ -1,4 +1,4 @@
-load("@rules_go//go:def.bzl", "go_library")
+load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "compress",
@@ -17,4 +17,13 @@ go_library(
         "@com_github_klauspost_compress//zstd",
         "@com_github_klauspost_pgzip//:pgzip",
     ],
+)
+
+go_test(
+    name = "compress_test",
+    size = "small",
+    srcs = ["cpu_dependent_output_test.go"],
+    data = glob(["testdata/**"]),
+    embed = [":compress"],
+    deps = ["//pkg/api"],
 )
