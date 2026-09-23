@@ -1,0 +1,31 @@
+load("@bazel_skylib//rules:build_test.bzl", "build_test")
+load("@rules_img//img:image.bzl", "image_manifest")
+load("@rules_img//img:push.bzl", "image_push")
+
+# gazelle:exclude_from_release
+
+image_manifest(
+    name = "image",
+    layers = [],
+)
+
+# The request runfile path exceeds the launcher's 256-byte argument limit.
+image_push(
+    name = "push_with_a_long_target_name_to_ensure_the_generated_deployment_request_runfile_path_exceeds_the_launchers_fixed_size_argument_buffer",
+    image = ":image",
+    registry = "example.com",
+    repository = "test/long-path",
+)
+
+# A local sink exercises request-file resolution without contacting a registry.
+genrule(
+    name = "local_push",
+    outs = ["image.tar"],
+    cmd = "$(location :push_with_a_long_target_name_to_ensure_the_generated_deployment_request_runfile_path_exceeds_the_launchers_fixed_size_argument_buffer) --sink oci-tar:$@",
+    tools = [":push_with_a_long_target_name_to_ensure_the_generated_deployment_request_runfile_path_exceeds_the_launchers_fixed_size_argument_buffer"],
+)
+
+build_test(
+    name = "long_request_path_test",
+    targets = [":local_push"],
+)
