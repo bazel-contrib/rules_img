@@ -80,3 +80,35 @@ bazel run //path/to:deploy_all
 | <a id="multi_deploy-tool_cfg"></a>tool_cfg |  Configuration of the deployer executable platform.<br><br>Available options: - **`host`** (default): Deployer executable matches the host platform. - **`target`**: Deployer executable matches the target platform(s) specified via `--platforms`.   | String | optional |  `"host"`  |
 
 
+<a id="multi_deploy_action"></a>
+
+## multi_deploy_action
+
+<pre>
+load("@rules_img//img:multi_deploy.bzl", "multi_deploy_action")
+
+multi_deploy_action(<a href="#multi_deploy_action-ctx">ctx</a>, *, <a href="#multi_deploy_action-name">name</a>, <a href="#multi_deploy_action-operations">operations</a>, <a href="#multi_deploy_action-push_strategy">push_strategy</a>, <a href="#multi_deploy_action-load_strategy">load_strategy</a>, <a href="#multi_deploy_action-deploy_operations">deploy_operations</a>,
+                    <a href="#multi_deploy_action-deploy_tool">deploy_tool</a>)
+</pre>
+
+Creates a multi-image deploy executable within a calling rule.
+
+**PARAMETERS**
+
+
+| Name  | Description | Default Value |
+| :------------- | :------------- | :------------- |
+| <a id="multi_deploy_action-ctx"></a>ctx |  The calling rule's context.   |  none |
+| <a id="multi_deploy_action-name"></a>name |  Output basename unique within the calling rule.   |  none |
+| <a id="multi_deploy_action-operations"></a>operations |  List of DeployInfo instances.   |  none |
+| <a id="multi_deploy_action-push_strategy"></a>push_strategy |  Push strategy, or "auto" to use the global setting.   |  `"auto"` |
+| <a id="multi_deploy_action-load_strategy"></a>load_strategy |  Load strategy, or "auto" to use the global setting.   |  `"auto"` |
+| <a id="multi_deploy_action-deploy_operations"></a>deploy_operations |  Operation kinds to include.   |  `["push", "load"]` |
+| <a id="multi_deploy_action-deploy_tool"></a>deploy_tool |  Optional target providing DeployToolInfo.   |  `None` |
+
+**RETURNS**
+
+A struct containing default_info, run_environment_info, executable,
+runfiles, deploy_manifest, and layer_hints.
+
+

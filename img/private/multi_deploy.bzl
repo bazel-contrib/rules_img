@@ -4,7 +4,7 @@ load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("@hermetic_launcher//launcher:lib.bzl", "launcher")
 load("//img/private:root_symlinks.bzl", "calculate_root_symlinks", "symlink_name_prefix")
 load("//img/private:sign_settings.bzl", "add_sign_setting_symlinks")
-load("//img/private/common:build.bzl", "TOOLCHAIN", "TOOLCHAINS")
+load("//img/private/common:build.bzl", "TOOLCHAIN")
 load("//img/private/common:default_deploy_tool.bzl", "default_deploy_tool")
 load("//img/private/common:transitions.bzl", "reset_platform_transition")
 load("//img/private/providers:deploy_info.bzl", "DeployInfo")
@@ -15,32 +15,25 @@ load("//img/private/providers:manifest_info.bzl", "ImageManifestInfo")
 load("//img/private/providers:push_settings_info.bzl", "PushSettingsInfo")
 load("//img/private/providers:stamp_setting_info.bzl", "StampSettingInfo")
 
-def _multi_deploy_strategy(ctx, operation_type):
+def _multi_deploy_strategy(strategy, settings):
     """Determine the strategy to use based on the settings and operation type."""
-    if operation_type == "push":
-        push_settings = ctx.attr._push_settings[PushSettingsInfo]
-        strategy = ctx.attr.push_strategy
-        if strategy == "auto":
-            strategy = push_settings.strategy
-        return strategy
-    elif operation_type == "load":
-        load_settings = ctx.attr._load_settings[LoadSettingsInfo]
-        strategy = ctx.attr.load_strategy
-        if strategy == "auto":
-            strategy = load_settings.strategy
-        return strategy
-    else:
-        fail("Unknown operation type: {}".format(operation_type))
+    return settings.strategy if strategy == "auto" else strategy
 
-def _compute_multi_deploy_metadata(*, ctx):
+def _compute_multi_deploy_metadata(
+        *,
+        ctx,
+        name,
+        operations,
+        push_strategy,
+        load_strategy,
+        deploy_operations):
     """Compute the merged deploy metadata from all operations."""
     inputs = []
     deploy_manifests = []
     layer_hints_files = []
 
     # Collect all deploy manifests and layer hints from operations
-    for operation in ctx.attr.operations:
-        deploy_info = operation[DeployInfo]
+    for deploy_info in operations:
         deploy_manifests.append(deploy_info.deploy_manifest)
         inputs.append(deploy_info.deploy_manifest)
         if deploy_info.layer_hints != None:
@@ -49,26 +42,26 @@ def _compute_multi_deploy_metadata(*, ctx):
 
     # Create the merge command
     merge_args = ctx.actions.args()
-    merge_args.add("--push-strategy", _multi_deploy_strategy(ctx, "push"))
-    merge_args.add("--load-strategy", _multi_deploy_strategy(ctx, "load"))
+    merge_args.add("--push-strategy", push_strategy)
+    merge_args.add("--load-strategy", load_strategy)
 
     # Filter the assembled operations by kind. push_specs contribute push (and
     # their associated registry_tag) operations; load_specs contribute load
     # operations. Only the requested kinds are merged into the final manifest.
-    merge_args.add_all(ctx.attr.deploy_operations, before_each = "--operation")
+    merge_args.add_all(deploy_operations, before_each = "--operation")
 
     # Add layer hints inputs and output if any exist
     layer_hints_out = None
     if layer_hints_files:
         merge_args.add_all(layer_hints_files, before_each = "--layer-hints-input")
-        layer_hints_out = ctx.actions.declare_file(ctx.label.name + ".layer_hints")
+        layer_hints_out = ctx.actions.declare_file(name + ".layer_hints")
         merge_args.add("--layer-hints-output", layer_hints_out)
 
     # Add input deploy manifest files
     merge_args.add_all(deploy_manifests)
 
     # Output file
-    metadata_out = ctx.actions.declare_file(ctx.label.name + ".json")
+    metadata_out = ctx.actions.declare_file(name + ".json")
     merge_args.add(metadata_out)
     merge_args.set_param_file_format("multiline")
     merge_args.use_param_file("@%s", use_always = True)
@@ -93,7 +86,7 @@ def _split_image(image):
         return image, None
     return None, image
 
-def _collect_operation_root_symlinks(ctx, *, symlink_name_prefix):
+def _collect_operation_root_symlinks(operations, *, symlink_name_prefix):
     """Build the runfiles symlink tree for all operations.
 
     The deploy tool resolves each operation's runfiles by its *position* in the
@@ -107,8 +100,7 @@ def _collect_operation_root_symlinks(ctx, *, symlink_name_prefix):
     """
     root_symlinks = {}
     operation_index = 0
-    for operation in ctx.attr.operations:
-        deploy_info = operation[DeployInfo]
+    for deploy_info in operations:
         index_info, manifest_info = _split_image(deploy_info.image)
         root_symlinks.update(calculate_root_symlinks(
             index_info = index_info,
@@ -131,31 +123,56 @@ def _collect_operation_root_symlinks(ctx, *, symlink_name_prefix):
             operation_index += 1
     return root_symlinks
 
-def _multi_deploy_impl(ctx):
-    """Implementation of the multi_deploy rule."""
-    if not ctx.attr.operations:
+def multi_deploy_action(
+        ctx,
+        *,
+        name,
+        operations,
+        push_strategy = "auto",
+        load_strategy = "auto",
+        deploy_operations = ["push", "load"],
+        deploy_tool = None):
+    """Creates a multi-image deploy executable within a calling rule.
+
+    Args:
+      ctx: The calling rule's context.
+      name: Output basename unique within the calling rule.
+      operations: List of DeployInfo instances.
+      push_strategy: Push strategy, or "auto" to use the global setting.
+      load_strategy: Load strategy, or "auto" to use the global setting.
+      deploy_operations: Operation kinds to include.
+      deploy_tool: Optional target providing DeployToolInfo.
+
+    Returns:
+      A struct containing default_info, run_environment_info, executable,
+      runfiles, deploy_manifest, and layer_hints.
+    """
+    if not operations:
         fail("operations attribute cannot be empty")
 
-    if not ctx.attr.deploy_operations:
+    if not deploy_operations:
         fail("deploy_operations attribute cannot be empty; specify [\"push\"], [\"load\"], or [\"push\", \"load\"]")
-    for operation in ctx.attr.deploy_operations:
+    for operation in deploy_operations:
         if operation not in ("push", "load"):
             fail("deploy_operations may only contain \"push\" and/or \"load\", got \"{}\"".format(operation))
 
-    for operation in ctx.attr.operations:
-        if DeployInfo not in operation:
-            if ImageManifestInfo in operation or ImageIndexInfo in operation:
-                fail("Target '{}' provides an image but not DeployInfo. Add 'push_specs' or 'load_specs' to produce DeployInfo, or wrap it with image_push.".format(operation.label))
-            else:
-                fail("Target '{}' does not provide DeployInfo.".format(operation.label))
+    push_settings = ctx.attr._multi_deploy_push_settings[PushSettingsInfo]
+    load_settings = ctx.attr._multi_deploy_load_settings[LoadSettingsInfo]
 
     # Merge all deploy manifests
-    deploy_metadata, layer_hints = _compute_multi_deploy_metadata(ctx = ctx)
+    deploy_metadata, layer_hints = _compute_multi_deploy_metadata(
+        ctx = ctx,
+        name = name,
+        operations = operations,
+        push_strategy = _multi_deploy_strategy(push_strategy, push_settings),
+        load_strategy = _multi_deploy_strategy(load_strategy, load_settings),
+        deploy_operations = deploy_operations,
+    )
 
     # Create the executable
-    root_symlinks_prefix = symlink_name_prefix(ctx)
-    deployer = ctx.actions.declare_file(ctx.label.name + ".exe")
-    deploy_tool_info = ctx.attr.deploy_tool[DeployToolInfo] if ctx.attr.deploy_tool != None else ctx.attr._deploy_tool[DeployToolInfo]
+    root_symlinks_prefix = "{}{}/".format(symlink_name_prefix(ctx), name)
+    deployer = ctx.actions.declare_file(name + ".exe")
+    deploy_tool_info = deploy_tool[DeployToolInfo] if deploy_tool != None else ctx.attr._multi_deploy_tool[DeployToolInfo]
     embedded_args, transformed_args = launcher.args_from_entrypoint(executable_file = deploy_tool_info.img_deploy_exe)
     embedded_args.extend(["deploy", "--runfiles-root-symlinks-prefix", root_symlinks_prefix, "--request-file"])
     embedded_args, transformed_args = launcher.append_runfile(
@@ -172,7 +189,7 @@ def _multi_deploy_impl(ctx):
     )
 
     # Collect all image providers for root symlinks
-    root_symlinks = _collect_operation_root_symlinks(ctx, symlink_name_prefix = root_symlinks_prefix)
+    root_symlinks = _collect_operation_root_symlinks(operations, symlink_name_prefix = root_symlinks_prefix)
 
     # Add merged layer hints to root symlinks if present
     if layer_hints != None:
@@ -181,8 +198,7 @@ def _multi_deploy_impl(ctx):
     # Collect sign_setting config files from all operations and ship them (plus
     # their signer plugins) into the deployer's runfiles.
     sign_config_infos = []
-    for operation in ctx.attr.operations:
-        deploy_info = operation[DeployInfo]
+    for deploy_info in operations:
         if hasattr(deploy_info, "sign_settings"):
             sign_config_infos.extend(deploy_info.sign_settings)
     plugin_runfiles = add_sign_setting_symlinks(root_symlinks, sign_config_infos)
@@ -190,9 +206,6 @@ def _multi_deploy_impl(ctx):
     # Merge environment settings from push and load
     environment = {}
     inherited_environment = ["DOCKER_CONFIG", "IMG_AUTH_DEBUG"]
-
-    push_settings = ctx.attr._push_settings[PushSettingsInfo]
-    load_settings = ctx.attr._load_settings[LoadSettingsInfo]
 
     if push_settings.remote_cache or load_settings.remote_cache:
         environment["IMG_REAPI_ENDPOINT"] = push_settings.remote_cache or load_settings.remote_cache
@@ -222,29 +235,86 @@ def _multi_deploy_impl(ctx):
         environment["IMG_INSECURE"] = "1"
 
     # Add REGISTRY_AUTH_FILE if docker_config_path is set
-    docker_config_path = ctx.attr._docker_config_path[BuildSettingInfo].value
+    docker_config_path = ctx.attr._multi_deploy_docker_config_path[BuildSettingInfo].value
     if docker_config_path:
         environment["REGISTRY_AUTH_FILE"] = docker_config_path
 
+    runfiles = ctx.runfiles(
+        files = [
+            deploy_tool_info.img_deploy_exe,
+            deploy_metadata,
+        ],
+        root_symlinks = root_symlinks,
+    ).merge_all(plugin_runfiles)
+    default_info = DefaultInfo(
+        files = depset([deployer]),
+        executable = deployer,
+        runfiles = runfiles,
+    )
+    run_environment_info = RunEnvironmentInfo(
+        environment = environment,
+        inherited_environment = inherited_environment,
+    )
+
+    return struct(
+        default_info = default_info,
+        deploy_manifest = deploy_metadata,
+        executable = deployer,
+        layer_hints = layer_hints,
+        run_environment_info = run_environment_info,
+        runfiles = runfiles,
+    )
+
+MULTI_DEPLOY_ACTION_ATTRS = {
+    "_multi_deploy_docker_config_path": attr.label(
+        default = Label("//img/settings:docker_config_path"),
+        providers = [BuildSettingInfo],
+    ),
+    "_multi_deploy_load_settings": attr.label(
+        default = Label("//img/private/settings:load"),
+        providers = [LoadSettingsInfo],
+    ),
+    "_multi_deploy_push_settings": attr.label(
+        default = Label("//img/private/settings:push"),
+        providers = [PushSettingsInfo],
+    ),
+    "_multi_deploy_tool": attr.label(
+        default = Label("//img/deploy_tool/for_host"),
+        providers = [DeployToolInfo],
+    ),
+}
+
+MULTI_DEPLOY_ACTION_TOOLCHAINS = [
+    Label(launcher.finalizer_toolchain_type),
+    Label(TOOLCHAIN),
+]
+
+def _multi_deploy_impl(ctx):
+    """Implementation of the multi_deploy rule."""
+    operations = []
+    for operation in ctx.attr.operations:
+        if DeployInfo not in operation:
+            if ImageManifestInfo in operation or ImageIndexInfo in operation:
+                fail("Target '{}' provides an image but not DeployInfo. Add 'push_specs' or 'load_specs' to produce DeployInfo, or wrap it with image_push.".format(operation.label))
+            else:
+                fail("Target '{}' does not provide DeployInfo.".format(operation.label))
+        operations.append(operation[DeployInfo])
+
+    result = multi_deploy_action(
+        ctx,
+        name = ctx.label.name,
+        operations = operations,
+        push_strategy = ctx.attr.push_strategy,
+        load_strategy = ctx.attr.load_strategy,
+        deploy_operations = ctx.attr.deploy_operations,
+        deploy_tool = ctx.attr.deploy_tool,
+    )
     return [
-        DefaultInfo(
-            files = depset([deployer]),
-            executable = deployer,
-            runfiles = ctx.runfiles(
-                files = [
-                    deploy_tool_info.img_deploy_exe,
-                    deploy_metadata,
-                ],
-                root_symlinks = root_symlinks,
-            ).merge_all(plugin_runfiles),
-        ),
+        result.default_info,
         OutputGroupInfo(
-            deploy_manifest = depset([deploy_metadata]),
+            deploy_manifest = depset([result.deploy_manifest]),
         ),
-        RunEnvironmentInfo(
-            environment = environment,
-            inherited_environment = inherited_environment,
-        ),
+        result.run_environment_info,
     ]
 
 multi_deploy = rule(
@@ -302,7 +372,7 @@ Runtime usage:
 bazel run //path/to:deploy_all
 ```
 """,
-    attrs = {
+    attrs = dict(MULTI_DEPLOY_ACTION_ATTRS, **{
         "operations": attr.label_list(
             doc = """List of operations to deploy together.
 
@@ -350,21 +420,9 @@ example, `["push"]` to push without loading, or `["load"]` to load without pushi
 """,
             default = ["push", "load"],
         ),
-        "_push_settings": attr.label(
-            default = Label("//img/private/settings:push"),
-            providers = [PushSettingsInfo],
-        ),
-        "_load_settings": attr.label(
-            default = Label("//img/private/settings:load"),
-            providers = [LoadSettingsInfo],
-        ),
         "_stamp_settings": attr.label(
             default = Label("//img/private/settings:stamp"),
             providers = [StampSettingInfo],
-        ),
-        "_docker_config_path": attr.label(
-            default = Label("//img/settings:docker_config_path"),
-            providers = [BuildSettingInfo],
         ),
         "tool_cfg": attr.string(
             doc = """Configuration of the deployer executable platform.
@@ -380,14 +438,12 @@ Available options:
             doc = """Optional label of a deploy tool target providing `DeployToolInfo` (created with `img_deploy_tool` from `@rules_img//img:deploy_tool.bzl`). When set, overrides `tool_cfg`.""",
             providers = [DeployToolInfo],
         ),
-        "_deploy_tool": attr.label(
+        "_multi_deploy_tool": attr.label(
             default = default_deploy_tool,
             providers = [DeployToolInfo],
         ),
-    },
+    }),
     executable = True,
     cfg = reset_platform_transition,
-    toolchains = [
-        launcher.finalizer_toolchain_type,
-    ] + TOOLCHAINS,
+    toolchains = MULTI_DEPLOY_ACTION_TOOLCHAINS,
 )
