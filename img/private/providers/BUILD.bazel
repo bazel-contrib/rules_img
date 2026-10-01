@@ -73,6 +73,12 @@ bzl_library(
 )
 
 bzl_library(
+    name = "multiple_deploy_info",
+    srcs = ["multiple_deploy_info.bzl"],
+    visibility = ["//img:__subpackages__"],
+)
+
+bzl_library(
     name = "oci_layout_settings_info",
     srcs = ["oci_layout_settings_info.bzl"],
     visibility = ["//img:__subpackages__"],

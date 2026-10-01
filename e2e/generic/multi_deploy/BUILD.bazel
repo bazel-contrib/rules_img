@@ -1,5 +1,7 @@
+load("@bazel_skylib//rules:build_test.bzl", "build_test")
 load("@rules_img//img:multi_deploy.bzl", "multi_deploy")
 load("@rules_img//img:push.bzl", "image_push")
+load(":defs.bzl", "deploy_bundle")
 
 image_push(
     name = "nginx",
@@ -25,5 +27,31 @@ multi_deploy(
         "//:push_annotated",
         "//:push_index",
         "//:push_complex",
+    ],
+)
+
+deploy_bundle(
+    name = "bundle",
+    operations = [
+        "//load:load_image",
+        "//:push_single_layer",
+    ],
+)
+
+# Mixes a MultipleDeployInfo target with plain DeployInfo targets.
+multi_deploy(
+    name = "bundled_deploy",
+    operations = [
+        ":nginx",
+        ":bundle",
+        "//load:load_index",
+    ],
+)
+
+build_test(
+    name = "test",
+    targets = [
+        ":bundled_deploy",
+        ":multi_deploy",
     ],
 )
