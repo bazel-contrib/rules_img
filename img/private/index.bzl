@@ -10,10 +10,12 @@ load("//img/private/common:transitions.bzl", "multi_platform_image_transition", 
 load("//img/private/common:write_index_json.bzl", "write_index_json")
 load("//img/private/providers:index_info.bzl", "ImageIndexInfo")
 load("//img/private/providers:load_config_info.bzl", "LoadConfigInfo")
+load("//img/private/providers:load_settings_info.bzl", "LoadSettingsInfo")
 load("//img/private/providers:manifest_info.bzl", "ImageManifestInfo")
 load("//img/private/providers:oci_layout_settings_info.bzl", "OCILayoutSettingsInfo")
 load("//img/private/providers:pull_info.bzl", "PullInfo")
 load("//img/private/providers:push_config_info.bzl", "PushConfigInfo")
+load("//img/private/providers:push_settings_info.bzl", "PushSettingsInfo")
 load("//img/private/providers:stamp_setting_info.bzl", "StampSettingInfo")
 
 def _build_oci_layout(ctx, format, index_out, manifests):
@@ -388,6 +390,14 @@ See [template expansion](/docs/templating.md) for available stamp variables.
         "_stamp_settings": attr.label(
             default = Label("//img/private/settings:stamp"),
             providers = [StampSettingInfo],
+        ),
+        "_push_settings": attr.label(
+            default = Label("//img/private/settings:push"),
+            providers = [PushSettingsInfo],
+        ),
+        "_load_settings": attr.label(
+            default = Label("//img/private/settings:load"),
+            providers = [LoadSettingsInfo],
         ),
         "push_specs": attr.label_list(
             doc = """Push configurations to produce DeployInfo for this image index.

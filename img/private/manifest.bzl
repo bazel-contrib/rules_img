@@ -14,10 +14,12 @@ load("//img/private/providers:index_info.bzl", "ImageIndexInfo")
 load("//img/private/providers:layer_config_info.bzl", "ImageLayerConfigInfo")
 load("//img/private/providers:layers_info.bzl", "LayersInfo")
 load("//img/private/providers:load_config_info.bzl", "LoadConfigInfo")
+load("//img/private/providers:load_settings_info.bzl", "LoadSettingsInfo")
 load("//img/private/providers:manifest_info.bzl", "ImageManifestInfo")
 load("//img/private/providers:oci_layout_settings_info.bzl", "OCILayoutSettingsInfo")
 load("//img/private/providers:pull_info.bzl", "PullInfo")
 load("//img/private/providers:push_config_info.bzl", "PushConfigInfo")
+load("//img/private/providers:push_settings_info.bzl", "PushSettingsInfo")
 load("//img/private/providers:single_layer_info.bzl", "SingleLayerInfo")
 load("//img/private/providers:stamp_setting_info.bzl", "StampSettingInfo")
 
@@ -1155,6 +1157,14 @@ See [template expansion](/docs/templating.md) for available stamp variables.
         "_stamp_settings": attr.label(
             default = Label("//img/private/settings:stamp"),
             providers = [StampSettingInfo],
+        ),
+        "_push_settings": attr.label(
+            default = Label("//img/private/settings:push"),
+            providers = [PushSettingsInfo],
+        ),
+        "_load_settings": attr.label(
+            default = Label("//img/private/settings:load"),
+            providers = [LoadSettingsInfo],
         ),
         "_default_stamp_created": attr.label(
             default = Label("//img/settings:stamp_created"),
