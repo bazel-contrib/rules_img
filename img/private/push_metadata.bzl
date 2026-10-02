@@ -11,7 +11,9 @@ load("//img/private/common:build.bzl", "TOOLCHAIN")
 load("//img/private/common:deploy_helpers.bzl", "content_tracking_json_vars", "cross_mount_blob_repository")
 load("//img/private/providers:deploy_info.bzl", "DeployInfo")
 load("//img/private/providers:load_config_info.bzl", "LoadConfigInfo")
+load("//img/private/providers:load_settings_info.bzl", "LoadSettingsInfo")
 load("//img/private/providers:push_config_info.bzl", "PushConfigInfo")
+load("//img/private/providers:push_settings_info.bzl", "PushSettingsInfo")
 
 def _manifest_layer_sources(manifest_info):
     """Return the per-layer upstream sources of a manifest, aligned with its layers.
@@ -327,14 +329,15 @@ def expand_manifest_tags_for_child(
         stamp_settings_override = stamp_settings_override,
     )
 
-def merge_deploy_manifests(ctx, *, deploy_infos, push_strategy = "auto", load_strategy = "auto"):
+def merge_deploy_manifests(ctx, *, deploy_infos, push_strategy, load_strategy):
     """Merge multiple deploy manifests using the deploy-merge tool.
 
     Args:
         ctx: Rule context.
         deploy_infos: List of struct(metadata=File, layer_hints=File-or-None).
-        push_strategy: Push strategy string for the merge.
-        load_strategy: Load strategy string for the merge.
+        push_strategy: Resolved push strategy for the merge ("eager", "lazy",
+            "cas_registry" or "bes").
+        load_strategy: Resolved load strategy for the merge ("eager" or "lazy").
 
     Returns:
         Tuple of (merged_metadata_file, merged_layer_hints_file).
@@ -958,8 +961,8 @@ def process_deploy_specs(
             referrers = [],
         ), validation_outputs
 
-    first_push_strategy = push_specs[0][PushConfigInfo].strategy if push_specs else "auto"
-    first_load_strategy = load_specs[0][LoadConfigInfo].strategy if load_specs else "auto"
+    first_push_strategy = push_specs[0][PushConfigInfo].strategy if push_specs else ctx.attr._push_settings[PushSettingsInfo].strategy
+    first_load_strategy = load_specs[0][LoadConfigInfo].strategy if load_specs else ctx.attr._load_settings[LoadSettingsInfo].strategy
 
     merged_metadata, merged_layer_hints = merge_deploy_manifests(
         ctx,
