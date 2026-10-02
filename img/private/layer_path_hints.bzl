@@ -1,6 +1,6 @@
 """Layer path hints for deploy metadata to support lazy push/load fallback."""
 
-def layer_hints_for_deploy_metadata(ctx, *, index_info, manifest_info, strategy, args, inputs, outputs):
+def layer_hints_for_deploy_metadata(ctx, *, index_info, manifest_info, strategy, output_prefix, args, inputs, outputs):
     """Generates layer path hints for deploy metadata when using lazy push strategy.
 
     This function creates a hints file that maps layer blobs to their metadata files,
@@ -12,6 +12,8 @@ def layer_hints_for_deploy_metadata(ctx, *, index_info, manifest_info, strategy,
         index_info: ImageIndexInfo provider for multi-platform images, or None.
         manifest_info: ImageManifestInfo provider for single-platform images, or None.
         strategy: Push strategy name. Only "lazy" strategy generates hints.
+        output_prefix: Prefix of the deploy operation's output files, unique per
+            push or load spec of the image.
         args: List to append hint flags to.
         inputs: List of input files to append layer blobs to.
         outputs: List of output files.
@@ -54,7 +56,7 @@ def layer_hints_for_deploy_metadata(ctx, *, index_info, manifest_info, strategy,
         )
         inputs.append(layer.metadata)
 
-    layer_hints_file = ctx.actions.declare_file(ctx.label.name + ".layer_path_hints")
+    layer_hints_file = ctx.actions.declare_file(output_prefix + ".layer_path_hints")
     output_args = ctx.actions.args()
     output_args.add("--layer-hints-paths-output", layer_hints_file)
     outputs.append(layer_hints_file)
