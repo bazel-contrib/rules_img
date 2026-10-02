@@ -1,5 +1,7 @@
+load("@bazel_skylib//rules:build_test.bzl", "build_test")
 load("@rules_img//img:multi_deploy.bzl", "multi_deploy")
 load("@rules_img//img:push.bzl", "image_push")
+load(":defs.bzl", "split_deploy")
 
 image_push(
     name = "nginx",
@@ -25,5 +27,21 @@ multi_deploy(
         "//:push_annotated",
         "//:push_index",
         "//:push_complex",
+    ],
+)
+
+split_deploy(
+    name = "split_deploy",
+    operations = [
+        ":nginx",
+        "//load:load_image",
+    ],
+)
+
+build_test(
+    name = "test",
+    targets = [
+        ":multi_deploy",
+        ":split_deploy",
     ],
 )

@@ -152,7 +152,7 @@ string_flag(
 string_flag(
     name = "docker_config_path",
     build_setting_default = "",
-    visibility = ["//img/private:__subpackages__"],
+    visibility = ["//visibility:public"],
 )
 
 string_flag(
