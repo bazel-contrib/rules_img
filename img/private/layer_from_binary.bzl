@@ -702,6 +702,8 @@ Possible settings:
             default = "",
             doc = """JSON-encoded default metadata to apply to all files in the layers.
 Can include fields like mode, uid, gid, uname, gname, mtime, and pax_records.
+Applies to regular files (including tree contents) and symlinks. Generated
+directories inherit only mtime, retaining their default mode and ownership.
 
 Accepts the same value as image_layer's attribute of the same name, so
 img/layer.bzl's file_metadata() builds it.""",

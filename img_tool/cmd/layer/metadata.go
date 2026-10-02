@@ -81,6 +81,25 @@ func (lm *LayerMetadata) ApplyToHeader(hdr *tar.Header, pathInImage string) erro
 	return nil
 }
 
+func (lm *LayerMetadata) applyToGeneratedHeader(hdr *tar.Header) error {
+	name := strings.TrimSuffix(hdr.Name, "/")
+	if hdr.Typeflag != tar.TypeDir {
+		return lm.ApplyToHeader(hdr, name)
+	}
+	// File defaults such as mode 0644 must not make parent directories
+	// unsearchable. Keep their mode/owner unless explicitly overridden.
+	if lm.Defaults != nil {
+		if err := applyFileMetadata(hdr, &FileMetadata{Mtime: lm.Defaults.Mtime}); err != nil {
+			return err
+		}
+	}
+	if override, ok := lm.FileOverrides[name]; ok {
+		lm.markUsed(name)
+		return applyFileMetadata(hdr, override)
+	}
+	return nil
+}
+
 // markUsed records that a file metadata override was applied, so
 // VerifyAllFileMetadataUsed does not report it as unused. Callers that apply an
 // override themselves (rather than going through ApplyToHeader) must call this.
