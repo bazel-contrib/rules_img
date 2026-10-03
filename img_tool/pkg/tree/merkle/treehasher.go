@@ -90,7 +90,7 @@ func (t *treeHasher) hashDirectory(p string) ([]byte, error) {
 	}
 	pending.Wait()
 
-	var directory Directory
+	directory := Directory{Files: files[:0]}
 	// Preserve ReadDir's sorted order regardless of worker completion order.
 	for i, child := range children {
 		if errs[i] != nil {
