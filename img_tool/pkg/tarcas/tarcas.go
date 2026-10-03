@@ -34,6 +34,7 @@ type CAS[HM hashHelper] struct {
 	closed         bool
 	digestFS       *digestfs.FileSystem
 	dirs           map[string]struct{}
+	lastParent     string
 	observer       EntryObserver
 	options
 }
@@ -132,9 +133,10 @@ func (c *CAS[HM]) writeHeaderAndData(hdr *tar.Header, data io.Reader, contentDig
 	}
 
 	// Create parent directory entries if enabled
-	if c.createParentDirectories {
+	parent := path.Dir(hdr.Name)
+	if c.createParentDirectories && parent != c.lastParent {
 		var parents []string
-		for dir := path.Dir(hdr.Name); dir != "."; dir = path.Dir(dir) {
+		for dir := parent; dir != "."; dir = path.Dir(dir) {
 			parents = append(parents, dir+"/")
 		}
 		for _, dir := range slices.Backward(parents) {
@@ -156,6 +158,9 @@ func (c *CAS[HM]) writeHeaderAndData(hdr *tar.Header, data io.Reader, contentDig
 			}
 			c.dirs[dir] = struct{}{}
 		}
+		// Entries commonly share a parent. Its full ancestry has been checked;
+		// dirs alone cannot prove that because it also tracks deferred entries.
+		c.lastParent = parent
 	}
 
 	// HOOK: begin entry
