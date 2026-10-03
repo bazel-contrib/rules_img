@@ -50,6 +50,7 @@ type FileSystem struct {
 	realpathCache map[string]string // path -> realpath
 
 	hashProvider HashProvider
+	copyBuffers  sync.Pool
 }
 
 type cachedDigestFile struct {
@@ -67,6 +68,9 @@ func New(hashProvider HashProvider) *FileSystem {
 		statCache:      make(map[string]os.FileInfo),
 		realpathCache:  make(map[string]string),
 		hashProvider:   hashProvider,
+		copyBuffers: sync.Pool{New: func() any {
+			return new([32 * 1024]byte)
+		}},
 	}
 }
 
@@ -269,7 +273,10 @@ func (f *cachedDigestFile) calculateDigest() ([]byte, error) {
 
 	// Calculate digest
 	h := f.fs.hashProvider.New()
-	if _, err := io.Copy(h, f.file); err != nil {
+	buf := f.fs.copyBuffers.Get().(*[32 * 1024]byte)
+	defer f.fs.copyBuffers.Put(buf)
+	// Hide WriterTo so os.File uses the shared buffer instead of allocating one.
+	if _, err := io.CopyBuffer(h, struct{ io.Reader }{f.file}, buf[:]); err != nil {
 		return nil, err
 	}
 
