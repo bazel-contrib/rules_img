@@ -7,215 +7,126 @@ import (
 	"io"
 	"io/fs"
 	"path"
-	"slices"
-	"strings"
+	"runtime"
 	"sync"
 )
 
 type treeHasher struct {
-	fs      fs.FS
-	newHash func() hash.Hash
-
-	// fileNodes is a map of file nodes,
-	// where the key is the path of the file
-	// relative to the tree root.
+	fs        fs.FS
+	newHash   func() hash.Hash
+	workers   chan struct{}
 	fileNodes map[string]FileNode
-
-	// dirNodes is a map of directory nodes,
-	// where the key is the path of the directory
-	// relative to the tree root.
-	dirNodes map[string]DirectoryNode
-
-	// unfinishedFileNodes is a map of unfinished directory nodes.
-	// The key is the path of the directory
-	// relative to the tree root.
-	// After all children of a directory are processed,
-	// the directory node can be removed from this map
-	// and added to the dirByLevel map.
-	unfinishedDirByLevel map[int]map[string][]fs.DirEntry
-
-	rootChildren []fs.DirEntry
-
-	mux sync.Mutex
+	fileMux   sync.Mutex
+	mux       sync.Mutex
 }
 
 func NewTreeHasher(fsys fs.FS, newHash func() hash.Hash) *treeHasher {
 	return &treeHasher{
-		fs:                   fsys,
-		newHash:              newHash,
-		fileNodes:            make(map[string]FileNode),
-		dirNodes:             make(map[string]DirectoryNode),
-		unfinishedDirByLevel: make(map[int]map[string][]fs.DirEntry),
+		fs:        fsys,
+		newHash:   newHash,
+		workers:   make(chan struct{}, min(4, runtime.GOMAXPROCS(0))-1),
+		fileNodes: make(map[string]FileNode),
 	}
+}
+
+// File returns metadata recorded by a successful Build.
+func (t *treeHasher) File(p string) (FileNode, bool) {
+	t.mux.Lock()
+	defer t.mux.Unlock()
+	node, ok := t.fileNodes[p]
+	return node, ok
 }
 
 func (t *treeHasher) Build() ([]byte, error) {
 	t.mux.Lock()
 	defer t.mux.Unlock()
-
-	// In case someone calls Build() multiple times,
-	// we need to clear the maps to ensure correctness.
-	// We could allow users to cache trees,
-	// in which case we would need to preserve the maps
-	// between calls (if we believe that they are not stale).
 	clear(t.fileNodes)
-	clear(t.dirNodes)
-	clear(t.unfinishedDirByLevel)
-	t.rootChildren = nil
+	return t.hashDirectory(".")
+}
 
-	if err := fs.WalkDir(t.fs, ".", t.walkdDirCollector); err != nil {
-		return nil, fmt.Errorf("building tree for hashing: %w", err)
+func (t *treeHasher) hashDirectory(p string) ([]byte, error) {
+	children, err := fs.ReadDir(t.fs, p)
+	if err != nil {
+		return nil, fmt.Errorf("reading directory %s: %w", p, err)
 	}
-	// Now we can build up our merkle tree from the leaves up.
-	var maxLevel int
-	for l := range t.unfinishedDirByLevel {
-		if l > maxLevel {
-			maxLevel = l
-		}
+	if p != "." && len(children) == 0 {
+		// Bazel does not preserve empty directories in tree artifacts across
+		// local and remote execution. Only the declared root may be empty.
+		return nil, fmt.Errorf("empty directory %s in tree artifact", p)
 	}
-	for l := maxLevel; l > 0; l-- {
-		for p, children := range t.unfinishedDirByLevel[l] {
-			var files []FileNode
-			var dirs []DirectoryNode
-			for _, child := range children {
-				if child.Type().IsRegular() {
-					fileNode := t.fileNodes[path.Join(p, child.Name())]
-					files = append(files, fileNode)
-				} else if child.Type().IsDir() {
-					dirNode := t.dirNodes[path.Join(p, child.Name())]
-					dirs = append(dirs, dirNode)
-				} else {
-					return nil, fmt.Errorf("unsupported file type %v", child.Type().String())
+
+	files := make([]FileNode, len(children))
+	digests := make([][]byte, len(children))
+	errs := make([]error, len(children))
+	var pending sync.WaitGroup
+	for i, child := range children {
+		childPath := path.Join(p, child.Name())
+		collect := func() {
+			switch {
+			case child.Type().IsRegular():
+				info, err := child.Info()
+				if err != nil {
+					errs[i] = fmt.Errorf("collecting %s: %w", childPath, err)
+					return
 				}
+				files[i], errs[i] = t.collectRegularFile(childPath, info)
+			case child.IsDir():
+				digests[i], errs[i] = t.hashDirectory(childPath)
+			default:
+				errs[i] = fmt.Errorf("collecting %s: unsupported file type %v", childPath, child.Type().String())
 			}
-			if len(files) == 0 && len(dirs) == 0 {
-				// This is an empty directory, which constitutes a possible correctness issues:
-				// Bazel doesn't track empty directories in tree artifacts correctly,
-				// but actions can still produce them in real filesystems for actions that produce tree artifacts.
-				// Including them in the artifact would be incorrect (Bazel sometimes provies them, i.e. when running locally),
-				// but ignoring them would be incorrect too (maybe the action is producing them on purpose).
-				return nil, fmt.Errorf("empty directory %s in tree artifact", p)
-			}
-			slices.SortFunc(files, func(a, b FileNode) int {
-				return strings.Compare(string(a.Name), string(b.Name))
+		}
+		// Count the caller as a worker. Run inline when full so recursive
+		// directory traversal cannot deadlock waiting for a worker slot.
+		select {
+		case t.workers <- struct{}{}:
+			pending.Go(func() {
+				defer func() { <-t.workers }()
+				collect()
 			})
-			slices.SortFunc(dirs, func(a, b DirectoryNode) int {
-				return strings.Compare(string(a.Name), string(b.Name))
-			})
+		default:
+			collect()
+		}
+	}
+	pending.Wait()
 
-			directory := Directory{
-				Files:       files,
-				Directories: dirs,
-			}
-			dirHash := directory.Hash(t.newHash())
-			dirNode := DirectoryNode{
-				Name: metadataString(path.Base(p)),
-				Hash: metadataBytes(dirHash),
-			}
-			t.dirNodes[p] = dirNode
+	var directory Directory
+	// Preserve ReadDir's sorted order regardless of worker completion order.
+	for i, child := range children {
+		if errs[i] != nil {
+			return nil, errs[i]
 		}
-	}
-	// Now we can build the root directory node.
-	// This is allowed to be empty, to match Bazel's behavior
-	// of ctx.actions.declare_directory.
-	var files []FileNode
-	var dirs []DirectoryNode
-	for _, child := range t.rootChildren {
-		if child.Type().IsRegular() {
-			fileNode := t.fileNodes[child.Name()]
-			files = append(files, fileNode)
-		} else if child.Type().IsDir() {
-			dirNode := t.dirNodes[child.Name()]
-			dirs = append(dirs, dirNode)
+		if child.IsDir() {
+			directory.Directories = append(directory.Directories, DirectoryNode{
+				Name: metadataString(child.Name()),
+				Hash: digests[i],
+			})
 		} else {
-			return nil, fmt.Errorf("unsupported file type %v", child.Type().String())
+			directory.Files = append(directory.Files, files[i])
 		}
-	}
-	slices.SortFunc(files, func(a, b FileNode) int {
-		return strings.Compare(string(a.Name), string(b.Name))
-	})
-	slices.SortFunc(dirs, func(a, b DirectoryNode) int {
-		return strings.Compare(string(a.Name), string(b.Name))
-	})
-	directory := Directory{
-		Files:       files,
-		Directories: dirs,
 	}
 	return directory.Hash(t.newHash()), nil
 }
 
-// walkDirCollector is called by fs.WalkDir to collect file and directory nodes.
-// It is used to build the (unfinished) tree structure.
-// After fs.WalkDir is finished, the fileNodes and unfinishedDirByLevel maps
-// are populated, but crucially, the dirNodes map is not yet populated.
-// This is because we need to build up the merkle tree from the leaves up,
-// while the fs.WalkDir function traverses the tree from the root down.
-func (t *treeHasher) walkdDirCollector(p string, d fs.DirEntry, err error) error {
-	if err != nil {
-		return err
-	}
-	dirFS, ok := t.fs.(fs.ReadDirFS)
-	if !ok {
-		return fmt.Errorf("tree hasher: filesystem does support listing directories: %w", err)
-	}
-
-	if p == "." {
-		// If the path is the root directory, we simply record it in a special field.
-		children, err := dirFS.ReadDir(p)
-		if err != nil {
-			return fmt.Errorf("collecting root directory (\".\") of tree: %w", err)
-		}
-		t.rootChildren = children
-		return nil
-	}
-	pathComponents := strings.Split(p, "/")
-	level := len(pathComponents)
-	info, err := d.Info()
-	if err != nil {
-		return fmt.Errorf("collecting %s: %w", p, err)
-	}
-	if d.Type().IsRegular() {
-		// If the entry is a regular file, we need to collect it.
-		return t.collectRegularFile(p, info)
-	}
-	if !d.Type().IsDir() {
-		return fmt.Errorf("collecting %s: unsupported file type %v", p, d.Type().String())
-	}
-
-	// get a list of direct children of the directory
-	children, err := dirFS.ReadDir(p)
-	if err != nil {
-		return fmt.Errorf("collecting directory %s: %w", p, err)
-	}
-
-	// If the entry is a directory, we need memorize it as an unfinished directory node.
-	// We will populate the dirNodes map later.
-	if _, ok := t.unfinishedDirByLevel[level]; !ok {
-		t.unfinishedDirByLevel[level] = make(map[string][]fs.DirEntry)
-	}
-	t.unfinishedDirByLevel[level][p] = children
-	return nil
-}
-
-func (t *treeHasher) collectRegularFile(p string, i fs.FileInfo) error {
+func (t *treeHasher) collectRegularFile(p string, i fs.FileInfo) (FileNode, error) {
 	if path.Base(p) != i.Name() {
 		// This indicates a symlink which we didn't intend to follow
 		// or a bad implementation of fs.FS.
-		return errors.New("file name does not match path base")
+		return FileNode{}, errors.New("file name does not match path base")
 	}
-
 	f, err := t.fs.Open(p)
 	if err != nil {
-		return err
+		return FileNode{}, err
 	}
 	defer f.Close()
 
 	contentHasher := t.newHash()
 	if _, err := io.Copy(contentHasher, f); err != nil {
-		return err
+		return FileNode{}, err
 	}
-
-	fileNode := DefaultFileNode(contentHasher.Sum(nil), i)
-	t.fileNodes[p] = fileNode
-	return nil
+	node := DefaultFileNode(contentHasher.Sum(nil), i)
+	t.fileMux.Lock()
+	t.fileNodes[p] = node
+	t.fileMux.Unlock()
+	return node, nil
 }
