@@ -20,6 +20,10 @@ var (
 
 type WriteHeaderCallback (func(hdr *tar.Header) error)
 
+// GeneratedMetadata applies metadata to tree entries and synthesized parent
+// directories. Regular-file metadata is applied before deduplication.
+type GeneratedMetadata func(hdr *tar.Header) error
+
 type WriteHeaderCallbackFilter uint64
 
 const (
@@ -41,6 +45,7 @@ type options struct {
 	deduplicateTreeArtifacts  bool
 	compactStreamWriter       *compactstream.Writer
 	observer                  EntryObserver
+	generatedMetadata         GeneratedMetadata
 }
 
 type CreateParentDirectories bool
@@ -48,6 +53,8 @@ type CreateParentDirectories bool
 func (s FileStructure) apply(opts *options) { opts.structure = s }
 
 func (f WriteHeaderCallback) apply(opts *options) { opts.writeHeaderCallback = f }
+
+func (m GeneratedMetadata) apply(opts *options) { opts.generatedMetadata = m }
 
 func (f WriteHeaderCallbackFilter) apply(opts *options) { opts.writeHeaderCallbackFilter = f }
 

@@ -46,6 +46,8 @@ How to handle duplicate tree artifacts (directories) in the layer.
 If set to 'full', each tree artifact is stored at its intended path (no deduplication).
 If set to 'deduplicate_symlink', duplicate tree artifacts are replaced with symlinks to the first occurrence.
 If set to 'auto', uses the global default from --@rules_img//img/settings:layer_tree_artifact_handling.
+When file metadata is configured, trees are stored in full so path-specific metadata
+is preserved. Regular files with identical contents and metadata still deduplicate.
 """,
     ),
     include_runfiles = attr.bool(
