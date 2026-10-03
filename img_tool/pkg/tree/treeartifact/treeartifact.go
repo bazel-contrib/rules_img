@@ -51,10 +51,14 @@ func (t treeartifactFS) ReadDir(name string) ([]fs.DirEntry, error) {
 	}
 	for i, entry := range dirents {
 		if entry.Type()&fs.ModeSymlink != 0 {
-			// If the entry is a symlink, we need to
-			// resolve it to the real path.
 			direntFullPath := filepath.Join(fullname, entry.Name())
-			realpath, err := filepath.EvalSymlinks(direntFullPath)
+			// Stat follows links itself on Unix; avoid resolving every component
+			// of each Bazel sandbox input path.
+			realpath := direntFullPath
+			var err error
+			if runtime.GOOS == "windows" {
+				realpath, err = filepath.EvalSymlinks(direntFullPath)
+			}
 			if err != nil {
 				if runtime.GOOS == "windows" {
 					// Exception: on Windows, we sometimes encounter nodes (Junctions? Symlinks? Who really knows?)
