@@ -12,6 +12,7 @@ import (
 	"path"
 	"slices"
 	"strings"
+	"sync"
 
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/api"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/digestfs"
@@ -597,17 +598,50 @@ func (c *CAS[HM]) StoreNodeFromPath(filePath string, hdr *tar.Header) (linkPath 
 	return linkPath, hash, size, err
 }
 
+// Cache listings between hashing and writing the same immutable tree artifact.
+type directoryCache struct {
+	fs.FS
+	mu   sync.Mutex
+	dirs map[string][]fs.DirEntry
+}
+
+func (d *directoryCache) ReadDir(name string) ([]fs.DirEntry, error) {
+	d.mu.Lock()
+	entries, ok := d.dirs[name]
+	d.mu.Unlock()
+	if ok {
+		return entries, nil
+	}
+	entries, err := fs.ReadDir(d.FS, name)
+	if err != nil {
+		return nil, err
+	}
+	d.mu.Lock()
+	d.dirs[name] = entries
+	d.mu.Unlock()
+	return entries, nil
+}
+
+func (d *directoryCache) Stat(name string) (fs.FileInfo, error) {
+	return fs.Stat(d.FS, name)
+}
+
 func (c *CAS[HM]) StoreTree(fsys fs.FS, intendedPath string) (linkPath string, err error) {
+	fsys = &directoryCache{FS: fsys, dirs: make(map[string][]fs.DirEntry)}
 	var hashMaker HM
 	treeHasher := merkle.NewTreeHasher(fsys, hashMaker.New)
-	rootHash, err := treeHasher.Build()
+	rootHash, err := treeHasher.BuildWithContentCache(8 << 20)
 	if err != nil {
 		return "", fmt.Errorf("calculating tree hash before storing tree artifact in tar: %w", err)
 	}
-	return c.StoreTreeKnownHash(fsys, intendedPath, rootHash)
+	return c.storeTree(fsys, intendedPath, rootHash, treeHasher.File)
 }
 
 func (c *CAS[HM]) StoreTreeKnownHash(fsys fs.FS, intendedPath string, treeHash []byte) (linkPath string, err error) {
+	return c.storeTree(fsys, intendedPath, treeHash, nil)
+}
+
+func (c *CAS[HM]) storeTree(fsys fs.FS, intendedPath string, treeHash []byte, fileNode func(string) (merkle.FileNode, []byte, bool)) (linkPath string, err error) {
 	hashStr := string(treeHash)
 	// Every regular file in the tree is a CAS object, so we need to store it,
 	// along with a hardlink to the CAS object.
@@ -635,13 +669,8 @@ func (c *CAS[HM]) StoreTreeKnownHash(fsys fs.FS, intendedPath string, treeHash [
 			// Skip non-regular files
 			return nil
 		}
-		f, err := fsys.Open(p)
-		if err != nil {
-			return fmt.Errorf("opening file %s: %w", p, err)
-		}
-		defer f.Close()
 		treePath := path.Join(intendedPath, p)
-		linkName, _, _, err := c.Store(f, treePath)
+		linkName, err := c.storeTreeFile(fsys, p, treePath, fileNode)
 		if err != nil {
 			return fmt.Errorf("storing file %s: %w", p, err)
 		}
@@ -674,6 +703,34 @@ func (c *CAS[HM]) StoreTreeKnownHash(fsys fs.FS, intendedPath string, treeHash [
 	c.firstTreePaths[hashStr] = intendedPath
 	c.treeOrder = append(c.treeOrder, treeHash)
 	return "", nil
+}
+
+func (c *CAS[HM]) storeTreeFile(fsys fs.FS, p, treePath string, fileNode func(string) (merkle.FileNode, []byte, bool)) (string, error) {
+	var node merkle.FileNode
+	if fileNode != nil {
+		var ok bool
+		var content []byte
+		node, content, ok = fileNode(p)
+		if !ok {
+			return "", fmt.Errorf("file %s appeared after hashing tree", p)
+		}
+		if firstPath, exists := c.firstBlobPaths[string(node.ContentHash)]; exists {
+			return firstPath, nil
+		}
+		if content != nil {
+			return c.storeKnownHashAndSize(bytes.NewReader(content), node.ContentHash, int64(node.Size), treePath)
+		}
+	}
+	f, err := fsys.Open(p)
+	if err != nil {
+		return "", fmt.Errorf("opening file %s: %w", p, err)
+	}
+	defer f.Close()
+	if fileNode != nil {
+		return c.storeKnownHashAndSize(f, node.ContentHash, int64(node.Size), treePath)
+	}
+	linkPath, _, _, err := c.Store(f, treePath)
+	return linkPath, err
 }
 
 func (c *CAS[HM]) writeHeaderOrDefer(hdr *tar.Header, data io.Reader, contentDigest []byte) error {

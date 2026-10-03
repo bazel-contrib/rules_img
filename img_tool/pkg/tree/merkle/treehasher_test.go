@@ -73,6 +73,47 @@ func TestTreeHasherEmptyDirectories(t *testing.T) {
 	}
 }
 
+func TestTreeHasherContentCache(t *testing.T) {
+	files := fstest.MapFS{
+		"a":     {Data: []byte("payload")},
+		"copy":  {Data: []byte("payload")},
+		"empty": {},
+		"large": {Data: bytes.Repeat([]byte("x"), maxCachedFileSize+1)},
+	}
+	hasher := NewTreeHasher(files, sha256.New)
+	wantHash, err := hasher.Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, budget := range []int64{0, 64, 128, 2 * maxCachedFileSize} {
+		gotHash, err := hasher.BuildWithContentCache(budget)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(gotHash, wantHash) {
+			t.Fatal("content caching changed the tree hash")
+		}
+		if got := len(hasher.contents); got != min(2, int(budget/64)) {
+			t.Fatalf("budget %d: cached %d unique payloads", budget, got)
+		}
+		for name, file := range files {
+			_, content, ok := hasher.File(name)
+			if !ok {
+				t.Fatalf("missing metadata for %s", name)
+			}
+			if content != nil && !bytes.Equal(content, file.Data) {
+				t.Errorf("incorrect cached contents for %s", name)
+			}
+			if budget >= 128 && name != "large" && content == nil {
+				t.Errorf("missing cached contents for %s", name)
+			}
+			if name == "large" && content != nil {
+				t.Error("cached a payload exceeding the size limit")
+			}
+		}
+	}
+}
+
 func BenchmarkTreeHasher(b *testing.B) {
 	f := make(fstest.MapFS, 1000)
 	for i := range 1000 {
