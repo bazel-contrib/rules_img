@@ -139,7 +139,7 @@ func (a Appender[C]) Finalize() (api.AppenderState, error) {
 }
 
 func (a Appender[C]) TarAppender() api.TarAppender {
-	return tarAppenderAdapter{
+	return &tarAppenderAdapter{
 		appender: a,
 	}
 }
@@ -222,13 +222,14 @@ func (c *countingWriter) Write(p []byte) (int, error) {
 
 type tarAppenderAdapter struct {
 	appender api.Appender
+	buf      [32 * 1024]byte
 }
 
-func (t tarAppenderAdapter) AppendTar(r io.Reader) error {
-	_, err := io.Copy(t.appender, r)
+func (t *tarAppenderAdapter) AppendTar(r io.Reader) error {
+	_, err := io.CopyBuffer(t.appender, r, t.buf[:])
 	return err
 }
 
-func (t tarAppenderAdapter) Finalize() (api.AppenderState, error) {
+func (t *tarAppenderAdapter) Finalize() (api.AppenderState, error) {
 	return t.appender.Finalize()
 }
