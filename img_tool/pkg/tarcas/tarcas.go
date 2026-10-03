@@ -630,7 +630,7 @@ func (c *CAS[HM]) StoreTree(fsys fs.FS, intendedPath string) (linkPath string, e
 	fsys = &directoryCache{FS: fsys, dirs: make(map[string][]fs.DirEntry)}
 	var hashMaker HM
 	treeHasher := merkle.NewTreeHasher(fsys, hashMaker.New)
-	rootHash, err := treeHasher.Build()
+	rootHash, err := treeHasher.BuildWithContentCache(8 << 20)
 	if err != nil {
 		return "", fmt.Errorf("calculating tree hash before storing tree artifact in tar: %w", err)
 	}
@@ -641,7 +641,7 @@ func (c *CAS[HM]) StoreTreeKnownHash(fsys fs.FS, intendedPath string, treeHash [
 	return c.storeTree(fsys, intendedPath, treeHash, nil)
 }
 
-func (c *CAS[HM]) storeTree(fsys fs.FS, intendedPath string, treeHash []byte, fileNode func(string) (merkle.FileNode, bool)) (linkPath string, err error) {
+func (c *CAS[HM]) storeTree(fsys fs.FS, intendedPath string, treeHash []byte, fileNode func(string) (merkle.FileNode, []byte, bool)) (linkPath string, err error) {
 	hashStr := string(treeHash)
 	// Every regular file in the tree is a CAS object, so we need to store it,
 	// along with a hardlink to the CAS object.
@@ -705,16 +705,20 @@ func (c *CAS[HM]) storeTree(fsys fs.FS, intendedPath string, treeHash []byte, fi
 	return "", nil
 }
 
-func (c *CAS[HM]) storeTreeFile(fsys fs.FS, p, treePath string, fileNode func(string) (merkle.FileNode, bool)) (string, error) {
+func (c *CAS[HM]) storeTreeFile(fsys fs.FS, p, treePath string, fileNode func(string) (merkle.FileNode, []byte, bool)) (string, error) {
 	var node merkle.FileNode
 	if fileNode != nil {
 		var ok bool
-		node, ok = fileNode(p)
+		var content []byte
+		node, content, ok = fileNode(p)
 		if !ok {
 			return "", fmt.Errorf("file %s appeared after hashing tree", p)
 		}
 		if firstPath, exists := c.firstBlobPaths[string(node.ContentHash)]; exists {
 			return firstPath, nil
+		}
+		if content != nil {
+			return c.storeKnownHashAndSize(bytes.NewReader(content), node.ContentHash, int64(node.Size), treePath)
 		}
 	}
 	f, err := fsys.Open(p)

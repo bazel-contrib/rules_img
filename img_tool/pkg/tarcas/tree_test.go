@@ -78,11 +78,11 @@ func TestStoreTreeReusesFileHashes(t *testing.T) {
 			if got := f.dirReads.Load(); got != 2 {
 				t.Errorf("listed directories %d times, want 2", got)
 			}
-			if got := f.opens.Load(); got != 5 {
-				t.Errorf("opened files %d times, want 5", got)
+			if got := f.opens.Load(); got != 3 {
+				t.Errorf("opened files %d times, want 3", got)
 			}
-			// Hash all files once, then read only unique payloads for writing.
-			if got, want := f.bytesRead.Load(), int64(3*len("payload")+2*len("different")); got != want {
+			// Read all three files once; archive writing reuses the cached bytes.
+			if got, want := f.bytesRead.Load(), int64(2*len("payload")+len("different")); got != want {
 				t.Errorf("read %d bytes, want %d", got, want)
 			}
 		}

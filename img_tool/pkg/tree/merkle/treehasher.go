@@ -1,6 +1,7 @@
 package merkle
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"hash"
@@ -16,9 +17,18 @@ type treeHasher struct {
 	newHash   func() hash.Hash
 	workers   chan struct{}
 	fileNodes map[string]FileNode
+	contents  map[string][]byte
+	remaining int64
 	fileMux   sync.Mutex
 	mux       sync.Mutex
 }
+
+const maxCachedFileSize = 4 * 1024
+
+// Tree hashers are short-lived; reuse scratch buffers across tree artifacts.
+var copyBuffers = sync.Pool{New: func() any {
+	return new([32 * 1024]byte)
+}}
 
 func NewTreeHasher(fsys fs.FS, newHash func() hash.Hash) *treeHasher {
 	return &treeHasher{
@@ -29,18 +39,30 @@ func NewTreeHasher(fsys fs.FS, newHash func() hash.Hash) *treeHasher {
 	}
 }
 
-// File returns metadata recorded by a successful Build.
-func (t *treeHasher) File(p string) (FileNode, bool) {
+// File returns metadata and any cached payload (nil on a cache miss). The data
+// is read-only; use it after Build succeeds and while the filesystem is unchanged.
+func (t *treeHasher) File(p string) (FileNode, []byte, bool) {
 	t.mux.Lock()
 	defer t.mux.Unlock()
 	node, ok := t.fileNodes[p]
-	return node, ok
+	return node, t.contents[string(node.ContentHash)], ok
 }
 
 func (t *treeHasher) Build() ([]byte, error) {
+	return t.BuildWithContentCache(0)
+}
+
+// BuildWithContentCache retains small payloads for a subsequent archive pass.
+// The payload budget charges at least 64 bytes per entry, including empty files.
+func (t *treeHasher) BuildWithContentCache(maxBytes int64) ([]byte, error) {
 	t.mux.Lock()
 	defer t.mux.Unlock()
 	clear(t.fileNodes)
+	t.contents = nil
+	t.remaining = maxBytes
+	if maxBytes > 0 {
+		t.contents = make(map[string][]byte)
+	}
 	return t.hashDirectory(".")
 }
 
@@ -121,12 +143,39 @@ func (t *treeHasher) collectRegularFile(p string, i fs.FileInfo) (FileNode, erro
 	defer f.Close()
 
 	contentHasher := t.newHash()
-	if _, err := io.Copy(contentHasher, f); err != nil {
-		return FileNode{}, err
+	buf := copyBuffers.Get().(*[32 * 1024]byte)
+	defer copyBuffers.Put(buf)
+	cachedSize := -1
+	if t.contents != nil && i.Size() <= maxCachedFileSize {
+		// Read one extra byte so a stale size cannot truncate the hash or cache.
+		n, err := io.ReadFull(f, buf[:maxCachedFileSize+1])
+		if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
+			return FileNode{}, err
+		}
+		if _, err := contentHasher.Write(buf[:n]); err != nil {
+			return FileNode{}, err
+		}
+		if n <= maxCachedFileSize {
+			cachedSize = n
+		}
+	}
+	// Hide WriterTo so os.File does not allocate its own buffer for every file.
+	if cachedSize < 0 {
+		if _, err := io.CopyBuffer(contentHasher, struct{ io.Reader }{f}, buf[:]); err != nil {
+			return FileNode{}, err
+		}
 	}
 	node := DefaultFileNode(contentHasher.Sum(nil), i)
 	t.fileMux.Lock()
 	t.fileNodes[p] = node
+	if cachedSize >= 0 {
+		key := string(node.ContentHash)
+		cost := int64(max(cachedSize, 64))
+		if _, exists := t.contents[key]; !exists && cost <= t.remaining {
+			t.contents[key] = bytes.Clone(buf[:cachedSize])
+			t.remaining -= cost
+		}
+	}
 	t.fileMux.Unlock()
 	return node, nil
 }
