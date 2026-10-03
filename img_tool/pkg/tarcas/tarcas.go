@@ -20,6 +20,7 @@ import (
 
 type CAS[HM hashHelper] struct {
 	buf            bytes.Buffer
+	headerWriter   tar.Writer
 	deferredFiles  []*tar.Header
 	tarAppender    api.TarAppender
 	hashOrder      [][]byte
@@ -120,8 +121,11 @@ func (c *CAS[HM]) notifyEntry(hdr *tar.Header, knownDigest []byte) error {
 }
 
 func (c *CAS[HM]) writeHeaderAndData(hdr *tar.Header, data io.Reader, contentDigest []byte) error {
-	var buf bytes.Buffer
-	tw := tar.NewWriter(&buf)
+	c.buf.Reset()
+	buf := &c.buf
+	// Reuse storage, but start each independently appended fragment with fresh state.
+	c.headerWriter = *tar.NewWriter(buf)
+	tw := &c.headerWriter
 
 	// Record explicitly defined directories before synthesizing parent directories. Most explicit directory headers
 	// pass through `writeHeaderOrDefer`, which already does this, but arifact roots are written directly through
@@ -181,8 +185,7 @@ func (c *CAS[HM]) writeHeaderAndData(hdr *tar.Header, data io.Reader, contentDig
 
 		multireader := io.MultiReader(bytes.NewBuffer(buf.Bytes()), data)
 		paddedreader := &paddedReader{
-			Reader:  multireader,
-			padSize: 512, // tar block size
+			Reader: multireader,
 		}
 		if err := c.tarAppender.AppendTar(paddedreader); err != nil {
 			return err
@@ -778,13 +781,12 @@ func (e *exporterState) TreeHashes() iter.Seq2[[]byte, error] {
 
 type paddedReader struct {
 	io.Reader
-	n       int
-	eof     bool
-	padSize int
+	n   int
+	eof bool
 }
 
 func (p *paddedReader) Read(b []byte) (int, error) {
-	if p.eof || p.padSize <= 0 {
+	if p.eof {
 		return p.Reader.Read(b)
 	}
 
@@ -792,14 +794,8 @@ func (p *paddedReader) Read(b []byte) (int, error) {
 	p.n += n
 	if err == io.EOF {
 		p.eof = true
-		blockFill := p.n % p.padSize
-		var padding []byte
-		if blockFill == 0 {
-			padding = nil
-		} else {
-			padding = make([]byte, p.padSize-blockFill)
-		}
-		p.Reader = bytes.NewReader(padding)
+		padding := (len(zeroBlock) - p.n%len(zeroBlock)) % len(zeroBlock)
+		p.Reader = bytes.NewReader(zeroBlock[:padding])
 		return n, nil
 	}
 

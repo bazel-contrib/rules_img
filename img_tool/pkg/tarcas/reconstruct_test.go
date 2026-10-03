@@ -81,7 +81,7 @@ func buildTarDirect(t *testing.T, entries []testEntry, settings tarSettings) []b
 		}
 		if e.hdr.Typeflag == tar.TypeReg && e.hdr.Size > 0 {
 			entryReader := io.MultiReader(bytes.NewReader(headerBytes), bytes.NewReader(e.content))
-			padded := &paddedReader{Reader: entryReader, padSize: 512}
+			padded := &paddedReader{Reader: entryReader}
 			if err := appender.AppendTar(padded); err != nil {
 				t.Fatal(err)
 			}
