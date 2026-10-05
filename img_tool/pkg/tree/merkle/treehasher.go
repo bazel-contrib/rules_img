@@ -13,7 +13,7 @@ import (
 
 type treeHasher struct {
 	fs        fs.FS
-	newHash   func() hash.Hash
+	hashers   sync.Pool
 	workers   chan struct{}
 	fileNodes map[string]FileNode
 	fileMux   sync.Mutex
@@ -23,7 +23,7 @@ type treeHasher struct {
 func NewTreeHasher(fsys fs.FS, newHash func() hash.Hash) *treeHasher {
 	return &treeHasher{
 		fs:        fsys,
-		newHash:   newHash,
+		hashers:   sync.Pool{New: func() any { return newHash() }},
 		workers:   make(chan struct{}, min(4, runtime.GOMAXPROCS(0))-1),
 		fileNodes: make(map[string]FileNode),
 	}
@@ -105,7 +105,10 @@ func (t *treeHasher) hashDirectory(p string) ([]byte, error) {
 			directory.Files = append(directory.Files, files[i])
 		}
 	}
-	return directory.Hash(t.newHash()), nil
+	h := t.hashers.Get().(hash.Hash)
+	defer t.hashers.Put(h)
+	h.Reset()
+	return directory.Hash(h), nil
 }
 
 func (t *treeHasher) collectRegularFile(p string, i fs.FileInfo) (FileNode, error) {
@@ -120,7 +123,9 @@ func (t *treeHasher) collectRegularFile(p string, i fs.FileInfo) (FileNode, erro
 	}
 	defer f.Close()
 
-	contentHasher := t.newHash()
+	contentHasher := t.hashers.Get().(hash.Hash)
+	defer t.hashers.Put(contentHasher)
+	contentHasher.Reset()
 	if _, err := io.Copy(contentHasher, f); err != nil {
 		return FileNode{}, err
 	}
