@@ -563,6 +563,8 @@ IMG_AUTH_DEBUG: keychain "google" for ghcr.io: no credentials, trying next
 IMG_AUTH_DEBUG: keychain "amazon ecr" for ghcr.io: no credentials, trying next
 ```
 
+It also logs every time a credential helper actually runs (answers it caches are reused without running it again), along with the helper's own output: the stderr of an `IMG_CREDENTIAL_HELPER`, and the debug log of the built-in Amazon ECR helper.
+
 #### Troubleshooting
 
 If you're experiencing authentication issues:

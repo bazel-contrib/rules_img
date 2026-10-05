@@ -45,6 +45,7 @@ use_repo(
     "com_github_opencontainers_go_digest",
     "com_github_opencontainers_image_spec",
     "com_github_prometheus_client_golang",
+    "com_github_sirupsen_logrus",
     "com_github_vbatts_go_mtree",
     "com_google_cloud_go_longrunning",
     "io_opentelemetry_go_otel",
