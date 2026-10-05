@@ -5,6 +5,7 @@ can also compute deploy metadata when they have push_specs/load_specs attached.
 """
 
 load("//img/private:layer_path_hints.bzl", "layer_hints_for_deploy_metadata")
+load("//img/private:root_symlinks.bzl", "runfiles_slot")
 load("//img/private:soci_deploy.bzl", "soci_deploy_children")
 load("//img/private:stamp.bzl", "expand_or_write")
 load("//img/private/common:build.bzl", "TOOLCHAIN")
@@ -186,6 +187,7 @@ def compute_push_metadata(
         inputs.append(cross_mount_from.deploy_manifest)
         args.add("--cross-mount-from-manifest-path", cross_mount_from.deploy_manifest)
 
+    args.add("--runfiles-slot", runfiles_slot(index_info, manifest_info))
     if manifest_info != None:
         args.add("--root-path", manifest_info.manifest)
         args.add("--root-kind", "manifest")
@@ -231,6 +233,7 @@ def compute_push_metadata(
     for ref_idx, referrer in enumerate(referrers):
         ref_manifest_info = referrer.manifest_info
         ref_index_info = referrer.index_info
+        args.add("--referrer-runfiles-slot", "{}={}".format(ref_idx, runfiles_slot(ref_index_info, ref_manifest_info)))
         if ref_manifest_info != None:
             args.add_all("--referrer-root-path", [ref_manifest_info.manifest], format_each = "{}=%s".format(ref_idx))
             args.add("--referrer-root-kind", "{}=manifest".format(ref_idx))
@@ -429,6 +432,7 @@ def compute_load_metadata(
         if pull_info.digest != None:
             args.add("--original-digest", pull_info.digest)
 
+    args.add("--runfiles-slot", runfiles_slot(index_info, manifest_info))
     if manifest_info != None:
         args.add("--root-path", manifest_info.manifest)
         args.add("--root-kind", "manifest")
@@ -803,6 +807,7 @@ def process_deploy_specs(
     }
 
     deploy_infos = []
+    referrers = []
     sign_config_infos = []
     validation_outputs = []
 
@@ -881,6 +886,7 @@ def process_deploy_specs(
             deduplicated_push_content = push_config.deduplicated_push_content,
         )
         deploy_infos.append(struct(metadata = deploy_metadata, layer_hints = layer_hints))
+        referrers.extend(push_config.referrers)
         if push_config.signing != None:
             sign_config_infos.append(push_config.signing.config_info)
 
@@ -960,7 +966,7 @@ def process_deploy_specs(
             layer_hints = deploy_infos[0].layer_hints,
             include_layers = include_layers,
             sign_settings = sign_config_infos,
-            referrers = [],
+            referrers = referrers,
         ), validation_outputs
 
     first_push_strategy = push_specs[0][PushConfigInfo].strategy if push_specs else ctx.attr._push_settings[PushSettingsInfo].strategy
@@ -978,4 +984,5 @@ def process_deploy_specs(
         layer_hints = merged_layer_hints,
         include_layers = include_layers,
         sign_settings = sign_config_infos,
+        referrers = referrers,
     ), validation_outputs

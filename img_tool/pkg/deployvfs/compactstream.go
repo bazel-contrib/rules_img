@@ -163,8 +163,8 @@ func (b *Builder) layerFromOCILayoutCompactStream(desc api.Descriptor) (blobEntr
 // directory (.inputfilecas) is shipped for eager strategies but intentionally
 // omitted for lazy ones; when it is absent the referenced blobs are fetched from
 // the disk cache / remote cache instead (see casDirStore).
-func (b *Builder) layerFromRunfilesCompactStream(operationIndex int, manifestIndex int, layerIndex int, desc api.Descriptor) (blobEntry, error) {
-	compactStreamRunfilesPath := sparseLayoutBlobPath(operationIndex, desc.Digest) + ".cstream"
+func (b *Builder) layerFromRunfilesCompactStream(slot string, manifestIndex int, layerIndex int, desc api.Descriptor) (blobEntry, error) {
+	compactStreamRunfilesPath := sparseLayoutBlobPath(slot, desc.Digest) + ".cstream"
 	compactStreamPath, err := b.rlocation(compactStreamRunfilesPath)
 	if err != nil {
 		return blobEntry{}, &BlobSourceError{Source: "compact stream", Digest: desc.Digest, Kind: BlobSourceOther, Message: fmt.Sprintf("rlocation(%s)", compactStreamRunfilesPath), Err: err}
@@ -178,7 +178,7 @@ func (b *Builder) layerFromRunfilesCompactStream(operationIndex int, manifestInd
 	// referenced blobs are fetched from the disk cache / remote cache instead (see
 	// casDirStore), so a missing directory is not an error here.
 	casDirPath := ""
-	casRunfilesPath := layerRunfilesPath(operationIndex, manifestIndex, layerIndex) + ".inputfilecas"
+	casRunfilesPath := layerRunfilesPath(slot, manifestIndex, layerIndex) + ".inputfilecas"
 	if p, rerr := b.rlocation(casRunfilesPath); rerr == nil {
 		if fi, serr := os.Stat(p); serr == nil && fi.IsDir() {
 			casDirPath = p

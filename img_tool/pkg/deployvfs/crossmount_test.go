@@ -79,7 +79,7 @@ func TestLayerBlobStubsWhenCrossMountRegistered(t *testing.T) {
 	})
 	// extraCrossMountHints is merged into crossMountHints during ingest; layerBlob
 	// reads it directly for the stub fallback.
-	entry, err := b.layerBlob(0, 0, 0, "eager", api.LayerBlob{Descriptor: desc})
+	entry, err := b.layerBlob("0", 0, 0, "eager", api.LayerBlob{Descriptor: desc})
 	if err != nil {
 		t.Fatalf("layerBlob with cross-mount hint should not error under eager: %v", err)
 	}
@@ -93,7 +93,7 @@ func TestLayerBlobStubsWhenCrossMountRegistered(t *testing.T) {
 func TestLayerBlobEagerErrorsWithoutSourceOrHint(t *testing.T) {
 	desc := crossMountLayerDesc()
 	b := NewBuilder(api.DeployManifest{})
-	if _, err := b.layerBlob(0, 0, 0, "eager", api.LayerBlob{Descriptor: desc}); err == nil {
+	if _, err := b.layerBlob("0", 0, 0, "eager", api.LayerBlob{Descriptor: desc}); err == nil {
 		t.Error("expected an error resolving an eager layer with no source and no cross-mount hint")
 	}
 }

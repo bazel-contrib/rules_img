@@ -54,6 +54,11 @@ var (
 
 	destinationFilePath string
 
+	// runfilesSlot and referrerRunfilesSlots name the runfiles directories that
+	// hold the main image and each referrer (see api.BaseCommandOperation.RunfilesSlot).
+	runfilesSlot          string
+	referrerRunfilesSlots *indexedStringFlag
+
 	manifestTagFiles map[int]string
 
 	referrerRootPaths     *indexedStringFlag
@@ -72,6 +77,8 @@ var (
 func DeployMetadataProcess(ctx context.Context, args []string) {
 	referrerRootPaths = newIndexedStringFlag()
 	referrerRootKinds = newIndexedStringFlag()
+	referrerRunfilesSlots = newIndexedStringFlag()
+	runfilesSlot = ""
 	referrerManifestPaths = newDoubleIndexedStringFlag()
 	layerCompactStreams = newDoubleIndexedStringFlag()
 	manifestTagFiles = nil
@@ -112,6 +119,7 @@ func DeployMetadataProcess(ctx context.Context, args []string) {
 	flagSet.StringVar(&originalRepository, "original-repository", "", `(Optional) original repository that the base of this image was pulled from.`)
 	flagSet.StringVar(&orginalTag, "original-tag", "", `(Optional) original tag that the base of this image was pulled from.`)
 	flagSet.StringVar(&originalDigest, "original-digest", "", `(Optional) original digest that the base of this image was pulled from.`)
+	flagSet.StringVar(&runfilesSlot, "runfiles-slot", "", `Runfiles directory, below the deploy tool's runfiles root symlinks prefix, holding the image's sparse layout and layers.`)
 	flagSet.StringVar(&destinationFilePath, "destination-file", "", `(Optional) path to a file containing the push destination as "registry/repository". Mutually exclusive with registry/repository in the configuration file.`)
 	flagSet.StringVar(&layerHintsInputPath, "layer-hints-paths-file-input", "", `(Optional) path to file containing layer path hints (null-separated blob/metadata pairs).`)
 	flagSet.StringVar(&layerHintsOutputPath, "layer-hints-paths-output", "", `(Optional) path to write resolved layer hints output.`)
@@ -150,6 +158,7 @@ func DeployMetadataProcess(ctx context.Context, args []string) {
 	})
 	flagSet.Var(referrerRootPaths, "referrer-root-path", `Path to a referrer root manifest or index file. Format: index=path (e.g., 0=referrer.json). Can be specified multiple times.`)
 	flagSet.Var(referrerRootKinds, "referrer-root-kind", `Kind of a referrer root. Format: index=kind (e.g., 0=manifest). Can be specified multiple times.`)
+	flagSet.Var(referrerRunfilesSlots, "referrer-runfiles-slot", `Runfiles directory holding a referrer's sparse layout and layers. Format: index=slot (e.g., 0=abc). Can be specified multiple times.`)
 	flagSet.Var(referrerManifestPaths, "referrer-manifest-path", `Path to a referrer child manifest file. Format: referrer_idx,manifest_idx=path (e.g., 0,0=manifest.json). Can be specified multiple times.`)
 	flagSet.Var(layerCompactStreams, "layer-compact-stream", `(Optional) compact-stream (.cstream) file for a layer. Format: manifest_idx,layer_idx=path. The file's CAS digest is recorded so the layer can be reconstructed from it (used by the bes strategy). Can be specified multiple times.`)
 	flagSet.StringVar(&signSettingFile, "sign-setting-file", "", `(Optional) path to the sign_setting config file for this push operation. Its content descriptor is recorded so the deploy tool can match it against the sign_settings shipped in runfiles.`)
@@ -193,6 +202,11 @@ func DeployMetadataProcess(ctx context.Context, args []string) {
 	}
 	if configurationPath == "" {
 		fmt.Fprintln(os.Stderr, "Error: --configuration-file is required")
+		flagSet.Usage()
+		os.Exit(1)
+	}
+	if runfilesSlot == "" {
+		fmt.Fprintln(os.Stderr, "Error: --runfiles-slot is required")
 		flagSet.Usage()
 		os.Exit(1)
 	}
@@ -389,10 +403,11 @@ func WriteMetadata(ctx context.Context, outputPath string) error {
 	}
 
 	baseCommand := api.BaseCommandOperation{
-		Command:   command,
-		RootKind:  rootKind,
-		Root:      rootDescriptor,
-		Manifests: manifests,
+		Command:      command,
+		RootKind:     rootKind,
+		Root:         rootDescriptor,
+		Manifests:    manifests,
+		RunfilesSlot: runfilesSlot,
 		PullInfo: api.PullInfo{
 			OriginalBaseImageRegistries: originalRegistries,
 			OriginalBaseImageRepository: originalRepository,
@@ -536,6 +551,10 @@ func processReferrers(knownDigests map[string]bool, config map[string]any, refer
 		if refRootKind != "manifest" && refRootKind != "index" {
 			return nil, fmt.Errorf("referrer %d: --referrer-root-kind must be 'manifest' or 'index', got %q", refIdx, refRootKind)
 		}
+		refRunfilesSlot, ok := referrerRunfilesSlots.values[refIdx]
+		if !ok {
+			return nil, fmt.Errorf("referrer %d: --referrer-runfiles-slot is required", refIdx)
+		}
 
 		refRootData, err := os.ReadFile(refRootPath)
 		if err != nil {
@@ -627,10 +646,11 @@ func processReferrers(knownDigests map[string]bool, config map[string]any, refer
 		}
 
 		refBaseCommand := api.BaseCommandOperation{
-			Command:   "push",
-			RootKind:  refRootKind,
-			Root:      refRootDescriptor,
-			Manifests: refManifests,
+			Command:      "push",
+			RootKind:     refRootKind,
+			Root:         refRootDescriptor,
+			Manifests:    refManifests,
+			RunfilesSlot: refRunfilesSlot,
 		}
 
 		// Create push operation with same registry/repository but no tags

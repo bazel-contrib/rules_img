@@ -197,6 +197,12 @@ type BaseCommandOperation struct {
 
 	CrossMountHint *CrossMountSource `json:"cross_mount_hint,omitempty"` // repository from which layers can be cross-mounted
 
+	// RunfilesSlot names the directory, below the runfiles root symlinks prefix,
+	// that holds this operation's sparse OCI layout and layer blobs. Bazel derives
+	// it from the image being deployed, so operations deploying the same image
+	// share one slot however a deploy manifest is assembled or merged.
+	RunfilesSlot string `json:"runfiles_slot,omitempty"`
+
 	// DeduplicatedPush, when set to DeduplicatedPushEnabled or
 	// DeduplicatedPushBestEffort, lets `img deploy` serve this operation's layers by
 	// cross-mounting them: it checks which manifests the registry already holds,

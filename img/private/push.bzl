@@ -13,8 +13,6 @@ load("//img/private/common:deploy_helpers.bzl", "content_tracking_json_vars", "c
 load("//img/private/common:transitions.bzl", "reset_platform_transition")
 load("//img/private/providers:deploy_info.bzl", "DeployInfo")
 load("//img/private/providers:deploy_tool_info.bzl", "DeployToolInfo")
-load("//img/private/providers:index_info.bzl", "ImageIndexInfo")
-load("//img/private/providers:manifest_info.bzl", "ImageManifestInfo")
 load("//img/private/providers:pull_info.bzl", "PullInfo")
 load("//img/private/providers:push_settings_info.bzl", "PushSettingsInfo")
 
@@ -129,16 +127,12 @@ def _image_push_impl(ctx):
         symlink_name_prefix = root_symlinks_prefix,
     )
 
-    # Add referrer root symlinks (operation_index starts at 1; main image is 0)
-    for ref_idx, referrer in enumerate(ctx.attr.referrers):
-        ref_manifest_info = referrer[ImageManifestInfo] if ImageManifestInfo in referrer else None
-        ref_index_info = referrer[ImageIndexInfo] if ImageIndexInfo in referrer else None
+    for referrer in extract_referrers(ctx):
         root_symlinks.update(calculate_root_symlinks(
-            ref_index_info,
-            ref_manifest_info,
+            referrer.index_info,
+            referrer.manifest_info,
             include_layers = push_strategy == "eager",
             symlink_name_prefix = root_symlinks_prefix,
-            operation_index = ref_idx + 1,
         ))
     if layer_hints != None:
         root_symlinks["{}layer_hints".format(root_symlinks_prefix)] = layer_hints
