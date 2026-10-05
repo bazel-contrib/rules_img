@@ -1,15 +1,152 @@
 package credential
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/go-containerregistry/pkg/authn"
 )
+
+// When RULES_IMG_TEST_CREDENTIAL_HELPER_CALLS is set, the test binary acts as a
+// credential helper: it records the invocation by appending a line to that file
+// and answers with a header and, if RULES_IMG_TEST_CREDENTIAL_HELPER_EXPIRES is
+// set, that expiry. It writes RULES_IMG_TEST_CREDENTIAL_HELPER_STDERR, if set,
+// to stderr.
+func TestMain(m *testing.M) {
+	if calls := os.Getenv("RULES_IMG_TEST_CREDENTIAL_HELPER_CALLS"); calls != "" && len(os.Args) > 1 && os.Args[1] == "get" {
+		f, err := os.OpenFile(calls, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		fmt.Fprintln(f, "get")
+		f.Close()
+		fmt.Fprint(os.Stderr, os.Getenv("RULES_IMG_TEST_CREDENTIAL_HELPER_STDERR"))
+		resp, _ := json.Marshal(externalResponse{
+			Expires: os.Getenv("RULES_IMG_TEST_CREDENTIAL_HELPER_EXPIRES"),
+			Headers: map[string][]string{"Authorization": {"Bearer token"}},
+		})
+		os.Stdout.Write(resp)
+		os.Exit(0)
+	}
+	os.Exit(m.Run())
+}
+
+// newSelfHelper returns a helper running this test binary (see TestMain),
+// answering with expires, and a function counting its invocations so far.
+func newSelfHelper(t *testing.T, expires string) (Helper, func() int) {
+	t.Helper()
+	return newSelfHelperWithOptions(t, expires, &Options{CaptureStderr: true})
+}
+
+func newSelfHelperWithOptions(t *testing.T, expires string, opts *Options) (Helper, func() int) {
+	t.Helper()
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := filepath.Join(t.TempDir(), "calls")
+	t.Setenv("RULES_IMG_TEST_CREDENTIAL_HELPER_CALLS", calls)
+	t.Setenv("RULES_IMG_TEST_CREDENTIAL_HELPER_EXPIRES", expires)
+	count := func() int {
+		data, err := os.ReadFile(calls)
+		if errors.Is(err, os.ErrNotExist) {
+			return 0
+		} else if err != nil {
+			t.Fatal(err)
+		}
+		return strings.Count(string(data), "\n")
+	}
+	return New(self, opts), count
+}
+
+func TestExternalHelper_DebugLog(t *testing.T) {
+	t.Setenv("RULES_IMG_TEST_CREDENTIAL_HELPER_STDERR", "helper says hi\n")
+	var debugLog bytes.Buffer
+	helper, _ := newSelfHelperWithOptions(t, "", &Options{CaptureStderr: true, DebugLog: &debugLog})
+
+	for range 2 {
+		if _, _, err := helper.Get(t.Context(), "registry.example"); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	log := debugLog.String()
+	// Only the first lookup runs the helper; the second is a cache hit.
+	if got := strings.Count(log, "running for registry.example"); got != 1 {
+		t.Errorf("debug log mentions %d runs, want 1:\n%s", got, log)
+	}
+	if got := strings.Count(log, "helper says hi"); got != 1 {
+		t.Errorf("debug log carries the helper's stderr %d times, want 1:\n%s", got, log)
+	}
+	if !strings.Contains(log, "got credentials without an expiry") {
+		t.Errorf("debug log does not report the result:\n%s", log)
+	}
+}
+
+func TestExternalHelper_CachesForDefaultExpiryWithoutExpires(t *testing.T) {
+	helper, calls := newSelfHelper(t, "")
+
+	before := time.Now()
+	_, expiresAt, err := helper.Get(t.Context(), "registry.example")
+	after := time.Now()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A response without an expiry is reused for an hour.
+	if expiresAt.Before(before.Add(60*time.Minute)) || expiresAt.After(after.Add(60*time.Minute)) {
+		t.Errorf("expiresAt = %v, want 60m after the lookup (between %v and %v)", expiresAt, before.Add(60*time.Minute), after.Add(60*time.Minute))
+	}
+
+	headers, cachedExpiresAt, err := helper.Get(t.Context(), "registry.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := headers["Authorization"]; len(got) != 1 || got[0] != "Bearer token" {
+		t.Errorf("cached headers = %v, want the helper's", headers)
+	}
+	if !cachedExpiresAt.Equal(expiresAt) {
+		t.Errorf("cached expiresAt = %v, want %v", cachedExpiresAt, expiresAt)
+	}
+	if got := calls(); got != 1 {
+		t.Errorf("helper ran %d times for two lookups of one URI, want 1", got)
+	}
+
+	if _, _, err := helper.Get(t.Context(), "other.example"); err != nil {
+		t.Fatal(err)
+	}
+	if got := calls(); got != 2 {
+		t.Errorf("helper ran %d times after a second URI, want 2", got)
+	}
+}
+
+func TestExternalHelper_HonorsExpires(t *testing.T) {
+	// Longer than the default, so the helper's expiry visibly wins.
+	want := time.Now().Add(3 * time.Hour).Truncate(time.Second)
+	helper, calls := newSelfHelper(t, want.Format(time.RFC3339))
+
+	for range 2 {
+		_, expiresAt, err := helper.Get(t.Context(), "registry.example")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !expiresAt.Equal(want) {
+			t.Errorf("expiresAt = %v, want the helper's %v", expiresAt, want)
+		}
+	}
+	if got := calls(); got != 1 {
+		t.Errorf("helper ran %d times for two lookups of one URI, want 1", got)
+	}
+}
 
 func TestNew_ReplacesWorkspacePlaceholder(t *testing.T) {
 	// Set up environment variable

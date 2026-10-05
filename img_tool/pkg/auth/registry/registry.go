@@ -1,11 +1,14 @@
 package registry
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
 	"os"
 	"strings"
+	"sync"
+	"time"
 
 	ecr "github.com/awslabs/amazon-ecr-credential-helper/ecr-login"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/auth/credential"
@@ -13,12 +16,43 @@ import (
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/v1/google"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
+	"github.com/sirupsen/logrus"
 )
 
 // amazonKeychain authenticates to Amazon ECR registries using the
 // amazon-ecr-credential-helper, resolving credentials from the ambient AWS
 // configuration (environment, shared config files, or instance/role metadata).
-var amazonKeychain authn.Keychain = authn.NewKeychainFromHelper(ecr.NewECRHelper(ecr.WithLogger(io.Discard)))
+//
+// Lookups are memoized per registry (see [cachingHelper]). Each call into the
+// ECR helper loads the AWS config from scratch, retrieves the ambient AWS
+// credentials (an STS or IMDS round trip), and may call
+// ecr:GetAuthorizationToken, even though one token covers the whole registry.
+// Uncached, a push to many repositories at once sends a burst of identical
+// requests to AWS and gets throttled.
+//
+// It is built on first use, not at init, so that it sees IMG_AUTH_DEBUG as set
+// by then. It is shared by every keychain built in the process, so is its cache.
+var amazonKeychain = sync.OnceValue(func() authn.Keychain {
+	logger := io.Writer(io.Discard)
+	var debugLog io.Writer
+	if authDebug() {
+		logger, debugLog = authDebugLog, authDebugLog
+		// The helper's API client and token cache log through the logrus
+		// standard logger, mostly at debug level ("Using cached token",
+		// "Got error fetching authorization token. Falling back to cached
+		// token.").
+		logrus.SetOutput(authDebugLog)
+		logrus.SetLevel(logrus.DebugLevel)
+	}
+	helper := ecr.NewECRHelper(ecr.WithLogger(logger))
+	return authn.NewKeychainFromHelper(newCachingHelper("amazon ecr", helper, ecrHelperCacheTTL, debugLog))
+})
+
+// ecrHelperCacheTTL bounds how long credentials from the ECR helper are reused
+// in-process. An ECR authorization token is valid for 12 hours and the helper
+// itself hands out a fresh one once half of that has passed, so a token served
+// from the cache is never older than eleven hours, leaving an hour of margin.
+const ecrHelperCacheTTL = 5 * time.Hour
 
 // Environment variables naming the Bazel credential helper to use. The
 // generic EnvCredentialHelper applies to every operation; the scoped variants
@@ -91,13 +125,24 @@ func Keychain() authn.Keychain {
 	return keychainFromEnvironment()
 }
 
-func keychainFromEnvironment() authn.Keychain {
+// authDebug reports whether IMG_AUTH_DEBUG asks for credential resolution to be
+// logged to stderr.
+func authDebug() bool {
 	_, debug := os.LookupEnv("IMG_AUTH_DEBUG")
+	return debug
+}
+
+func keychainFromEnvironment() authn.Keychain {
+	debug := authDebug()
 
 	var keychains []authn.Keychain
 
 	if value := OCIRegistryCredentialHelper(); value != "" {
-		bazel := credential.New(value, &credential.Options{CaptureStderr: true})
+		opts := &credential.Options{CaptureStderr: true}
+		if debug {
+			opts.DebugLog = authDebugLog
+		}
+		bazel := credential.New(value, opts)
 		keychain := credential.ContainerRegistryKeychain(bazel)
 		keychains = append(keychains, namedKeychain("bazel credential helper", keychain, debug))
 	}
@@ -118,7 +163,7 @@ func keychainFromEnvironment() authn.Keychain {
 		keychains,
 		namedKeychain("docker config", authn.DefaultKeychain, debug),
 		namedKeychain("google", google.Keychain, debug),
-		namedKeychain("amazon ecr", amazonKeychain, debug),
+		namedKeychain("amazon ecr", amazonKeychain(), debug),
 	)
 
 	return authn.NewMultiKeychain(keychains...)
@@ -183,13 +228,53 @@ func (d *debugKeychain) Resolve(target authn.Resource) (authn.Authenticator, err
 func (d *debugKeychain) ResolveContext(ctx context.Context, target authn.Resource) (authn.Authenticator, error) {
 	auth, err := authn.Resolve(ctx, d.inner, target)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "IMG_AUTH_DEBUG: keychain %q for %s: error: %v\n", d.name, target.RegistryStr(), err)
+		fmt.Fprintf(authDebugLog, "keychain %q for %s: error: %v\n", d.name, target.RegistryStr(), err)
 		return nil, err
 	}
 	if auth == authn.Anonymous {
-		fmt.Fprintf(os.Stderr, "IMG_AUTH_DEBUG: keychain %q for %s: no credentials, trying next\n", d.name, target.RegistryStr())
+		fmt.Fprintf(authDebugLog, "keychain %q for %s: no credentials, trying next\n", d.name, target.RegistryStr())
 		return authn.Anonymous, nil
 	}
-	fmt.Fprintf(os.Stderr, "IMG_AUTH_DEBUG: keychain %q for %s: found credentials\n", d.name, target.RegistryStr())
+	fmt.Fprintf(authDebugLog, "keychain %q for %s: found credentials\n", d.name, target.RegistryStr())
 	return auth, nil
+}
+
+// authDebugLog is where IMG_AUTH_DEBUG output goes: stderr, with every line
+// prefixed so it can be told apart from (and grepped out of) everything else,
+// including the output of credential helpers and libraries that know nothing of
+// the prefix.
+var authDebugLog io.Writer = &prefixWriter{prefix: []byte("IMG_AUTH_DEBUG: "), out: os.Stderr}
+
+// prefixWriter writes prefix at the start of every line written through it. It
+// is shared by every source of debug output, so writes are serialized, but a
+// line written in several pieces by one source can still be split by another.
+type prefixWriter struct {
+	prefix []byte
+	out    io.Writer
+
+	mu      sync.Mutex
+	midLine bool
+}
+
+func (w *prefixWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	var buf []byte
+	for rest := p; len(rest) > 0; {
+		if !w.midLine {
+			buf = append(buf, w.prefix...)
+			w.midLine = true
+		}
+		line, after, found := bytes.Cut(rest, []byte{'\n'})
+		buf = append(buf, line...)
+		if found {
+			buf = append(buf, '\n')
+			w.midLine = false
+		}
+		rest = after
+	}
+	if _, err := w.out.Write(buf); err != nil {
+		return 0, err
+	}
+	return len(p), nil
 }
