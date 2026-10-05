@@ -668,14 +668,15 @@ func (b *Builder) ingest() (map[string]blobEntry, map[string]blobEntry, map[stri
 			// so we don't need to upload any blobs ourselves.
 			continue
 		}
+		slot := op.RunfilesSlot
 		if op.RootKind == "index" {
-			manifests[op.Root.Digest] = b.resolveManifestBlob(i, op.Root)
+			manifests[op.Root.Digest] = b.resolveManifestBlob(slot, op.Root)
 		}
 		for manifestIndex, manifest := range op.Manifests {
-			manifests[manifest.Descriptor.Digest] = b.resolveManifestBlob(i, manifest.Descriptor)
-			blobs[manifest.Config.Digest] = b.resolveConfigBlob(i, manifest.Config)
+			manifests[manifest.Descriptor.Digest] = b.resolveManifestBlob(slot, manifest.Descriptor)
+			blobs[manifest.Config.Digest] = b.resolveConfigBlob(slot, manifest.Config)
 			for layerIndex, layer := range manifest.LayerBlobs {
-				blob, err := b.layerBlob(i, manifestIndex, layerIndex, strategy, layer)
+				blob, err := b.layerBlob(slot, manifestIndex, layerIndex, strategy, layer)
 				if err != nil {
 					return nil, nil, nil, fmt.Errorf("locating source for layer with digest %s with index %d in manifest %d of operation %d: %w", layer.Digest, layerIndex, manifestIndex, i, err)
 				}
@@ -715,7 +716,7 @@ func (b *Builder) ingest() (map[string]blobEntry, map[string]blobEntry, map[stri
 	return blobs, manifests, crossMountHints, nil
 }
 
-func (b *Builder) layerBlob(operationIndex int, manifestIndex int, layerIndex int, strategy string, layer api.LayerBlob) (blobEntry, error) {
+func (b *Builder) layerBlob(slot string, manifestIndex int, layerIndex int, strategy string, layer api.LayerBlob) (blobEntry, error) {
 	// we try the following sources, in order:
 	// 1. OCI layouts (--oci-layout flags, supports both sparse and standard formats)
 	// 2. explicit layer files (--layer flags pointing at a raw compressed blob)
@@ -743,7 +744,7 @@ func (b *Builder) layerBlob(operationIndex int, manifestIndex int, layerIndex in
 	} else {
 		sourceErrors = append(sourceErrors, err.(*BlobSourceError))
 	}
-	if entry, err := b.layerFromFile(operationIndex, manifestIndex, layerIndex, desc); err == nil {
+	if entry, err := b.layerFromFile(slot, manifestIndex, layerIndex, desc); err == nil {
 		return entry, nil
 	} else {
 		sourceErrors = append(sourceErrors, err.(*BlobSourceError))
@@ -758,7 +759,7 @@ func (b *Builder) layerBlob(operationIndex int, manifestIndex int, layerIndex in
 	} else {
 		sourceErrors = append(sourceErrors, err.(*BlobSourceError))
 	}
-	if entry, err := b.layerFromRunfilesCompactStream(operationIndex, manifestIndex, layerIndex, desc); err == nil {
+	if entry, err := b.layerFromRunfilesCompactStream(slot, manifestIndex, layerIndex, desc); err == nil {
 		return entry, nil
 	} else {
 		sourceErrors = append(sourceErrors, err.(*BlobSourceError))
@@ -859,8 +860,8 @@ func (b *Builder) layerFromExplicit(desc api.Descriptor) (blobEntry, error) {
 }
 
 // layerFromFile tries to find the layer in the runfiles tree. If it exists, it returns the blobEntry.
-func (b *Builder) layerFromFile(operationIndex int, manifestIndex int, layerIndex int, desc api.Descriptor) (blobEntry, error) {
-	runfilesPath := layerRunfilesPath(operationIndex, manifestIndex, layerIndex)
+func (b *Builder) layerFromFile(slot string, manifestIndex int, layerIndex int, desc api.Descriptor) (blobEntry, error) {
+	runfilesPath := layerRunfilesPath(slot, manifestIndex, layerIndex)
 	fpath, err := b.rlocation(runfilesPath)
 	if err != nil {
 		return blobEntry{}, &BlobSourceError{Source: "runfiles", Digest: desc.Digest, Kind: BlobSourceOther, Message: fmt.Sprintf("rlocation(%s)", runfilesPath), Err: err}
@@ -998,11 +999,11 @@ type blobEntry struct {
 
 // resolveManifestBlob resolves a manifest or index blob from available sources.
 // Priority: OCI layouts → runfiles sparse layout path → disk cache → remote CAS.
-func (b *Builder) resolveManifestBlob(operationIndex int, desc api.Descriptor) blobEntry {
+func (b *Builder) resolveManifestBlob(slot string, desc api.Descriptor) blobEntry {
 	if entry, err := b.blobFromOCILayouts(desc); err == nil {
 		return entry
 	}
-	if entry, err := b.blobFromRunfilesSparseLayout(operationIndex, desc); err == nil {
+	if entry, err := b.blobFromRunfilesSparseLayout(slot, desc); err == nil {
 		return entry
 	}
 	if entry, err := b.blobFromDiskCache(desc); err == nil {
@@ -1021,11 +1022,11 @@ func (b *Builder) resolveManifestBlob(operationIndex int, desc api.Descriptor) b
 
 // resolveConfigBlob resolves a config blob from available sources.
 // Priority: OCI layouts → runfiles sparse layout path → disk cache → remote CAS.
-func (b *Builder) resolveConfigBlob(operationIndex int, desc api.Descriptor) blobEntry {
+func (b *Builder) resolveConfigBlob(slot string, desc api.Descriptor) blobEntry {
 	if entry, err := b.blobFromOCILayouts(desc); err == nil {
 		return entry
 	}
-	if entry, err := b.blobFromRunfilesSparseLayout(operationIndex, desc); err == nil {
+	if entry, err := b.blobFromRunfilesSparseLayout(slot, desc); err == nil {
 		return entry
 	}
 	if entry, err := b.blobFromDiskCache(desc); err == nil {
@@ -1122,8 +1123,8 @@ func (b *Builder) blobFromOCILayouts(desc api.Descriptor) (blobEntry, error) {
 }
 
 // blobFromRunfilesSparseLayout resolves a blob from the runfiles sparse layout tree.
-func (b *Builder) blobFromRunfilesSparseLayout(operationIndex int, desc api.Descriptor) (blobEntry, error) {
-	runfilesPath := sparseLayoutBlobPath(operationIndex, desc.Digest)
+func (b *Builder) blobFromRunfilesSparseLayout(slot string, desc api.Descriptor) (blobEntry, error) {
+	runfilesPath := sparseLayoutBlobPath(slot, desc.Digest)
 	fpath, err := b.rlocation(runfilesPath)
 	if err != nil {
 		return blobEntry{}, &BlobSourceError{Source: "runfiles", Digest: desc.Digest, Kind: BlobSourceOther, Message: fmt.Sprintf("rlocation(%s)", runfilesPath), Err: err}
@@ -1241,11 +1242,11 @@ func digestFromHashAndSize(hash registryv1.Hash, sizeBytes int64) (cas.Digest, e
 	return cas.Digest{}, fmt.Errorf("unsupported digest algorithm: %s", hash.Algorithm)
 }
 
-func sparseLayoutBlobPath(operationIndex int, digest string) string {
+func sparseLayoutBlobPath(slot string, digest string) string {
 	algo, hex, _ := strings.Cut(digest, ":")
-	return path.Join(fmt.Sprintf("%d", operationIndex), "sparse_oci_layout", "blobs", algo, hex)
+	return path.Join(slot, "sparse_oci_layout", "blobs", algo, hex)
 }
 
-func layerRunfilesPath(operationIndex int, manifestIndex int, layerIndex int) string {
-	return path.Join(fmt.Sprintf("%d", operationIndex), "manifests", fmt.Sprintf("%d", manifestIndex), "layer", fmt.Sprintf("%d", layerIndex))
+func layerRunfilesPath(slot string, manifestIndex int, layerIndex int) string {
+	return path.Join(slot, "manifests", fmt.Sprintf("%d", manifestIndex), "layer", fmt.Sprintf("%d", layerIndex))
 }

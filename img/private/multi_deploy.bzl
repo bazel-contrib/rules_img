@@ -96,17 +96,11 @@ def _split_image(image):
 def _collect_operation_root_symlinks(ctx, *, symlink_name_prefix):
     """Build the runfiles symlink tree for all operations.
 
-    The deploy tool resolves each operation's runfiles by its *position* in the
-    merged deploy manifest (see deployvfs). `deploy-merge` concatenates every
-    operation contributed by each target in order: an image_push contributes its
-    main image first, then one operation per referrer. We reproduce that exact
-    ordering here with a running operation index, so a referrer's layers land at
-    the operation index the deploy tool will look them up under. (With no
-    referrers this reduces to one index per operation, matching the historical
-    behavior.)
+    Every deploy operation names the runfiles slot holding its image (see
+    `runfiles_slot`), so each image and referrer is laid out once, however many
+    operations of the merged deploy manifest deploy it.
     """
     root_symlinks = {}
-    operation_index = 0
     for operation in ctx.attr.operations:
         deploy_info = operation[DeployInfo]
         index_info, manifest_info = _split_image(deploy_info.image)
@@ -114,21 +108,15 @@ def _collect_operation_root_symlinks(ctx, *, symlink_name_prefix):
             index_info = index_info,
             manifest_info = manifest_info,
             include_layers = deploy_info.include_layers,
-            operation_index = operation_index,
             symlink_name_prefix = symlink_name_prefix,
         ))
-        operation_index += 1
-
-        # Referrers are additional deploy operations attached to this push.
         for referrer in getattr(deploy_info, "referrers", []):
             root_symlinks.update(calculate_root_symlinks(
                 index_info = referrer.index_info,
                 manifest_info = referrer.manifest_info,
                 include_layers = deploy_info.include_layers,
-                operation_index = operation_index,
                 symlink_name_prefix = symlink_name_prefix,
             ))
-            operation_index += 1
     return root_symlinks
 
 def _multi_deploy_impl(ctx):

@@ -333,6 +333,7 @@ bzl_library(
     visibility = ["//img:__subpackages__"],
     deps = [
         ":layer_path_hints",
+        ":root_symlinks",
         ":soci_deploy",
         ":stamp",
         "//img/private/common:build",

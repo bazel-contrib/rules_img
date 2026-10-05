@@ -3,8 +3,27 @@
 load("@sha256.bzl", "sha256")
 load("//img/private:soci_deploy.bzl", "soci_deploy_children")
 
-def _layer_root_symlinks_for_manifest(manifest_info, operation_index, manifest_index, symlink_name_prefix):
-    base_path = "{}{}/manifests/{}/layer".format(symlink_name_prefix, operation_index, manifest_index)
+def runfiles_slot(index_info, manifest_info):
+    """Returns the runfiles slot holding an image's files for `img deploy`.
+
+    The slot is recorded in each deploy operation (`--runfiles-slot`) and names
+    the directory, below the root symlinks prefix, holding the image's sparse OCI
+    layout and layer blobs. It is derived from the image alone, so every
+    operation deploying the same image resolves to the same files, whichever
+    deploy manifest or multi_deploy the operation ends up in.
+
+    Args:
+        index_info: ImageIndexInfo provider, or None
+        manifest_info: ImageManifestInfo provider, or None
+
+    Returns:
+        str: the slot name
+    """
+    image = index_info if index_info != None else manifest_info
+    return sha256(image.sparse_oci_layout.path)[:32]
+
+def _layer_root_symlinks_for_manifest(manifest_info, slot, manifest_index, symlink_name_prefix):
+    base_path = "{}{}/manifests/{}/layer".format(symlink_name_prefix, slot, manifest_index)
     result = {}
     for (layer_index, layer) in enumerate(manifest_info.layers):
         if layer.blob != None:
@@ -17,7 +36,7 @@ def _layer_root_symlinks_for_manifest(manifest_info, operation_index, manifest_i
             result["{base}/{layer_index}.inputfilecas".format(base = base_path, layer_index = layer_index)] = layer.layer_input_files_cas
     return result
 
-def calculate_root_symlinks(index_info, manifest_info, *, include_layers, symlink_name_prefix, operation_index = 0):
+def calculate_root_symlinks(index_info, manifest_info, *, include_layers, symlink_name_prefix):
     """Creates a dictionary of symlinks for container image root structure.
 
     Generates symlinks that organize container image artifacts into a standardized
@@ -30,17 +49,17 @@ def calculate_root_symlinks(index_info, manifest_info, *, include_layers, symlin
         manifest_info: ImageManifestInfo provider for single-platform images, or None
         include_layers: bool, whether to include layer blob symlinks
         symlink_name_prefix: str, prefix for naming symlinks
-        operation_index: int, index of the operation in a batch (used for naming)
 
     Returns:
         dict: Mapping of symlink paths to target files
     """
     root_symlinks = {}
+    slot = runfiles_slot(index_info, manifest_info)
     if index_info != None:
-        root_symlinks["{}{}/sparse_oci_layout".format(symlink_name_prefix, operation_index)] = index_info.sparse_oci_layout
+        root_symlinks["{}{}/sparse_oci_layout".format(symlink_name_prefix, slot)] = index_info.sparse_oci_layout
         if include_layers:
             for i, manifest in enumerate(index_info.manifests):
-                root_symlinks.update(_layer_root_symlinks_for_manifest(manifest, operation_index, i, symlink_name_prefix))
+                root_symlinks.update(_layer_root_symlinks_for_manifest(manifest, slot, i, symlink_name_prefix))
 
             # SOCI index pseudo-children are pushed as extra index children after
             # the real manifests; ship their ztoc blobs at the matching positional
@@ -49,11 +68,11 @@ def calculate_root_symlinks(index_info, manifest_info, *, include_layers, symlin
             soci_children = soci_deploy_children(index_info.manifests)
             for offset, child in enumerate(soci_children):
                 manifest_index = len(index_info.manifests) + offset
-                root_symlinks.update(_layer_root_symlinks_for_manifest(child, operation_index, manifest_index, symlink_name_prefix))
+                root_symlinks.update(_layer_root_symlinks_for_manifest(child, slot, manifest_index, symlink_name_prefix))
     if manifest_info != None:
-        root_symlinks["{}{}/sparse_oci_layout".format(symlink_name_prefix, operation_index)] = manifest_info.sparse_oci_layout
+        root_symlinks["{}{}/sparse_oci_layout".format(symlink_name_prefix, slot)] = manifest_info.sparse_oci_layout
         if include_layers:
-            root_symlinks.update(_layer_root_symlinks_for_manifest(manifest_info, operation_index, 0, symlink_name_prefix))
+            root_symlinks.update(_layer_root_symlinks_for_manifest(manifest_info, slot, 0, symlink_name_prefix))
     return root_symlinks
 
 def symlink_name_prefix(ctx):

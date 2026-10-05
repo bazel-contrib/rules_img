@@ -1,0 +1,50 @@
+load("@rules_img//img:image.bzl", "image_manifest")
+load("@rules_img//img:layer.bzl", "image_layer")
+load("@rules_img//img:multi_deploy.bzl", "multi_deploy")
+load("@rules_img//img:push.bzl", "image_push_spec")
+
+image_layer(
+    name = "layer",
+    srcs = {"hello.txt": ":hello.txt"},
+)
+
+image_push_spec(
+    name = "spec_a",
+    registry = "registry-a.invalid",
+    repository = "example/app",
+    tag = "latest",
+)
+
+image_push_spec(
+    name = "spec_b",
+    registry = "registry-b.invalid",
+    repository = "example/app",
+    tag = "latest",
+)
+
+image_manifest(
+    name = "two_specs",
+    layers = [":layer"],
+    push_specs = [
+        ":spec_a",
+        ":spec_b",
+    ],
+)
+
+image_manifest(
+    name = "one_spec",
+    layers = [":layer"],
+    push_specs = [":spec_a"],
+)
+
+multi_deploy(
+    name = "push_two_specs",
+    deploy_operations = ["push"],
+    operations = [":two_specs"],
+)
+
+multi_deploy(
+    name = "push_one_spec",
+    deploy_operations = ["push"],
+    operations = [":one_spec"],
+)
