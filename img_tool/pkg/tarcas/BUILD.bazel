@@ -26,10 +26,12 @@ go_test(
         "reconstruct_integration_test.go",
         "reconstruct_test.go",
         "store_streaming_test.go",
+        "tree_test.go",
     ],
     embed = [":tarcas"],
     deps = [
         "//pkg/compactstream",
         "//pkg/compress",
+        "//pkg/tree/merkle",
     ],
 )
