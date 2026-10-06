@@ -358,6 +358,27 @@ string_flag(
     visibility = ["//visibility:public"],
 )
 
+# Which output group the push-at-build-time outputs are placed in, which decides
+# how a build requests them.
+#
+# "validation" (default) puts them in the implicit `_validation` output group, so
+# they run on every build of the target (unless --norun_validations).
+#
+# "push_at_build_time" puts them in a regular `push_at_build_time` output group
+# instead, so they only run when the build asks for them with
+# `--output_groups=+push_at_build_time`. Because output groups are not part of the
+# analysis configuration, toggling the push on and off that way does not discard
+# the analysis cache -- unlike flipping push_at_build_time itself.
+string_flag(
+    name = "push_at_build_time_output_group",
+    build_setting_default = "validation",
+    values = [
+        "validation",
+        "push_at_build_time",
+    ],
+    visibility = ["//visibility:public"],
+)
+
 # Optional OCI distribution gateway endpoints. When set, registry requests made by
 # build actions (lazy layer downloads and build-time uploads) are routed through
 # the gateway instead of talking to the registry directly. `registry_gateway` is

@@ -30,6 +30,7 @@ FIELDS = dict(
     push_at_build_time_content = "Resolved push-at-build-time content: 'blobs', 'blobs_and_manifests' (manifests by digest, no tags) or 'all' (manifests and tags).",
     push_at_build_time_manifest_repository = "Resolved repository the build-time manifest push uploads manifest(s)/index and config to instead of the operation's own repository, or ''. Does not affect blob cross-mounting.",
     push_at_build_time_exec_properties = "Dict(string, string) of execution_requirements forwarded to the PushImage build-time push actions.",
+    push_at_build_time_output_group = "Resolved output group that drives the build-time pushes: 'validation' (also wired into the implicit `_validation` group, so they run on every build) or 'push_at_build_time' (only run when requested with --output_groups=+push_at_build_time).",
     push_at_build_time_gateway = "Shared OCI distribution gateway endpoint for the build-time push actions, or ''.",
     push_at_build_time_push_gateway = "Push OCI distribution gateway endpoint for the build-time push actions, or ''.",
     push_at_build_time_pull_gateway = "Pull OCI distribution gateway endpoint for the build-time push actions, or ''.",

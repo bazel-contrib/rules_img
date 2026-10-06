@@ -43,6 +43,7 @@ def _image_push_spec_impl(ctx):
         push_at_build_time_content = pbt.content,
         push_at_build_time_manifest_repository = pbt.manifest_repository,
         push_at_build_time_exec_properties = pbt.exec_properties,
+        push_at_build_time_output_group = pbt.output_group,
         push_at_build_time_gateway = pbt.gateway,
         push_at_build_time_push_gateway = pbt.push_gateway,
         push_at_build_time_pull_gateway = pbt.pull_gateway,

@@ -230,8 +230,10 @@ when signing is enabled (see `sign`).
         doc = """Whether image content is pushed to the registry *during the build*.
 
 Push at build time wires extra `PushImage` build actions (one per blob, plus a
-manifest push unless the content is `blobs`) that upload directly to the registry
-as a Bazel validation action. See
+manifest push unless the content is `blobs`) that upload directly to the registry.
+Their outputs go into the `push_at_build_time` output group and, unless
+`--@rules_img//img/settings:push_at_build_time_output_group` says otherwise, are
+also wired as a Bazel validation action. See
 [push at build time](/docs/push-strategies.md#push-at-build-time).
 
 - **`auto`** (default): defer to the global `--@rules_img//img/settings:push_at_build_time` flag.

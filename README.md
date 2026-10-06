@@ -150,6 +150,15 @@ common --@rules_img//img/settings:docker_config_path=/home/user/.docker/config.j
 # logs and the build still succeeds; "enabled" fails the build on a push failure.
 common --@rules_img//img/settings:push_at_build_time=enabled
 
+# Which output group drives the push-at-build-time actions. The outputs always go
+# into a regular "push_at_build_time" output group, so a build can request the
+# pushes with --output_groups=+push_at_build_time; with "validation" (default)
+# they are additionally wired as a validation action, so they run on every build
+# of the target. Output groups are not part of the build configuration, so
+# "push_at_build_time" lets you turn the push on and off per invocation without
+# discarding the analysis cache.
+common --@rules_img//img/settings:push_at_build_time_output_group=push_at_build_time
+
 # What the push-at-build-time actions push. "blobs" uploads every image blob (all
 # layer blobs and the config blob), one action each; "blobs_and_manifests"
 # additionally pushes the config and manifest(s) by digest, without writing any

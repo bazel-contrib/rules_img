@@ -9,7 +9,7 @@ load("//img/private:root_symlinks.bzl", "runfiles_slot")
 load("//img/private:soci_deploy.bzl", "soci_deploy_children")
 load("//img/private:stamp.bzl", "expand_or_write")
 load("//img/private/common:build.bzl", "TOOLCHAIN")
-load("//img/private/common:deploy_helpers.bzl", "content_tracking_json_vars", "cross_mount_blob_repository")
+load("//img/private/common:deploy_helpers.bzl", "add_build_time_push_outputs", "content_tracking_json_vars", "cross_mount_blob_repository")
 load("//img/private/providers:deploy_info.bzl", "DeployInfo")
 load("//img/private/providers:load_config_info.bzl", "LoadConfigInfo")
 load("//img/private/providers:load_settings_info.bzl", "LoadSettingsInfo")
@@ -520,7 +520,7 @@ def build_time_push_actions(
         insecure,
         pull_info,
         exec_requirements):
-    """Create the PushImage validation actions for one push operation.
+    """Create the PushImage actions for one push operation.
 
     Emits one action per blob (mnemonic PushImage) that pushes a single blob to
     the blob target repository (the staging repository if blob_repository is set,
@@ -570,9 +570,10 @@ def build_time_push_actions(
         emitted PushImage action (e.g. {"requires-network": "1"}).
 
     Returns:
-      List of Files to place in the `_validation` output group: the per-layer and
+      List of Files that drive the emitted actions when built: the per-layer and
       per-config result JSONs, plus (when content is not "blobs") the single
-      manifest marker file.
+      manifest marker file. Callers place them in the output group(s) selected by
+      `add_build_time_push_outputs`.
     """
     img_toolchain_info = ctx.toolchains[TOOLCHAIN].imgtoolchaininfo
     tool = img_toolchain_info.tool_exe
@@ -788,17 +789,18 @@ def process_deploy_specs(
             push_at_build_time is active; supplies manifest(s) + config to the push).
 
     Each push spec carries its own resolved push-at-build-time configuration
-    (mode, content, blob/manifest repository, exec properties, gateways) in its
-    PushConfigInfo. When a spec's mode is not 'disabled', PushImage validation
+    (mode, content, blob/manifest repository, exec properties, gateways, output
+    group) in its PushConfigInfo. When a spec's mode is not 'disabled', PushImage
     actions are emitted for it, and its blob staging repository is recorded in the
     deploy manifest for cross-mounting at `bazel run` time.
 
     Returns:
-        Tuple of (DeployInfo or None, validation_outputs). validation_outputs is a
-        (possibly empty) list of files to place in the `_validation` output group.
+        Tuple of (DeployInfo or None, push_output_groups). push_output_groups is a
+        (possibly empty) dict of output group name -> list of Files, holding the
+        build-time push outputs (see `add_build_time_push_outputs`).
     """
     if not push_specs and not load_specs:
-        return None, []
+        return None, {}
 
     image_info = manifest_info if manifest_info != None else index_info
     image_target_vars = {
@@ -809,7 +811,7 @@ def process_deploy_specs(
     deploy_infos = []
     referrers = []
     sign_config_infos = []
-    validation_outputs = []
+    push_output_groups = {}
 
     for push_idx, deployment in enumerate(push_specs):
         push_config = deployment[PushConfigInfo]
@@ -890,26 +892,30 @@ def process_deploy_specs(
         if push_config.signing != None:
             sign_config_infos.append(push_config.signing.config_info)
 
-        # Push at build time via PushImage validation actions, per push spec.
+        # Push at build time via PushImage actions, per push spec.
         if push_config.push_at_build_time_mode in ("best_effort", "enabled"):
-            validation_outputs.extend(build_time_push_actions(
-                ctx,
-                push_idx = push_idx,
-                configuration_json = configuration_json,
-                manifest_info = manifest_info,
-                index_info = index_info,
-                sparse_layout = sparse_layout,
-                mode = push_config.push_at_build_time_mode,
-                content = push_config.push_at_build_time_content,
-                blob_repository = push_config.blob_repository,
-                manifest_repository = push_config.push_at_build_time_manifest_repository,
-                gateway = push_config.push_at_build_time_gateway,
-                push_gateway = push_config.push_at_build_time_push_gateway,
-                pull_gateway = push_config.push_at_build_time_pull_gateway,
-                insecure = push_config.insecure,
-                pull_info = pull_info,
-                exec_requirements = push_config.push_at_build_time_exec_properties,
-            ))
+            add_build_time_push_outputs(
+                push_output_groups,
+                build_time_push_actions(
+                    ctx,
+                    push_idx = push_idx,
+                    configuration_json = configuration_json,
+                    manifest_info = manifest_info,
+                    index_info = index_info,
+                    sparse_layout = sparse_layout,
+                    mode = push_config.push_at_build_time_mode,
+                    content = push_config.push_at_build_time_content,
+                    blob_repository = push_config.blob_repository,
+                    manifest_repository = push_config.push_at_build_time_manifest_repository,
+                    gateway = push_config.push_at_build_time_gateway,
+                    push_gateway = push_config.push_at_build_time_push_gateway,
+                    pull_gateway = push_config.push_at_build_time_pull_gateway,
+                    insecure = push_config.insecure,
+                    pull_info = pull_info,
+                    exec_requirements = push_config.push_at_build_time_exec_properties,
+                ),
+                push_config.push_at_build_time_output_group,
+            )
 
     for load_idx, deployment in enumerate(load_specs):
         load_config = deployment[LoadConfigInfo]
@@ -967,7 +973,7 @@ def process_deploy_specs(
             include_layers = include_layers,
             sign_settings = sign_config_infos,
             referrers = referrers,
-        ), validation_outputs
+        ), push_output_groups
 
     first_push_strategy = push_specs[0][PushConfigInfo].strategy if push_specs else ctx.attr._push_settings[PushSettingsInfo].strategy
     first_load_strategy = load_specs[0][LoadConfigInfo].strategy if load_specs else ctx.attr._load_settings[LoadSettingsInfo].strategy
@@ -985,4 +991,4 @@ def process_deploy_specs(
         include_layers = include_layers,
         sign_settings = sign_config_infos,
         referrers = referrers,
-    ), validation_outputs
+    ), push_output_groups

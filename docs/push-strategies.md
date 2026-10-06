@@ -345,10 +345,13 @@ When `push_at_build_time` is enabled, every `image_manifest` / `image_index` tha
 has `push_specs`, as well as every `image_push` target, gains extra build actions
 (mnemonic `PushImage`) that upload content directly to the registry: one action
 per image blob (each layer and each config), plus — unless the content mode is
-`blobs` — one more action per push that writes the config and manifest(s). The actions
-are wired as Bazel [validation actions], so they run whenever the target is built
-(with `--run_validations`, on by default) without sitting on the critical path of
-the target's normal outputs.
+`blobs` — one more action per push that writes the config and manifest(s). The
+actions' outputs are always placed in a `push_at_build_time` output group and, by
+default, additionally wired as Bazel [validation actions], so they run whenever
+the target is built (with `--run_validations`, on by default) without sitting on
+the critical path of the target's normal outputs. See [Toggling the push without
+losing the analysis cache](#toggling-the-push-without-losing-the-analysis-cache)
+for the alternative.
 
 `multi_deploy` has no push at build time of its own — it deploys at `bazel run`
 time. The `image_push` targets (or images with `push_specs`) it references still
@@ -505,6 +508,37 @@ Then just build the image target — the push happens as a validation action:
 ```bash
 bazel build //your:image_target
 ```
+
+### Toggling the push without losing the analysis cache
+`push_at_build_time` is a build setting, so flipping it between invocations
+changes the build configuration and makes Bazel discard its analysis cache. For a
+push you want to turn on and off per invocation — push on CI, don't push locally;
+one `bazel build` of a large target tree with the push, another without — that
+re-analysis is the dominant cost.
+
+The outputs of the `PushImage` actions always live in a regular
+`push_at_build_time` output group, which is *not* part of the configuration: a
+build only runs the pushes when it asks for that output group. Set
+
+```bash
+common --@rules_img//img/settings:push_at_build_time=enabled
+common --@rules_img//img/settings:push_at_build_time_output_group=push_at_build_time
+```
+
+once in your `.bazelrc`, and the push actions stay in the action graph but idle:
+
+```bash
+# No push: the push_at_build_time output group is not requested.
+bazel build //your:image_target
+
+# Push, reusing the same analysis cache.
+bazel build --output_groups=+push_at_build_time //your:image_target
+```
+
+With the default `push_at_build_time_output_group=validation`, the outputs are
+additionally placed in Bazel's implicit `_validation` output group, so the pushes
+run on every build of the target (and `--norun_validations` turns them off
+wholesale, for every validation action in the build, not just the pushes).
 
 ### Per-target configuration
 The global flags above set the baseline; each `image_push` target and each
