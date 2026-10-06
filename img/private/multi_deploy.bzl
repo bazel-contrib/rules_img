@@ -12,6 +12,7 @@ load("//img/private/providers:deploy_tool_info.bzl", "DeployToolInfo")
 load("//img/private/providers:index_info.bzl", "ImageIndexInfo")
 load("//img/private/providers:load_settings_info.bzl", "LoadSettingsInfo")
 load("//img/private/providers:manifest_info.bzl", "ImageManifestInfo")
+load("//img/private/providers:multiple_deploy_info.bzl", "MultipleDeployInfo")
 load("//img/private/providers:push_settings_info.bzl", "PushSettingsInfo")
 load("//img/private/providers:stamp_setting_info.bzl", "StampSettingInfo")
 
@@ -32,15 +33,34 @@ def _multi_deploy_strategy(ctx, operation_type):
     else:
         fail("Unknown operation type: {}".format(operation_type))
 
-def _compute_multi_deploy_metadata(*, ctx):
+def _collect_deploy_infos(ctx):
+    """Flatten all operations into a list of DeployInfo.
+
+    A target providing DeployInfo contributes itself; a target providing
+    MultipleDeployInfo contributes each of its infos.
+    """
+    deploy_infos = []
+    for operation in ctx.attr.operations:
+        if DeployInfo in operation:
+            deploy_infos.append(operation[DeployInfo])
+        elif MultipleDeployInfo in operation:
+            deploy_infos.extend(operation[MultipleDeployInfo].infos.to_list())
+        elif ImageManifestInfo in operation or ImageIndexInfo in operation:
+            fail("Target '{}' provides an image but not DeployInfo. Add 'push_specs' or 'load_specs' to produce DeployInfo, or wrap it with image_push.".format(operation.label))
+        else:
+            fail("Target '{}' does not provide DeployInfo or MultipleDeployInfo.".format(operation.label))
+    if not deploy_infos:
+        fail("operations did not contribute any DeployInfo")
+    return deploy_infos
+
+def _compute_multi_deploy_metadata(*, ctx, deploy_infos):
     """Compute the merged deploy metadata from all operations."""
     inputs = []
     deploy_manifests = []
     layer_hints_files = []
 
     # Collect all deploy manifests and layer hints from operations
-    for operation in ctx.attr.operations:
-        deploy_info = operation[DeployInfo]
+    for deploy_info in deploy_infos:
         deploy_manifests.append(deploy_info.deploy_manifest)
         inputs.append(deploy_info.deploy_manifest)
         if deploy_info.layer_hints != None:
@@ -93,7 +113,7 @@ def _split_image(image):
         return image, None
     return None, image
 
-def _collect_operation_root_symlinks(ctx, *, symlink_name_prefix):
+def _collect_operation_root_symlinks(deploy_infos, *, symlink_name_prefix):
     """Build the runfiles symlink tree for all operations.
 
     Every deploy operation names the runfiles slot holding its image (see
@@ -101,8 +121,7 @@ def _collect_operation_root_symlinks(ctx, *, symlink_name_prefix):
     operations of the merged deploy manifest deploy it.
     """
     root_symlinks = {}
-    for operation in ctx.attr.operations:
-        deploy_info = operation[DeployInfo]
+    for deploy_info in deploy_infos:
         index_info, manifest_info = _split_image(deploy_info.image)
         root_symlinks.update(calculate_root_symlinks(
             index_info = index_info,
@@ -130,15 +149,10 @@ def _multi_deploy_impl(ctx):
         if operation not in ("push", "load"):
             fail("deploy_operations may only contain \"push\" and/or \"load\", got \"{}\"".format(operation))
 
-    for operation in ctx.attr.operations:
-        if DeployInfo not in operation:
-            if ImageManifestInfo in operation or ImageIndexInfo in operation:
-                fail("Target '{}' provides an image but not DeployInfo. Add 'push_specs' or 'load_specs' to produce DeployInfo, or wrap it with image_push.".format(operation.label))
-            else:
-                fail("Target '{}' does not provide DeployInfo.".format(operation.label))
+    deploy_infos = _collect_deploy_infos(ctx)
 
     # Merge all deploy manifests
-    deploy_metadata, layer_hints = _compute_multi_deploy_metadata(ctx = ctx)
+    deploy_metadata, layer_hints = _compute_multi_deploy_metadata(ctx = ctx, deploy_infos = deploy_infos)
 
     # Create the executable
     root_symlinks_prefix = symlink_name_prefix(ctx)
@@ -160,7 +174,7 @@ def _multi_deploy_impl(ctx):
     )
 
     # Collect all image providers for root symlinks
-    root_symlinks = _collect_operation_root_symlinks(ctx, symlink_name_prefix = root_symlinks_prefix)
+    root_symlinks = _collect_operation_root_symlinks(deploy_infos, symlink_name_prefix = root_symlinks_prefix)
 
     # Add merged layer hints to root symlinks if present
     if layer_hints != None:
@@ -169,8 +183,7 @@ def _multi_deploy_impl(ctx):
     # Collect sign_setting config files from all operations and ship them (plus
     # their signer plugins) into the deployer's runfiles.
     sign_config_infos = []
-    for operation in ctx.attr.operations:
-        deploy_info = operation[DeployInfo]
+    for deploy_info in deploy_infos:
         if hasattr(deploy_info, "sign_settings"):
             sign_config_infos.extend(deploy_info.sign_settings)
     plugin_runfiles = add_sign_setting_symlinks(root_symlinks, sign_config_infos)
@@ -278,7 +291,9 @@ multi_deploy(
 ```
 
 Alternatively, standalone `image_push` or `image_load` targets that already
-provide `DeployInfo` can be used directly in `operations`.
+provide `DeployInfo` can be used directly in `operations`, as can custom
+targets that provide `MultipleDeployInfo` to contribute several deploy
+operations at once.
 
 `multi_deploy` has no push at build time of its own; it deploys at `bazel run`
 time. When `push_at_build_time` is enabled, the `image_push` targets (or images
@@ -295,14 +310,15 @@ bazel run //path/to:deploy_all
             doc = """List of operations to deploy together.
 
 Each operation must provide DeployInfo (typically from image_push, image_load,
-image_manifest with push_specs/load_specs, or image_index with push_specs/load_specs).
+image_manifest with push_specs/load_specs, or image_index with push_specs/load_specs)
+or MultipleDeployInfo (whose `infos` are expanded in place).
 All operations will be merged and executed in the order specified.
 """,
             mandatory = True,
             # OR-semantics: accepts image targets without DeployInfo so that
             # _multi_deploy_impl can provide actionable error messages guiding
             # users to add push_specs/load_specs or wrap with image_push.
-            providers = [[DeployInfo], [ImageManifestInfo], [ImageIndexInfo]],
+            providers = [[DeployInfo], [MultipleDeployInfo], [ImageManifestInfo], [ImageIndexInfo]],
         ),
         "push_strategy": attr.string(
             doc = """Push strategy to use for all push operations in the deployment.
