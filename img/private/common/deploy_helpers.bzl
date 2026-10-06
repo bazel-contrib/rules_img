@@ -19,6 +19,13 @@ load("//img/private/providers:signing_config_info.bzl", "SigningConfigInfo")
 # placeholder chosen to be extremely unlikely to collide with a real repository.
 USE_GLOBAL_SETTING = "<use global setting>"
 
+# Output groups the push-at-build-time outputs are placed in. The outputs always
+# go into PUSH_AT_BUILD_TIME_OUTPUT_GROUP (a regular output group, only built when
+# a build asks for it) and, when the `push_at_build_time_output_group` setting is
+# "validation", additionally into Bazel's implicit validation output group.
+PUSH_AT_BUILD_TIME_OUTPUT_GROUP = "push_at_build_time"
+VALIDATION_OUTPUT_GROUP = "_validation"
+
 def get_tags(ctx):
     """Get the list of tags from the context, validating mutual exclusivity.
 
@@ -239,7 +246,8 @@ def resolve_push_at_build_time(ctx):
       `deduplicated_push_blob_repository`: the USE_GLOBAL_SETTING sentinel defers to
       the global setting; any other string (including "") is used verbatim.
     - `push_at_build_time_exec_properties`: used verbatim (no global fallback).
-    - gateway endpoints: always global (there is no per-target attribute).
+    - gateway endpoints and the output group: always global (there is no per-target
+      attribute).
 
     Args:
         ctx: Rule context with the push-at-build-time attributes, `_push_settings`
@@ -249,7 +257,7 @@ def resolve_push_at_build_time(ctx):
         A struct with fields: mode, content, blob_repository, manifest_repository,
         forbid_layer_push (bool), deduplicated_push (mode string),
         deduplicated_push_blob_repository, deduplicated_push_content,
-        exec_properties (dict), gateway, push_gateway, pull_gateway.
+        exec_properties (dict), output_group, gateway, push_gateway, pull_gateway.
     """
     global_settings = ctx.attr._push_at_build_time_settings[PushAtBuildTimeSettingsInfo]
     push_settings = ctx.attr._push_settings[PushSettingsInfo]
@@ -296,10 +304,35 @@ def resolve_push_at_build_time(ctx):
         deduplicated_push_blob_repository = deduplicated_push_blob_repository,
         deduplicated_push_content = deduplicated_push_content,
         exec_properties = ctx.attr.push_at_build_time_exec_properties,
+        output_group = global_settings.output_group,
         gateway = global_settings.gateway,
         push_gateway = global_settings.push_gateway,
         pull_gateway = global_settings.pull_gateway,
     )
+
+def add_build_time_push_outputs(output_groups, outputs, output_group):
+    """Record push-at-build-time outputs in the output group(s) that drive them.
+
+    The outputs always land in the `push_at_build_time` output group, so a build
+    can ask for the pushes explicitly with `--output_groups=+push_at_build_time`.
+    When `output_group` is "validation" they are additionally wired into the
+    implicit `_validation` group, so the pushes run on every build of the target.
+
+    Args:
+        output_groups: dict of output group name -> list of Files, updated in
+            place.
+        outputs: list of Files produced by the `PushImage` actions. Empty is a
+            no-op.
+        output_group: resolved `push_at_build_time_output_group` setting, one of
+            "validation" or "push_at_build_time".
+    """
+    if not outputs:
+        return
+    names = [PUSH_AT_BUILD_TIME_OUTPUT_GROUP]
+    if output_group == "validation":
+        names.append(VALIDATION_OUTPUT_GROUP)
+    for name in names:
+        output_groups[name] = output_groups.get(name, []) + outputs
 
 def cross_mount_blob_repository(mode, blob_repository):
     """The blob staging repository to record in the deploy manifest, or "".

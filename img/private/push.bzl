@@ -9,7 +9,7 @@ load("//img/private:stamp.bzl", "expand_or_write")
 load("//img/private/common:build.bzl", "TOOLCHAINS")
 load("//img/private/common:default_deploy_tool.bzl", "default_deploy_tool")
 load("//img/private/common:deploy_attrs.bzl", "COMMON_PUSH_ATTRS")
-load("//img/private/common:deploy_helpers.bzl", "content_tracking_json_vars", "cross_mount_blob_repository", "extract_cross_mount_from", "extract_referrers", "get_image_providers", "get_tags", "image_target_vars", "resolve_push_at_build_time", "resolve_push_registry", "resolve_push_strategy", "resolve_signing")
+load("//img/private/common:deploy_helpers.bzl", "add_build_time_push_outputs", "content_tracking_json_vars", "cross_mount_blob_repository", "extract_cross_mount_from", "extract_referrers", "get_image_providers", "get_tags", "image_target_vars", "resolve_push_at_build_time", "resolve_push_registry", "resolve_push_strategy", "resolve_signing")
 load("//img/private/common:transitions.bzl", "reset_platform_transition")
 load("//img/private/providers:deploy_info.bzl", "DeployInfo")
 load("//img/private/providers:deploy_tool_info.bzl", "DeployToolInfo")
@@ -196,32 +196,37 @@ def _image_push_impl(ctx):
     for pr in plugin_runfiles:
         runfiles = runfiles.merge(pr)
 
-    # Push at build time via PushImage validation actions (mnemonic PushImage),
+    # Push at build time via PushImage build actions (mnemonic PushImage),
     # mirroring the push_specs path on image_manifest / image_index. Gated by the
     # resolved per-target push_at_build_time setting; a no-op (no actions) when
     # disabled.
     output_groups = {"deploy_manifest": depset([deploy_metadata])}
     if pbt.mode in ("best_effort", "enabled"):
-        validation_outputs = build_time_push_actions(
-            ctx,
-            push_idx = 0,
-            configuration_json = configuration_json,
-            manifest_info = manifest_info,
-            index_info = index_info,
-            sparse_layout = getattr(image_provider, "sparse_oci_layout", None),
-            mode = pbt.mode,
-            content = pbt.content,
-            blob_repository = pbt.blob_repository,
-            manifest_repository = pbt.manifest_repository,
-            gateway = pbt.gateway,
-            push_gateway = pbt.push_gateway,
-            pull_gateway = pbt.pull_gateway,
-            insecure = ctx.attr._push_settings[PushSettingsInfo].insecure,
-            pull_info = ctx.attr.image[PullInfo] if PullInfo in ctx.attr.image else None,
-            exec_requirements = pbt.exec_properties,
+        push_output_groups = {}
+        add_build_time_push_outputs(
+            push_output_groups,
+            build_time_push_actions(
+                ctx,
+                push_idx = 0,
+                configuration_json = configuration_json,
+                manifest_info = manifest_info,
+                index_info = index_info,
+                sparse_layout = getattr(image_provider, "sparse_oci_layout", None),
+                mode = pbt.mode,
+                content = pbt.content,
+                blob_repository = pbt.blob_repository,
+                manifest_repository = pbt.manifest_repository,
+                gateway = pbt.gateway,
+                push_gateway = pbt.push_gateway,
+                pull_gateway = pbt.pull_gateway,
+                insecure = ctx.attr._push_settings[PushSettingsInfo].insecure,
+                pull_info = ctx.attr.image[PullInfo] if PullInfo in ctx.attr.image else None,
+                exec_requirements = pbt.exec_properties,
+            ),
+            pbt.output_group,
         )
-        if validation_outputs:
-            output_groups["_validation"] = depset(validation_outputs)
+        for group_name, files in push_output_groups.items():
+            output_groups[group_name] = depset(files)
 
     return [
         DefaultInfo(
@@ -338,8 +343,8 @@ See [push strategies documentation](/docs/push-strategies.md) for detailed compa
 Push at build time:
 
 When the `push_at_build_time` setting is enabled, an `image_push` target also
-uploads its image content to the registry *during the build* (as `PushImage`
-validation actions), so the image is present without a separate `bazel run`. See
+uploads its image content to the registry *during the build* (via `PushImage`
+actions), so the image is present without a separate `bazel run`. See
 [push at build time](/docs/push-strategies.md#push-at-build-time).
 
 Runtime usage:

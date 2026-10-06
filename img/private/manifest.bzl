@@ -714,7 +714,7 @@ def _image_manifest_impl(ctx):
         manifest_info_provider,
     ])
 
-    deploy_info, validation_outputs = process_deploy_specs(
+    deploy_info, push_output_groups = process_deploy_specs(
         ctx,
         manifest_info = manifest_info_provider,
         index_info = None,
@@ -743,8 +743,8 @@ def _image_manifest_impl(ctx):
     if deploy_info != None:
         providers.append(deploy_info)
         output_groups["deploy_manifest"] = depset([deploy_info.deploy_manifest])
-    if validation_outputs:
-        output_groups["_validation"] = depset(validation_outputs)
+    for group_name, files in push_output_groups.items():
+        output_groups[group_name] = depset(files)
     providers.append(OutputGroupInfo(**output_groups))
 
     return providers
