@@ -336,13 +336,21 @@ By default, all child manifests of a multi-platform image index are downloaded. 
         "registry": attr.string(
             doc = """Primary registry to pull from (e.g., "index.docker.io", "gcr.io").
 
-If not specified, defaults to Docker Hub. Can be overridden by entries in registries list.""",
+If neither this nor `registries` is specified, defaults to Docker Hub.
+
+The primary registry is also the canonical one: it names the image in the generated
+package URL and in the `:load` target. Add mirrors that serve the same image in
+`registries`.""",
         ),
         "registries": attr.string_list(
-            doc = """List of mirror registries to try in order.
+            doc = """Mirror registries that serve the same image.
 
-These registries will be tried in order before the primary registry. Useful for
-corporate environments with registry mirrors or air-gapped setups.""",
+Useful for corporate environments with registry mirrors or air-gapped setups.
+
+The primary `registry` and every entry here are interchangeable sources for the same
+content. The order downloads try them in is unspecified, and a pull succeeds if at
+least one of them has the data, so do not rely on a particular registry being
+contacted first.""",
         ),
         "repository": attr.string(
             mandatory = True,

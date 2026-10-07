@@ -7,11 +7,16 @@ def get_registries(rctx):
     It checks both the singular 'registry' and plural 'registries' attributes,
     and provides a sensible default (index.docker.io) if neither is specified.
 
+    All returned registries are interchangeable sources for the same content:
+    the order downloads try them in is unspecified, and a pull succeeds if at
+    least one of them has the data. The first entry is the canonical registry,
+    used to name the image where a single registry is required.
+
     Args:
         rctx: Repository context with 'registry' and 'registries' attributes.
 
     Returns:
-        A list of registry strings to try in order.
+        A non-empty list of registry strings, canonical entry first.
     """
     registries = []
     if rctx.attr.registry:
@@ -71,6 +76,8 @@ def get_sources_list(sources_dict):
     Returns:
         A list of "repository@registry" strings for all source combinations.
         Repositories with empty registry lists default to "index.docker.io".
+        Downloads treat the entries as interchangeable sources and try them in
+        an unspecified order.
     """
     source_list = []
     for repository, registries in sources_dict.items():
