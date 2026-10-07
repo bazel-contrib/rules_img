@@ -98,7 +98,9 @@ Each entry specifies a repository path and the registries that can serve it:
 - Key: The image repository (e.g., "library/ubuntu", "my-project/my-image")
 - Value: List of registries that serve this repository
 
-All repository@registry combinations will be tried (in random order for load distribution).
+All repository@registry combinations are interchangeable sources for the same content.
+The order they are tried in is unspecified, and the download succeeds if at least one
+of them has the data.
 
 If a registry list is empty, it defaults to Docker Hub (index.docker.io).""",
         ),
