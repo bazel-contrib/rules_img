@@ -46,6 +46,11 @@ type deployWorkerHandler struct {
 	// work request may override it in turn.
 	deduplicatedPush dedupFlags
 
+	// printSpec is the raw process-wide --print value, selecting which references
+	// are reported in a work response. Empty leaves every kind selected, and a
+	// work request may override it in turn.
+	printSpec string
+
 	// blobLocations remembers where the deduplicated push has put each shared blob,
 	// for the lifetime of the worker: a work request only knows its own destinations,
 	// so without it two requests sharing a layer would each upload it into a
@@ -59,11 +64,14 @@ type deployWorkerHandler struct {
 	sinkMu     sync.Mutex
 }
 
-func newDeployWorkerHandler(ctx context.Context, jobs int, sinkSpec string, deduplicatedPush dedupFlags) (*deployWorkerHandler, error) {
+func newDeployWorkerHandler(ctx context.Context, jobs int, sinkSpec string, deduplicatedPush dedupFlags, printSpec string) (*deployWorkerHandler, error) {
 	if err := validateDeduplicatedPushOverride(deduplicatedPush.mode); err != nil {
 		return nil, err
 	}
 	if err := validateDeduplicatedPushContent(deduplicatedPush.content, "--deduplicated-push-content"); err != nil {
+		return nil, err
+	}
+	if _, err := parsePrintFilter(splitCommaList(printSpec)); err != nil {
 		return nil, err
 	}
 
@@ -100,6 +108,7 @@ func newDeployWorkerHandler(ctx context.Context, jobs int, sinkSpec string, dedu
 		pushTransport:    pushTransport,
 		casBlobs:         casBlobs,
 		deduplicatedPush: deduplicatedPush,
+		printSpec:        printSpec,
 		// Requests arrive one at a time, so a blob's home is settled the first time a
 		// request needs it and published for the rest.
 		blobLocations: newBlobLocations(true),
@@ -178,6 +187,17 @@ func (h *deployWorkerHandler) processRequest(ctx context.Context, req persistent
 		return "", err
 	}
 
+	// --print follows the same precedence: the work request's value wins over
+	// the one img deploy was started with.
+	printSpec := opts.printSpec
+	if printSpec == "" {
+		printSpec = h.printSpec
+	}
+	printSelection, err := parsePrintFilter(splitCommaList(printSpec))
+	if err != nil {
+		return "", err
+	}
+
 	vfsBuilder := h.baseBuilder.Clone().WithDeployManifest(dm).WithContext(ctx)
 	for _, layoutPath := range opts.ociLayouts {
 		vfsBuilder = vfsBuilder.WithOCILayout(layoutPath)
@@ -199,10 +219,10 @@ func (h *deployWorkerHandler) processRequest(ctx context.Context, req persistent
 		if opts.sink != "" {
 			return "", fmt.Errorf("--sink cannot be set in a work request when img deploy was started with a global --sink")
 		}
-		return h.routeGlobalSink(ctx, vfs, dm, opts)
+		return h.routeGlobalSink(ctx, vfs, dm, opts, printSelection)
 	}
 	if opts.sink != "" {
-		return h.routePerRequestSink(ctx, vfs, dm, opts)
+		return h.routePerRequestSink(ctx, vfs, dm, opts, printSelection)
 	}
 
 	var output strings.Builder
@@ -250,14 +270,11 @@ func (h *deployWorkerHandler) processRequest(ctx context.Context, req persistent
 	}
 
 	if len(pushOps) > 0 {
-		tags, err := h.pushOps(ctx, vfs, vfsForOperation, pushOps, dm.Settings.PushStrategy, opts)
+		refs, err := h.pushOps(ctx, vfs, vfsForOperation, pushOps, dm.Settings.PushStrategy, opts)
 		if err != nil {
 			return "", fmt.Errorf("push: %w", err)
 		}
-		for _, tag := range tags {
-			output.WriteString(tag)
-			output.WriteByte('\n')
-		}
+		printSelection.printPushed(&output, refs)
 	}
 
 	if len(registryTagOps) > 0 {
@@ -265,10 +282,7 @@ func (h *deployWorkerHandler) processRequest(ctx context.Context, req persistent
 		if err != nil {
 			return "", fmt.Errorf("registry_tag: %w", err)
 		}
-		for _, tag := range tags {
-			output.WriteString(tag)
-			output.WriteByte('\n')
-		}
+		printSelection.printRefs(&output, printKindTag, tags)
 	}
 
 	loadOps, err := dm.LoadOperations()
@@ -322,7 +336,7 @@ func sinkOperations(dm api.DeployManifest) ([]api.IndexedPushDeployOperation, []
 // Access is serialized because the incremental dir sinks are not concurrency-
 // safe, and the sink is flushed after each request so its on-disk state stays
 // valid between requests.
-func (h *deployWorkerHandler) routeGlobalSink(ctx context.Context, vfs *deployvfs.VFS, dm api.DeployManifest, opts *workerOpts) (string, error) {
+func (h *deployWorkerHandler) routeGlobalSink(ctx context.Context, vfs *deployvfs.VFS, dm api.DeployManifest, opts *workerOpts, printSelection printFilter) (string, error) {
 	pushOps, loadOps, tagOps, err := sinkOperations(dm)
 	if err != nil {
 		return "", err
@@ -349,12 +363,12 @@ func (h *deployWorkerHandler) routeGlobalSink(ctx context.Context, vfs *deployvf
 	if err := h.globalSink.Close(); err != nil {
 		return "", fmt.Errorf("flushing sink: %w", err)
 	}
-	return refsOutput(refs), nil
+	return refsOutput(printSelection, refs), nil
 }
 
 // routePerRequestSink captures a request's operations into an isolated,
 // request-scoped oci-tar/docker-save sink.
-func (h *deployWorkerHandler) routePerRequestSink(ctx context.Context, vfs *deployvfs.VFS, dm api.DeployManifest, opts *workerOpts) (string, error) {
+func (h *deployWorkerHandler) routePerRequestSink(ctx context.Context, vfs *deployvfs.VFS, dm api.DeployManifest, opts *workerOpts, printSelection printFilter) (string, error) {
 	kind, path, err := parseSink(opts.sink)
 	if err != nil {
 		return "", err
@@ -386,21 +400,21 @@ func (h *deployWorkerHandler) routePerRequestSink(ctx context.Context, vfs *depl
 	if err := s.Close(); err != nil {
 		return "", fmt.Errorf("finalizing sink: %w", err)
 	}
-	return refsOutput(refs), nil
+	return refsOutput(printSelection, refs), nil
 }
 
-func refsOutput(refs []string) string {
+// refsOutput renders the references a sink captured as the work response's
+// output. They are all tags: a sink captures no digest references of its own
+// (see routeToSink).
+func refsOutput(filter printFilter, refs []string) string {
 	var output strings.Builder
-	for _, ref := range refs {
-		output.WriteString(ref)
-		output.WriteByte('\n')
-	}
+	filter.printRefs(&output, printKindTag, refs)
 	return output.String()
 }
 
 // pushOps pushes the operations, serving each one's blobs from vfsForOperation. vfs
 // is the plain view, used for anything not tied to a single operation.
-func (h *deployWorkerHandler) pushOps(ctx context.Context, vfs *deployvfs.VFS, vfsForOperation func(string, api.BaseCommandOperation) *deployvfs.VFS, ops []api.IndexedPushDeployOperation, strategy string, opts *workerOpts) ([]string, error) {
+func (h *deployWorkerHandler) pushOps(ctx context.Context, vfs *deployvfs.VFS, vfsForOperation func(string, api.BaseCommandOperation) *deployvfs.VFS, ops []api.IndexedPushDeployOperation, strategy string, opts *workerOpts) ([]push.PushedReference, error) {
 	uploadBuilder := push.NewBuilder(vfs).
 		WithVFSForOperation(func(op api.IndexedPushDeployOperation) push.VFS {
 			return vfsForOperation(op.Registry, op.BaseCommandOperation)
@@ -490,6 +504,10 @@ type workerOpts struct {
 	platforms          []string
 	sink               string
 	toolInvocationID   string
+	// printSpec is this request's raw --print value, selecting which of the
+	// references its operations produced are reported back in the work
+	// response. Empty defers to the value img deploy was started with.
+	printSpec string
 	// deduplicatedPush holds this work request's overrides of the deduplicated push
 	// settings recorded per operation in its deploy manifest.
 	deduplicatedPush dedupFlags
@@ -618,6 +636,18 @@ func parseWorkerArgs(args []string) (*workerOpts, error) {
 				return nil, err
 			}
 			opts.deduplicatedPush.content = value
+		case key == "--print":
+			if !hasValue {
+				if i+1 >= len(args) {
+					return nil, fmt.Errorf("--print requires a value")
+				}
+				i++
+				value = args[i]
+			}
+			if _, err := parsePrintFilter(splitCommaList(value)); err != nil {
+				return nil, err
+			}
+			opts.printSpec = value
 		case key == "--invocation-id" || key == "--invocation_id":
 			if !hasValue {
 				if i+1 >= len(args) {
@@ -656,8 +686,8 @@ func withWorkerRequestMetadata(ctx context.Context, defaults protohelper.Request
 	return ctx
 }
 
-func persistentWorker(ctx context.Context, jobs int, sinkSpec string, deduplicatedPush dedupFlags) error {
-	handler, err := newDeployWorkerHandler(ctx, jobs, sinkSpec, deduplicatedPush)
+func persistentWorker(ctx context.Context, jobs int, sinkSpec string, deduplicatedPush dedupFlags, printSpec string) error {
+	handler, err := newDeployWorkerHandler(ctx, jobs, sinkSpec, deduplicatedPush, printSpec)
 	if err != nil {
 		return err
 	}

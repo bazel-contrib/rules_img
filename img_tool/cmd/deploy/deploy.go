@@ -69,7 +69,7 @@ func DeployProcess(ctx context.Context, args []string) {
 			mode:           extractFlag(processedArgs, "--deduplicated-push"),
 			blobRepository: extractFlag(processedArgs, "--deduplicated-push-blob-repository"),
 			content:        extractFlag(processedArgs, "--deduplicated-push-content"),
-		}); err != nil {
+		}, extractFlag(processedArgs, "--print")); err != nil {
 			fmt.Fprintf(os.Stderr, "Error in persistent worker: %v\n", err)
 			os.Exit(1)
 		}
@@ -96,6 +96,7 @@ func DeployProcess(ctx context.Context, args []string) {
 	var deduplicatedPushBlobRepository string
 	var deduplicatedPushContent string
 	var allowEmpty bool
+	var printSpec string
 
 	flagSet := flag.NewFlagSet("deploy", flag.ContinueOnError)
 	flagSet.Var(&requestFiles, "request-file", "Deploy manifest JSON request file (can be used multiple times)")
@@ -111,6 +112,7 @@ func DeployProcess(ctx context.Context, args []string) {
 	flagSet.StringVar(&sink, "sink", "", "Override the destination of all push/load/registry_tag operations for testing. Format: <type>:<path> where type is one of oci-tar, docker-save, oci, distribution, distribution-flat. No registry or daemon network I/O is performed.")
 	flagSet.StringVar(&progressMode, "progress", "", "How to report progress on stderr: 'bar' (interactive progress bars), 'log' (one crane-style line per blob), 'none', or 'auto' (default: bars on a terminal, log lines otherwise). Overridable with $IMG_PROGRESS.")
 	flagSet.BoolVar(&allowEmpty, "allow-empty", false, "Exit successfully when the deploy manifest contains no operations, instead of reporting it as an error. Used for deployments that are empty by construction.")
+	flagSet.StringVar(&printSpec, "print", "", "Which of the references the deploy produced are printed to stdout, one per line: a comma-separated list of 'tag' (tag references), 'manifest' (digest references of the manifests pushed in their own right) and 'referrer' (digest references of the manifests pushed as attachments of another manifest, such as SBOMs), or 'all' (default) for every kind, or 'none' to print nothing.")
 	flagSet.Var(&signSettingFiles, "sign_setting_file", "Additional sign_setting config file to ingest for signing (can be used multiple times)")
 	flagSet.StringVar(&defaultSignSetting, "default_sign_setting", "", "Default sign_setting for operations without one: a path to a config file, or sha256:<hex> referencing a discovered setting")
 	flagSet.BoolVar(&signForce, "sign_force", false, "Sign every push operation using the default sign_setting, even operations not configured to sign at build time")
@@ -136,6 +138,13 @@ func DeployProcess(ctx context.Context, args []string) {
 	}
 
 	if err := applyProgressMode(progressMode, false); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		flagSet.Usage()
+		os.Exit(1)
+	}
+
+	printSelection, err := parsePrintFilter(splitCommaList(printSpec))
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		flagSet.Usage()
 		os.Exit(1)
@@ -170,6 +179,7 @@ func DeployProcess(ctx context.Context, args []string) {
 		Jobs:                       jobs,
 		Sink:                       sink,
 		AllowEmpty:                 allowEmpty,
+		Print:                      printSelection,
 		SignSettingFiles:           []string(signSettingFiles),
 		DefaultSignSetting:         defaultSignSetting,
 		SignForce:                  signForce,
@@ -244,6 +254,10 @@ type DeployOptions struct {
 	Jobs                       int
 	Sink                       string
 	AllowEmpty                 bool
+
+	// Print selects which of the references the deploy produced are written to
+	// stdout. The zero value prints all of them.
+	Print printFilter
 
 	// Signing options.
 	SignSettingFiles   []string // extra sign_setting config files to ingest
@@ -446,7 +460,7 @@ func DeployWithExtras(ctx context.Context, rawRequest []byte, opts DeployOptions
 	// registryopts.EnvLogConcurrency), including on the failure paths below.
 	defer registryopts.LogConcurrencySummary(os.Stderr)
 
-	var pushedTags []string
+	var pushedRefs []push.PushedReference
 	// groupCtx is cancelled once g.Wait returns; keep the outer ctx for work after it (registry_tag ops).
 	g, groupCtx := errgroup.WithContext(ctx)
 
@@ -523,11 +537,11 @@ func DeployWithExtras(ctx context.Context, rawRequest []byte, opts DeployOptions
 		uploader := uploadBuilder.Build()
 
 		g.Go(func() error {
-			tags, err := uploader.PushAll(groupCtx, pushOperations, req.Settings.PushStrategy)
+			refs, err := uploader.PushAll(groupCtx, pushOperations, req.Settings.PushStrategy)
 			if err != nil {
 				return err
 			}
-			pushedTags = tags
+			pushedRefs = refs
 			return nil
 		})
 	}
@@ -560,10 +574,8 @@ func DeployWithExtras(ctx context.Context, rawRequest []byte, opts DeployOptions
 
 	printBlobStats(vfs, casBlobs)
 
-	// Print all pushed tags to stdout, one per line.
-	for _, tag := range pushedTags {
-		fmt.Println(tag)
-	}
+	// Print the pushed references to stdout, one per line, as --print selects.
+	opts.Print.printPushed(os.Stdout, pushedRefs)
 	// Note: loadedTags are already printed by the loader itself
 
 	// Sign pushed artifacts (referrers require the subjects to already exist in
@@ -590,9 +602,7 @@ func DeployWithExtras(ctx context.Context, rawRequest []byte, opts DeployOptions
 		if err != nil {
 			return err
 		}
-		for _, t := range extraTagNames {
-			fmt.Println(t)
-		}
+		opts.Print.printRefs(os.Stdout, printKindTag, extraTagNames)
 	}
 
 	return nil
@@ -1128,8 +1138,8 @@ func deployToSink(ctx context.Context, spec string, vfs *deployvfs.VFS, casBlobs
 		return fmt.Errorf("finalizing sink: %w", err)
 	}
 	printBlobStats(vfs, casBlobs)
-	for _, ref := range refs {
-		fmt.Println(ref)
-	}
+	// Every reference a sink reports is a tag: a sink captures no digest
+	// references of its own (see routeToSink).
+	opts.Print.printRefs(os.Stdout, printKindTag, refs)
 	return nil
 }

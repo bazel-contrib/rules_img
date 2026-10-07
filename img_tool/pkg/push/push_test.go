@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -47,16 +48,16 @@ func TestPushAllReportsCraneStyleProgress(t *testing.T) {
 		WithRemoteOptions(transport).
 		Build()
 
-	tags, err := uploader.PushAll(context.Background(), pushOps(host, "test/image", digest, "latest"), "eager")
+	pushed, err := uploader.PushAll(context.Background(), pushOps(host, "test/image", digest, "latest"), "eager")
 	if err != nil {
 		t.Fatalf("PushAll() returned error: %v", err)
 	}
-	wantTags := []string{
-		host + "/test/image@" + digest.String(),
-		host + "/test/image:latest",
+	wantRefs := []PushedReference{
+		{Ref: host + "/test/image@" + digest.String()},
+		{Ref: host + "/test/image:latest", Tag: true},
 	}
-	if strings.Join(tags, ",") != strings.Join(wantTags, ",") {
-		t.Errorf("PushAll() = %q, want %q", tags, wantTags)
+	if !slices.Equal(pushed, wantRefs) {
+		t.Errorf("PushAll() = %+v, want %+v", pushed, wantRefs)
 	}
 
 	// Same shape as crane: one timestamped line per event, nothing else.
@@ -74,8 +75,8 @@ func TestPushAllReportsCraneStyleProgress(t *testing.T) {
 			t.Errorf("missing %q in progress output:\n%s", want, got)
 		}
 	}
-	for _, tag := range wantTags {
-		if want := fmt.Sprintf("%s: digest: %s size:", tag, digest); !strings.Contains(got, want) {
+	for _, ref := range wantRefs {
+		if want := fmt.Sprintf("%s: digest: %s size:", ref.Ref, digest); !strings.Contains(got, want) {
 			t.Errorf("missing %q in progress output:\n%s", want, got)
 		}
 	}
@@ -154,6 +155,54 @@ func TestPushAllStaysSilentWithoutProgress(t *testing.T) {
 	}
 	if got := out.String(); got != "" {
 		t.Errorf("reported progress with progress reporting off:\n%s", got)
+	}
+}
+
+// TestPushAllMarksReferrerReferences checks that PushAll reports which of the
+// manifests it pushed are attachments of another one, so that callers can tell
+// an image apart from its SBOMs and signatures in the list of references.
+func TestPushAllMarksReferrerReferences(t *testing.T) {
+	host, transport := newTestRegistry(t)
+
+	image, err := random.Image(256, 1)
+	if err != nil {
+		t.Fatalf("creating test image: %v", err)
+	}
+	imageDigest, err := image.Digest()
+	if err != nil {
+		t.Fatalf("digesting test image: %v", err)
+	}
+	attachment, err := random.Image(128, 1)
+	if err != nil {
+		t.Fatalf("creating test attachment: %v", err)
+	}
+	attachmentDigest, err := attachment.Digest()
+	if err != nil {
+		t.Fatalf("digesting test attachment: %v", err)
+	}
+	vfs := imageVFS{}
+	vfs.add(t, image)
+	vfs.add(t, attachment)
+
+	// A referrer push carries no tags of its own; it is discovered through the
+	// referrers API (see referrerPushOperation in cmd/deploymetadata).
+	ops := pushOps(host, "test/image", imageDigest, "latest")
+	referrerOps := pushOps(host, "test/image", attachmentDigest)
+	referrerOps[0].Referrer = true
+	ops = append(ops, referrerOps...)
+
+	pushed, err := NewBuilder(vfs).WithJobs(1).WithRemoteOptions(transport).Build().
+		PushAll(context.Background(), ops, "eager")
+	if err != nil {
+		t.Fatalf("PushAll() returned error: %v", err)
+	}
+	want := []PushedReference{
+		{Ref: host + "/test/image@" + imageDigest.String()},
+		{Ref: host + "/test/image:latest", Tag: true},
+		{Ref: host + "/test/image@" + attachmentDigest.String(), Referrer: true},
+	}
+	if !slices.Equal(pushed, want) {
+		t.Errorf("PushAll() = %+v, want %+v", pushed, want)
 	}
 }
 
