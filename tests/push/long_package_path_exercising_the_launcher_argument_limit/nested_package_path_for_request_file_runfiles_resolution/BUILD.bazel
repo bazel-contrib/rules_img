@@ -1,0 +1,47 @@
+load("@bazel_skylib//rules:build_test.bzl", "build_test")
+load("@rules_img//img:image.bzl", "image_manifest")
+load("@rules_img//img:push.bzl", "image_push")
+
+# gazelle:exclude_from_release
+
+image_manifest(
+    name = "image",
+    layers = [],
+)
+
+# The request runfile path exceeds the launcher's 256-byte argument limit.
+image_push(
+    name = "push_with_a_long_target_name_to_ensure_the_generated_deployment_request_runfile_path_exceeds_the_launchers_fixed_size_argument_buffer",
+    image = ":image",
+    registry = "example.com",
+    repository = "test/long-path",
+)
+
+# A local sink exercises request-file resolution without contacting a registry.
+#
+# Windows is excluded. The paths this package needs to exceed the launcher's
+# 256-byte argument limit also exceed the 260-character MAX_PATH limit, and
+# nothing here can run: the launcher resolves its own runfiles manifest through
+# the ANSI file APIs, and Bazel's test wrapper spells the package path twice
+# when it starts a test from its runfiles tree. Windows still builds the pusher
+# through the enclosing target pattern, which is where the argument limit is
+# enforced, so the regression stays covered there.
+genrule(
+    name = "local_push",
+    outs = ["image.tar"],
+    cmd = "$(location :push_with_a_long_target_name_to_ensure_the_generated_deployment_request_runfile_path_exceeds_the_launchers_fixed_size_argument_buffer) --sink oci-tar:$@",
+    target_compatible_with = select({
+        "@platforms//os:windows": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
+    tools = [":push_with_a_long_target_name_to_ensure_the_generated_deployment_request_runfile_path_exceeds_the_launchers_fixed_size_argument_buffer"],
+)
+
+build_test(
+    name = "long_request_path_test",
+    target_compatible_with = select({
+        "@platforms//os:windows": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
+    targets = [":local_push"],
+)
