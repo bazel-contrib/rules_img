@@ -1,7 +1,7 @@
 load("@bazel_skylib//rules:build_test.bzl", "build_test")
 load("@rules_img//img:multi_deploy.bzl", "multi_deploy")
 load("@rules_img//img:push.bzl", "image_push")
-load(":defs.bzl", "deploy_bundle")
+load(":defs.bzl", "deploy_bundle", "no_deploy_infos")
 
 image_push(
     name = "nginx",
@@ -48,10 +48,31 @@ multi_deploy(
     ],
 )
 
+deploy_bundle(
+    name = "empty_bundle",
+    operations = [],
+)
+
+no_deploy_infos(name = "unset_bundle")
+
+# MultipleDeployInfo is allowed to be empty and results in a no-op.
+multi_deploy(
+    name = "empty_deploy",
+    operations = [
+        ":empty_bundle",
+        ":unset_bundle",
+    ],
+)
+
 build_test(
     name = "test",
     targets = [
         ":bundled_deploy",
         ":multi_deploy",
     ],
+)
+
+build_test(
+    name = "empty_test",
+    targets = [":empty_deploy"],
 )

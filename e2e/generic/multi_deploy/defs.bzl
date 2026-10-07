@@ -18,3 +18,11 @@ deploy_bundle = rule(
         ),
     },
 )
+
+def _no_deploy_infos_impl(_ctx):
+    return [MultipleDeployInfo()]
+
+no_deploy_infos = rule(
+    implementation = _no_deploy_infos_impl,
+    doc = "Provides empty MultipleDeployInfo for testing.",
+)

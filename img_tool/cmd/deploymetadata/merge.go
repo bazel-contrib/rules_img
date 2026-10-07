@@ -33,6 +33,7 @@ func DeployMergeProcess(ctx context.Context, args []string) {
 		flagSet.PrintDefaults()
 		examples := []string{
 			"img deploy-merge --push-strategy=lazy --load-strategy=eager push1.json push2.json load1.json merged.json",
+			"img deploy-merge empty.json",
 		}
 		fmt.Fprintf(flagSet.Output(), "\nExamples:\n")
 		for _, example := range examples {
@@ -63,8 +64,8 @@ func DeployMergeProcess(ctx context.Context, args []string) {
 		os.Exit(1)
 	}
 
-	if flagSet.NArg() < 2 {
-		fmt.Fprintln(os.Stderr, "Error: at least one input file and one output file are required")
+	if flagSet.NArg() < 1 {
+		fmt.Fprintln(os.Stderr, "Error: an output file is required")
 		flagSet.Usage()
 		os.Exit(1)
 	}
@@ -131,7 +132,8 @@ func keepOperation(command string, kinds map[string]bool) bool {
 // MergeDeployManifests concatenates the operations of every input manifest into a
 // single manifest written to outputPath. When operations is non-empty, only the
 // requested operation kinds ("push" and/or "load") are retained; an empty
-// operations slice keeps every operation.
+// operations slice keeps every operation. An empty inputPaths writes a manifest
+// with no operations.
 func MergeDeployManifests(ctx context.Context, inputPaths []string, outputPath string, operations []string) error {
 	var kinds map[string]bool
 	if len(operations) > 0 {

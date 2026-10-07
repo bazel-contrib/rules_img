@@ -38,19 +38,21 @@ def _collect_deploy_infos(ctx):
 
     A target providing DeployInfo contributes itself; a target providing
     MultipleDeployInfo contributes each of its infos.
+
+    MultipleDeployInfo is deliberately allowed to add 0 operations.
     """
     deploy_infos = []
     for operation in ctx.attr.operations:
         if DeployInfo in operation:
             deploy_infos.append(operation[DeployInfo])
         elif MultipleDeployInfo in operation:
-            deploy_infos.extend(operation[MultipleDeployInfo].infos.to_list())
+            infos = getattr(operation[MultipleDeployInfo], "infos", None)
+            if infos != None:
+                deploy_infos.extend(infos.to_list())
         elif ImageManifestInfo in operation or ImageIndexInfo in operation:
             fail("Target '{}' provides an image but not DeployInfo. Add 'push_specs' or 'load_specs' to produce DeployInfo, or wrap it with image_push.".format(operation.label))
         else:
             fail("Target '{}' does not provide DeployInfo or MultipleDeployInfo.".format(operation.label))
-    if not deploy_infos:
-        fail("operations did not contribute any DeployInfo")
     return deploy_infos
 
 def _compute_multi_deploy_metadata(*, ctx, deploy_infos):
@@ -159,7 +161,13 @@ def _multi_deploy_impl(ctx):
     deployer = ctx.actions.declare_file(ctx.label.name + ".exe")
     deploy_tool_info = ctx.attr.deploy_tool[DeployToolInfo] if ctx.attr.deploy_tool != None else ctx.attr._deploy_tool[DeployToolInfo]
     embedded_args, transformed_args = launcher.args_from_entrypoint(executable_file = deploy_tool_info.img_deploy_exe)
-    embedded_args.extend(["deploy", "--runfiles-root-symlinks-prefix", root_symlinks_prefix, "--request-file"])
+    embedded_args.extend(["deploy", "--runfiles-root-symlinks-prefix", root_symlinks_prefix])
+
+    # Every operation expanded to an empty MultipleDeployInfo, so the merged
+    # manifest is empty on purpose.
+    if not deploy_infos:
+        embedded_args.append("--allow-empty")
+    embedded_args.append("--request-file")
     embedded_args, transformed_args = launcher.append_runfile(
         file = deploy_metadata,
         embedded_args = embedded_args,
@@ -313,6 +321,8 @@ Each operation must provide DeployInfo (typically from image_push, image_load,
 image_manifest with push_specs/load_specs, or image_index with push_specs/load_specs)
 or MultipleDeployInfo (whose `infos` are expanded in place).
 All operations will be merged and executed in the order specified.
+
+A MultipleDeployInfo with no `infos` is allowed and results in a no-op instead of an error.
 """,
             mandatory = True,
             # OR-semantics: accepts image targets without DeployInfo so that

@@ -95,6 +95,7 @@ func DeployProcess(ctx context.Context, args []string) {
 	var deduplicatedPush string
 	var deduplicatedPushBlobRepository string
 	var deduplicatedPushContent string
+	var allowEmpty bool
 
 	flagSet := flag.NewFlagSet("deploy", flag.ContinueOnError)
 	flagSet.Var(&requestFiles, "request-file", "Deploy manifest JSON request file (can be used multiple times)")
@@ -109,6 +110,7 @@ func DeployProcess(ctx context.Context, args []string) {
 	flagSet.IntVar(&jobs, "jobs", defaultDeployJobs(), "Maximum number of concurrent requests to the destination registry, and of parallel push operations (defaults to GOMAXPROCS)")
 	flagSet.StringVar(&sink, "sink", "", "Override the destination of all push/load/registry_tag operations for testing. Format: <type>:<path> where type is one of oci-tar, docker-save, oci, distribution, distribution-flat. No registry or daemon network I/O is performed.")
 	flagSet.StringVar(&progressMode, "progress", "", "How to report progress on stderr: 'bar' (interactive progress bars), 'log' (one crane-style line per blob), 'none', or 'auto' (default: bars on a terminal, log lines otherwise). Overridable with $IMG_PROGRESS.")
+	flagSet.BoolVar(&allowEmpty, "allow-empty", false, "Exit successfully when the deploy manifest contains no operations, instead of reporting it as an error. Used for deployments that are empty by construction.")
 	flagSet.Var(&signSettingFiles, "sign_setting_file", "Additional sign_setting config file to ingest for signing (can be used multiple times)")
 	flagSet.StringVar(&defaultSignSetting, "default_sign_setting", "", "Default sign_setting for operations without one: a path to a config file, or sha256:<hex> referencing a discovered setting")
 	flagSet.BoolVar(&signForce, "sign_force", false, "Sign every push operation using the default sign_setting, even operations not configured to sign at build time")
@@ -167,6 +169,7 @@ func DeployProcess(ctx context.Context, args []string) {
 		Layers:                     []string(explicitLayers),
 		Jobs:                       jobs,
 		Sink:                       sink,
+		AllowEmpty:                 allowEmpty,
 		SignSettingFiles:           []string(signSettingFiles),
 		DefaultSignSetting:         defaultSignSetting,
 		SignForce:                  signForce,
@@ -240,6 +243,7 @@ type DeployOptions struct {
 	Layers                     []string // raw --layer specs: "digest=path" or bare "path" (raw blob or .cstream)
 	Jobs                       int
 	Sink                       string
+	AllowEmpty                 bool
 
 	// Signing options.
 	SignSettingFiles   []string // extra sign_setting config files to ingest
@@ -404,6 +408,10 @@ func DeployWithExtras(ctx context.Context, rawRequest []byte, opts DeployOptions
 	}
 
 	if len(pushOperations) == 0 && len(loadOperations) == 0 && len(registryTagOperations) == 0 {
+		if opts.AllowEmpty {
+			fmt.Fprintln(os.Stderr, "No push, load, or registry_tag operations found in deploy manifest. Doing nothing.")
+			return nil
+		}
 		return fmt.Errorf("no push, load, or registry_tag operations found in deploy manifest")
 	}
 

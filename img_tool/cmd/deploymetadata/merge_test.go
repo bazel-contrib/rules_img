@@ -97,6 +97,34 @@ func TestMergeDeployManifestsFiltersByOperation(t *testing.T) {
 	}
 }
 
+// Merging no input manifests at all is legal and yields a manifest with no
+// operations. multi_deploy relies on it: when every target in `operations`
+// expands to an empty MultipleDeployInfo there is nothing to merge, and the
+// deployment is meant to be a no-op rather than an error.
+func TestMergeDeployManifestsAcceptsNoInputs(t *testing.T) {
+	output := filepath.Join(t.TempDir(), "out.json")
+
+	if err := MergeDeployManifests(context.Background(), nil, output, []string{"push", "load"}); err != nil {
+		t.Fatalf("MergeDeployManifests: %v", err)
+	}
+	if got := mergedCommands(t, output); len(got) != 0 {
+		t.Errorf("merged commands = %v, want none", got)
+	}
+
+	// The result must still decode as a deploy manifest for `img deploy`, which
+	// rejects unknown fields.
+	data, err := os.ReadFile(output)
+	if err != nil {
+		t.Fatalf("reading output manifest: %v", err)
+	}
+	decoder := json.NewDecoder(strings.NewReader(string(data)))
+	decoder.DisallowUnknownFields()
+	var manifest api.DeployManifest
+	if err := decoder.Decode(&manifest); err != nil {
+		t.Fatalf("decoding merged manifest %s: %v", data, err)
+	}
+}
+
 // An unrecognized command must never be dropped, even when a filter is active.
 func TestMergeDeployManifestsKeepsUnknownCommands(t *testing.T) {
 	tmp := t.TempDir()
