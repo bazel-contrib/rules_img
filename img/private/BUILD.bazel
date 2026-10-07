@@ -313,6 +313,7 @@ bzl_library(
         "//img/private/providers:index_info",
         "//img/private/providers:load_settings_info",
         "//img/private/providers:manifest_info",
+        "//img/private/providers:multiple_deploy_info",
         "//img/private/providers:push_settings_info",
         "//img/private/providers:stamp_setting_info",
         "@bazel_skylib//rules:common_settings",
