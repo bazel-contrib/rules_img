@@ -197,12 +197,15 @@ directory, and a single output is laid out inside it just like multiple outputs 
         "default_metadata": attr.string(
             default = "",
             doc = """JSON-encoded default metadata to apply to all files in the layer.
-Can include fields like mode, uid, gid, uname, gname, mtime, and pax_records.""",
+Can include fields like mode, uid, gid, uname, gname, mtime, and pax_records.
+Applies to regular files (including tree contents) and symlinks. Generated
+directories inherit only mtime; use file_metadata for directory modes or ownership.""",
         ),
         "file_metadata": attr.string_dict(
             default = {},
             doc = """Per-file metadata overrides as a dict mapping file paths to JSON-encoded metadata.
-The path should match the path in the image (the key in srcs attribute).
+The path should match the path in the image, including paths inside directory inputs.
+Directory paths should omit the trailing slash.
 Metadata specified here overrides any defaults from default_metadata.""",
         ),
         "history": history_attr(),
