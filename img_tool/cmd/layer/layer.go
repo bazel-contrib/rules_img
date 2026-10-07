@@ -458,6 +458,9 @@ func handleLayerState(
 		tarcas.CreateParentDirectories(createParentDirectories),
 		tarcas.DeduplicateTreeArtifacts(treeArtifactHandling == "deduplicate_symlink"),
 	)
+	if layerMetadata != nil && (layerMetadata.Defaults != nil || len(layerMetadata.FileOverrides) > 0) {
+		tarcasOpts = append(tarcasOpts, tarcas.GeneratedMetadata(layerMetadata.applyToGeneratedHeader))
+	}
 
 	var csFile *os.File
 	var csWriter *compactstream.Writer
@@ -520,6 +523,10 @@ func handleLayerState(
 		if err := tw.Close(); err != nil {
 			fmt.Fprintf(os.Stderr, "Error closing tar writer: %v\n", err)
 			os.Exit(1)
+		}
+		// Closing writes deferred symlinks and their parent directories.
+		if err == nil && layerMetadata != nil {
+			err = layerMetadata.VerifyAllFileMetadataUsed()
 		}
 
 		var compressorCloseErr error
@@ -622,13 +629,6 @@ func writeLayer(recorder tree.Recorder, addFiles addFiles, importTars importTars
 	for _, path := range emptyFiles {
 		if err := recorder.EmptyFile(path); err != nil {
 			return fmt.Errorf("writing empty file: %w", err)
-		}
-	}
-
-	// Verify that all file metadata entries were used
-	if layerMetadata != nil {
-		if err := layerMetadata.VerifyAllFileMetadataUsed(); err != nil {
-			return err
 		}
 	}
 

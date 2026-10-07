@@ -38,4 +38,8 @@ go_test(
         "placement_test.go",
     ],
     embed = [":layer"],
+    deps = [
+        "//pkg/api",
+        "//pkg/contentmanifest",
+    ],
 )

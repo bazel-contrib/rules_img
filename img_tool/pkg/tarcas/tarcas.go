@@ -149,6 +149,11 @@ func (c *CAS[HM]) writeHeaderAndData(hdr *tar.Header, data io.Reader, contentDig
 				Mode:     0o755,
 				Name:     dir,
 			}
+			if c.generatedMetadata != nil {
+				if err := c.generatedMetadata(dirHdr); err != nil {
+					return err
+				}
+			}
 
 			if err := c.notifyEntry(dirHdr, nil); err != nil {
 				return err
@@ -632,6 +637,11 @@ func (d *directoryCache) Stat(name string) (fs.FileInfo, error) {
 }
 
 func (c *CAS[HM]) StoreTree(fsys fs.FS, intendedPath string) (linkPath string, err error) {
+	// Content-only tree hashes cannot represent path-specific metadata.
+	// Keep file deduplication, but do not replace these trees with symlinks.
+	if c.generatedMetadata != nil {
+		return c.StoreTreeKnownHash(fsys, intendedPath, nil)
+	}
 	fsys = &directoryCache{FS: fsys, dirs: make(map[string][]fs.DirEntry)}
 	var hashMaker HM
 	treeHasher := merkle.NewTreeHasher(fsys, hashMaker.New)
@@ -648,11 +658,7 @@ func (c *CAS[HM]) StoreTreeKnownHash(fsys fs.FS, intendedPath string, treeHash [
 
 func (c *CAS[HM]) storeTree(fsys fs.FS, intendedPath string, treeHash []byte, fileNode func(string) (merkle.FileNode, bool)) (linkPath string, err error) {
 	hashStr := string(treeHash)
-	// Every regular file in the tree is a CAS object, so we need to store it,
-	// along with a hardlink to the CAS object.
-	// For now, we don't support any special metadata for tree artifacts and disallow empty directories,
-	// so we can get away with storing a single directory entry (for the root directory of the tree).
-	if treeBase, exists := c.firstTreePaths[hashStr]; exists && c.deduplicateTreeArtifacts {
+	if treeBase, exists := c.firstTreePaths[hashStr]; exists && c.deduplicateTreeArtifacts && c.generatedMetadata == nil {
 		return treeBase, nil
 	}
 
@@ -660,6 +666,11 @@ func (c *CAS[HM]) storeTree(fsys fs.FS, intendedPath string, treeHash []byte, fi
 		Typeflag: tar.TypeDir,
 		Name:     intendedPath + "/",
 		Mode:     0o755,
+	}
+	if c.generatedMetadata != nil {
+		if err := c.generatedMetadata(header); err != nil {
+			return "", err
+		}
 	}
 	if err := c.writeHeaderAndData(header, nil, nil); err != nil {
 		return "", err
@@ -675,6 +686,27 @@ func (c *CAS[HM]) storeTree(fsys fs.FS, intendedPath string, treeHash []byte, fi
 			return nil
 		}
 		treePath := path.Join(intendedPath, p)
+		if c.generatedMetadata != nil {
+			f, err := fsys.Open(p)
+			if err != nil {
+				return fmt.Errorf("opening file %s: %w", p, err)
+			}
+			defer f.Close()
+			info, err := f.Stat()
+			if err != nil {
+				return err
+			}
+			header := &tar.Header{
+				Typeflag: tar.TypeReg,
+				Name:     treePath,
+				Size:     info.Size(),
+				Mode:     0o755,
+			}
+			if err := c.generatedMetadata(header); err != nil {
+				return err
+			}
+			return c.WriteRegularDeduplicated(header, f)
+		}
 		linkName, err := c.storeTreeFile(fsys, p, treePath, fileNode)
 		if err != nil {
 			return fmt.Errorf("storing file %s: %w", p, err)
@@ -704,9 +736,11 @@ func (c *CAS[HM]) storeTree(fsys fs.FS, intendedPath string, treeHash []byte, fi
 		return "", fmt.Errorf("storing tree artifact %x in tar: %w", treeHash, err)
 	}
 
-	c.storedTrees[hashStr] = struct{}{}
-	c.firstTreePaths[hashStr] = intendedPath
-	c.treeOrder = append(c.treeOrder, treeHash)
+	if c.generatedMetadata == nil {
+		c.storedTrees[hashStr] = struct{}{}
+		c.firstTreePaths[hashStr] = intendedPath
+		c.treeOrder = append(c.treeOrder, treeHash)
+	}
 	return "", nil
 }
 

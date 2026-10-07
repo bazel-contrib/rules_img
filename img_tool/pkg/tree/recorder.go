@@ -350,6 +350,11 @@ func (r Recorder) Symlink(target, linkName string) error {
 		Name:     linkName,
 		Linkname: target,
 	}
+	if r.metadata != nil {
+		if err := r.metadata.ApplyToHeader(hdr, linkName); err != nil {
+			return fmt.Errorf("applying metadata: %w", err)
+		}
+	}
 	return r.tf.WriteHeader(hdr)
 }
 
