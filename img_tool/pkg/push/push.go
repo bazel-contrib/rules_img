@@ -113,7 +113,20 @@ type uploader struct {
 	jobs               int
 }
 
-func (u *uploader) PushAll(ctx context.Context, ops []api.IndexedPushDeployOperation, strategy string) (tags []string, retErr error) {
+// PushedReference is one reference PushAll wrote to a registry. Callers use it
+// to tell the references apart when reporting what a deploy produced: a tag
+// from a digest, and an image pushed in its own right from an attachment.
+type PushedReference struct {
+	// Ref is the reference as written, fully qualified.
+	Ref string
+	// Tag reports whether Ref names a tag rather than a digest.
+	Tag bool
+	// Referrer reports whether the pushed manifest is an attachment (an OCI
+	// referrer) of another manifest rather than an image in its own right.
+	Referrer bool
+}
+
+func (u *uploader) PushAll(ctx context.Context, ops []api.IndexedPushDeployOperation, strategy string) (pushed []PushedReference, retErr error) {
 	if strategy == "bes" {
 		return nil, nil // nothing to do
 	}
@@ -126,7 +139,7 @@ func (u *uploader) PushAll(ctx context.Context, ops []api.IndexedPushDeployOpera
 		taggable remote.Taggable
 	}
 	var items []pushItem
-	var allTags []string
+	var allRefs []PushedReference
 
 	// collect all operations
 	for _, op := range ops {
@@ -144,7 +157,8 @@ func (u *uploader) PushAll(ctx context.Context, ops []api.IndexedPushDeployOpera
 		}
 		for _, ref := range refs {
 			items = append(items, pushItem{ref: ref, taggable: taggable})
-			allTags = append(allTags, ref.String())
+			_, isTag := ref.(name.Tag)
+			allRefs = append(allRefs, PushedReference{Ref: ref.String(), Tag: isTag, Referrer: op.Referrer})
 		}
 	}
 
@@ -177,7 +191,7 @@ func (u *uploader) PushAll(ctx context.Context, ops []api.IndexedPushDeployOpera
 		return nil, err
 	}
 
-	return allTags, nil
+	return allRefs, nil
 }
 
 // vfsFor returns the VFS an operation's blobs are served from: the per-operation

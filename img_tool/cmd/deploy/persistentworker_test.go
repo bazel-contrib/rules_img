@@ -22,6 +22,27 @@ func TestParseWorkerArgsInvocationID(t *testing.T) {
 	}
 }
 
+func TestParseWorkerArgsPrint(t *testing.T) {
+	for _, args := range [][]string{
+		{"--request-file", "request.json", "--print", "tag,manifest"},
+		{"--request-file=request.json", "--print=tag,manifest"},
+	} {
+		opts, err := parseWorkerArgs(args)
+		if err != nil {
+			t.Fatalf("parseWorkerArgs(%v): %v", args, err)
+		}
+		if opts.printSpec != "tag,manifest" {
+			t.Errorf("parseWorkerArgs(%v) print = %q, want tag,manifest", args, opts.printSpec)
+		}
+	}
+}
+
+func TestParseWorkerArgsRejectsInvalidPrint(t *testing.T) {
+	if _, err := parseWorkerArgs([]string{"--request-file=request.json", "--print=bogus"}); err == nil {
+		t.Error("parseWorkerArgs(--print=bogus) = nil error, want one")
+	}
+}
+
 func TestDeployRequestMetadataUsesLogicalRequest(t *testing.T) {
 	ctx := protohelper.WithToolInvocationID(context.Background(), "invocation")
 	ctx = withDeployRequestMetadata(ctx, []string{"bazel-out/bin/images/app.deploy.json"})
