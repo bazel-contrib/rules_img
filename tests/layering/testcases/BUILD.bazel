@@ -60,7 +60,7 @@ binary_with_runfiles_symlink(
     binary = ":script_sh",
 )
 
-# An executable providing RunfilesGroupInfo, so layer_from_binary splits its
+# An executable describing runfiles groups, so layer_from_binary splits its
 # runfiles into multiple layers.
 binary_with_runfiles_groups(
     name = "runfiles_groups_tool",

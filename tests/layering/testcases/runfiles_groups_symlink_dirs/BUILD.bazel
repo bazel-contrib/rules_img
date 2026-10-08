@@ -16,6 +16,7 @@ layer_from_binary(
     binary = "//tests/layering/testcases:runfiles_groups_symlink_dir_tool",
     path = "/app/bin/launcher",
     runfiles_sharing_mode = "shared",
+    use_runfiles_groups = True,
 )
 
 layer_contents_test(
@@ -39,11 +40,28 @@ layer_from_binary(
     layer_budget = 1,
     path = "/app/bin/launcher",
     runfiles_sharing_mode = "shared",
+    use_runfiles_groups = True,
 )
 
 layer_contents_test(
     name = "ungrouped_test",
     size = "small",
     layer = ":ungrouped_layer",
+    manifests = ["ungrouped.ndjson"],
+)
+
+# The same binary with runfiles groups left off, which is the default: the aspect
+# stops at the binary and the layer is exactly the single-layer one above.
+layer_from_binary(
+    name = "disabled_layer",
+    binary = "//tests/layering/testcases:runfiles_groups_symlink_dir_tool",
+    path = "/app/bin/launcher",
+    runfiles_sharing_mode = "shared",
+)
+
+layer_contents_test(
+    name = "disabled_test",
+    size = "small",
+    layer = ":disabled_layer",
     manifests = ["ungrouped.ndjson"],
 )

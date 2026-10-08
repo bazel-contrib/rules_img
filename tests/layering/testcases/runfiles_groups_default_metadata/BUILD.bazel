@@ -14,6 +14,7 @@ layer_from_binary(
         uid = 1000,
     ),
     path = "/app/bin/launcher",
+    use_runfiles_groups = True,
 )
 
 layer_contents_test(

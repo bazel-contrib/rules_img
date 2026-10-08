@@ -76,13 +76,27 @@ bzl_library(
     srcs = ["layer_from_binary.bzl"],
     visibility = ["//img:__subpackages__"],
     deps = [
+        ":runfiles_group_layers",
         "//img/private/common:build",
         "//img/private/common:layer_attrs",
         "//img/private/common:tar_layer",
         "//img/private/providers:layer_config_info",
         "//img/private/providers:layers_info",
         "@rules_runfiles_group//runfiles_group:lib",
-        "@rules_runfiles_group//runfiles_group:providers",
+    ],
+)
+
+bzl_library(
+    name = "runfiles_group_layers",
+    srcs = ["runfiles_group_layers.bzl"],
+    visibility = ["//img:__subpackages__"],
+    deps = [
+        "//img/private/common:build",
+        "//img/private/common:layer_attrs",
+        "//img/private/common:tar_layer",
+        "//img/private/providers:single_layer_info",
+        "@bazel_skylib//rules:common_settings",
+        "@rules_runfiles_group//runfiles_group:lib",
     ],
 )
 
