@@ -10,6 +10,7 @@ layer_from_binary(
     name = "layer",
     binary = "//tests/layering/testcases:runfiles_groups_exec_tool",
     path = "/app/bin/launcher",
+    use_runfiles_groups = True,
 )
 
 # One manifest per produced layer, in order: the stdlib group (foundation rank),

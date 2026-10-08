@@ -5,7 +5,7 @@ load("//img/private:index.bzl", "image_index")
 load("//img/private:layer_from_binary.bzl", "layer_from_binary")
 load("//img/private:manifest.bzl", "image_manifest")
 
-def _image_from_binary_impl(name, binary, path, include_runfiles, infer_working_dir, layer_budget, layers, kind, platforms, visibility, tags, **kwargs):
+def _image_from_binary_impl(name, binary, path, include_runfiles, infer_working_dir, layer_budget, use_runfiles_groups, layers, kind, platforms, visibility, tags, **kwargs):
     tags = (tags or [])
     intermediate_tags = [] + tags
     if "manual" not in intermediate_tags:
@@ -17,6 +17,7 @@ def _image_from_binary_impl(name, binary, path, include_runfiles, infer_working_
         include_runfiles = include_runfiles,
         infer_working_dir = infer_working_dir,
         layer_budget = layer_budget,
+        use_runfiles_groups = use_runfiles_groups,
         visibility = visibility,
         tags = intermediate_tags,
     )
@@ -53,7 +54,7 @@ def _image_from_binary_impl(name, binary, path, include_runfiles, infer_working_
             **index_extra_kwargs
         )
 
-def _image_from_binary_legacy(*, name, binary, path = "", include_runfiles = True, infer_working_dir = True, layer_budget = 0, layers = [], kind = "auto", platforms = [], visibility = None, tags = None, **kwargs):
+def _image_from_binary_legacy(*, name, binary, path = "", include_runfiles = True, infer_working_dir = True, layer_budget = 0, use_runfiles_groups = False, layers = [], kind = "auto", platforms = [], visibility = None, tags = None, **kwargs):
     _image_from_binary_impl(
         name = name,
         binary = binary,
@@ -61,6 +62,7 @@ def _image_from_binary_legacy(*, name, binary, path = "", include_runfiles = Tru
         include_runfiles = include_runfiles,
         infer_working_dir = infer_working_dir,
         layer_budget = layer_budget,
+        use_runfiles_groups = use_runfiles_groups,
         layers = layers,
         kind = kind,
         platforms = platforms,
@@ -84,15 +86,11 @@ image configuration:
 - **working_dir** is set to the binary's runfiles root (unless `infer_working_dir = False`,
   which keeps the base image's working directory)
 
-If the binary provides RunfilesGroupInfo (from rules_runfiles_group), the runfiles are split
-into separate layers based on the groups. This allows for better caching: stable layers
+If the binary's rules describe its runfiles groups (see rules_runfiles_group), the runfiles are
+split into separate layers based on the groups. This allows for better caching: stable layers
 (interpreter, stdlib) change infrequently and can be shared, while the application code layer
 changes with each build. Layers are emitted in the groups' `rank` order (lowest first), and any
 RunfilesGroupTransformInfo in the binary's `aspect_hints` is applied first.
-
-Note that RunfilesGroupInfo emission is off by default in rules_runfiles_group. Build with
-`--@rules_runfiles_group//runfiles_group:enabled=true` to opt in; without it, group-aware
-binaries produce a single layer.
 
 All image_manifest attributes (base, env, labels, annotations, etc.) are inherited and
 forwarded to the underlying image_manifest. The binary layer is always appended as the
@@ -152,7 +150,8 @@ Targets created:
 The binary's `args` and `env` attributes are extracted and applied as image configuration
 (cmd and env). The `data` attribute is used for `$(location)` expansion in args and env values.
 
-If the binary provides RunfilesGroupInfo, the runfiles are split into separate layers per group.""",
+If the binary's rules describe its runfiles groups, the runfiles are split into separate layers
+per group.""",
             mandatory = True,
         ),
         "path": attr.string(
@@ -193,13 +192,21 @@ working directory is kept unless the `working_dir` attribute is set explicitly.
             default = 0,
             doc = """\
 Maximum number of runfiles group layers.
-If set to a value > 0 and the binary provides RunfilesGroupInfo, groups are merged down to this
+If set to a value > 0 and the binary is split into runfiles groups, groups are merged down to this
 limit using the merge algorithm from rules_runfiles_group. The algorithm respects group rank
 (only merges within the same rank), do_not_merge flags, merge affinity (groups sharing an
 affinity are preferred merge partners), and weight hints (lighter groups merge first).
 This is a target, not a hard cap: do_not_merge groups and groups alone in their rank cannot be
 merged away, so a binary whose groups cannot be reduced far enough still produces more layers.
 0 means no limit (all groups become separate layers).
+""",
+        ),
+        "use_runfiles_groups": attr.bool(
+            default = False,
+            configurable = False,
+            doc = """\
+Whether to split the binary's runfiles into one layer per runfiles group.
+Off by default. See layer_from_binary's attribute of the same name.
 """,
         ),
         "kind": attr.string(

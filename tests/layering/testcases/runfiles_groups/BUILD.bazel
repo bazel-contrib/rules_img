@@ -3,13 +3,14 @@ load("//tests/layering:defs.bzl", "layer_contents_test")
 
 # gazelle:exclude_from_release
 
-# A binary providing RunfilesGroupInfo: layer_from_binary splits its runfiles
+# A binary describing runfiles groups: layer_from_binary splits its runfiles
 # into one layer per group (stdlib, app) plus a layer for the executable itself,
 # so this single target produces multiple ordered layers.
 layer_from_binary(
     name = "layer",
     binary = "//tests/layering/testcases:runfiles_groups_tool",
     path = "/app/bin/launcher",
+    use_runfiles_groups = True,
 )
 
 # One manifest per produced layer, in order: the stdlib group (rank 0), the app

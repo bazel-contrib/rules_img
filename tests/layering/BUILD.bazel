@@ -1,4 +1,5 @@
 load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
+load(":defs.bzl", "binary_with_runfiles_groups_describer")
 
 # gazelle:exclude_from_release
 
@@ -13,7 +14,6 @@ bzl_library(
     deps = [
         "@rules_img//img:providers",
         "@rules_runfiles_group//runfiles_group:lib",
-        "@rules_runfiles_group//runfiles_group:providers",
     ],
 )
 
@@ -21,4 +21,10 @@ bzl_library(
     name = "empty_runfiles_repo",
     srcs = ["empty_runfiles_repo.bzl"],
     visibility = ["//visibility:public"],
+)
+
+# The runfiles group describer of the binary_with_runfiles_groups fixture.
+binary_with_runfiles_groups_describer(
+    name = "binary_with_runfiles_groups_describer",
+    visibility = ["//tests/layering:__subpackages__"],
 )

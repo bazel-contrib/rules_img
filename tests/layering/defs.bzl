@@ -19,13 +19,12 @@ the compact stream with multi-block content and many CAS references.
 load("@hermetic_launcher//launcher:lib.bzl", "launcher")
 load("@rules_img//img:providers.bzl", "LayersInfo")
 load("@rules_runfiles_group//runfiles_group:lib.bzl", "runfiles_groups")
-load("@rules_runfiles_group//runfiles_group:providers.bzl", "RunfilesGroupInfo")
 
 _COMPACT_LAYERS_SETTING = "@rules_img//img/settings:experimental_compact_layers"
 
 # Group names of the binary_with_runfiles_groups fixture. Named groups (as opposed
-# to per-target Label groups) share one namespace across every provider merged into
-# a binary, hence the ruleset-unique prefix.
+# to per-target Label groups) share one namespace across every ruleset reachable
+# from a binary, hence the ruleset-unique prefix.
 _STDLIB_GROUP = "rules_img_layering#stdlib"
 _APP_GROUP = "rules_img_layering#app"
 
@@ -360,6 +359,48 @@ and are therefore hardlink-deduplicated by the layer tool.""",
     },
 )
 
+# Hands the groups' contents from the rule implementation to the runfiles group
+# describer, which only sees the finished target. They are the same objects
+# default_runfiles is built from, so the groups and the runfiles cannot drift apart.
+_RunfilesGroupsFixtureInfo = provider(
+    doc = "The contents of binary_with_runfiles_groups' two runfiles groups.",
+    fields = {
+        "stdlib_files": "depset of File: the stdlib group.",
+        "app_runfiles": "runfiles: the app group.",
+    },
+)
+
+def _describe_binary_with_runfiles_groups_runfiles(target, ctx):
+    contents = target[_RunfilesGroupsFixtureInfo]
+
+    # The two content forms an entry may carry are both exercised on purpose: the
+    # stdlib group hands over its depset of File directly (the files-only form) and
+    # the app group hands over a runfiles object (the general form). A packager must
+    # place both identically. The fixture adds both groups itself and merges nothing
+    # in.
+    return runfiles_groups.node(
+        add = [
+            runfiles_groups.entry(
+                name = _STDLIB_GROUP,
+                content = contents.stdlib_files,
+                kind = "foundation",
+                rank = runfiles_groups.RANK_FOUNDATION,
+            ),
+            runfiles_groups.entry(
+                name = _APP_GROUP,
+                content = contents.app_runfiles,
+                kind = "first_party",
+                rank = runfiles_groups.RANK_EXECUTABLE,
+            ),
+        ],
+        merge_from = [],
+        executable_group = _APP_GROUP if ctx.rule.attr.executable_group else None,
+    )
+
+binary_with_runfiles_groups_describer = runfiles_groups.make_describer_rule(
+    describe = _describe_binary_with_runfiles_groups_runfiles,
+)
+
 def _binary_with_runfiles_groups_impl(ctx):
     exe = ctx.actions.declare_file(ctx.label.name)
     ctx.actions.symlink(
@@ -405,40 +446,21 @@ def _binary_with_runfiles_groups_impl(ctx):
             root_symlinks = {"external_tool/bin/helper.sh": helper},
         ))
 
-    # The two content forms an entry may carry are both exercised on purpose: the
-    # stdlib group hands over its depset of File directly (the files-only form) and
-    # the app group hands over a runfiles object (the general form). A packager must
-    # place both identically.
-    entries = [
-        runfiles_groups.entry(
-            name = _STDLIB_GROUP,
-            content = stdlib_files,
-            kind = "foundation",
-            rank = runfiles_groups.RANK_FOUNDATION,
-        ),
-        runfiles_groups.entry(
-            name = _APP_GROUP,
-            content = app_rf,
-            kind = "first_party",
-            rank = runfiles_groups.RANK_EXECUTABLE,
-        ),
-    ]
-
     return [
         DefaultInfo(
             files = depset([exe]),
             runfiles = stdlib.merge(app_rf),
             executable = exe,
         ),
-        RunfilesGroupInfo(
-            entries = runfiles_groups.entries(entries),
-            executable_group = _APP_GROUP if ctx.attr.executable_group else None,
+        _RunfilesGroupsFixtureInfo(
+            stdlib_files = stdlib_files,
+            app_runfiles = app_rf,
         ),
     ]
 
 binary_with_runfiles_groups = rule(
     implementation = _binary_with_runfiles_groups_impl,
-    doc = "Executable fixture providing RunfilesGroupInfo with two ranked runfiles groups (stdlib, app).",
+    doc = "Executable fixture describing two ranked runfiles groups (stdlib, app).",
     attrs = {
         "binary": attr.label(allow_single_file = True, cfg = "target"),
         "symlink_dirs": attr.bool(
@@ -451,15 +473,13 @@ together, because the two carry their paths in different namespaces.""",
         ),
         "executable_group": attr.bool(
             default = False,
-            doc = """Whether to name the app group as the RunfilesGroupInfo executable_group.
+            doc = """Whether to name the app group as the executable_group.
 
 When True, layer_from_binary merges the executable and its supporting files into
 the app group's layer instead of emitting a separate binary layer.""",
         ),
+        "_runfiles_group_describer": attr.label(default = Label("//tests/layering:binary_with_runfiles_groups_describer")),
+        "_runfiles_group_attrs": attr.string_list(default = []),
     },
-    # Deliberately does not merge runfiles_groups.RULE_ATTRS or gate on
-    # runfiles_groups.is_enabled(ctx): a real producing rule honors the global
-    # @rules_runfiles_group//runfiles_group:enabled switch, but this fixture must emit
-    # unconditionally so the golden manifests do not depend on a build flag.
     executable = True,
 )

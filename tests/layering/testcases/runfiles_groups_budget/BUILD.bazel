@@ -3,13 +3,14 @@ load("//tests/layering:defs.bzl", "layer_contents_test")
 
 # gazelle:exclude_from_release
 
-# layer_budget = 1 caps the binary at a single layer, forcing the RunfilesGroupInfo
+# layer_budget = 1 caps the binary at a single layer, forcing the runfiles
 # groups (and the executable) to all be merged together into one layer.
 layer_from_binary(
     name = "layer",
     binary = "//tests/layering/testcases:runfiles_groups_tool",
     layer_budget = 1,
     path = "/app/bin/launcher",
+    use_runfiles_groups = True,
 )
 
 # Everything collapses into a single layer: the executable and all runfiles.
