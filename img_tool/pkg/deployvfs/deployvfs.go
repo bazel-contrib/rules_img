@@ -133,6 +133,32 @@ func (vfs *VFS) WithCrossMountPlan(plan CrossMountPlan) *VFS {
 	return &view
 }
 
+// WithCrossMountRegistryOverride returns a view whose hints in originalRegistry
+// name overrideRegistry instead. Blob sources and upload restrictions are shared
+// with the receiver, so fallback reads still use the original source.
+func (vfs *VFS) WithCrossMountRegistryOverride(originalRegistry, overrideRegistry string) *VFS {
+	if overrideRegistry == "" || overrideRegistry == originalRegistry {
+		return vfs
+	}
+	var hints map[string]api.CrossMountSource
+	for digest, hint := range vfs.crossMountHints {
+		if hint.Registry != originalRegistry {
+			continue
+		}
+		if hints == nil {
+			hints = maps.Clone(vfs.crossMountHints)
+		}
+		hint.Registry = overrideRegistry
+		hints[digest] = hint
+	}
+	if hints == nil {
+		return vfs
+	}
+	view := *vfs
+	view.crossMountHints = hints
+	return &view
+}
+
 // Stats returns the current statistics for the VFS.
 func (vfs *VFS) Stats() *Stats {
 	return vfs.stats
