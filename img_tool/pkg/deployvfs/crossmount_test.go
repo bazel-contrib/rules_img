@@ -309,3 +309,114 @@ func TestWithCrossMountPlanSharesStats(t *testing.T) {
 		t.Error("view does not share the receiver's Stats")
 	}
 }
+
+func TestWithCrossMountRegistryOverride(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		hintRegistry string
+		override     string
+		noHint       bool
+		wantRegistry string
+	}{
+		{name: "same registry hint", hintRegistry: "original.example", override: "private.example", wantRegistry: "private.example"},
+		{name: "foreign registry hint", hintRegistry: "upstream.example", override: "private.example", wantRegistry: "upstream.example"},
+		{name: "empty override", hintRegistry: "original.example", wantRegistry: "original.example"},
+		{name: "unchanged registry", hintRegistry: "original.example", override: "original.example", wantRegistry: "original.example"},
+		{name: "registry-less hint", override: "private.example"},
+		{name: "no hint", override: "private.example", noHint: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			desc := crossMountLayerDesc()
+			stats := &Stats{}
+			vfs := &VFS{
+				blobs: map[string]blobEntry{
+					desc.Digest: {
+						Descriptor: desc,
+						Location:   "registry",
+						Opener: func() (io.ReadCloser, error) {
+							stats.BlobsFromRegistry.Add(1)
+							return nopOpener()
+						},
+					},
+				},
+				stats: stats,
+			}
+			if !tc.noHint {
+				vfs.crossMountHints = map[string]api.CrossMountSource{
+					desc.Digest: {Registry: tc.hintRegistry, Repository: "base/image"},
+				}
+			}
+
+			view := vfs.WithCrossMountRegistryOverride("original.example", tc.override)
+			layer, err := view.Layer(mustHash(t, desc.Digest))
+			if err != nil {
+				t.Fatalf("Layer: %v", err)
+			}
+			ml, mountable := layer.(*remote.MountableLayer)
+			if tc.noHint {
+				if mountable {
+					t.Fatal("Layer without a hint should not be mountable")
+				}
+			} else {
+				if !mountable {
+					t.Fatalf("Layer returned %T, want *remote.MountableLayer", layer)
+				}
+				if got := ml.Reference.Context().RegistryStr(); got != tc.wantRegistry {
+					t.Errorf("mount registry = %q, want %q", got, tc.wantRegistry)
+				}
+				if got := ml.Reference.Context().RepositoryStr(); got != "base/image" {
+					t.Errorf("mount repository = %q, want base/image", got)
+				}
+				if got := vfs.crossMountHints[desc.Digest].Registry; got != tc.hintRegistry {
+					t.Errorf("receiver hint registry = %q, want unchanged %q", got, tc.hintRegistry)
+				}
+			}
+
+			// Changing the mount destination must retain the original byte source
+			// and report its transfers in the receiver's shared statistics.
+			raw, err := view.RawLayer(mustHash(t, desc.Digest))
+			if err != nil {
+				t.Fatalf("RawLayer: %v", err)
+			}
+			rc, err := raw.Compressed()
+			if err != nil {
+				t.Fatalf("RawLayer Compressed: %v", err)
+			}
+			defer rc.Close()
+			got, err := io.ReadAll(rc)
+			if err != nil || string(got) != "abc" {
+				t.Fatalf("reading original source = (%q, %v), want abc", got, err)
+			}
+			if got := vfs.Stats().BlobsFromRegistry.Load(); got != 1 {
+				t.Errorf("receiver registry transfers = %d, want 1", got)
+			}
+			if got := view.Stats().BlobsFromRegistry.Load(); got != 1 {
+				t.Errorf("view registry transfers = %d, want 1", got)
+			}
+		})
+	}
+}
+
+func TestWithCrossMountRegistryOverridePreservesMountOnly(t *testing.T) {
+	vfs := planTestVFS(t).WithCrossMountPlan(CrossMountPlan{
+		Sources: map[string]api.CrossMountSource{
+			crossMountDigest: {Registry: "original.example", Repository: "shared/blobs"},
+		},
+		MountOnly: map[string]struct{}{crossMountDigest: {}},
+	})
+	view := vfs.WithCrossMountRegistryOverride("original.example", "private.example")
+	layer, err := view.Layer(mustHash(t, crossMountDigest))
+	if err != nil {
+		t.Fatalf("Layer: %v", err)
+	}
+	ml, ok := layer.(*remote.MountableLayer)
+	if !ok {
+		t.Fatalf("Layer returned %T, want *remote.MountableLayer", layer)
+	}
+	if got := ml.Reference.Context().RegistryStr(); got != "private.example" {
+		t.Errorf("mount registry = %q, want private.example", got)
+	}
+	if _, err := ml.Compressed(); err == nil {
+		t.Fatal("Compressed should still fail for a mount-only layer")
+	}
+}

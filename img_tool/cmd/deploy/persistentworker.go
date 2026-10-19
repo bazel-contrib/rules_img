@@ -263,10 +263,11 @@ func (h *deployWorkerHandler) processRequest(ctx context.Context, req persistent
 		}
 	}
 	vfsForOperation := func(registry string, base api.BaseCommandOperation) *deployvfs.VFS {
-		if view := dedupVFS.For(registry, base); view != nil {
-			return view
+		view := dedupVFS.For(registry, base)
+		if view == nil {
+			view = vfs
 		}
-		return vfs
+		return view.WithCrossMountRegistryOverride(registry, opts.overrideRegistry)
 	}
 
 	if len(pushOps) > 0 {

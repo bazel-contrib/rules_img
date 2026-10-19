@@ -506,13 +506,15 @@ func DeployWithExtras(ctx context.Context, rawRequest []byte, opts DeployOptions
 			return fmt.Errorf("pre-uploading blobs to staging repository %q: %w", req.Settings.BlobRepository, err)
 		}
 	}
-	// vfsForOperation serves an operation from the view of its destination registry
-	// when it opted in, and from the plain VFS otherwise.
+	// Apply the registry override to same-registry mount hints as well as the push
+	// destination, so authentication requests pull access to the source repository.
+	// Each operation gets its own view; fallback reads keep their original sources.
 	vfsForOperation := func(registry string, base api.BaseCommandOperation) *deployvfs.VFS {
-		if view := dedupVFS.For(registry, base); view != nil {
-			return view
+		view := dedupVFS.For(registry, base)
+		if view == nil {
+			view = vfs
 		}
-		return vfs
+		return view.WithCrossMountRegistryOverride(registry, opts.OverrideRegistry)
 	}
 
 	if len(pushOperations) > 0 {
