@@ -163,20 +163,29 @@ func setupWriterPipeline[C Compressor, CM compressorMaker[C]](output io.Writer, 
 	outputTee := io.MultiWriter(output, outerHash)
 	var compressorMaker CM
 	var compress C
-	if opts.compressionLevel != nil {
+	switch maker := any(compressorMaker).(type) {
+	case configurableCompressorMaker[C]:
+		// The compressor needs all options up front (zstd).
 		var err error
-		compress, err = compressorMaker.NewWriterLevel(outputTee, int(*opts.compressionLevel))
+		compress, err = maker.NewWriterOptions(outputTee, opts)
 		if err != nil {
 			return nil, compress, err
 		}
-	} else {
-		compress = compressorMaker.NewWriter(outputTee)
+	default:
+		if opts.compressionLevel != nil {
+			var err error
+			compress, err = compressorMaker.NewWriterLevel(outputTee, int(*opts.compressionLevel))
+			if err != nil {
+				return nil, compress, err
+			}
+		} else {
+			compress = compressorMaker.NewWriter(outputTee)
+		}
 	}
 	// Configure optional concurrency for compressors that support it (e.g., pgzip)
 	switch any(compress).(type) {
 	case *pgzip.Writer:
-		if opts.compressorJobs != nil {
-			jobs := *opts.compressorJobs
+		if jobs := opts.jobs(); jobs > 0 {
 			if err := any(compress).(*pgzip.Writer).SetConcurrency(1<<20, jobs); err != nil {
 				return nil, compress, err
 			}
@@ -207,6 +216,13 @@ type compressorMaker[T Compressor] interface {
 	NewWriter(w io.Writer) T
 	NewWriterLevel(w io.Writer, level int) (T, error)
 	Name() string
+}
+
+// configurableCompressorMaker is implemented by compressor makers that need the
+// full option set at construction time, because their settings cannot be
+// changed on the writer afterwards the way pgzip's concurrency can.
+type configurableCompressorMaker[T Compressor] interface {
+	NewWriterOptions(w io.Writer, opts options) (T, error)
 }
 
 type countingWriter struct {

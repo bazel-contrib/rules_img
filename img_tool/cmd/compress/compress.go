@@ -49,7 +49,7 @@ func CompressProcess(ctx context.Context, args []string) {
 	flagSet.StringVar(&sourceFormat, "source-format", "", `The format of the source layer. Can be "tar" or "gzip".`)
 	flagSet.StringVar(&format, "format", "", `The format of the output layer. Can be "tar" or "gzip".`)
 	flagSet.BoolVar(&estargzFlag, "estargz", false, `Use estargz format for compression. This creates seekable gzip streams optimized for lazy pulling.`)
-	flagSet.StringVar(&compressorJobsFlag, "compressor-jobs", "1", `Number of compressor jobs. 1 uses single-threaded stdlib gzip. n>1 uses pgzip. "nproc" uses NumCPU.`)
+	flagSet.StringVar(&compressorJobsFlag, "compressor-jobs", "", `Number of compressor jobs. For gzip, 1 uses single-threaded stdlib gzip and n>1 uses pgzip. For zstd, it is the number of parallel encoder goroutines, which is always at least 2. "nproc" uses the available cores. If unset, gzip is single-threaded and zstd uses 2 jobs.`)
 	flagSet.IntVar(&compressionLevelFlag, "compression-level", -1, `Compression level. For gzip: 0-9. If unset, use library default.`)
 	flagSet.Var(&annotations, "annotation", `Add an annotation as key=value. Can be specified multiple times.`)
 	flagSet.StringVar(&metadataOutputFile, "metadata", "", `Write the metadata to the specified file. The metadata is a JSON file containing info needed to use the layer as part of an OCI image.`)

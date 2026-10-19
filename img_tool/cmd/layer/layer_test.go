@@ -111,10 +111,12 @@ func TestRecordedCompressorJobs(t *testing.T) {
 		{"garbage", 1},
 		{"2", 2},
 		{"4", 4},
-		{"255", 255},
-		{"256", 255},    // clamped, must not truncate to 0
-		{"257", 255},    // clamped, must not truncate to 1
-		{"100000", 255}, // clamped
+		{"16", 16},
+		{"17", maxRecordedCompressorJobs},     // clamped
+		{"255", maxRecordedCompressorJobs},    // clamped
+		{"256", maxRecordedCompressorJobs},    // clamped, must not truncate to 0
+		{"257", maxRecordedCompressorJobs},    // clamped, must not truncate to 1
+		{"100000", maxRecordedCompressorJobs}, // clamped
 	}
 	for _, tc := range tests {
 		if got := recordedCompressorJobs(tc.flag); got != tc.want {

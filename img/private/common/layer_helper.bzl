@@ -119,11 +119,13 @@ def layer_history_args(ctx):
 def compression_tuning_args(ctx, compression, estargz):
     """Compression tuning arguments for img tools based on build mode.
 
-    Returns additional CLI arguments to tune gzip compression defaults
+    Returns additional CLI arguments to tune compression defaults
     according to Bazel's compilation mode. This
     function prefers faster, parallel compression in fastbuild, and
-    smaller, single-threaded high-compression in opt. Other compression
-    algorithms are left unchanged.
+    smaller, single-threaded high-compression in opt. For gzip the job count
+    also selects the compressor implementation; zstd parallelizes a single
+    stream without changing its output, so it defaults to 2 jobs in every mode
+    and takes a configured job count as-is.
 
     Args:
         ctx: Rule context used to read `COMPILATION_MODE`.
@@ -144,6 +146,7 @@ def compression_tuning_args(ctx, compression, estargz):
     # Start with mode-based defaults
     mode = ctx.var.get("COMPILATION_MODE", "fastbuild")
     jobs = "nproc" if mode != "opt" else "1"
+    jobs_explicit = False
     default_level = "-1"  # default compression (no flag set)
     max_level = "9" if compression == "gzip" else "4"
     level = default_level
@@ -157,6 +160,7 @@ def compression_tuning_args(ctx, compression, estargz):
         val = ctx.attr._compression_jobs[BuildSettingInfo].value
         if val and val != "auto":
             jobs = val
+            jobs_explicit = True
     if hasattr(ctx.attr, "_compression_level") and ctx.attr._compression_level != None:
         lvl = ctx.attr._compression_level[BuildSettingInfo].value
         if lvl and lvl != "auto":
@@ -171,6 +175,14 @@ def compression_tuning_args(ctx, compression, estargz):
     if compression == "gzip" and not estargz:
         # For gzip, we can tune the number of compression threads (pgzip)
         tuned_args.extend(["--compressor-jobs", jobs])
+    if compression == "zstd" and not estargz:
+        # zstd compresses a single stream in parallel, so the job count is a
+        # pure speed/memory trade-off: it does not change the output bytes the
+        # way it does for gzip (where it also picks the implementation), and 2
+        # is the minimum the parallel encoder needs. Keep that conservative
+        # default - roughly 64 MiB of peak memory per job - in every mode, and
+        # let users spend more with the compression_jobs setting.
+        tuned_args.extend(["--compressor-jobs", jobs if jobs_explicit else "2"])
     if level != "-1" and compression != "none":
         if level not in valid_levels[compression]:
             fail("Invalid compression level {} for {}".format(level, compression))
