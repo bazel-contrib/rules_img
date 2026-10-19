@@ -109,7 +109,7 @@ func (e *Editor) AddManifest(ctx context.Context, m ManifestInput, tags ...strin
 	if err := e.AddManifestBlobs(ctx, m); err != nil {
 		return err
 	}
-	descs := DescriptorsForTags(tags, m.Manifest.MediaType, m.ManifestData, hashBytes(m.ManifestData), artifactTypeOf(m.Manifest), e.format.tagOnly())
+	descs := DescriptorsForTags(tags, api.ImageManifestMediaType(m.Manifest.MediaType), m.ManifestData, hashBytes(m.ManifestData), artifactTypeOf(m.Manifest), e.format.tagOnly())
 	for _, d := range descs {
 		e.AddIndexEntry(d)
 	}

@@ -52,6 +52,7 @@ var (
 	subjectDescriptor         string
 	sociIndexDescriptor       string
 	omitPlatform              bool
+	omitMediaType             bool
 )
 
 // inheritFromBase is the sentinel value used by the image_manifest rule to
@@ -105,6 +106,7 @@ func ManifestProcess(_ context.Context, args []string) {
 	flagSet.StringVar(&subjectDescriptor, "subject-descriptor", "", `A JSON file containing the descriptor of the subject manifest or index.`)
 	flagSet.StringVar(&sociIndexDescriptor, "soci-index-descriptor", "", `A JSON file containing the descriptor of this image's SOCI index. Its digest is recorded in the com.amazon.soci.index-digest manifest annotation (SOCI v2), which rewrites the manifest and changes its digest.`)
 	flagSet.BoolVar(&omitPlatform, "omit-platform", false, `Leave the platform out of the manifest descriptor. Use this for manifests that describe an artifact rather than a container image (an ORAS artifact, a Helm chart, ...): they have no platform of their own, so --os/--architecture would fall back to whatever platform the build targeted.`)
+	flagSet.BoolVar(&omitMediaType, "omit-media-type", false, `Leave the top-level mediaType field out of the manifest, to match a manifest written by a tool that omits it (such as helm push). The manifest descriptor keeps the image manifest media type.`)
 
 	if err := flagSet.Parse(args); err != nil {
 		flagSet.Usage()
@@ -233,6 +235,9 @@ func ManifestProcess(_ context.Context, args []string) {
 		ArtifactType: artifactType,
 		Config:       configDescriptor,
 		Layers:       layerDescriptors,
+	}
+	if omitMediaType {
+		manifest.MediaType = ""
 	}
 
 	// Set subject descriptor if provided

@@ -11,6 +11,8 @@ import (
 
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/types"
+
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/api"
 )
 
 // DistributionWriter materializes images into a static, read-only container
@@ -241,10 +243,11 @@ func (w *DistributionWriter) writeTagsList(repoRoot, name string) error {
 type referrerManifest struct {
 	MediaType    string `json:"mediaType"`
 	ArtifactType string `json:"artifactType"`
-	Config       struct {
+	Config       *struct {
 		MediaType string `json:"mediaType"`
 	} `json:"config"`
-	Subject *v1.Descriptor `json:"subject"`
+	Subject   *v1.Descriptor    `json:"subject"`
+	Manifests []json.RawMessage `json:"manifests"`
 }
 
 // writeReferrers (re)generates referrers/sha256:<subject> for every subject
@@ -274,11 +277,15 @@ func (w *DistributionWriter) writeReferrers(repoRoot string) error {
 			continue
 		}
 		artifactType := m.ArtifactType
-		if artifactType == "" {
+		if artifactType == "" && m.Config != nil {
 			artifactType = m.Config.MediaType
 		}
+		mediaType := types.MediaType(m.MediaType)
+		if m.Config != nil && m.Manifests == nil {
+			mediaType = api.ImageManifestMediaType(mediaType)
+		}
 		desc := v1.Descriptor{
-			MediaType:    types.MediaType(m.MediaType),
+			MediaType:    mediaType,
 			Size:         int64(len(data)),
 			Digest:       hashBytes(data),
 			ArtifactType: artifactType,

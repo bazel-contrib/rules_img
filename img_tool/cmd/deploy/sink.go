@@ -271,9 +271,14 @@ func resolveRoot(ctx context.Context, vfs *deployvfs.VFS, rootKind, rootDigest s
 	if err != nil {
 		return resolvedRoot{}, err
 	}
+	// The request descriptor, unlike the manifest bytes, always has a media type.
+	mediaType, err := img.MediaType()
+	if err != nil {
+		return resolvedRoot{}, err
+	}
 	return resolvedRoot{
 		RootData:     raw,
-		MediaType:    manifest.MediaType,
+		MediaType:    mediaType,
 		ArtifactType: manifestArtifactType(manifest),
 		IsIndex:      false,
 		Children:     []ocilayout.ManifestInput{ocilayout.ManifestInputFromVFS(src, manifest, raw, nil)},
