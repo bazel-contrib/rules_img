@@ -421,6 +421,7 @@ func (s *Syncer) pushImage(ctx context.Context, ref name.Repository, pushOp api.
 		ctx:          ctx,
 		manifest:     &manifest,
 		manifestData: manifestData,
+		mediaType:    types.MediaType(manifestBlob.MediaType),
 		pushOp:       pushOp,
 	}
 
@@ -801,10 +802,13 @@ type casImage struct {
 	config       *v1.ConfigFile // cached config
 	configOnce   sync.Once
 	configErr    error
+	// mediaType comes from the descriptor the manifest was fetched by, because
+	// the manifest itself may omit the field.
+	mediaType types.MediaType
 }
 
 func (i *casImage) MediaType() (types.MediaType, error) {
-	return i.manifest.MediaType, nil
+	return api.ImageManifestMediaType(i.mediaType), nil
 }
 
 func (i *casImage) Size() (int64, error) {
@@ -964,6 +968,7 @@ func (idx *casIndex) Image(hash v1.Hash) (v1.Image, error) {
 				ctx:          idx.ctx,
 				manifest:     &manifestObj,
 				manifestData: manifestData,
+				mediaType:    manifest.MediaType,
 				pushOp:       idx.pushOp,
 			}, nil
 		}

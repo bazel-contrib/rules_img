@@ -10,6 +10,8 @@ import (
 
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/types"
+
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/api"
 )
 
 // fileEntry is a small in-memory file written verbatim.
@@ -123,7 +125,7 @@ func (b *Builder) buildPlan(ctx context.Context) (*plan, error) {
 	case IndexClean:
 		m := b.manifests[0]
 		desc := v1.Descriptor{
-			MediaType:   m.Manifest.MediaType,
+			MediaType:   api.ImageManifestMediaType(m.Manifest.MediaType),
 			Digest:      hashBytes(m.ManifestData),
 			Size:        int64(len(m.ManifestData)),
 			Annotations: m.Manifest.Annotations,
@@ -140,7 +142,7 @@ func (b *Builder) buildPlan(ctx context.Context) (*plan, error) {
 
 	case IndexAnnotated:
 		m := b.manifests[0]
-		descs := DescriptorsForTags(b.ociTags, m.Manifest.MediaType, m.ManifestData, hashBytes(m.ManifestData), artifactTypeOf(m.Manifest), b.format.tagOnly())
+		descs := DescriptorsForTags(b.ociTags, api.ImageManifestMediaType(m.Manifest.MediaType), m.ManifestData, hashBytes(m.ManifestData), artifactTypeOf(m.Manifest), b.format.tagOnly())
 		data, err := marshalIndent(v1.IndexManifest{SchemaVersion: 2, MediaType: mediaTypeOCIImageIndex, Manifests: descs})
 		if err != nil {
 			return nil, err
@@ -185,7 +187,7 @@ func (b *Builder) buildPlan(ctx context.Context) (*plan, error) {
 			}
 		} else {
 			m := b.manifests[0]
-			data, err := marshalIndent(v1.Descriptor{MediaType: m.Manifest.MediaType, Digest: hashBytes(m.ManifestData), Size: int64(len(m.ManifestData))})
+			data, err := marshalIndent(v1.Descriptor{MediaType: api.ImageManifestMediaType(m.Manifest.MediaType), Digest: hashBytes(m.ManifestData), Size: int64(len(m.ManifestData))})
 			if err != nil {
 				return nil, err
 			}

@@ -332,7 +332,7 @@ func WriteMetadata(ctx context.Context, outputPath string) error {
 		if err != nil {
 			return fmt.Errorf("parsing root manifest as manifest: %w", err)
 		}
-		mediaType = string(manifest.MediaType)
+		mediaType = api.ImageManifestMediaType(string(manifest.MediaType))
 	} else {
 		return fmt.Errorf("failed to parse root file as either index or manifest")
 	}
@@ -364,7 +364,7 @@ func WriteMetadata(ctx context.Context, outputPath string) error {
 		}
 
 		manifestDescriptor := api.Descriptor{
-			MediaType: string(manifest.MediaType),
+			MediaType: api.ImageManifestMediaType(string(manifest.MediaType)),
 			Digest:    fmt.Sprintf("sha256:%x", manifestDigest),
 			Size:      manifestSize,
 		}
@@ -582,7 +582,7 @@ func processReferrers(knownDigests map[string]bool, config map[string]any, refer
 			if err != nil {
 				return nil, fmt.Errorf("referrer %d: parsing root as manifest: %w", refIdx, err)
 			}
-			refMediaType = string(manifest.MediaType)
+			refMediaType = api.ImageManifestMediaType(string(manifest.MediaType))
 		}
 
 		refRootDescriptor := api.Descriptor{
@@ -616,7 +616,7 @@ func processReferrers(knownDigests map[string]bool, config map[string]any, refer
 			}
 
 			manifestDescriptor := api.Descriptor{
-				MediaType: string(manifest.MediaType),
+				MediaType: api.ImageManifestMediaType(string(manifest.MediaType)),
 				Digest:    fmt.Sprintf("sha256:%x", manifestDigest),
 				Size:      manifestSize,
 			}

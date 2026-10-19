@@ -31,7 +31,22 @@ const (
 
 	// Config media types
 	MediaTypeEmptyJSON = "application/vnd.oci.empty.v1+json"
+
+	// Manifest media types
+	MediaTypeImageManifest = "application/vnd.oci.image.manifest.v1+json"
 )
+
+// ImageManifestMediaType returns mediaType, an image manifest's top-level
+// field, or the OCI image manifest media type when it is empty. A manifest may
+// omit the field (image_manifest's omit_media_type, or a pulled image), but its
+// descriptors and the Content-Type sent to a registry must carry one. Docker
+// manifests must set the field, so a manifest without one is OCI.
+func ImageManifestMediaType[T ~string](mediaType T) T {
+	if mediaType == "" {
+		return MediaTypeImageManifest
+	}
+	return mediaType
+}
 
 func (h HashAlgorithm) Len() int {
 	switch h {

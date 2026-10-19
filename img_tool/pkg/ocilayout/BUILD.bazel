@@ -35,6 +35,7 @@ go_test(
         "distribution_test.go",
         "editor_test.go",
         "golden_test.go",
+        "media_type_test.go",
         "multiroot_test.go",
     ],
     embed = [":ocilayout"],

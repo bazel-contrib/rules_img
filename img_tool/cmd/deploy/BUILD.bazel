@@ -55,6 +55,7 @@ go_test(
         "progress_test.go",
         "registry_override_test.go",
         "sign_sink_test.go",
+        "sink_media_type_test.go",
         "sink_test.go",
         "sink_vfs_test.go",
     ],

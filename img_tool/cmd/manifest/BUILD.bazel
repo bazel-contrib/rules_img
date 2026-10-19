@@ -19,7 +19,10 @@ go_library(
 
 go_test(
     name = "manifest_test",
-    srcs = ["manifest_override_test.go"],
+    srcs = [
+        "manifest_media_type_test.go",
+        "manifest_override_test.go",
+    ],
     embed = [":manifest"],
     deps = ["@com_github_opencontainers_image_spec//specs-go/v1:specs-go"],
 )

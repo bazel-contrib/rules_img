@@ -1,0 +1,108 @@
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@rules_go//go:def.bzl", "go_test")
+load("@rules_img//img:image.bzl", "image_manifest")
+load("@rules_img//img:layer.bzl", "image_layer")
+load("@rules_img//img:push.bzl", "image_push")
+
+# gazelle:exclude_from_release
+
+# The test checks manifests built with omit_media_type in the built files, the
+# oci_tarball output group, and a push it routes to a local sink.
+
+write_file(
+    name = "helm_config",
+    out = "helm_config.json",
+    content = ['{"apiVersion":"v2","name":"chart","version":"1.0.0"}'],
+)
+
+write_file(
+    name = "hello_txt",
+    out = "hello.txt",
+    content = ["hello\n"],
+)
+
+image_layer(
+    name = "layer",
+    srcs = {"/etc/hello.txt": ":hello_txt"},
+)
+
+image_manifest(
+    name = "chart",
+    config_fragment = ":helm_config",
+    config_media_type = "application/vnd.cncf.helm.config.v1+json",
+    layers = [":layer"],
+    omit_media_type = True,
+    soci = "disabled",
+)
+
+# A container image with a SOCI index, which adds a manifest annotation.
+image_manifest(
+    name = "soci_image",
+    layers = [":layer"],
+    omit_media_type = True,
+    soci = "enabled",
+)
+
+[
+    filegroup(
+        name = "{}.{}".format(image, group),
+        srcs = [":" + image],
+        output_group = group,
+    )
+    for image in [
+        "chart",
+        "soci_image",
+    ]
+    for group in [
+        "descriptor",
+        "oci_tarball",
+        "root_blob",
+    ]
+]
+
+[
+    image_push(
+        name = image + ".push",
+        image = ":" + image,
+        registry = "example.com",
+        repository = "test/" + image,
+        tag = "1.0.0",
+    )
+    for image in [
+        "chart",
+        "soci_image",
+    ]
+]
+
+# Not run on Windows: no other test starts a pusher from a test there, so
+# whether the launcher finds its runfiles from a child process is untested.
+go_test(
+    name = "omit_media_type_test",
+    size = "small",
+    srcs = ["omit_media_type_test.go"],
+    data = [
+        ":chart.descriptor",
+        ":chart.oci_tarball",
+        ":chart.push",
+        ":chart.root_blob",
+        ":soci_image.descriptor",
+        ":soci_image.oci_tarball",
+        ":soci_image.push",
+        ":soci_image.root_blob",
+    ],
+    env = {
+        "CHART_DESCRIPTOR": "$(rlocationpath :chart.descriptor)",
+        "CHART_MANIFEST": "$(rlocationpath :chart.root_blob)",
+        "CHART_OCI_TARBALL": "$(rlocationpath :chart.oci_tarball)",
+        "CHART_PUSH": "$(rlocationpath :chart.push)",
+        "SOCI_IMAGE_DESCRIPTOR": "$(rlocationpath :soci_image.descriptor)",
+        "SOCI_IMAGE_MANIFEST": "$(rlocationpath :soci_image.root_blob)",
+        "SOCI_IMAGE_OCI_TARBALL": "$(rlocationpath :soci_image.oci_tarball)",
+        "SOCI_IMAGE_PUSH": "$(rlocationpath :soci_image.push)",
+    },
+    target_compatible_with = select({
+        "@platforms//os:windows": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
+    deps = ["@rules_go//go/runfiles"],
+)

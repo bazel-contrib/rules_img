@@ -517,6 +517,8 @@ def _image_manifest_impl(ctx):
         args.add("--variant", variant)
     if ctx.attr.omit_platform:
         args.add("--omit-platform")
+    if ctx.attr.omit_media_type:
+        args.add("--omit-media-type")
     for layer in layers:
         inputs.append(layer.metadata)
     args.add_all(layers, format_each = "--layer-from-metadata=%s", map_each = _to_layer_arg, expand_directories = False)
@@ -821,6 +823,31 @@ image_manifest(
 ```
 """,
             providers = [platform_common.PlatformInfo],
+        ),
+        "omit_media_type": attr.bool(
+            doc = """Leave the top-level `mediaType` field out of the manifest.
+
+The OCI image spec says a manifest SHOULD set `mediaType`, so keep the default unless the
+manifest has to be byte-identical to one written by a tool that omits the field. `helm push`
+is one: a Helm chart manifest whose config, layers and annotations match Helm's gets the
+digest Helm pushes only when this attribute is set.
+
+Only the manifest bytes change. The manifest's descriptor, its entries in an `image_index` or
+OCI layout, and the `Content-Type` sent to a registry keep
+`application/vnd.oci.image.manifest.v1+json`.
+
+Example:
+```python
+image_manifest(
+    name = "chart",
+    config_fragment = ":chart_config.json",
+    config_media_type = "application/vnd.cncf.helm.config.v1+json",
+    layers = [":chart_layer"],
+    omit_media_type = True,
+)
+```
+""",
+            default = False,
         ),
         "omit_platform": attr.bool(
             doc = """Leave the platform out of this manifest's descriptor.
