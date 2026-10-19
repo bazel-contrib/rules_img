@@ -97,7 +97,7 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 	flagSet.StringVar(&formatFlag, "format", "", `The compression format of the output layer. Can be "gzip", "zstd", or "none". Default is to guess the algorithm based on the filename, but fall back to "gzip".`)
 	flagSet.BoolVar(&estargzFlag, "estargz", false, `Use estargz format for compression. This creates seekable gzip streams optimized for lazy pulling.`)
 	flagSet.StringVar(&mediaTypeFlag, "media-type", "", `Override the layer media type in the metadata output. If empty, auto-detected from the compression format.`)
-	flagSet.StringVar(&compressorJobsFlag, "compressor-jobs", "1", `Number of compressor jobs. 1 uses single-threaded stdlib gzip. n>1 uses pgzip. "nproc" uses NumCPU.`)
+	flagSet.StringVar(&compressorJobsFlag, "compressor-jobs", "", `Number of compressor jobs. For gzip, 1 uses single-threaded stdlib gzip and n>1 uses pgzip. For zstd, it is the number of parallel encoder goroutines, which is always at least 2. "nproc" uses the available cores. If unset, gzip is single-threaded and zstd uses 2 jobs.`)
 	flagSet.IntVar(&compressionLevelFlag, "compression-level", -1, `Compression level. For gzip: 0-9. If unset, use library default.`)
 	flagSet.Var(&annotations, "annotation", `Add an annotation as key=value. Can be specified multiple times.`)
 	flagSet.StringVar(&annotationsFile, "annotations-file", "", `File containing annotations, as JSON ({"key":"value"}, {"key":["v1","v2"]}, or ["key=value"]) or newline-delimited KEY=VALUE text. Annotations from the file are merged with those specified via --annotation, which take precedence.`)
@@ -385,21 +385,32 @@ func resolveCompressorJobs(flag string) int {
 	return 0
 }
 
+// maxRecordedCompressorJobs bounds the worker count written to the compact
+// stream header.
+//
+// Neither compressor's output depends on the exact count - gzip only
+// distinguishes parallel (>1, pgzip) from single-threaded (stdlib), and zstd
+// lays its parallel jobs out independently of the worker count - so
+// reconstruction reproduces the same bytes from a bounded value. Bounding it
+// matters because the build machine's core count is not the reconstructing
+// machine's: a value taken verbatim from a machine with hundreds of cores would
+// have every reconstruction allocate hundreds of zstd job buffers, at roughly
+// 64 MiB of peak memory each. The build itself is free to use every core, since
+// there the count was asked for.
+const maxRecordedCompressorJobs = 16
+
 // recordedCompressorJobs is the compressor-jobs value stored in the compact
-// stream header. The header field is a single byte and the gzip factory only
-// distinguishes parallel (>1, pgzip) from single-threaded (stdlib); pgzip output
-// is independent of the exact worker count, so we clamp to 255 to prevent uint8
-// truncation from flipping the pgzip/stdlib decision at reconstruction time
-// (e.g. NumCPU 256 must not truncate to 0). resolveCompressorJobs mirrors how
-// the compress factory interprets the --compressor-jobs flag the build used, so
-// the recorded value selects the same gzip implementation at reconstruction.
+// stream header. resolveCompressorJobs mirrors how the compress factory
+// interprets the --compressor-jobs flag the build used, so the recorded value
+// selects the same gzip implementation, and parallel zstd encoding, at
+// reconstruction time.
 func recordedCompressorJobs(flag string) uint8 {
 	resolved := resolveCompressorJobs(flag)
 	switch {
 	case resolved <= 1:
 		return 1
-	case resolved > 255:
-		return 255
+	case resolved > maxRecordedCompressorJobs:
+		return maxRecordedCompressorJobs
 	default:
 		return uint8(resolved)
 	}
