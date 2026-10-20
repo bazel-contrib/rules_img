@@ -3,6 +3,7 @@ load("@bazel_skylib//rules:write_file.bzl", "write_file")
 load("@rules_img//img:convert.bzl", "image_index_from_oci_layout", "image_manifest_from_oci_layout")
 load("@rules_img//img:image.bzl", "image_index", "image_manifest", "image_optimize")
 load("@rules_img//img:layer.bzl", "file_metadata", "image_layer", "layer_from_binary")
+load("@rules_img//img:load.bzl", "image_load")
 load("@rules_img//img:media_types.bzl", "GZIP_LAYER")
 load("@rules_img//img:test.bzl", "image_structure_test")
 load(":defs.bzl", "mtree_config_output_groups", "simple_binary")
@@ -184,6 +185,161 @@ image_structure_test(
     size = "small",
     configs = ["hello.yaml"],
     image = ":hello_from_layout",
+)
+
+# image_manifest_from_oci_layout with flatten = True -> squashes all layers into
+# a single zstd layer while preserving config metadata.
+image_manifest_from_oci_layout(
+    name = "hello_from_layout_flattened",
+    src = ":hello_index_oci_layout",
+    architecture = "amd64",
+    flatten = True,
+    os = "linux",
+)
+
+image_structure_test(
+    name = "hello_from_layout_flattened_test",
+    size = "small",
+    configs = ["hello.yaml"],
+    image = ":hello_from_layout_flattened",
+)
+
+# Extending a flattened image as `base` in image_manifest preserves both the
+# flattened filesystem and inherited config (Env, WorkingDir, Labels).
+image_manifest(
+    name = "hello_extended_from_flattened",
+    base = ":hello_from_layout_flattened",
+    layers = [":launcher_layer_no_infer"],
+    platform = ":linux_amd64",
+)
+
+image_structure_test(
+    name = "hello_extended_from_flattened_test",
+    size = "small",
+    configs = [
+        "base_workdir.yaml",
+        "hello.yaml",
+    ],
+    image = ":hello_extended_from_flattened",
+)
+
+# image_manifest_from_oci_layout from a .tar archive (both multi-layer and flattened).
+filegroup(
+    name = "hello_oci_tarball",
+    srcs = [":hello_index"],
+    output_group = "oci_tarball",
+)
+
+image_manifest_from_oci_layout(
+    name = "hello_from_tarball",
+    src = ":hello_oci_tarball",
+    architecture = "amd64",
+    layers = [
+        GZIP_LAYER,
+        GZIP_LAYER,
+    ],
+    os = "linux",
+)
+
+image_structure_test(
+    name = "hello_from_tarball_test",
+    size = "small",
+    configs = ["hello.yaml"],
+    image = ":hello_from_tarball",
+)
+
+image_manifest_from_oci_layout(
+    name = "hello_from_tarball_flattened",
+    src = ":hello_oci_tarball",
+    architecture = "amd64",
+    flatten = True,
+    os = "linux",
+)
+
+image_structure_test(
+    name = "hello_from_tarball_flattened_test",
+    size = "small",
+    configs = ["hello.yaml"],
+    image = ":hello_from_tarball_flattened",
+)
+
+# image_manifest_from_oci_layout from a `docker save` tarball (both multi-layer and flattened).
+image_load(
+    name = "hello_load",
+    image = ":hello_from_layout",
+    tag = "example.com/hello:latest",
+)
+
+filegroup(
+    name = "hello_docker_tarball",
+    srcs = [":hello_load"],
+    output_group = "tarball",
+)
+
+image_manifest_from_oci_layout(
+    name = "hello_from_docker_tarball",
+    src = ":hello_docker_tarball",
+    architecture = "amd64",
+    layers = [
+        GZIP_LAYER,
+        GZIP_LAYER,
+    ],
+    os = "linux",
+)
+
+image_structure_test(
+    name = "hello_from_docker_tarball_test",
+    size = "small",
+    configs = ["hello.yaml"],
+    image = ":hello_from_docker_tarball",
+)
+
+image_manifest_from_oci_layout(
+    name = "hello_from_docker_tarball_flattened",
+    src = ":hello_docker_tarball",
+    architecture = "amd64",
+    flatten = True,
+    os = "linux",
+)
+
+image_structure_test(
+    name = "hello_from_docker_tarball_flattened_test",
+    size = "small",
+    configs = ["hello.yaml"],
+    image = ":hello_from_docker_tarball_flattened",
+)
+
+# Extending a flattened `docker save` tarball as `base` in image_manifest
+# (end-to-end test for bazel-contrib/rules_img#809).
+image_manifest(
+    name = "hello_extended_from_docker_tarball_flattened",
+    base = ":hello_from_docker_tarball_flattened",
+    layers = [":launcher_layer_no_infer"],
+    platform = ":linux_amd64",
+)
+
+image_structure_test(
+    name = "hello_extended_from_docker_tarball_flattened_test",
+    size = "small",
+    configs = [
+        "base_workdir.yaml",
+        "hello.yaml",
+    ],
+    image = ":hello_extended_from_docker_tarball_flattened",
+)
+
+# Verify the `oci_layout` output group of a flattened archive-backed manifest.
+filegroup(
+    name = "hello_from_docker_tarball_flattened_oci_layout",
+    srcs = [":hello_from_docker_tarball_flattened"],
+    output_group = "oci_layout",
+)
+
+image_structure_test(
+    name = "hello_from_docker_tarball_flattened_oci_layout_test",
+    size = "small",
+    configs = ["hello.yaml"],
+    image = ":hello_from_docker_tarball_flattened_oci_layout",
 )
 
 # image_index_from_oci_layout -> per-manifest mtree (exercises unique naming).

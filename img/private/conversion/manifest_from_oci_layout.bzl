@@ -1,5 +1,6 @@
-"""Rule to convert an OCI layout to an image manifest."""
+"""Rule to convert an OCI layout or container image tar archive to an image manifest."""
 
+load("//img/private:oci_layout_action.bzl", "run_oci_layout_action")
 load("//img/private/common:build.bzl", "TOOLCHAIN", "TOOLCHAINS")
 load("//img/private/common:layer_helper.bzl", "IMAGE_MTREE_ATTRS", "image_mtree_or_none")
 load("//img/private/common:media_types.bzl", "GZIP_LAYER", "LAYER_TYPES", "UNCOMPRESSED_LAYER", "ZSTD_LAYER")
@@ -13,11 +14,38 @@ _layer_extension = {
     ZSTD_LAYER: "tzst",
 }
 
+def _build_oci_layout(ctx, manifest_out, config_out, layers):
+    oci_layout_output = ctx.actions.declare_directory(ctx.label.name + "_oci_layout")
+
+    args = ctx.actions.args()
+    args.add("oci-layout")
+    args.add("--format", "directory")
+    args.add("--manifest", manifest_out.path)
+    args.add("--config", config_out.path)
+
+    inputs = [manifest_out, config_out]
+    for layer in layers:
+        args.add("--layer", "{}={}".format(layer.metadata.path, layer.blob.path))
+        inputs.append(layer.metadata)
+        inputs.append(layer.blob)
+
+    run_oci_layout_action(
+        ctx,
+        format = "directory",
+        output = oci_layout_output,
+        args = args,
+        inputs = inputs,
+        mnemonic = "OCILayout",
+    )
+
+    return oci_layout_output
+
 def _image_manifest_from_oci_layout(ctx):
-    src_dir = ctx.file.src
+    src = ctx.file.src
     architecture = ctx.attr.architecture
     os = ctx.attr.os
     variant = ctx.attr.variant
+    flatten = ctx.attr.flatten
     layer_media_types = ctx.attr.layers
 
     # ARM64 defaults to v8 variant
@@ -25,7 +53,12 @@ def _image_manifest_from_oci_layout(ctx):
     if architecture == "arm64" and variant == "":
         variant = "v8"
 
-    if len(layer_media_types) == 0:
+    if flatten:
+        if len(layer_media_types) == 0:
+            layer_media_types = [ZSTD_LAYER]
+        elif len(layer_media_types) > 1:
+            fail("When flatten = True, at most one layer media type may be specified, got {}.".format(len(layer_media_types)))
+    elif len(layer_media_types) == 0:
         fail("At least one layer media type must be specified.")
 
     for media_type in layer_media_types:
@@ -72,7 +105,7 @@ def _image_manifest_from_oci_layout(ctx):
     args = [
         "manifest-from-oci-layout",
         "--src",
-        src_dir.path,
+        src.path,
         "--manifest",
         output_manifest.path,
         "--config",
@@ -88,6 +121,8 @@ def _image_manifest_from_oci_layout(ctx):
     ]
     if variant != "":
         args += ["--variant", variant]
+    if flatten:
+        args.append("--flatten")
     for i in range(len(layer_media_types)):
         args += [
             "--layer_media_type={}={}".format(i, layer_media_types[i]),
@@ -97,22 +132,23 @@ def _image_manifest_from_oci_layout(ctx):
 
     img_toolchain_info = ctx.toolchains[TOOLCHAIN].imgtoolchaininfo
     ctx.actions.run(
-        inputs = [src_dir],
+        inputs = [src],
         outputs = outputs,
         arguments = args,
         executable = img_toolchain_info.tool_exe,
         mnemonic = "ConvertOCILayoutToImageManifest",
-        progress_message = "Converting OCI layout at {} to image manifest {}".format(src_dir.path, output_manifest.path),
+        progress_message = "Converting {} to image manifest {}".format(src.path, output_manifest.path),
     )
 
     sparse_layout = build_sparse_oci_layout_for_manifest(ctx, output_manifest, output_config, layer_infos)
+    oci_layout = src if (src.is_directory and not flatten) else _build_oci_layout(ctx, output_manifest, output_config, layer_infos)
 
     return [
         DefaultInfo(files = depset([output_manifest, output_config])),
         OutputGroupInfo(
             descriptor = depset([output_descriptor]),
             digest = depset([output_digest]),
-            oci_layout = depset([src_dir]),
+            oci_layout = depset([oci_layout]),
         ),
         ImageManifestInfo(
             descriptor = output_descriptor,
@@ -137,7 +173,7 @@ image_manifest_from_oci_layout = rule(
     attrs = dict(
         IMAGE_MTREE_ATTRS,
         src = attr.label(
-            doc = "The directory containing the OCI layout to convert from.",
+            doc = "The OCI layout directory, OCI layout tar archive, or docker save tar archive to convert from.",
             mandatory = True,
             allow_single_file = True,
         ),
@@ -170,8 +206,12 @@ image_manifest_from_oci_layout = rule(
             ],
         ),
         layers = attr.string_list(
-            doc = "A list of layer media types. Use the well-defined media types in @rules_img//img:media_types.bzl.",
-            mandatory = True,
+            doc = "A list of layer media types. Use the well-defined media types in @rules_img//img:media_types.bzl. Required when flatten = False; defaults to [ZSTD_LAYER] when flatten = True.",
+            default = [],
+        ),
+        flatten = attr.bool(
+            doc = "If True, squash all layers of the source image into a single flattened layer while preserving the image configuration (Env, WorkingDir, Entrypoint, Cmd, User, ExposedPorts, Labels, etc.).",
+            default = False,
         ),
         variant = attr.string(
             doc = "The platform variant (e.g., 'v3' for amd64/v3, 'v8' for arm64/v8).",

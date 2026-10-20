@@ -5,6 +5,7 @@ bzl_library(
     srcs = ["manifest_from_oci_layout.bzl"],
     visibility = ["//visibility:public"],
     deps = [
+        "//img/private:oci_layout_action",
         "//img/private/common:build",
         "//img/private/common:layer_helper",
         "//img/private/common:media_types",

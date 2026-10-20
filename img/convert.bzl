@@ -1,8 +1,9 @@
-"""Rules to convert OCI layout directories to container images.
+"""Rules to convert OCI layout directories and container image archives to container images.
 
-Use `image_manifest_from_oci_layout` to convert an OCI layout directory
-to a single-platform container image manifest, and
-`image_index_from_oci_layout` to convert an OCI layout directory
+Use `image_manifest_from_oci_layout` to convert an OCI layout directory,
+OCI layout tar archive, or `docker save` tar archive to a single-platform
+container image manifest (optionally flattening all layers into a single layer),
+and `image_index_from_oci_layout` to convert an OCI layout directory
 to a multi-platform container image index.
 """
 
