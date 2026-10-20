@@ -1,0 +1,3 @@
+load(":defs.bzl", "transitions_test_suite")
+
+transitions_test_suite(name = "transitions_test")

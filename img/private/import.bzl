@@ -5,7 +5,6 @@ load("//img/private/common:build.bzl", "TOOLCHAIN")
 load("//img/private/common:layer_helper.bzl", "build_layer_mtree", "image_mtree_or_none", "media_type_is_tar")
 load("//img/private/common:layout_blob.bzl", "copy_blobs_to_output_base")
 load("//img/private/common:sparse_oci_layout.bzl", "build_sparse_oci_layout_for_index", "build_sparse_oci_layout_for_manifest")
-load("//img/private/common:transitions.bzl", "reset_platform_transition")
 load("//img/private/providers:index_info.bzl", "ImageIndexInfo")
 load("//img/private/providers:manifest_info.bzl", "ImageManifestInfo")
 load("//img/private/providers:pull_info.bzl", "PullInfo")
@@ -360,7 +359,6 @@ makes them be ignored; any other missing blob is still an error.""",
             providers = [BuildSettingInfo],
         ),
     },
-    cfg = reset_platform_transition,
     toolchains = [TOOLCHAIN],
 )
 

@@ -9,7 +9,7 @@ load("//img/private/common:build.bzl", "TOOLCHAIN", "TOOLCHAINS")
 load("//img/private/common:inherit.bzl", "INHERIT_FROM_BASE")
 load("//img/private/common:layer_helper.bzl", "allow_tar_files", "build_image_mtree", "calculate_layer_info", "extension_to_compression", "image_layer_mtrees", "image_layer_ztocs")
 load("//img/private/common:layout_blob.bzl", "blob_for_layout")
-load("//img/private/common:transitions.bzl", "normalize_layer_transition", "single_platform_transition")
+load("//img/private/common:transitions.bzl", "single_platform_transition")
 load("//img/private/config:defs.bzl", "TargetPlatformInfo")
 load("//img/private/providers:index_info.bzl", "ImageIndexInfo")
 load("//img/private/providers:layer_config_info.bzl", "ImageLayerConfigInfo")
@@ -805,7 +805,6 @@ Output groups:
         ),
         "layers": attr.label_list(
             doc = "Layers to include in the image. Either a LayersInfo provider or a DefaultInfo with tar files.",
-            cfg = normalize_layer_transition,
         ),
         "platform": attr.label(
             doc = """Optional target platform to build this manifest for.

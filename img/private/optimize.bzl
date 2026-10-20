@@ -5,7 +5,6 @@ load("//img/private:oci_layout_action.bzl", "run_oci_layout_action")
 load("//img/private/common:build.bzl", "TOOLCHAIN", "TOOLCHAINS")
 load("//img/private/common:layer_helper.bzl", "IMAGE_MTREE_ATTRS", "compression_tuning_args", "image_mtree_or_none")
 load("//img/private/common:layout_blob.bzl", "blob_for_layout")
-load("//img/private/common:transitions.bzl", "reset_platform_transition")
 load("//img/private/providers:index_info.bzl", "ImageIndexInfo")
 load("//img/private/providers:manifest_info.bzl", "ImageManifestInfo")
 load("//img/private/providers:oci_layout_settings_info.bzl", "OCILayoutSettingsInfo")
@@ -362,5 +361,4 @@ image_optimize(
         ),
     ),
     toolchains = TOOLCHAINS,
-    cfg = reset_platform_transition,
 )
