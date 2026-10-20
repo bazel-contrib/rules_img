@@ -3,7 +3,6 @@
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("//img/private/common:deploy_attrs.bzl", "COMMON_PUSH_ATTRS")
 load("//img/private/common:deploy_helpers.bzl", "extract_cross_mount_from", "extract_referrers", "get_tags", "resolve_push_at_build_time", "resolve_push_registry", "resolve_push_strategy", "resolve_signing")
-load("//img/private/common:transitions.bzl", "reset_platform_transition")
 load("//img/private/providers:push_config_info.bzl", "PushConfigInfo")
 load("//img/private/providers:push_settings_info.bzl", "PushSettingsInfo")
 load("//img/private/providers:stamp_setting_info.bzl", "StampSettingInfo")
@@ -109,5 +108,4 @@ multi_deploy(
 """,
     attrs = COMMON_PUSH_ATTRS,
     provides = [PushConfigInfo],
-    cfg = reset_platform_transition,
 )

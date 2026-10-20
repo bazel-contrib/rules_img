@@ -1,7 +1,6 @@
 """Implementation of the image_toolchain rule."""
 
 load("@bazel_features//:features.bzl", "bazel_features")
-load("//img/private/common:transitions.bzl", "reset_platform_transition")
 load("//img/private/providers:image_toolchain_info.bzl", "ImageToolchainInfo")
 
 DOC = """\
@@ -50,5 +49,4 @@ image_toolchain = rule(
     implementation = _image_toolchain_impl,
     attrs = ATTRS,
     doc = DOC,
-    cfg = reset_platform_transition,
 )
