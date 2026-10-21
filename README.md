@@ -653,6 +653,7 @@ linux/arm64).
     - [`signing_config`](docs/signing.md#signing_config) - Configure how `img deploy` signs pushed images
   - **Test Rules**
     - [`image_structure_test`](docs/test.md#image_structure_test) - Validate image structure (config + mtree) using container-structure-test configs
+    - [`image_size_test`](docs/test.md#image_size_test) - Budget wasted and duplicated bytes across an image's layers (per-layer mtrees)
   - **Special artifacts**
     - [`layer_from_file`](docs/layer.md#layer_from_file) - Create layers from custom blobs (not tar files)
     - [`oras_file_layer`](docs/oras.md#oras_file_layer) - Create oras artifact layers from individual files

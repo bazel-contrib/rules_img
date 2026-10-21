@@ -106,7 +106,10 @@ bzl_library(
     name = "test",
     srcs = ["test.bzl"],
     visibility = ["//visibility:public"],
-    deps = ["//img/private:image_structure_test"],
+    deps = [
+        "//img/private:image_size_test",
+        "//img/private:image_structure_test",
+    ],
 )
 
 filegroup(
