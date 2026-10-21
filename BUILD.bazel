@@ -29,8 +29,6 @@ filegroup(
         ["img_tool/**"],
         allow_empty = True,
         exclude = [
-            "img_tool/.bazelrc.common",
-            "img_tool/.bazelrc",
             "img_tool/.vscode/**",
             "img_tool/tools/**",
         ],

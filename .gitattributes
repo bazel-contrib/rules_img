@@ -4,7 +4,3 @@
 # always writes LF in binary mode).
 *.mtree text eol=lf
 
-# Match //:tool_source_files for GitHub source archives. The symlink leaves
-# img_tool/, which Bazel rejects when archive_override strips that prefix.
-/img_tool/.bazelrc export-ignore
-/img_tool/.bazelrc.common export-ignore
