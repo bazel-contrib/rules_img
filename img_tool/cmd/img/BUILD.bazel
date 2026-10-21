@@ -19,6 +19,7 @@ go_library(
         "//cmd/downloadmanifest",
         "//cmd/expandtemplate",
         "//cmd/hash",
+        "//cmd/imagesizetest",
         "//cmd/index",
         "//cmd/indexfromocilayout",
         "//cmd/layer",

@@ -1,0 +1,241 @@
+load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@rules_img//img:image.bzl", "image_index", "image_manifest")
+load("@rules_img//img:layer.bzl", "file_metadata", "image_layer")
+load("@rules_img//img:test.bzl", "image_size_test")
+load(":defs.bzl", "shallow_image")
+
+# gazelle:exclude_from_release
+
+filegroup(
+    name = "all_files",
+    srcs = glob(["**"]),
+    visibility = ["//img/private/release:__subpackages__"],
+)
+
+write_file(
+    name = "hello_txt",
+    out = "hello.txt",
+    content = ["hello\n"],
+)
+
+write_file(
+    name = "tool_sh",
+    out = "tool.sh",
+    content = ["#!/bin/sh\necho hi\n"],
+)
+
+write_file(
+    name = "lib_v1",
+    out = "lib_v1.so",
+    content = ["version-one-of-the-library-that-the-app-layer-replaces\n"],
+)
+
+write_file(
+    name = "lib_v2",
+    out = "lib_v2.so",
+    content = ["v2\n"],
+)
+
+write_file(
+    name = "marker_file",
+    out = "marker",
+    content = [""],
+)
+
+# --- a clean image: no layer shadows or duplicates another ---
+
+image_layer(
+    name = "hello_layer",
+    srcs = {"/etc/hello.txt": ":hello_txt"},
+    default_metadata = file_metadata(
+        mode = "0644",
+        mtime = "2023-01-01T00:00:00Z",
+    ),
+)
+
+image_layer(
+    name = "tool_layer",
+    srcs = {"/usr/local/bin/tool": ":tool_sh"},
+    default_metadata = file_metadata(
+        mode = "0755",
+        mtime = "2023-01-01T00:00:00Z",
+    ),
+)
+
+image_manifest(
+    name = "clean",
+    layers = [
+        ":hello_layer",
+        ":tool_layer",
+    ],
+)
+
+image_size_test(
+    name = "clean_test",
+    size = "small",
+    image = ":clean",
+    max_duplicated_bytes = 0,
+    max_wasted_bytes = 0,
+)
+
+# Multi-platform image (image_index -> ImageIndexInfo branch): every
+# single-platform child image is checked.
+platform(
+    name = "linux_amd64",
+    constraint_values = [
+        "@platforms//cpu:x86_64",
+        "@platforms//os:linux",
+    ],
+)
+
+platform(
+    name = "linux_arm64",
+    constraint_values = [
+        "@platforms//cpu:arm64",
+        "@platforms//os:linux",
+    ],
+)
+
+image_index(
+    name = "clean_index",
+    manifests = [":clean"],
+    platforms = [
+        ":linux_amd64",
+        ":linux_arm64",
+    ],
+)
+
+image_size_test(
+    name = "clean_index_test",
+    size = "small",
+    image = ":clean_index",
+    max_duplicated_bytes = 0,
+    max_wasted_bytes = 0,
+)
+
+# --- a wasteful image: layer 2 overwrites the library and whiteouts hello.txt ---
+
+image_layer(
+    name = "lib_v1_layer",
+    srcs = {"/usr/lib/libfoo.so": ":lib_v1"},
+    default_metadata = file_metadata(
+        mode = "0644",
+        mtime = "2023-01-01T00:00:00Z",
+    ),
+)
+
+image_layer(
+    name = "lib_v2_layer",
+    srcs = {
+        "/etc/.wh.hello.txt": ":marker_file",
+        "/usr/lib/libfoo.so": ":lib_v2",
+    },
+    default_metadata = file_metadata(
+        mode = "0644",
+        mtime = "2023-01-01T00:00:00Z",
+    ),
+)
+
+image_manifest(
+    name = "wasteful",
+    layers = [
+        ":hello_layer",
+        ":lib_v1_layer",
+        ":lib_v2_layer",
+    ],
+)
+
+# Wasted bytes are exactly the shadowed lib_v1 (55) + hello.txt (6) = 61; a
+# budget at the measured value passes.
+image_size_test(
+    name = "wasteful_within_budget_test",
+    size = "small",
+    image = ":wasteful",
+    max_wasted_bytes = 61,
+)
+
+# --- a duplicated image: the same content at two paths in two layers ---
+
+image_layer(
+    name = "copy_a_layer",
+    srcs = {"/opt/a/libfoo.so": ":lib_v1"},
+    default_metadata = file_metadata(
+        mode = "0644",
+        mtime = "2023-01-01T00:00:00Z",
+    ),
+)
+
+image_layer(
+    name = "copy_b_layer",
+    srcs = {"/opt/b/libfoo.so": ":lib_v1"},
+    default_metadata = file_metadata(
+        mode = "0644",
+        mtime = "2023-01-01T00:00:00Z",
+    ),
+)
+
+image_manifest(
+    name = "duplicated",
+    layers = [
+        ":copy_a_layer",
+        ":copy_b_layer",
+    ],
+)
+
+# One extra copy of lib_v1 (55 bytes); a budget at the measured value passes.
+image_size_test(
+    name = "duplicated_within_budget_test",
+    size = "small",
+    image = ":duplicated",
+    max_duplicated_bytes = 55,
+    max_wasted_bytes = 0,
+)
+
+# Negative cases (run manually to confirm the budgets fail loudly):
+#   bazel test //tests/image_size_test:wasteful_over_budget_test     # -> fails: 61 wasted bytes over a 60 budget
+#   bazel test //tests/image_size_test:duplicated_over_budget_test   # -> fails: 55 duplicated bytes over a 0 budget
+image_size_test(
+    name = "wasteful_over_budget_test",
+    size = "small",
+    image = ":wasteful",
+    max_wasted_bytes = 60,
+    tags = ["manual"],
+)
+
+image_size_test(
+    name = "duplicated_over_budget_test",
+    size = "small",
+    image = ":duplicated",
+    max_duplicated_bytes = 0,
+    tags = ["manual"],
+)
+
+# A shallow base-image layer (no blob, no mtree) must fail with an
+# "incomplete layer metadata" error, not silently pass:
+#   bazel test //tests/image_size_test:shallow_incomplete_test  # -> fails: incomplete layer metadata
+write_file(
+    name = "shallow_metadata",
+    out = "shallow_metadata.json",
+    content = ['{"mediaType":"application/vnd.oci.image.layer.v1.tar+gzip","digest":"sha256:0000000000000000000000000000000000000000000000000000000000000000","size":1234,"history":[{"created_by":"bazel build //tests/image_size_test:shallow"}]}'],
+)
+
+shallow_image(
+    name = "shallow",
+    metadata = ":shallow_metadata",
+)
+
+image_size_test(
+    name = "shallow_incomplete_test",
+    size = "small",
+    image = ":shallow",
+    max_wasted_bytes = 0,
+    tags = ["manual"],
+)
+
+bzl_library(
+    name = "defs",
+    srcs = ["defs.bzl"],
+    visibility = ["//visibility:public"],
+    deps = ["@rules_img//img:providers"],
+)

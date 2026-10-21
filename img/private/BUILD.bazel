@@ -165,6 +165,22 @@ bzl_library(
 )
 
 bzl_library(
+    name = "image_size_test",
+    srcs = ["image_size_test.bzl"],
+    visibility = ["//img:__subpackages__"],
+    deps = [
+        "//img/private/common:build",
+        "//img/private/common:layer_helper",
+        "//img/private/providers:deploy_tool_info",
+        "//img/private/providers:image_size_test_info",
+        "//img/private/providers:index_info",
+        "//img/private/providers:manifest_info",
+        "@bazel_skylib//rules:common_settings",
+        "@hermetic_launcher//launcher:lib_bzl",
+    ],
+)
+
+bzl_library(
     name = "manifest",
     srcs = ["manifest.bzl"],
     visibility = ["//img:__subpackages__"],
