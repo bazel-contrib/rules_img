@@ -1,5 +1,11 @@
 load("@rules_go//go:def.bzl", "go_library", "go_test")
 
+# Excluding manifestfromocilayout_test.go from Gazelle generation
+# because the generated test target name "manifestfromocilayout_test"
+# exceeds Windows path length limits (MAX_PATH = 260 characters).
+# Instead, we manually define a shorter target name "main_test" below.
+# gazelle:exclude manifestfromocilayout_test.go
+
 go_library(
     name = "manifestfromocilayout",
     srcs = [
@@ -24,10 +30,12 @@ go_library(
 )
 
 go_test(
-    name = "manifestfromocilayout_test",
+    name = "main_test",
     size = "small",
+    # keep
     srcs = ["manifestfromocilayout_test.go"],
     embed = [":manifestfromocilayout"],
+    # keep
     deps = [
         "//pkg/api",
         "@com_github_google_go_containerregistry//pkg/name",
