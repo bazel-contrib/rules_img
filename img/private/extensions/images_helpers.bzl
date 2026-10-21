@@ -5,11 +5,12 @@ load("@img_toolchain//:defs.bzl", "tool_for_repository_os")
 load("//img/private:manifest_media_type.bzl", "get_media_type", manifest_kind = "kind")
 load("//img/private/repository_rules:download.bzl", "auth_environment", "download_manifest", "execute_kwargs")
 
-def pull_tag_to_struct(tag):
+def pull_tag_to_struct(tag, digest = None):
     """Convert a pull tag to a struct for easier attribute access.
 
     Args:
         tag: Pull tag object with repository, digest, and optional registry/tag fields
+        digest: The digest to use instead of tag.digest, such as one resolved from tag.tag
 
     Returns:
         Struct with normalized pull attributes including sources dict
@@ -22,7 +23,7 @@ def pull_tag_to_struct(tag):
     vals = {
         "repository": tag.repository,
         "registries": registries,
-        "digest": tag.digest,
+        "digest": digest or tag.digest,
         "layer_handling": tag.layer_handling,
         "sources": {tag.repository: registries},
     }
