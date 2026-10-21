@@ -69,8 +69,9 @@ img_integration_tests(
 img_integration_tests(
     name = "js",
     bazel_versions = [
-        "8.7.0",
-        "9.1.1",
+        "8.8.2",
+        "9.3.1",
+        "10.0.0rc1",
     ],
     tags = TAGS,
     target_compatible_with = select({
@@ -99,8 +100,9 @@ img_integration_tests(
 img_integration_tests(
     name = "python",
     bazel_versions = [
-        "8.7.0",
-        "9.1.1",
+        "8.8.2",
+        "9.3.1",
+        "10.0.0rc1",
     ],
     tags = TAGS,
     target_compatible_with = select({
@@ -122,7 +124,7 @@ img_integration_tests(
     # Supply chain security tooling is still WIP.
     # It doesn't make sense to target older
     # Bazel versions.
-    bazel_versions = ["9.1.1"],
+    bazel_versions = ["9.3.1"],
     # Exercises the cosign/notation signed-push + verification phases.
     supports_signing = True,
     tags = TAGS,
@@ -137,7 +139,7 @@ img_integration_tests(
     name = "workspace",
     # bazel 9 drops WORKSPACE support.
     bazel_versions = [
-        "7.4.0",
+        "7.7.1",
     ],
     tags = TAGS,
     test_runner = "@rules_img_internal_tools//integration_test_runner",
@@ -162,24 +164,26 @@ test_suite(
     ) + integration_test_utils.bazel_integration_test_names(
         "js",
         [
-            "8.7.0",
-            "9.1.1",
+            "8.8.2",
+            "9.3.1",
+            "10.0.0rc1",
         ],
     ) + integration_test_utils.bazel_integration_test_names(
         "python",
         [
-            "8.7.0",
-            "9.1.1",
+            "8.8.2",
+            "9.3.1",
+            "10.0.0rc1",
         ],
     ) + integration_test_utils.bazel_integration_test_names(
         "sbom",
         [
-            "9.1.1",
+            "9.3.1",
         ],
     ) + integration_test_utils.bazel_integration_test_names(
         "workspace",
         [
-            "7.4.0",
+            "7.7.1",
         ],
     ),
     visibility = ["//:__subpackages__"],
