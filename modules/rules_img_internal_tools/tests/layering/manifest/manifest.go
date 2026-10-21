@@ -183,29 +183,82 @@ func formatTime(t time.Time) string {
 }
 
 // openLayer reads the layer blob at path and returns a tar reader over its
-// uncompressed contents. The compression format is detected by trying, in
-// order, gzip, then zstd, then an uncompressed tar stream.
+// uncompressed contents.
 func openLayer(path string) (*tar.Reader, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("reading layer %s: %w", path, err)
 	}
+	decoded, err := decompress(data)
+	if err != nil {
+		return nil, err
+	}
+	return tar.NewReader(bytes.NewReader(decoded)), nil
+}
 
+// decompress returns the uncompressed tar stream of a layer blob. The
+// compression format is detected by trying, in order, gzip, then zstd, then an
+// uncompressed tar stream.
+func decompress(data []byte) ([]byte, error) {
 	// 1. gzip — gzip.NewReader validates the magic header eagerly.
 	if gz, err := gzip.NewReader(bytes.NewReader(data)); err == nil {
-		return tar.NewReader(gz), nil
+		return io.ReadAll(gz)
 	}
 
 	// 2. zstd — DecodeAll fails cleanly on a non-zstd stream.
 	if dec, err := zstd.NewReader(nil); err == nil {
 		defer dec.Close()
 		if decoded, err := dec.DecodeAll(data, nil); err == nil {
-			return tar.NewReader(bytes.NewReader(decoded)), nil
+			return decoded, nil
 		}
 	}
 
 	// 3. uncompressed tar.
-	return tar.NewReader(bytes.NewReader(data)), nil
+	return data, nil
+}
+
+// LayerMetadata is the part of the layer metadata JSON written by the img tool
+// that describes the blob itself.
+type LayerMetadata struct {
+	DiffID string `json:"diff_id"`
+	Digest string `json:"digest"`
+	Size   int64  `json:"size"`
+}
+
+// VerifyMetadata checks that the digest, size and diff_id recorded in the
+// metadata file at metadataPath match the layer blob at blobPath.
+func VerifyMetadata(blobPath, metadataPath string) error {
+	raw, err := os.ReadFile(metadataPath)
+	if err != nil {
+		return fmt.Errorf("reading metadata %s: %w", metadataPath, err)
+	}
+	var meta LayerMetadata
+	if err := json.Unmarshal(raw, &meta); err != nil {
+		return fmt.Errorf("parsing metadata %s: %w", metadataPath, err)
+	}
+	data, err := os.ReadFile(blobPath)
+	if err != nil {
+		return fmt.Errorf("reading layer %s: %w", blobPath, err)
+	}
+	if got := int64(len(data)); got != meta.Size {
+		return fmt.Errorf("size: metadata records %d, blob is %d bytes", meta.Size, got)
+	}
+	if got := sha256Hex(data); got != meta.Digest {
+		return fmt.Errorf("digest: metadata records %s, blob is %s", meta.Digest, got)
+	}
+	decoded, err := decompress(data)
+	if err != nil {
+		return err
+	}
+	if got := sha256Hex(decoded); got != meta.DiffID {
+		return fmt.Errorf("diff_id: metadata records %s, uncompressed blob is %s", meta.DiffID, got)
+	}
+	return nil
+}
+
+func sha256Hex(data []byte) string {
+	sum := sha256.Sum256(data)
+	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
 func mustJSON(v any) string {

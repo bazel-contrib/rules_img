@@ -1,0 +1,26 @@
+load("@rules_img//img:layer.bzl", "layer_from_tar")
+load("//tests/layering:defs.bzl", "layer_contents_test")
+
+# gazelle:exclude_from_release
+
+# layer_from_tar with estargz over the same hand-crafted tar as the
+# //tests/layering/testcases/from_tar case. The source is recompressed through
+# the estargz writer, which re-encodes the tar entries and appends the
+# stargz.index.json entry, so the recorded diff_id and uncompressed size must
+# come from the stream estargz wrote and not from the source tar.
+layer_from_tar(
+    name = "layer",
+    src = "//tests/layering/testcases/from_tar:source.tar.zst",
+    compress = "gzip",
+    estargz = "enabled",
+)
+
+layer_contents_test(
+    name = "test",
+    size = "small",
+    layer = ":layer",
+    manifests = ["expected.ndjson"],
+    # layer_from_tar recompresses via the layer helper path, which never emits a
+    # compact stream, so there is nothing to reconstruct.
+    test_compact_stream = False,
+)

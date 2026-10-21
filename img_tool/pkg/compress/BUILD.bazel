@@ -16,6 +16,7 @@ go_library(
         "@com_github_containerd_stargz_snapshotter_estargz//zstdchunked",
         "@com_github_klauspost_compress//zstd",
         "@com_github_klauspost_pgzip//:pgzip",
+        "@com_github_opencontainers_go_digest//:go-digest",
     ],
 )
 
@@ -24,6 +25,7 @@ go_test(
     size = "medium",
     srcs = [
         "cpu_dependent_output_test.go",
+        "estargz_test.go",
         "zstd_concurrency_test.go",
     ],
     data = glob(["testdata/**"]),

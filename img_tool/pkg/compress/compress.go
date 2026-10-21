@@ -201,6 +201,42 @@ type ResumableHash interface {
 	encoding.BinaryUnmarshaler
 }
 
+// CountingResumableHash is a ResumableHash that also knows how much data was
+// written to it. It is used as the sink for the uncompressed (content) stream,
+// so that the uncompressed size is whatever the content hash consumed, even
+// when the bytes are produced deep inside a compressor instead of being
+// written by the caller.
+type CountingResumableHash interface {
+	ResumableHash
+	// BytesWritten returns the number of bytes written to the hash,
+	// including the bytes accounted for by the state it was resumed from.
+	BytesWritten() int64
+}
+
+// countingHash is the CountingResumableHash implementation used by this
+// package.
+type countingHash struct {
+	ResumableHash
+	n int64
+}
+
+// newCountingHash wraps h, starting the byte count at n. Resuming an appender
+// passes the uncompressed size of the previous state, since the hash state it
+// restores covers that many bytes already.
+func newCountingHash(h ResumableHash, n int64) *countingHash {
+	return &countingHash{ResumableHash: h, n: n}
+}
+
+func (c *countingHash) Write(p []byte) (int, error) {
+	n, err := c.ResumableHash.Write(p)
+	c.n += int64(n)
+	return n, err
+}
+
+func (c *countingHash) BytesWritten() int64 {
+	return c.n
+}
+
 type Compressor interface {
 	Close() error
 	Flush() error
