@@ -72,6 +72,12 @@ common --@rules_img//img/settings:create_parent_directories=disabled
 # "deduplicate_symlink" replaces duplicate trees with symlinks to the first occurrence.
 common --@rules_img//img/settings:layer_tree_artifact_handling=full
 
+# Whether directory outputs (the oci_layout output group and the internal sparse
+# layouts) point at their blobs with relative symlinks that leave the tree
+# artifact, instead of hardlinking/copying the blob in. Disable to get
+# self-contained directories.
+common --@rules_img//img/settings:treeartifact_symlinks=enabled
+
 # How to handle runfiles when packaging binaries into layers.
 # "auto" shares runfiles if RunfilesGroupInfo is provided, "shared" always shares,
 # "private" never shares.

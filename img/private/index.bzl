@@ -125,7 +125,7 @@ def _build_sparse_oci_layout(ctx, format, index_out, manifests):
         inputs.append(child.config)
 
     img_toolchain_info = ctx.toolchains[TOOLCHAIN].imgtoolchaininfo
-    if format == "directory" and img_toolchain_info.supports_treeartifact_uplevel_symlinks:
+    if format == "directory" and img_toolchain_info.use_treeartifact_uplevel_symlinks:
         args.add("--symlink")
     ctx.actions.run(
         inputs = inputs,

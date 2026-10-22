@@ -1,6 +1,7 @@
 """Implementation of the image_toolchain rule."""
 
 load("@bazel_features//:features.bzl", "bazel_features")
+load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("//img/private/common:transitions.bzl", "reset_platform_transition")
 load("//img/private/providers:image_toolchain_info.bzl", "ImageToolchainInfo")
 
@@ -22,6 +23,10 @@ ATTRS = dict(
         doc = "An image build tool executable.",
         allow_single_file = True,
     ),
+    _treeartifact_symlinks = attr.label(
+        default = Label("//img/settings:treeartifact_symlinks"),
+        providers = [BuildSettingInfo],
+    ),
 )
 
 TOOLCHAIN_TYPE = str(Label("//img:toolchain_type"))
@@ -34,9 +39,10 @@ def _image_toolchain_impl(ctx):
     # Windows hardlinks can propagate relative symlink targets unchanged when
     # copying files out of a tree artifact, leaving dangling symlinks.
     image_toolchain_info = ImageToolchainInfo(
-        supports_treeartifact_uplevel_symlinks = (
+        use_treeartifact_uplevel_symlinks = (
             ctx.attr.exec_os != "windows" and
-            bazel_features.rules.permits_treeartifact_uplevel_symlinks
+            bazel_features.rules.permits_treeartifact_uplevel_symlinks and
+            ctx.attr._treeartifact_symlinks[BuildSettingInfo].value == "enabled"
         ),
         tool_exe = ctx.file.tool_exe,
     )

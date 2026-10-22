@@ -5,15 +5,26 @@ load("@bazel_skylib//lib:unittest.bzl", "analysistest", "asserts")
 load("@bazel_skylib//rules:write_file.bzl", "write_file")
 load("//img/private:image_toolchain.bzl", "image_toolchain")
 
+_SYMLINKS_FLAG = str(Label("//img/settings:treeartifact_symlinks"))
+
 def _capability_test_impl(ctx):
     env = analysistest.begin(ctx)
     info = analysistest.target_under_test(env)[platform_common.ToolchainInfo].imgtoolchaininfo
-    asserts.equals(env, ctx.attr.expected, info.supports_treeartifact_uplevel_symlinks)
+    asserts.equals(env, ctx.attr.expected, info.use_treeartifact_uplevel_symlinks)
     return analysistest.end(env)
+
+_ATTRS = {"expected": attr.bool()}
 
 _capability_test = analysistest.make(
     _capability_test_impl,
-    attrs = {"expected": attr.bool()},
+    attrs = _ATTRS,
+)
+
+# Same assertions with the setting disabled.
+_capability_symlinks_disabled_test = analysistest.make(
+    _capability_test_impl,
+    attrs = _ATTRS,
+    config_settings = {_SYMLINKS_FLAG: "disabled"},
 )
 
 def image_toolchain_test_suite(name):
@@ -38,11 +49,19 @@ def image_toolchain_test_suite(name):
                 tool_exe = ":" + case + "_file",
                 tags = ["manual"],
             )
+            supports = exec_os != "windows" and bazel_features.rules.permits_treeartifact_uplevel_symlinks
             _capability_test(
                 name = case,
                 target_under_test = ":" + case + "_toolchain",
-                expected = exec_os != "windows" and bazel_features.rules.permits_treeartifact_uplevel_symlinks,
+                expected = supports,
                 size = "small",
             )
             tests.append(":" + case)
+            _capability_symlinks_disabled_test(
+                name = case + "_symlinks_disabled",
+                target_under_test = ":" + case + "_toolchain",
+                expected = False,
+                size = "small",
+            )
+            tests.append(":" + case + "_symlinks_disabled")
     native.test_suite(name = name, tests = tests)

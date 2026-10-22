@@ -222,6 +222,7 @@ bzl_library(
         "//img/private/common:transitions",
         "//img/private/providers:image_toolchain_info",
         "@bazel_features//:features",
+        "@bazel_skylib//rules:common_settings",
     ],
 )
 
