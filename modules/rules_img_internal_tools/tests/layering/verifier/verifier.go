@@ -4,7 +4,10 @@
 // It takes alternating <layer> <manifest> positional arguments (absolute paths;
 // the hermetic launcher resolves them from runfiles) and, for each pair, iterates
 // the layer tar and the manifest in lockstep (see the manifest package), failing
-// on the first entry that does not match or if the entry counts differ.
+// on the first entry that does not match or if the entry counts differ. The
+// layer metadata the img tool recorded (located in the runfiles at
+// "<prefix>/<layer index>") is checked against the blob as well: its digest,
+// size and diff_id must describe the blob that was built.
 //
 // When the environment variable RULES_IMG_LAYERING_RECONSTRUCT_COMPACT_STREAM is set,
 // each layer is additionally reconstructed from its compact stream by invoking
@@ -36,6 +39,7 @@ const reconstructEnv = "RULES_IMG_LAYERING_RECONSTRUCT_COMPACT_STREAM"
 const (
 	compactStreamRunfilesPrefix = "++rules_img_private++/compactstream"
 	inputFileCASRunfilesPrefix  = "++rules_img_private++/inputfilecas"
+	metadataRunfilesPrefix      = "++rules_img_private++/metadata"
 )
 
 func main() {
@@ -63,6 +67,10 @@ func main() {
 			fmt.Fprintf(os.Stderr, "FAIL: layer %d (%s): %v\n", layerIdx, blob, err)
 			os.Exit(1)
 		}
+		if err := verifyMetadata(layerIdx, blob); err != nil {
+			fmt.Fprintf(os.Stderr, "FAIL: layer %d (%s) metadata does not describe the blob: %v\n", layerIdx, blob, err)
+			os.Exit(1)
+		}
 		if reconstruct {
 			if err := verifyReconstruction(imgPath, layerIdx, blob); err != nil {
 				fmt.Fprintf(os.Stderr, "FAIL: layer %d compact stream reconstruction does not match the layer built directly: %v\n", layerIdx, err)
@@ -70,6 +78,16 @@ func main() {
 			}
 		}
 	}
+}
+
+// verifyMetadata checks the layer metadata the img tool recorded (digest, size
+// and diff_id) against the layer blob itself.
+func verifyMetadata(layerIdx int, blob string) error {
+	metadataPath, err := runfiles.Rlocation(metadataRunfilesPrefix + "/" + strconv.Itoa(layerIdx))
+	if err != nil {
+		return fmt.Errorf("locating layer metadata: %w", err)
+	}
+	return manifest.VerifyMetadata(blob, metadataPath)
 }
 
 // verifyReconstruction reconstructs layer layerIdx from its compact stream and

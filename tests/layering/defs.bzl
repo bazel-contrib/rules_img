@@ -34,12 +34,13 @@ _APP_GROUP = "rules_img_layering#app"
 # directly-built layer blob.
 _RECONSTRUCT_ENV = "RULES_IMG_LAYERING_RECONSTRUCT_COMPACT_STREAM"
 
-# Runfiles root-symlink prefixes under which the per-layer compact stream and the
-# content-addressed input-file directory are exposed for the verifier. The
-# verifier resolves "<prefix>/<layer index>" via the runfiles library. These must
-# stay in sync with the constants in verifier.go.
+# Runfiles root-symlink prefixes under which the per-layer metadata file, the
+# compact stream and the content-addressed input-file directory are exposed for
+# the verifier. The verifier resolves "<prefix>/<layer index>" via the runfiles
+# library. These must stay in sync with the constants in verifier.go.
 _COMPACT_STREAM_RUNFILES_PREFIX = "++rules_img_private++/compactstream"
 _INPUTFILECAS_RUNFILES_PREFIX = "++rules_img_private++/inputfilecas"
+_METADATA_RUNFILES_PREFIX = "++rules_img_private++/metadata"
 
 def _compact_layers_transition_impl(settings, attr):
     """Split the `layer` attribute by compact-stream emission.
@@ -108,12 +109,14 @@ def _layer_contents_test_impl(ctx):
     # arguments (resolved to absolute paths at runtime). A generated .sh launcher
     # is not executable on Windows; the native stub works everywhere.
     #
-    # When test_compact_stream is set, each layer's compact stream (.cstream) and its
-    # content-addressed input directory (.inputfilecas) are NOT passed as arguments
-    # (the launcher stub has a small fixed argument budget); they are exposed as
-    # runfiles symlinks keyed by layer index. At test time the verifier invokes
-    # `img compact-stream reconstruct` on them and asserts the reconstructed stream
-    # equals the layer blob byte-for-byte.
+    # Everything else the verifier needs is exposed as runfiles symlinks keyed by
+    # layer index rather than as arguments (the launcher stub has a small fixed
+    # argument budget): each layer's metadata file, whose recorded digest, size
+    # and diff_id are checked against the blob, and, when test_compact_stream is
+    # set, each layer's compact stream (.cstream) and its content-addressed input
+    # directory (.inputfilecas). At test time the verifier invokes
+    # `img compact-stream reconstruct` on the latter two and asserts the
+    # reconstructed stream equals the layer blob byte-for-byte.
     embedded_args, transformed_args = launcher.args_from_entrypoint(
         executable_file = ctx.executable._verifier,
     )
@@ -122,7 +125,10 @@ def _layer_contents_test_impl(ctx):
     for i, (layer, manifest) in enumerate(zip(layers, manifest_files)):
         if layer.blob == None:
             fail("layer {} contains a shallow layer with no blob".format(disabled_target.label))
+        if layer.metadata == None:
+            fail("layer {} contains a layer with no metadata file".format(disabled_target.label))
         blobs.append(layer.blob)
+        root_symlinks["{}/{}".format(_METADATA_RUNFILES_PREFIX, i)] = layer.metadata
         embedded_args, transformed_args = launcher.append_runfile(
             file = layer.blob,
             embedded_args = embedded_args,
@@ -175,6 +181,9 @@ layer_contents_test = rule(
 (one per layer); each line describes one tar entry with all of its tar header
 fields and, for regular files, the sha256 of its content. The test fails if any
 entry differs or if the number of entries does not match.
+
+Each layer's metadata file is validated against its blob as well: the digest,
+size and diff_id the img tool recorded must describe the blob that was built.
 
 When `test_compact_stream` is True (the default), the layer is additionally built with
 `experimental_compact_layers=enabled`. At test time the verifier reconstructs

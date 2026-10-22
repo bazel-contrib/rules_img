@@ -1,12 +1,15 @@
 package compress
 
 import (
+	"compress/gzip"
 	"fmt"
+	"hash"
 	"io"
 
 	"github.com/containerd/stargz-snapshotter/estargz"
 	"github.com/containerd/stargz-snapshotter/estargz/zstdchunked"
 	"github.com/klauspost/compress/zstd"
+	"github.com/opencontainers/go-digest"
 
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/api"
 )
@@ -14,14 +17,18 @@ import (
 // TarAppender appends tar entries to a compressed blob using estargz,
 // while hashing the compressed and uncompressed data.
 // It is resumable, meaning that it can be resumed from a previous state.
+//
+// The estargz writer rewrites the tar stream it is given (it re-encodes the
+// entries and appends the TOC entry), so the content hash and the uncompressed
+// size are taken from the stream estargz hands to the compressor, not from the
+// tar stream that was appended.
 type TarAppender[C TarCompressor] struct {
 	hashFunctionName         string
 	compressionAlgorithmName string
 	outerHash                ResumableHash
-	contentHash              ResumableHash
+	contentHash              CountingResumableHash
 	compressor               C
 	outputWriter             *countingWriter
-	uncompressedSize         int64
 	options
 }
 
@@ -34,7 +41,7 @@ func NewTar[C TarCompressor, HM hashMaker, CM tarCompressorMaker[C]](output io.W
 
 	var hashMaker HM
 	outerHash := hashMaker.New()
-	contentHash := hashMaker.New()
+	contentHash := newCountingHash(hashMaker.New(), 0)
 	outputWriter := &countingWriter{w: output}
 
 	var compressorMaker CM
@@ -50,7 +57,6 @@ func NewTar[C TarCompressor, HM hashMaker, CM tarCompressorMaker[C]](output io.W
 		contentHash:              contentHash,
 		compressor:               compress,
 		outputWriter:             outputWriter,
-		uncompressedSize:         0,
 		options:                  options,
 	}, nil
 }
@@ -64,13 +70,14 @@ func ResumeTar[C TarCompressor, HM hashMaker, CM tarCompressorMaker[C]](state ap
 
 	var hashMaker HM
 	outerHash := hashMaker.New()
-	contentHash := hashMaker.New()
+	innerContentHash := hashMaker.New()
 	if err := outerHash.UnmarshalBinary(state.OuterHashState); err != nil {
 		return TarAppender[C]{}, err
 	}
-	if err := contentHash.UnmarshalBinary(state.ContentHashState); err != nil {
+	if err := innerContentHash.UnmarshalBinary(state.ContentHashState); err != nil {
 		return TarAppender[C]{}, err
 	}
+	contentHash := newCountingHash(innerContentHash, state.UncompressedSize)
 	outputWriter := &countingWriter{w: output, n: state.CompressedSize}
 
 	var compressorMaker CM
@@ -86,7 +93,6 @@ func ResumeTar[C TarCompressor, HM hashMaker, CM tarCompressorMaker[C]](state ap
 		contentHash:              contentHash,
 		compressor:               compress,
 		outputWriter:             outputWriter,
-		uncompressedSize:         state.UncompressedSize,
 		options:                  options,
 	}
 
@@ -99,16 +105,7 @@ func ResumeTar[C TarCompressor, HM hashMaker, CM tarCompressorMaker[C]](state ap
 
 // AppendTar appends a tar entry to the TarAppender using estargz Writer.AppendTar.
 func (a *TarAppender[C]) AppendTar(r io.Reader) error {
-	// Create a tee reader to hash the content and track size
-	contentReader := io.TeeReader(r, a.contentHash)
-	countingReader := &countingReader{r: contentReader}
-
-	if err := a.compressor.AppendTar(countingReader); err != nil {
-		return err
-	}
-
-	a.uncompressedSize += countingReader.n
-	return nil
+	return a.compressor.AppendTar(r)
 }
 
 // Finalize finalizes the TarAppender and returns the state.
@@ -132,7 +129,7 @@ func (a *TarAppender[C]) Finalize() (api.AppenderState, error) {
 	// Populate layer annotations for estargz
 	layerAnnotations := make(map[string]string)
 	layerAnnotations[api.TocDigestAnnotation] = tocDigest
-	layerAnnotations[api.UncompressedSizeAnnotation] = fmt.Sprintf("%d", a.uncompressedSize)
+	layerAnnotations[api.UncompressedSizeAnnotation] = fmt.Sprintf("%d", a.contentHash.BytesWritten())
 
 	state := api.AppenderState{
 		Magic:            a.magic(),
@@ -141,7 +138,7 @@ func (a *TarAppender[C]) Finalize() (api.AppenderState, error) {
 		ContentHashState: contentHashState,
 		ContentHash:      a.contentHash.Sum(nil),
 		CompressedSize:   a.outputWriter.n,
-		UncompressedSize: a.uncompressedSize,
+		UncompressedSize: a.contentHash.BytesWritten(),
 		LayerAnnotations: layerAnnotations,
 	}
 	return state, nil
@@ -155,21 +152,22 @@ func (a *TarAppender[C]) magic() string {
 	return magic
 }
 
-func setupTarWriterPipeline[C TarCompressor, CM tarCompressorMaker[C]](output io.Writer, outerHash, contentHash ResumableHash, opts options) (C, error) {
+func setupTarWriterPipeline[C TarCompressor, CM tarCompressorMaker[C]](output io.Writer, outerHash ResumableHash, contentHash CountingResumableHash, opts options) (C, error) {
 	// Pipeline for writing data:
 	// estargz writer -> output tee (to outerHash and final output)
+	// the estargz writer also tees the tar stream it produces into contentHash
 	outputTee := io.MultiWriter(output, outerHash)
 
 	var compressorMaker CM
 	var compress C
 	if opts.compressionLevel != nil {
 		var err error
-		compress, err = compressorMaker.NewWriterLevel(outputTee, int(*opts.compressionLevel))
+		compress, err = compressorMaker.NewWriterLevel(outputTee, contentHash, int(*opts.compressionLevel))
 		if err != nil {
 			return compress, err
 		}
 	} else {
-		compress = compressorMaker.NewWriter(outputTee)
+		compress = compressorMaker.NewWriter(outputTee, contentHash)
 	}
 
 	return compress, nil
@@ -182,21 +180,64 @@ type TarCompressor interface {
 }
 
 type tarCompressorMaker[T TarCompressor] interface {
-	NewWriter(w io.Writer) T
-	NewWriterLevel(w io.Writer, level int) (T, error)
+	NewWriter(compressed io.Writer, contentHash CountingResumableHash) T
+	NewWriterLevel(compressed io.Writer, contentHash CountingResumableHash, level int) (T, error)
 	Name() string
 }
 
-// countingReader tracks the number of bytes read
-type countingReader struct {
-	r io.Reader
-	n int64
+// contentHashingCompressor wraps an estargz.Compressor so that every
+// uncompressed byte the estargz writer emits is also written to contentHash.
+//
+// estargz re-encodes the tar entries it is given and appends its own
+// stargz.index.json entry, so the stream that reaches the compressor - not the
+// stream that was appended - is the layer's uncompressed content.
+type contentHashingCompressor struct {
+	estargz.Compressor
+	contentHash CountingResumableHash
 }
 
-func (c *countingReader) Read(p []byte) (int, error) {
-	n, err := c.r.Read(p)
-	c.n += int64(n)
+// Writer returns the compressing writer the estargz writer pushes the
+// re-encoded tar entries into.
+func (c contentHashingCompressor) Writer(w io.Writer) (estargz.WriteFlushCloser, error) {
+	inner, err := c.Compressor.Writer(w)
+	if err != nil {
+		return nil, err
+	}
+	return contentHashingWriter{WriteFlushCloser: inner, contentHash: c.contentHash}, nil
+}
+
+// WriteTOCAndFooter writes the TOC. Compressors that put the TOC into the tar
+// stream itself (gzip does, zstd:chunked does not) write it to diffHash as
+// well, which is where the remaining uncompressed bytes show up.
+func (c contentHashingCompressor) WriteTOCAndFooter(w io.Writer, off int64, toc *estargz.JTOC, diffHash hash.Hash) (digest.Digest, error) {
+	return c.Compressor.WriteTOCAndFooter(w, off, toc, contentHashingHash{Hash: diffHash, contentHash: c.contentHash})
+}
+
+type contentHashingWriter struct {
+	estargz.WriteFlushCloser
+	contentHash CountingResumableHash
+}
+
+func (w contentHashingWriter) Write(p []byte) (int, error) {
+	n, err := w.WriteFlushCloser.Write(p)
+	if n > 0 {
+		if _, hashErr := w.contentHash.Write(p[:n]); hashErr != nil && err == nil {
+			err = hashErr
+		}
+	}
 	return n, err
+}
+
+type contentHashingHash struct {
+	hash.Hash
+	contentHash CountingResumableHash
+}
+
+func (h contentHashingHash) Write(p []byte) (int, error) {
+	if _, err := h.contentHash.Write(p); err != nil {
+		return 0, err
+	}
+	return h.Hash.Write(p)
 }
 
 // EstargzWriter wraps estargz.Writer to implement TarCompressor
@@ -206,20 +247,18 @@ type EstargzWriter struct {
 }
 
 // NewEstargzWriter creates a new EstargzWriter with default gzip compression
-func NewEstargzWriter(w io.Writer) *EstargzWriter {
-	writer := estargz.NewWriter(w)
-	return &EstargzWriter{writer: writer, compressionFormat: "gzip"}
+func NewEstargzWriter(compressed io.Writer, contentHash CountingResumableHash) *EstargzWriter {
+	writer, _ := NewEstargzWriterLevel(compressed, contentHash, gzip.BestCompression)
+	return writer
 }
 
 // NewEstargzWriterLevel creates a new EstargzWriter with compression level
-func NewEstargzWriterLevel(w io.Writer, level int) (*EstargzWriter, error) {
-	compressor := estargz.NewGzipCompressorWithLevel(level)
-	writer := estargz.NewWriterWithCompressor(w, compressor)
-	return &EstargzWriter{writer: writer, compressionFormat: "gzip"}, nil
+func NewEstargzWriterLevel(compressed io.Writer, contentHash CountingResumableHash, level int) (*EstargzWriter, error) {
+	return NewEstargzWriterWithCompression(compressed, contentHash, "gzip", level)
 }
 
 // NewEstargzWriterWithCompression creates a new EstargzWriter with specified compression
-func NewEstargzWriterWithCompression(w io.Writer, compressionFormat string, level int) (*EstargzWriter, error) {
+func NewEstargzWriterWithCompression(compressed io.Writer, contentHash CountingResumableHash, compressionFormat string, level int) (*EstargzWriter, error) {
 	var compressor estargz.Compressor
 	switch compressionFormat {
 	case "gzip":
@@ -232,7 +271,7 @@ func NewEstargzWriterWithCompression(w io.Writer, compressionFormat string, leve
 	default:
 		return nil, fmt.Errorf("unsupported compression format: %s", compressionFormat)
 	}
-	writer := estargz.NewWriterWithCompressor(w, compressor)
+	writer := estargz.NewWriterWithCompressor(compressed, contentHashingCompressor{Compressor: compressor, contentHash: contentHash})
 	return &EstargzWriter{writer: writer, compressionFormat: compressionFormat}, nil
 }
 
@@ -250,12 +289,12 @@ func (e *EstargzWriter) Close() (string, error) {
 // EstargzGzipCompressorMaker implements tarCompressorMaker for EstargzWriter with gzip
 type EstargzGzipCompressorMaker struct{}
 
-func (EstargzGzipCompressorMaker) NewWriter(w io.Writer) *EstargzWriter {
-	return NewEstargzWriter(w)
+func (EstargzGzipCompressorMaker) NewWriter(compressed io.Writer, contentHash CountingResumableHash) *EstargzWriter {
+	return NewEstargzWriter(compressed, contentHash)
 }
 
-func (EstargzGzipCompressorMaker) NewWriterLevel(w io.Writer, level int) (*EstargzWriter, error) {
-	return NewEstargzWriterLevel(w, level)
+func (EstargzGzipCompressorMaker) NewWriterLevel(compressed io.Writer, contentHash CountingResumableHash, level int) (*EstargzWriter, error) {
+	return NewEstargzWriterLevel(compressed, contentHash, level)
 }
 
 func (EstargzGzipCompressorMaker) Name() string {
@@ -265,13 +304,13 @@ func (EstargzGzipCompressorMaker) Name() string {
 // EstargzZstdCompressorMaker implements tarCompressorMaker for EstargzWriter with zstd
 type EstargzZstdCompressorMaker struct{}
 
-func (EstargzZstdCompressorMaker) NewWriter(w io.Writer) *EstargzWriter {
-	writer, _ := NewEstargzWriterWithCompression(w, "zstd", 3) // default level
+func (EstargzZstdCompressorMaker) NewWriter(compressed io.Writer, contentHash CountingResumableHash) *EstargzWriter {
+	writer, _ := NewEstargzWriterWithCompression(compressed, contentHash, "zstd", 3) // default level
 	return writer
 }
 
-func (EstargzZstdCompressorMaker) NewWriterLevel(w io.Writer, level int) (*EstargzWriter, error) {
-	return NewEstargzWriterWithCompression(w, "zstd", level)
+func (EstargzZstdCompressorMaker) NewWriterLevel(compressed io.Writer, contentHash CountingResumableHash, level int) (*EstargzWriter, error) {
+	return NewEstargzWriterWithCompression(compressed, contentHash, "zstd", level)
 }
 
 func (EstargzZstdCompressorMaker) Name() string {
