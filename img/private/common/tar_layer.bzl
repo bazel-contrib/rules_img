@@ -396,6 +396,7 @@ def create_tar_single_layer(ctx, settings, name, extra_args = [], extra_inputs =
     return (
         SingleLayerInfo(
             blob = out if out else reconstructed_blob,
+            generated_blob = None,
             metadata = metadata_out,
             media_type = settings.media_type,
             estargz = settings.estargz,

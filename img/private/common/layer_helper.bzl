@@ -2,6 +2,7 @@
 
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("//img/private/common:build.bzl", "TOOLCHAIN")
+load("//img/private/common:layout_blob.bzl", "generated_blob_or_none")
 load("//img/private/providers:single_layer_info.bzl", "SingleLayerInfo")
 
 allow_tar_files = [".tar", ".tar.gz", ".tgz", ".tar.zst", ".tzst"]
@@ -493,6 +494,14 @@ def calculate_layer_info(*, ctx, media_type, tar_file, metadata_file, estargz, a
     )
     return SingleLayerInfo(
         blob = tar_file,
+        # The input may be a source file (a checked-in or external tar), which a
+        # tree artifact layout cannot reference. The copy is named after the
+        # metadata file, which is already unique within the rule.
+        generated_blob = generated_blob_or_none(
+            ctx,
+            tar_file,
+            name = metadata_file.basename.removesuffix(".json") + "_blob_copy",
+        ),
         metadata = metadata_file,
         media_type = media_type,
         estargz = estargz,
@@ -542,6 +551,7 @@ def recompress_layer(*, ctx, media_type, tar_file, metadata_file, output, target
     )
     return SingleLayerInfo(
         blob = output,
+        generated_blob = None,
         metadata = metadata_file,
         media_type = media_type,
         estargz = estargz,
@@ -592,6 +602,7 @@ def optimize_layer(*, ctx, media_type, tar_file, metadata_file, output, target_c
     )
     return SingleLayerInfo(
         blob = output,
+        generated_blob = None,
         metadata = metadata_file,
         media_type = media_type,
         estargz = estargz,

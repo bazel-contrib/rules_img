@@ -4,6 +4,7 @@ load("@bazel_skylib//lib:unittest.bzl", "analysistest", "asserts")
 load("@bazel_skylib//rules:write_file.bzl", "write_file")
 load("//img/private:import.bzl", "image_import")
 load("//img/private/providers:index_info.bzl", "ImageIndexInfo")
+load("//img/private/providers:manifest_info.bzl", "ImageManifestInfo")
 
 # Digests are opaque keys here: nothing verifies that a blob hashes to the digest
 # it is registered under during analysis, so these are readable placeholders.
@@ -152,6 +153,56 @@ def _skips_omitted_manifests_test_impl(ctx):
 
 _skips_omitted_manifests_test = analysistest.make(_skips_omitted_manifests_test_impl)
 
+def _copies_source_blobs_test_impl(ctx):
+    env = analysistest.begin(ctx)
+    target_under_test = analysistest.target_under_test(env)
+    manifest_info = target_under_test[ImageManifestInfo]
+    copy_dir = "{}_blobs/sha256/".format(target_under_test.label.name)
+
+    # Manifests and configs are small and every layout embeds them, so the
+    # providers carry the copy in the output base instead of the source file.
+    for (kind, file) in [("manifest", manifest_info.manifest), ("config", manifest_info.config)]:
+        asserts.false(env, file.is_source, "{} should be a generated copy".format(kind))
+        asserts.true(env, copy_dir in file.short_path, "{} copy is at an unexpected path: {}".format(kind, file.short_path))
+
+    # A layer blob is large, and everything but a tree artifact layout reads it
+    # directly, so it keeps pointing at the source file. The copy of it is
+    # recorded on the side.
+    layer = manifest_info.layers[0]
+    asserts.true(env, layer.blob.is_source, "layer blob should stay the source file")
+    asserts.false(env, layer.generated_blob.is_source, "generated_blob should be a generated copy")
+    asserts.equals(env, _LAYER_DIGEST.removeprefix("sha256:"), layer.generated_blob.basename)
+
+    # Two actions: one for the metadata blobs the providers hand out, one for the
+    # layer blobs, which only runs when a layout referencing them is built.
+    copy_actions = [
+        action.mnemonic
+        for action in analysistest.target_actions(env)
+        if action.mnemonic.startswith("CopyImage")
+    ]
+    asserts.equals(env, ["CopyImageLayerBlobs", "CopyImageMetadataBlobs"], sorted(copy_actions))
+    return analysistest.end(env)
+
+_copies_source_blobs_test = analysistest.make(_copies_source_blobs_test_impl)
+
+def _keeps_generated_blobs_test_impl(ctx):
+    env = analysistest.begin(ctx)
+    target_under_test = analysistest.target_under_test(env)
+
+    # Nothing to copy: blobs that already are generated files live in the output
+    # base, so a tree artifact may reference them.
+    copy_actions = [
+        action.mnemonic
+        for action in analysistest.target_actions(env)
+        if action.mnemonic.startswith("CopyImage")
+    ]
+    asserts.equals(env, [], copy_actions)
+    for manifest in target_under_test[ImageIndexInfo].manifests:
+        asserts.false(env, manifest.config.is_source, "config should not be a source file")
+    return analysistest.end(env)
+
+_keeps_generated_blobs_test = analysistest.make(_keeps_generated_blobs_test_impl)
+
 def import_test_suite(name):
     """Declare image_import analysis tests.
 
@@ -215,7 +266,41 @@ def import_test_suite(name):
         target_under_test = ":" + filtered_subject,
     )
 
+    # The blobs of a pulled image are source files of the generated repository
+    # (eagerly downloaded layers included). Their content is never read during
+    # analysis, so one file stands in for all of them.
+    source_digests = [
+        _AMD64_MANIFEST_DIGEST,
+        _AMD64_CONFIG_DIGEST,
+        _LAYER_DIGEST,
+    ]
+    source_subject = name + "_source_subject"
+    image_import(
+        name = source_subject,
+        digest = _AMD64_MANIFEST_DIGEST,
+        data = {digest: _BLOBS[digest] for digest in [_AMD64_MANIFEST_DIGEST, _AMD64_CONFIG_DIGEST]},
+        files = {digest: ":import_testdata/source_blob.json" for digest in source_digests},
+        registries = ["registry.example.com"],
+        repository = "example/image",
+        tag = "latest",
+        tags = ["manual"],
+    )
+
+    source_test = name + "_copies_source_blobs_test"
+    _copies_source_blobs_test(
+        name = source_test,
+        size = "small",
+        target_under_test = ":" + source_subject,
+    )
+
+    generated_test = name + "_keeps_generated_blobs_test"
+    _keeps_generated_blobs_test(
+        name = generated_test,
+        size = "small",
+        target_under_test = ":" + subject,
+    )
+
     native.test_suite(
         name = name,
-        tests = [":" + test, ":" + filtered_test],
+        tests = [":" + test, ":" + filtered_test, ":" + source_test, ":" + generated_test],
     )

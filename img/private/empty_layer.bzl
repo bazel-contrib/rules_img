@@ -23,6 +23,7 @@ def _empty_layer_impl(ctx):
         ),
         LayersInfo(layers = [SingleLayerInfo(
             blob = out,
+            generated_blob = None,
             metadata = metadata_out,
             media_type = media_type,
             estargz = False,

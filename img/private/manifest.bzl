@@ -8,6 +8,7 @@ load("//img/private:stamp.bzl", "expand_or_write")
 load("//img/private/common:build.bzl", "TOOLCHAIN", "TOOLCHAINS")
 load("//img/private/common:inherit.bzl", "INHERIT_FROM_BASE")
 load("//img/private/common:layer_helper.bzl", "allow_tar_files", "build_image_mtree", "calculate_layer_info", "extension_to_compression", "image_layer_mtrees", "image_layer_ztocs")
+load("//img/private/common:layout_blob.bzl", "blob_for_layout")
 load("//img/private/common:transitions.bzl", "normalize_layer_transition", "single_platform_transition")
 load("//img/private/config:defs.bzl", "TargetPlatformInfo")
 load("//img/private/providers:index_info.bzl", "ImageIndexInfo")
@@ -245,10 +246,11 @@ def _build_oci_layout(ctx, format, manifest_out, config_out, layers):
 
     # Add layers with metadata=blob mapping
     for layer in layers:
-        if layer.blob != None:
-            args.add("--layer", "{}={}".format(layer.metadata.path, layer.blob.path))
+        blob = blob_for_layout(ctx, layer, format)
+        if blob != None:
+            args.add("--layer", "{}={}".format(layer.metadata.path, blob.path))
             inputs.append(layer.metadata)
-            inputs.append(layer.blob)
+            inputs.append(blob)
 
     run_oci_layout_action(
         ctx,

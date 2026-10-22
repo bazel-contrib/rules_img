@@ -11,6 +11,7 @@ go_library(
         "//cmd/casdir",
         "//cmd/compactstream",
         "//cmd/compress",
+        "//cmd/copyfiles",
         "//cmd/cst",
         "//cmd/deploy",
         "//cmd/deploymetadata",

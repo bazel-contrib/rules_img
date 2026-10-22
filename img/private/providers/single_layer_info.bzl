@@ -16,6 +16,13 @@ File containing metadata about the layer blob as a JSON file with the following 
 
 FIELDS = dict(
     blob = "File containing the raw layer or None (for shallow base images or compact-stream-only mode).",
+    generated_blob = """Generated copy of `blob`, or None if `blob` is already a generated file (or absent).
+
+Only set by rules whose blob is a source file, such as `image_import` for an
+eagerly pulled base image. Tree artifact layouts must reference this copy instead
+of `blob` (see `blob_for_layout`), because a source file is outside the output
+base and Bazel does not track a tree artifact's symlinks into it.
+""",
     metadata = _metadata_doc,
     media_type = "The media type of the layer as a string. Example: application/vnd.oci.image.layer.v1.tar+gzip.",
     estargz = "Boolean indicating whether the layer is an estargz layer.",

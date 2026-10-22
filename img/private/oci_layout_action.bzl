@@ -1,6 +1,7 @@
 """Shared helper to run img oci-layout with optional uplevel symlinks."""
 
 load("//img/private/common:build.bzl", "TOOLCHAIN")
+load("//img/private/common:layout_blob.bzl", "layout_uses_uplevel_symlinks")
 
 def run_oci_layout_action(ctx, *, format, output, args, inputs, mnemonic):
     """Run `img oci-layout`, emitting relative symlinks for directory outputs on Bazel >= 7.1.
@@ -21,7 +22,7 @@ def run_oci_layout_action(ctx, *, format, output, args, inputs, mnemonic):
     img_toolchain_info = ctx.toolchains[TOOLCHAIN].imgtoolchaininfo
     tool = img_toolchain_info.tool_exe
 
-    if format == "directory" and img_toolchain_info.supports_treeartifact_uplevel_symlinks:
+    if layout_uses_uplevel_symlinks(ctx, format):
         args.add("--symlink")
 
     args.add("--output", output.path)
