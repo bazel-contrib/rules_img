@@ -198,8 +198,8 @@ def transitions_test_suite(name):
 
     tests = []
     for mode, index_platform, test_rule, test_suffix in [
-        ("default", "inherited", _default_base_index_on_manifest_platform_test, "_base_index_on_manifest_platform_test"),
-        ("multiarch", "multiarch", _multiarch_shares_base_index_test, "_shares_base_index_test"),
+        ("default", "inherited", _default_base_index_on_manifest_platform_test, "_base_follows_manifest_test"),
+        ("multiarch", "multiarch", _multiarch_shares_base_index_test, "_base_shared_test"),
     ]:
         image_index(
             name = mode + "_base_index",
@@ -209,13 +209,13 @@ def transitions_test_suite(name):
             tags = ["manual"],
         )
 
-        # split_platform: the manifest takes each platform of the index's split.
-        # same_platform: the manifest's platform already matches the split.
-        # override_platform: the manifest forces amd64 under an arm64 split.
+        # split: the manifest takes each platform of the index's split.
+        # same: the manifest's platform already matches the split.
+        # override: the manifest forces amd64 under an arm64 split.
         for case, platform, platforms in [
-            ("split_platform", None, [":linux_amd64", ":linux_arm64"]),
-            ("same_platform", ":linux_amd64", [":linux_amd64"]),
-            ("override_platform", ":linux_amd64", [":linux_arm64"]),
+            ("split", None, [":linux_amd64", ":linux_arm64"]),
+            ("same", ":linux_amd64", [":linux_amd64"]),
+            ("override", ":linux_amd64", [":linux_arm64"]),
         ]:
             prefix = mode + "_" + case
             image_manifest(
@@ -252,23 +252,23 @@ def transitions_test_suite(name):
         tags = ["manual"],
     )
     _multiarch_index_without_platforms_keeps_platform_test(
-        name = "multiarch_index_without_platforms_keeps_platform_test",
+        name = "multiarch_without_platforms_test",
         target_under_test = ":index_without_platforms",
         size = "small",
     )
-    tests.append(":multiarch_index_without_platforms_keeps_platform_test")
+    tests.append(":multiarch_without_platforms_test")
 
     _plain_comparison(
         name = "manifest_vs_plain_build",
-        index = ":default_same_platform_index",
+        index = ":default_same_index",
         plain = ":application_layer",
         tags = ["manual"],
     )
     _manifest_matches_plain_build_test(
-        name = "default_manifest_matches_plain_build_test",
+        name = "default_matches_plain_build_test",
         target_under_test = ":manifest_vs_plain_build",
         size = "small",
     )
-    tests.append(":default_manifest_matches_plain_build_test")
+    tests.append(":default_matches_plain_build_test")
 
     native.test_suite(name = name, tests = tests)
