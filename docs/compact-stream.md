@@ -12,7 +12,7 @@ and using them, and the byte-level specification of the on-disk format:
 - **Using compact layers:** [Enabling in a Bazel build](#enabling-in-a-bazel-build) ·
   [What this means in practice](#what-this-means-in-practice) ·
   [Usage (CLI)](#usage) ·
-  [ext4 images](#compact-streams-of-ext4-images) ·
+  [ext4 and FAT32 images](#compact-streams-of-ext4-and-fat32-images) ·
   [Materializing the blob on demand](#materializing-the-blob-on-demand) ·
   [Reconstructing a layer](#reconstructing-a-layer-from-a-compact-stream) ·
   [Inspecting a compact stream](#inspecting-a-compact-stream-without-reconstruction) ·
@@ -385,7 +385,7 @@ emitted). This eliminates CAS lookups during reconstruction for small files.
 The byte stream is zstd-compressed by default. The original compression
 metadata is automatically derived from the layer's compression settings.
 
-## Compact streams of ext4 images
+## Compact streams of ext4 and FAT32 images
 
 The format is not specific to tar layers: any uncompressed byte stream whose
 bulk content is available as separate blobs can be represented this way. The
@@ -418,6 +418,12 @@ b, _ := ext4.NewBuilder(ext4.Options{DigestFiles: true})
 // ... b.WriteRegular / b.WriteHeader / b.ImportTar ...
 info, err := ext4cstream.Build(b, imageFile, streamFile, ext4cstream.Options{MinSize: 4096})
 ```
+
+The `fat32cstream` package (`img_tool/pkg/fs/fat32/fat32cstream`) does the same for the
+FAT32 images of `img_tool/pkg/fs/fat32`, which also store every file contiguously. With
+`img layer --format ext4` or `--format fat32`, `--compact-stream` writes the stream next to the
+image, and `--compact-stream-inline-threshold` is the minimum size of a referenced file (zero
+references every file).
 
 ## Materializing the blob on demand
 

@@ -5,7 +5,9 @@ go_library(
     srcs = [
         "basemetadata.go",
         "ext4.go",
+        "fat32.go",
         "flagtypes.go",
+        "imagelayer.go",
         "layer.go",
         "metadata.go",
         "paramfile.go",
@@ -23,6 +25,8 @@ go_library(
         "//pkg/erofscas",
         "//pkg/fs/ext4",
         "//pkg/fs/ext4/ext4cstream",
+        "//pkg/fs/fat32",
+        "//pkg/fs/fat32/fat32cstream",
         "//pkg/kvfile",
         "//pkg/metadata",
         "//pkg/proto/baselayer",
@@ -38,6 +42,7 @@ go_test(
     name = "layer_test",
     srcs = [
         "ext4_test.go",
+        "fat32_test.go",
         "layer_test.go",
         "paramfile_test.go",
         "placement_test.go",
