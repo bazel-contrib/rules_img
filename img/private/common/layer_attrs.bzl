@@ -11,7 +11,8 @@ Format of the layer.
 
 - `tar` (default): an OCI layer tar archive, optionally compressed.
 - `ext4`: an ext4 filesystem image, written directly by `img layer`. Each regular file is stored as
-  one contiguous run of blocks and the image is only as large as its content needs.
+  one contiguous run of blocks and the image is only as large as its content needs. As in tar layers,
+  regular files with the same content and metadata are stored once, as hard links.
   The layer file has the extension `.ext4`.
 
 The `ext4` format is for using the layer on its own. It is **not** a valid OCI layer: the metadata

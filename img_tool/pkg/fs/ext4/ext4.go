@@ -118,6 +118,17 @@ type Options struct {
 	// missing.
 	OmitLostAndFound bool
 
+	// Deduplicate merges regular files that have the same content and the same
+	// metadata (mode, owner, timestamps to the second, and extended
+	// attributes): they are stored once, as hard links of a single inode. This
+	// is what tar layers do with hard links.
+	//
+	// Only files added through the Deduplicated methods of the [Builder],
+	// [Builder.ImportTar] and [Builder.AddFS] take part, and the first file added
+	// is the one that is kept. Files that would exceed the hard link limit of
+	// ext4 start a new copy.
+	Deduplicate bool
+
 	// DigestFiles records the SHA-256 digest of every regular file's content
 	// in [FileLayout.Digest] while the image is written.
 	DigestFiles bool

@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "builder.go",
         "crc.go",
+        "dedup.go",
         "emit.go",
         "ext4.go",
         "plan.go",

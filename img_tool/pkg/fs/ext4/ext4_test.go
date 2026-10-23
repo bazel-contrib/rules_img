@@ -662,9 +662,18 @@ func TestDumpImages(t *testing.T) {
 		"nolf":    {OmitLostAndFound: true},
 		"label":   {Label: "rules_img"},
 		"many-1k": {BlockSize: 1024, ExtraInodes: 20000},
+		"dedup":   {Deduplicate: true},
 	} {
 		b := mustBuilder(t, opts)
 		populate(t, b)
+		if opts.Deduplicate {
+			dup := pattern(60000, 21)
+			for _, n := range []string{"dup/one", "dup/two", "other/three"} {
+				if err := b.WriteRegularDeduplicated(&tar.Header{Typeflag: tar.TypeReg, Name: n, Size: int64(len(dup)), Mode: 0o644}, bytes.NewReader(dup)); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
 		f, err := os.Create(filepath.Join(dir, name+".img"))
 		if err != nil {
 			t.Fatal(err)
@@ -695,5 +704,128 @@ func TestDigestFiles(t *testing.T) {
 	_, info2 := build(t, b2)
 	if info2.Files[0].Digest != nil {
 		t.Error("digest computed without DigestFiles")
+	}
+}
+
+func TestDeduplicate(t *testing.T) {
+	content := pattern(50000, 11)
+	add := func(b *Builder, name string, content []byte, mode int64, mutate func(*tar.Header)) {
+		t.Helper()
+		hdr := &tar.Header{Typeflag: tar.TypeReg, Name: name, Size: int64(len(content)), Mode: mode, Uid: 5, ModTime: time.Unix(1_600_000_000, 0)}
+		if mutate != nil {
+			mutate(hdr)
+		}
+		if err := b.WriteRegularDeduplicated(hdr, bytes.NewReader(content)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	populateDup := func(b *Builder) {
+		add(b, "a", content, 0o644, nil)
+		add(b, "dir/b", content, 0o644, nil)                                                  // identical: merged
+		add(b, "c-mode", content, 0o600, nil)                                                 // other mode
+		add(b, "c-owner", content, 0o644, func(h *tar.Header) { h.Uid = 6 })                  // other owner
+		add(b, "c-time", content, 0o644, func(h *tar.Header) { h.ModTime = time.Unix(1, 0) }) // other time
+		add(b, "c-subsecond", content, 0o644, func(h *tar.Header) { h.ModTime = h.ModTime.Add(time.Millisecond) })
+		add(b, "c-xattr", content, 0o644, func(h *tar.Header) {
+			h.PAXRecords = map[string]string{"SCHILY.xattr.user.k": "v"}
+		})
+		other := append([]byte(nil), content...)
+		other[777]++
+		add(b, "d-content", other, 0o644, nil) // same size, other content
+		addFile(t, b, "e-plain", content, 0o644)
+		if err := b.WriteRegularFromPathDeduplicated(&tar.Header{Typeflag: tar.TypeReg, Name: "f-path", Size: int64(len(content)), Mode: 0o644, Uid: 5, ModTime: time.Unix(1_600_000_000, 0)}, writeTemp(t, content)); err != nil {
+			t.Fatal(err)
+		}
+		if err := b.WriteRegularDeduplicatedKnownHash(&tar.Header{Typeflag: tar.TypeReg, Name: "g-known", Size: int64(len(content)), Mode: 0o644, Uid: 5, ModTime: time.Unix(1_600_000_000, 0)}, bytes.NewReader(content), func() []byte { s := sha256.Sum256(content); return s[:] }()); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	off := mustBuilder(t, Options{})
+	populateDup(off)
+	_, offInfo := build(t, off)
+
+	on := mustBuilder(t, Options{Deduplicate: true})
+	populateDup(on)
+	m, onInfo := build(t, on)
+	c := checkImage(t, m, onInfo.Size)
+
+	// a, dir/b, f-path, g-known and c-subsecond (timestamps count to the
+	// second, like for tar layers) are one file with five links.
+	for _, name := range []string{"dir/b", "f-path", "g-known", "c-subsecond"} {
+		if c.nodes[name].ino != c.nodes["a"].ino {
+			t.Errorf("%s was not merged with a", name)
+		}
+	}
+	if c.nodes["a"].links != 5 {
+		t.Errorf("a has %d links, want 5", c.nodes["a"].links)
+	}
+	for _, name := range []string{"c-mode", "c-owner", "c-time", "c-xattr", "d-content", "e-plain"} {
+		if c.nodes[name].ino == c.nodes["a"].ino || c.nodes[name].links != 1 {
+			t.Errorf("%s was merged but must not be", name)
+		}
+	}
+	if !bytes.Equal(c.nodes["a"].data, content) || !bytes.Equal(c.nodes["g-known"].data, content) {
+		t.Error("wrong content")
+	}
+	if onInfo.UsedInodes != offInfo.UsedInodes-4 {
+		t.Errorf("%d inodes in use, want %d", onInfo.UsedInodes, offInfo.UsedInodes-4)
+	}
+	// Four copies of 13 blocks less.
+	if want := offInfo.UsedBlocks - 4*13; onInfo.UsedBlocks != want {
+		t.Errorf("%d blocks in use, want %d", onInfo.UsedBlocks, want)
+	}
+	if len(onInfo.Files) != len(offInfo.Files)-4 {
+		t.Errorf("%d file layouts, want %d", len(onInfo.Files), len(offInfo.Files)-4)
+	}
+
+	// Without the option, nothing is merged, even through the Deduplicated methods.
+	moff := &memFile{}
+	{
+		b := mustBuilder(t, Options{})
+		populateDup(b)
+		if _, err := b.Build(moff); err != nil {
+			t.Fatal(err)
+		}
+	}
+	coff := checkImage(t, moff, int64(len(moff.b)))
+	if coff.nodes["a"].ino == coff.nodes["dir/b"].ino || coff.nodes["a"].links != 1 {
+		t.Error("files were merged without Options.Deduplicate")
+	}
+}
+
+func writeTemp(t *testing.T, content []byte) string {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "f")
+	if err := os.WriteFile(p, content, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+func TestDeduplicateLinkLimit(t *testing.T) {
+	b := mustBuilder(t, Options{Deduplicate: true})
+	const files = maxLinks + 1500
+	for i := 0; i < files; i++ {
+		hdr := &tar.Header{Typeflag: tar.TypeReg, Name: fmt.Sprintf("d/f%d", i), Mode: 0o644}
+		if err := b.WriteRegularDeduplicated(hdr, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	m, info := build(t, b)
+	c := checkImage(t, m, info.Size)
+	inodes := map[uint32]int{}
+	for name, n := range c.nodes {
+		if strings.HasPrefix(name, "d/f") {
+			inodes[n.ino]++
+		}
+	}
+	if len(inodes) != 2 {
+		t.Fatalf("%d inodes for %d identical files, want 2 (link limit)", len(inodes), files)
+	}
+	for ino, n := range inodes {
+		if n > maxLinks {
+			t.Errorf("inode %d has %d links", ino, n)
+		}
 	}
 }
