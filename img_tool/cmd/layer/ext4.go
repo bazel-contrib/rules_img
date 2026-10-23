@@ -19,8 +19,9 @@ import (
 
 // ext4Sink adapts an ext4 builder to the sink the layer recorder writes
 // into, so that every input of "img layer" can be written as an ext4 image.
-// Deduplication (and with it the content-addressed state) does not apply to
-// ext4 images: every file is stored once, contiguously, as written.
+// Like in tar layers, regular files with the same content and metadata are
+// stored once, as hard links of each other. The content-addressed state shared
+// between layers (--deduplicate) does not apply to ext4 images.
 type ext4Sink struct {
 	builder  *ext4.Builder
 	metadata *LayerMetadata
@@ -37,11 +38,11 @@ func (s *ext4Sink) WriteRegular(hdr *tar.Header, r io.Reader) error {
 }
 
 func (s *ext4Sink) WriteRegularDeduplicated(hdr *tar.Header, r io.Reader) error {
-	return s.builder.WriteRegular(hdr, r)
+	return s.builder.WriteRegularDeduplicated(hdr, r)
 }
 
-func (s *ext4Sink) WriteRegularDeduplicatedKnownHash(hdr *tar.Header, r io.Reader, _ []byte) error {
-	return s.builder.WriteRegular(hdr, r)
+func (s *ext4Sink) WriteRegularDeduplicatedKnownHash(hdr *tar.Header, r io.Reader, blobHash []byte) error {
+	return s.builder.WriteRegularDeduplicatedKnownHash(hdr, r, blobHash)
 }
 
 func (s *ext4Sink) WriteRegularFromPath(hdr *tar.Header, filePath string) error {
@@ -49,14 +50,14 @@ func (s *ext4Sink) WriteRegularFromPath(hdr *tar.Header, filePath string) error 
 }
 
 func (s *ext4Sink) WriteRegularFromPathDeduplicated(hdr *tar.Header, filePath string) error {
-	return s.builder.WriteRegularFromPath(hdr, filePath)
+	return s.builder.WriteRegularFromPathDeduplicated(hdr, filePath)
 }
 
 func (s *ext4Sink) Import(api.CASStateSupplier) error { return nil }
 func (s *ext4Sink) Export(api.CASStateExporter) error { return nil }
 
 // ContentHasher is used by the recorder to digest tar entries before writing
-// them. The digests are not needed here, but the recorder asks for the hasher.
+// them. The ext4 builder takes SHA-256 digests.
 func (s *ext4Sink) ContentHasher() hash.Hash { return sha256.New() }
 
 var errExt4NoCAS = errors.New("content-addressed storage is not supported for ext4 layers")
@@ -119,7 +120,7 @@ func (s *ext4Sink) StoreTree(fsys fs.FS, intendedPath string) (string, error) {
 		if err := s.applyMetadata(hdr); err != nil {
 			return err
 		}
-		return s.builder.WriteRegular(hdr, f)
+		return s.builder.WriteRegularDeduplicated(hdr, f)
 	})
 	return "", err
 }
@@ -166,12 +167,12 @@ func handleImageLayer(
 
 // writeExt4Layer writes the layer as an ext4 image to out, which must be a new,
 // empty file. Options that only apply to tar layers (compression, estargz,
-// deduplication, compact streams, ztoc) have no effect.
+// compact streams, ztoc) have no effect.
 func writeExt4Layer(
 	out *os.File, addFiles addFiles, importTars importTars, addExecutables executables, addSymlinks symlinks, emptyFiles []string,
 	baseMetadataPaths []string, createParentDirectories bool, layerMetadata *LayerMetadata,
 ) (*ext4.Info, error) {
-	builder, err := ext4.NewBuilder(ext4.Options{})
+	builder, err := ext4.NewBuilder(ext4.Options{Deduplicate: true})
 	if err != nil {
 		return nil, err
 	}

@@ -48,6 +48,7 @@ func TestExt4Layer(t *testing.T) {
 		"--ztoc", filepath.Join(dir, "unused.ztoc"),
 		"--add", "/etc/app/config.json=" + cfg,
 		"--add", "/opt/app=" + appFile,
+		"--add", "/opt/app-copy=" + appFile,
 		"--symlink", "/usr/bin/app=/opt/app",
 		"--empty-files-from-file", empties,
 		"--default-metadata", `{"uid":42,"gid":43}`,
@@ -80,8 +81,9 @@ func TestExt4Layer(t *testing.T) {
 	if magic := binary.LittleEndian.Uint16(img[1024+0x38:]); magic != 0xEF53 {
 		t.Fatalf("not an ext4 image: magic %#x", magic)
 	}
-	if !bytes.Contains(img, app) {
-		t.Error("the application is not stored contiguously in the image")
+	// Two files with the same content and metadata are stored once.
+	if n := bytes.Count(img, app); n != 1 {
+		t.Errorf("the application is stored %d times in the image, want once", n)
 	}
 	if !bytes.Contains(img, []byte(`{"a":1}`)) {
 		t.Error("config file missing from the image")

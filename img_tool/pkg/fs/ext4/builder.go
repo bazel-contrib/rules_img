@@ -3,6 +3,7 @@ package ext4
 import (
 	"archive/tar"
 	"bytes"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -59,6 +60,11 @@ type node struct {
 	minor    uint32
 	xattrs   []xattr
 	children map[string]*node
+
+	// dedup marks a regular file that may be merged with identical files
+	// (see Options.Deduplicate); digest is the SHA-256 of its content if known.
+	dedup  bool
+	digest []byte
 
 	planned planned
 }
@@ -125,17 +131,21 @@ func (b *Builder) WriteHeader(hdr *tar.Header) error {
 		if hdr.Size != 0 {
 			return fmt.Errorf("ext4: %s: regular file of %d bytes needs content, use WriteRegular", hdr.Name, hdr.Size)
 		}
-		return b.add(hdr, memSource(nil))
+		return b.add(hdr, memSource(nil), false, nil)
 	case tar.TypeXGlobalHeader:
 		return nil
 	}
-	return b.add(hdr, nil)
+	return b.add(hdr, nil, false, nil)
 }
 
 // WriteRegular adds a regular file whose hdr.Size bytes of content are read
 // from r. The content is kept in memory, or in a temporary file when it
 // exceeds [Options.SpoolThreshold], until Build.
 func (b *Builder) WriteRegular(hdr *tar.Header, r io.Reader) error {
+	return b.writeRegular(hdr, r, false, nil)
+}
+
+func (b *Builder) writeRegular(hdr *tar.Header, r io.Reader, dedup bool, digest []byte) error {
 	if !isRegular(hdr.Typeflag) {
 		return fmt.Errorf("ext4: %s: type %q is not a regular file", hdr.Name, hdr.Typeflag)
 	}
@@ -146,39 +156,57 @@ func (b *Builder) WriteRegular(hdr *tar.Header, r io.Reader) error {
 	if err != nil {
 		return fmt.Errorf("ext4: %s: %w", hdr.Name, err)
 	}
-	return b.add(hdr, src)
+	return b.add(hdr, src, dedup, digest)
 }
 
-// WriteRegularDeduplicated is like WriteRegular. The filesystem does not
-// deduplicate content, as that would give up contiguous files.
+// WriteRegularDeduplicated is like WriteRegular, but with [Options.Deduplicate]
+// the file is merged with other files that have the same content and
+// metadata: they become hard links to a single copy.
 func (b *Builder) WriteRegularDeduplicated(hdr *tar.Header, r io.Reader) error {
-	return b.WriteRegular(hdr, r)
+	return b.writeRegular(hdr, r, b.opts.Deduplicate, nil)
 }
 
-// WriteRegularDeduplicatedKnownHash is like WriteRegular and ignores the hash.
-func (b *Builder) WriteRegularDeduplicatedKnownHash(hdr *tar.Header, r io.Reader, _ []byte) error {
-	return b.WriteRegular(hdr, r)
+// WriteRegularDeduplicatedKnownHash is like WriteRegularDeduplicated for a
+// file whose SHA-256 digest the caller already knows. Other digests are
+// ignored. The digest is trusted: if it is wrong, files with different
+// content may be merged.
+func (b *Builder) WriteRegularDeduplicatedKnownHash(hdr *tar.Header, r io.Reader, blobHash []byte) error {
+	return b.writeRegular(hdr, r, b.opts.Deduplicate, sha256Digest(blobHash))
+}
+
+func sha256Digest(d []byte) []byte {
+	if len(d) != sha256.Size {
+		return nil
+	}
+	return append([]byte(nil), d...)
 }
 
 // WriteRegularFromPath adds a regular file whose hdr.Size bytes of content
 // are read from the file at filePath during Build. The file must not change
 // before then.
 func (b *Builder) WriteRegularFromPath(hdr *tar.Header, filePath string) error {
+	return b.writeRegularFromPath(hdr, filePath, false)
+}
+
+func (b *Builder) writeRegularFromPath(hdr *tar.Header, filePath string, dedup bool) error {
 	if !isRegular(hdr.Typeflag) {
 		return fmt.Errorf("ext4: %s: type %q is not a regular file", hdr.Name, hdr.Typeflag)
 	}
 	if hdr.Size < 0 {
 		return fmt.Errorf("ext4: %s: negative size", hdr.Name)
 	}
-	return b.add(hdr, pathSource(filePath))
+	return b.add(hdr, pathSource(filePath), dedup, nil)
 }
 
-// WriteRegularFromPathDeduplicated is like WriteRegularFromPath.
+// WriteRegularFromPathDeduplicated is like WriteRegularFromPath, but with
+// [Options.Deduplicate] the file is merged with identical files, like
+// [Builder.WriteRegularDeduplicated].
 func (b *Builder) WriteRegularFromPathDeduplicated(hdr *tar.Header, filePath string) error {
-	return b.WriteRegularFromPath(hdr, filePath)
+	return b.writeRegularFromPath(hdr, filePath, b.opts.Deduplicate)
 }
 
-// ImportTar adds every entry of an uncompressed tar stream.
+// ImportTar adds every entry of an uncompressed tar stream. Regular files are
+// added like by [Builder.WriteRegularDeduplicated].
 func (b *Builder) ImportTar(r io.Reader) error {
 	tr := tar.NewReader(r)
 	for {
@@ -190,7 +218,7 @@ func (b *Builder) ImportTar(r io.Reader) error {
 			return err
 		}
 		if isRegular(hdr.Typeflag) {
-			err = b.WriteRegular(hdr, tr)
+			err = b.WriteRegularDeduplicated(hdr, tr)
 		} else {
 			err = b.WriteHeader(hdr)
 		}
@@ -201,7 +229,8 @@ func (b *Builder) ImportTar(r io.Reader) error {
 }
 
 // AddFS adds the files of fsys below the directory prefix of the image (the
-// root of the image if prefix is empty). Only the permission bits of the
+// root of the image if prefix is empty). Regular files are added like by
+// [Builder.WriteRegularDeduplicated]. Only the permission bits of the
 // files are kept: ownership is root and timestamps are the default, which
 // keeps the image reproducible.
 func (b *Builder) AddFS(fsys fs.FS, prefix string) error {
@@ -235,7 +264,7 @@ func (b *Builder) AddFS(fsys fs.FS, prefix string) error {
 			defer f.Close()
 			hdr.Typeflag = tar.TypeReg
 			hdr.Size = info.Size()
-			return b.WriteRegular(hdr, f)
+			return b.WriteRegularDeduplicated(hdr, f)
 		}
 		return fmt.Errorf("ext4: %s: unsupported file type %v", p, mode.Type())
 	})
@@ -333,7 +362,7 @@ func splitPath(name string) ([]string, error) {
 
 // add inserts the entry described by hdr, with the given content for
 // regular files.
-func (b *Builder) add(hdr *tar.Header, src source) error {
+func (b *Builder) add(hdr *tar.Header, src source, dedup bool, digest []byte) error {
 	if b.built {
 		return errors.New("ext4: image already built")
 	}
@@ -354,6 +383,7 @@ func (b *Builder) add(hdr *tar.Header, src source) error {
 	if err := b.fill(n, hdr, src); err != nil {
 		return fmt.Errorf("ext4: %s: %w", hdr.Name, err)
 	}
+	n.dedup, n.digest = dedup && k == kindReg, digest
 
 	if len(parts) == 0 {
 		if k != kindDir {

@@ -74,6 +74,9 @@ func (b *Builder) plan() (*layout, error) {
 	}
 	l.bpg = min(8*l.bs, 65528)
 
+	if err := b.deduplicate(); err != nil {
+		return nil, err
+	}
 	b.collect(l)
 	if err := b.sizeNodes(l); err != nil {
 		return nil, err
