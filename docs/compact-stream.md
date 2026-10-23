@@ -12,6 +12,7 @@ and using them, and the byte-level specification of the on-disk format:
 - **Using compact layers:** [Enabling in a Bazel build](#enabling-in-a-bazel-build) ·
   [What this means in practice](#what-this-means-in-practice) ·
   [Usage (CLI)](#usage) ·
+  [ext4 images](#compact-streams-of-ext4-images) ·
   [Materializing the blob on demand](#materializing-the-blob-on-demand) ·
   [Reconstructing a layer](#reconstructing-a-layer-from-a-compact-stream) ·
   [Inspecting a compact stream](#inspecting-a-compact-stream-without-reconstruction) ·
@@ -369,6 +370,40 @@ emitted). This eliminates CAS lookups during reconstruction for small files.
 
 The byte stream is zstd-compressed by default. The original compression
 metadata is automatically derived from the layer's compression settings.
+
+## Compact streams of ext4 images
+
+The format is not specific to tar layers: any uncompressed byte stream whose
+bulk content is available as separate blobs can be represented this way. The
+`ext4cstream` Go package (`img_tool/pkg/fs/ext4/ext4cstream`) does that for the
+ext4 images written by `img_tool/pkg/fs/ext4`.
+
+The ext4 writer stores every regular file as one contiguous run of blocks and,
+with `DigestFiles` enabled, records the offset, size and SHA-256 digest of each
+file while it writes the image. After the image is complete, one sequential pass
+over it produces the compact stream next to it:
+
+- every file of at least the minimum size (4096 bytes by default) becomes a CAS
+  reference at the file's absolute offset in the image, and
+- everything else stays inline in the byte stream: filesystem metadata, files
+  below the minimum size, block padding and, for now, runs of zero bytes.
+
+The original compression is `none`, and the digest and size of the whole image
+are recorded as the [compressed-stream info](#compressed-stream-digest-and-size-optional),
+so reconstruction (`compact-stream reconstruct`) verifies that it reproduced the
+image exactly. The CAS blobs are the files that went into the image.
+
+Because zero runs are inline, the byte stream of an image with a lot of free space
+is mostly zeros. The writer compresses the byte stream while it is written
+(`Writer.CompressIncrementally`) so memory use follows the compressed size, and
+zstd shrinks such runs to almost nothing on disk. A future version of the format
+could replace zero regions with explicit placeholders.
+
+```go
+b, _ := ext4.NewBuilder(ext4.Options{DigestFiles: true})
+// ... b.WriteRegular / b.WriteHeader / b.ImportTar ...
+info, err := ext4cstream.Build(b, imageFile, streamFile, ext4cstream.Options{MinSize: 4096})
+```
 
 ## Materializing the blob on demand
 
