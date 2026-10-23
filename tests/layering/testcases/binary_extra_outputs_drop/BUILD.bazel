@@ -1,0 +1,41 @@
+load("@rules_img//img:layer.bzl", "image_layer", "layer_from_binary")
+load("//tests/layering:defs.bzl", "layer_contents_test")
+
+# gazelle:exclude_from_release
+
+# extra_default_outputs = "drop" places only the executable and its runfiles: the
+# fixture's sidecar, nested and parent default outputs are left out entirely,
+# even though all of them would fit under this path.
+image_layer(
+    name = "layer",
+    srcs = {"/app/bin/launcher": "//tests/layering/testcases:tool"},
+    extra_default_outputs = "drop",
+)
+
+layer_contents_test(
+    name = "test",
+    size = "small",
+    layer = ":layer",
+    manifests = ["expected.ndjson"],
+)
+
+# The same policy on the grouped layer_from_binary path, where the executable
+# reaches the layer action through DefaultInfo.files: dropping the extra default
+# outputs must not drop the executable with them.
+layer_from_binary(
+    name = "grouped_layer",
+    binary = "//tests/layering/testcases:runfiles_groups_tool",
+    extra_default_outputs = "drop",
+    path = "/app/bin/launcher",
+)
+
+layer_contents_test(
+    name = "grouped_test",
+    size = "small",
+    layer = ":grouped_layer",
+    manifests = [
+        "grouped_stdlib.ndjson",
+        "grouped_app.ndjson",
+        "grouped_binary.ndjson",
+    ],
+)

@@ -1,3 +1,4 @@
+load("@bazel_lib//lib:transitions.bzl", "platform_transition_binary")
 load("@bazel_skylib//rules:copy_directory.bzl", "copy_directory")
 load("@bazel_skylib//rules:write_file.bzl", "write_file")
 load("//tests/layering:defs.bzl", "binary_with_extra_outputs", "binary_with_runfiles_groups", "binary_with_runfiles_symlink", "files_with_symlink")
@@ -82,4 +83,25 @@ binary_with_runfiles_groups(
     name = "runfiles_groups_exec_tool",
     binary = ":script_sh",
     executable_group = True,
+)
+
+# A platform for the transitioned fixture below. Its only job is to be a
+# platform other than the host, so that the wrapper really transitions.
+platform(
+    name = "other_platform",
+    constraint_values = [
+        "@platforms//cpu:arm64",
+        "@platforms//os:linux",
+    ],
+)
+
+# bazel-lib's standard binary wrapper: it symlinks the wrapped executable into a
+# subdirectory named after the wrapper and prepends that symlink to the wrapped
+# binary's DefaultInfo.files. Every other default output therefore lives above
+# the executable's directory, which is what makes placement relative to the
+# executable escape the image root for a shallow path.
+platform_transition_binary(
+    name = "transitioned_tool",
+    binary = ":tool",
+    target_platform = ":other_platform",
 )
