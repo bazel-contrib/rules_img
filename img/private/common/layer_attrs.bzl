@@ -15,15 +15,25 @@ Compression algorithm to use. If set to 'auto', uses the global default compress
     ),
     format = attr.string(
         default = "auto",
-        values = ["auto", "tar", "erofs"],
+        values = ["auto", "tar", "erofs", "ext4"],
         doc = """\
 Container format of the layer blob, orthogonal to `compress`.
 
-'tar' writes an OCI tar changeset. 'erofs' writes a mountable EROFS filesystem image. If set to 'auto', uses the global default
+'tar' writes an OCI tar changeset. 'erofs' writes a mountable EROFS filesystem image. 'ext4' writes an
+ext4 filesystem image. If set to 'auto', uses the global default
 --@rules_img//img/settings:layer_format setting.
 
 An EROFS layer is a filesystem, not a changeset, which changes what an absent
 directory entry means. See docs/erofs-layers.md before using it.
+
+An `ext4` layer is written directly by `img layer`, for using the layer on its own: each regular file
+is stored as one contiguous run of blocks, the image is only as large as its content needs, and
+regular files with the same content and metadata are stored once, as hard links (like in tar layers).
+The layer file has the extension `.ext4`. It is **not** a valid OCI layer: the metadata recorded for it
+(media type, digests) does not describe an OCI blob, so do not use such a layer in an `image_manifest`.
+Options that only apply to tar layers are ignored: `compress`, `estargz`, `soci`, the global
+compression settings, compact layers, and `mtree` output. Entries are limited to what ext4 can store
+(for example, file names of up to 255 bytes).
 """,
     ),
     estargz = attr.string(

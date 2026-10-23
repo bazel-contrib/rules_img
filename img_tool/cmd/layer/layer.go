@@ -101,7 +101,7 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 	flagSet.Var(&contentManifestInputFlags, "deduplicate", `Path of a content manifest of a previous layer that can be used for deduplication.`)
 	flagSet.StringVar(&contentManifestCollection, "deduplicate-collection", "", `Path of a content manifest collection file that can be used for deduplication.`)
 	flagSet.StringVar(&formatFlag, "format", "", `The compression format of the output layer. Can be "gzip", "zstd", or "none". Default is to guess the algorithm based on the filename, but fall back to "gzip".`)
-	flagSet.StringVar(&layerFormatFlag, "layer-format", "tar", `The container format of the output layer. "tar" writes an OCI tar changeset. "erofs" writes a mountable EROFS filesystem image, which accepts only --format none or zstd and no --estargz or --ztoc.`)
+	flagSet.StringVar(&layerFormatFlag, "layer-format", "tar", `The container format of the output layer. "tar" writes an OCI tar changeset. "erofs" writes a mountable EROFS filesystem image, which accepts only --format none or zstd and no --estargz or --ztoc. "ext4" writes an ext4 filesystem image instead of a tar file. It is not an OCI layer: the options that only apply to tar layers (--format, --estargz, --ztoc and the compressor flags) are ignored.`)
 	flagSet.IntVar(&erofsBlockSizeFlag, "erofs-block-size", 0, `Filesystem block size of an EROFS layer, in bytes. 0 uses 4096, which matches the common page size. Only used with --layer-format erofs.`)
 	flagSet.Uint64Var(&erofsInlineThresholdFlag, "erofs-inline-threshold", 0, `Maximum size (in bytes) of a file payload an EROFS layer may tail-pack into its inode. A file at least this large gets a data extent of its own, and therefore becomes a content-addressed reference in the compact stream rather than inline bytes. 0 packs whatever fits in the inode's block. Only used with --layer-format erofs.`)
 	flagSet.StringVar(&erofsSyntheticDirectoriesFlag, "erofs-synthetic-directories", "inherit", `Attributes for directories an EROFS layer has to invent because nothing describes them. "inherit" copies the nearest described ancestor's ownership (what mkfs.erofs does), "default" uses 0755 root:root, "strict" fails the layer instead of guessing. Only used with --layer-format erofs.`)
@@ -128,6 +128,28 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 	if err := flagSet.Parse(args); err != nil {
 		flagSet.Usage()
 		os.Exit(1)
+	}
+
+	var containerFormat api.ContainerFormat
+	switch layerFormatFlag {
+	case "", "tar":
+		containerFormat = api.TarFormat
+	case "erofs":
+		containerFormat = api.ErofsFormat
+	case "ext4":
+		containerFormat = api.Ext4Format
+	default:
+		fmt.Fprintf(os.Stderr, "Unknown layer format %s. Supported layer formats are tar, erofs and ext4.\n", layerFormatFlag)
+		os.Exit(1)
+	}
+	if containerFormat.IsImageFormat() {
+		// A filesystem image is written directly. Options that only apply to
+		// tar layers are ignored, and an image is always written.
+		formatFlag = "none"
+		estargzFlag = false
+		compactStreamOnlyFlag = false
+		compactStreamOutputFlag = ""
+		ztocOutputFlag = ""
 	}
 
 	if compactStreamOnlyFlag && compactStreamOutputFlag == "" {
@@ -168,17 +190,6 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 				annotations[k] = v
 			}
 		}
-	}
-
-	var containerFormat api.ContainerFormat
-	switch layerFormatFlag {
-	case "", "tar":
-		containerFormat = api.TarFormat
-	case "erofs":
-		containerFormat = api.ErofsFormat
-	default:
-		fmt.Fprintf(os.Stderr, "Unknown layer format %s. Supported layer formats are tar and erofs.\n", layerFormatFlag)
-		os.Exit(1)
 	}
 
 	var compressionAlgorithm api.CompressionAlgorithm
@@ -256,10 +267,15 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 	}
 
 	var outputFile io.Writer
+	var outputOSFile *os.File
 	if compactStreamOnlyFlag {
 		outputFile = io.Discard
 	} else {
-		f, err := os.OpenFile(outputFilePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+		openFlags := os.O_WRONLY | os.O_CREATE | os.O_TRUNC
+		if containerFormat.IsImageFormat() {
+			openFlags = os.O_RDWR | os.O_CREATE | os.O_TRUNC // read back for the digest
+		}
+		f, err := os.OpenFile(outputFilePath, openFlags, 0o644)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error opening output file: %v\n", err)
 			os.Exit(1)
@@ -271,6 +287,7 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 			}
 		}()
 		outputFile = f
+		outputOSFile = f
 	}
 
 	// Parse layer metadata
@@ -377,6 +394,17 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 				break
 			}
 		}
+	}
+
+	if containerFormat.IsImageFormat() {
+		if err := handleImageLayer(
+			containerFormat, outputOSFile, addFiles, importTarFlags, executableFlags, symlinkFlags, emptyFilePaths, baseMetadataPaths,
+			createParentDirectoriesFlag, layerMetadata, layerHistory, mediaTypeFlag, annotations, metadataOutputFlag,
+		); err != nil {
+			fmt.Fprintf(os.Stderr, "Writing %s layer: %v\n", containerFormat, err)
+			os.Exit(1)
+		}
+		return
 	}
 
 	casImporter := contentmanifest.NewMultiImporter(contentManifestInputFlags, api.SHA256)

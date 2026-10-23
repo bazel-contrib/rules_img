@@ -1,0 +1,51 @@
+load("@bazel_skylib//rules:build_test.bzl", "build_test")
+load("@rules_img//img:layer.bzl", "image_layer")
+
+# gazelle:exclude_from_release
+
+genrule(
+    name = "hello",
+    outs = ["hello.txt"],
+    cmd = "echo 'hello from an ext4 layer' > $@",
+)
+
+# Options that only apply to tar layers are ignored for ext4 layers.
+image_layer(
+    name = "ext4_layer",
+    srcs = {
+        "/etc/hello.txt": ":hello",
+    },
+    compress = "zstd",
+    estargz = "enabled",
+    format = "ext4",
+    symlinks = {
+        "/hello": "/etc/hello.txt",
+    },
+)
+
+# Fails the build unless the layer is an ext4 image holding the file.
+genrule(
+    name = "check_ext4_layer",
+    srcs = [":ext4_layer"],
+    outs = ["ext4_layer_ok"],
+    cmd = """
+layer="$(location :ext4_layer)"
+case "$$layer" in *.ext4) ;; *) echo "expected a .ext4 layer, got $$layer" >&2; exit 1;; esac
+# The ext4 magic number 0xEF53 is at offset 0x38 of the superblock, which starts at 1024.
+magic="$$(od -An -tx1 -j1080 -N2 "$$layer" | tr -d ' \\n')"
+[ "$$magic" = "53ef" ] || { echo "not an ext4 image: magic is $$magic" >&2; exit 1; }
+grep -q "hello from an ext4 layer" "$$layer" || { echo "file content not found in the image" >&2; exit 1; }
+touch $@
+""",
+)
+
+build_test(
+    name = "ext4_layer_test",
+    targets = [":check_ext4_layer"],
+)
+
+filegroup(
+    name = "all_files",
+    srcs = glob(["**"]),
+    visibility = ["//img/private/release:__subpackages__"],
+)

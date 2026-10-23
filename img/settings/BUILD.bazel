@@ -15,13 +15,16 @@ string_flag(
 
 # Layer container format, orthogonal to :compress. "tar" writes an OCI tar
 # changeset; "erofs" writes a mountable EROFS filesystem image (see
-# docs/erofs-layers.md), which accepts only compress=none or zstd.
+# docs/erofs-layers.md), which accepts only compress=none or zstd; "ext4"
+# writes an ext4 filesystem image, which is for using a layer on its own (it is
+# not an OCI layer) and ignores the options that only apply to tar layers.
 string_flag(
     name = "layer_format",
     build_setting_default = "tar",
     values = [
         "tar",
         "erofs",
+        "ext4",
     ],
     visibility = ["//visibility:public"],
 )

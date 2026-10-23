@@ -17,6 +17,11 @@ EROFS_LAYER_TYPES = [
     EROFS_ZSTD_LAYER,
 ]
 
+# The media type recorded for an ext4 filesystem image layer. It is not an OCI
+# layer media type: such a layer is meant to be used on its own, not as part of
+# an image, so it is not one of the LAYER_TYPES.
+EXT4_LAYER = "application/x-ext4"
+
 LAYER_TYPES = [
     UNCOMPRESSED_LAYER,
     GZIP_LAYER,

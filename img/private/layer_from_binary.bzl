@@ -341,7 +341,8 @@ def _create_grouped_layers(ctx, settings, exe, path_in_image, ordered_groups, ru
         all_metadata.append(metadata)
         if compact_stream:
             all_compact_streams.append(compact_stream)
-        all_mtrees.append(mtree)
+        if mtree:
+            all_mtrees.append(mtree)
         if ztoc:
             all_ztocs.append(ztoc)
 
@@ -365,7 +366,8 @@ def _create_grouped_layers(ctx, settings, exe, path_in_image, ordered_groups, ru
         all_metadata.append(metadata)
         if compact_stream:
             all_compact_streams.append(compact_stream)
-        all_mtrees.append(mtree)
+        if mtree:
+            all_mtrees.append(mtree)
         if ztoc:
             all_ztocs.append(ztoc)
 
