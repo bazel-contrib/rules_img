@@ -211,13 +211,40 @@ def resolve_layer_settings(ctx):
     and tree_artifact_handling from global build settings. Computes derived values
     (media type and output file extension) based on the resolved compression.
 
+    With format "ext4", the options that only apply to tar layers (compression,
+    estargz, soci, compact layers) are ignored and resolve to their disabled
+    values.
+
     Args:
         ctx: Rule context. Must have attrs from layer_attrs.common.
 
     Returns:
-        struct with fields: compression, estargz, create_parent_directories,
+        struct with fields: format, compression, estargz, create_parent_directories,
         tree_artifact_handling, media_type, out_ext.
     """
+    if ctx.attr.format == "ext4":
+        create_parent_directories = ctx.attr.create_parent_directories
+        if create_parent_directories == "auto":
+            create_parent_directories = ctx.attr._default_create_parent_directories[BuildSettingInfo].value
+        tree_artifact_handling = ctx.attr.tree_artifact_handling
+        if tree_artifact_handling == "auto":
+            tree_artifact_handling = ctx.attr._default_tree_artifact_handling[BuildSettingInfo].value
+        return struct(
+            format = "ext4",
+            compression = "none",
+            estargz = False,
+            create_parent_directories = create_parent_directories == "enabled",
+            tree_artifact_handling = tree_artifact_handling,
+            # Not an OCI media type: ext4 layers are not meant for image manifests.
+            media_type = ctx.attr.media_type or "application/x-ext4",
+            out_ext = ".ext4",
+            compact_layers = False,
+            compact_layers_inline_threshold = 0,
+            compact_layers_materialize_blob = False,
+            soci = False,
+            soci_span_size = 0,
+        )
+
     compression = ctx.attr.compress
     if compression == "auto":
         compression = ctx.attr._default_compression[BuildSettingInfo].value
@@ -259,6 +286,7 @@ def resolve_layer_settings(ctx):
     compact_layers_materialize_blob = ctx.attr._experimental_compact_layers_materialize_blob[BuildSettingInfo].value == "enabled"
 
     return struct(
+        format = "tar",
         compression = compression,
         estargz = estargz_enabled,
         create_parent_directories = create_parent_directories_enabled,
@@ -288,7 +316,7 @@ def create_tar_single_layer(ctx, settings, name, extra_args = [], extra_inputs =
         extra_inputs: list of depset objects to merge with base inputs.
 
     Returns:
-        tuple of (SingleLayerInfo, out_file_or_None, metadata_file, compact_stream_file_or_None, mtree_file, ztoc_file_or_None).
+        tuple of (SingleLayerInfo, out_file_or_None, metadata_file, compact_stream_file_or_None, mtree_file_or_None, ztoc_file_or_None).
     """
     metadata_out = ctx.actions.declare_file(name + "_metadata.json")
     out = None
@@ -306,10 +334,12 @@ def create_tar_single_layer(ctx, settings, name, extra_args = [], extra_inputs =
     if settings.soci and settings.compression == "gzip" and out != None:
         ztoc_out = ctx.actions.declare_file(name + settings.out_ext + ".ztoc")
 
-    args = ["layer"] + layer_history_args(ctx) + ["--metadata", metadata_out.path, "--format", settings.compression]
+    is_ext4 = settings.format == "ext4"
+    args = ["layer"] + layer_history_args(ctx) + ["--metadata", metadata_out.path, "--format", "ext4" if is_ext4 else settings.compression]
     if ctx.attr.media_type:
         args.extend(["--media-type", ctx.attr.media_type])
-    args.extend(compression_tuning_args(ctx, settings.compression, settings.estargz))
+    if not is_ext4:
+        args.extend(compression_tuning_args(ctx, settings.compression, settings.estargz))
     if settings.estargz:
         args.append("--estargz")
     if settings.create_parent_directories:
@@ -364,7 +394,10 @@ def create_tar_single_layer(ctx, settings, name, extra_args = [], extra_inputs =
     # Produce the mtree metadata description from whichever layer artifact exists.
     # The mtree is built from tar headers only, so the compact-stream case needs
     # no content and yields output identical to the materialized blob.
-    if out:
+    # ext4 layers are not tar archives and have no mtree.
+    if is_ext4:
+        mtree_out = None
+    elif out:
         mtree_out = build_layer_mtree(ctx, name, tar_blob = out)
     else:
         mtree_out = build_layer_mtree(ctx, name, compact_stream = compact_stream_out)
@@ -481,8 +514,9 @@ def create_tar_layer(ctx, settings, extra_args = [], extra_inputs = []):
     layer_info, out, metadata_out, compact_stream_out, mtree_out, ztoc_out = create_tar_single_layer(ctx, settings, ctx.attr.name, extra_args, extra_inputs)
     output_groups = dict(
         metadata = depset([metadata_out]),
-        mtree = depset([mtree_out]),
     )
+    if mtree_out:
+        output_groups["mtree"] = depset([mtree_out])
     if out:
         output_groups["layer"] = depset([out])
     if compact_stream_out:

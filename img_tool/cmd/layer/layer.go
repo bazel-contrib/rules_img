@@ -94,7 +94,7 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 	flagSet.Var(&baseMetadataFromFiles, "base-metadata-from-file", `Add the base metadata streams listed in the parameter file, one path per line, in order. The parameter file is usually written by Bazel.`)
 	flagSet.Var(&contentManifestInputFlags, "deduplicate", `Path of a content manifest of a previous layer that can be used for deduplication.`)
 	flagSet.StringVar(&contentManifestCollection, "deduplicate-collection", "", `Path of a content manifest collection file that can be used for deduplication.`)
-	flagSet.StringVar(&formatFlag, "format", "", `The compression format of the output layer. Can be "gzip", "zstd", or "none". Default is to guess the algorithm based on the filename, but fall back to "gzip".`)
+	flagSet.StringVar(&formatFlag, "format", "", `The format of the output layer. Can be "gzip", "zstd" or "none" (a tar file with the given compression), or "ext4" (an ext4 filesystem image, not an OCI layer: options that only apply to tar layers are ignored). Default is to guess the compression based on the filename, but fall back to "gzip".`)
 	flagSet.BoolVar(&estargzFlag, "estargz", false, `Use estargz format for compression. This creates seekable gzip streams optimized for lazy pulling.`)
 	flagSet.StringVar(&mediaTypeFlag, "media-type", "", `Override the layer media type in the metadata output. If empty, auto-detected from the compression format.`)
 	flagSet.StringVar(&compressorJobsFlag, "compressor-jobs", "", `Number of compressor jobs. For gzip, 1 uses single-threaded stdlib gzip and n>1 uses pgzip. For zstd, it is the number of parallel encoder goroutines, which is always at least 2. "nproc" uses the available cores. If unset, gzip is single-threaded and zstd uses 2 jobs.`)
@@ -117,6 +117,15 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 	if err := flagSet.Parse(args); err != nil {
 		flagSet.Usage()
 		os.Exit(1)
+	}
+
+	ext4Format := formatFlag == "ext4"
+	if ext4Format {
+		// Options that only apply to tar layers are ignored.
+		estargzFlag = false
+		compactStreamOnlyFlag = false
+		compactStreamOutputFlag = ""
+		ztocOutputFlag = ""
 	}
 
 	if compactStreamOnlyFlag && compactStreamOutputFlag == "" {
@@ -177,7 +186,7 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 		compressionAlgorithm = api.Gzip
 	case "zstd":
 		compressionAlgorithm = api.Zstd
-	case "none", "uncompressed", "tar":
+	case "none", "uncompressed", "tar", "ext4":
 		compressionAlgorithm = api.Uncompressed
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown format %s. Supported formats are gzip, zstd and uncompressed.\n", formatFlag)
@@ -190,10 +199,15 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 	}
 
 	var outputFile io.Writer
+	var outputOSFile *os.File
 	if compactStreamOnlyFlag {
 		outputFile = io.Discard
 	} else {
-		f, err := os.OpenFile(outputFilePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+		openFlags := os.O_WRONLY | os.O_CREATE | os.O_TRUNC
+		if ext4Format {
+			openFlags = os.O_RDWR | os.O_CREATE | os.O_TRUNC // read back for the digest
+		}
+		f, err := os.OpenFile(outputFilePath, openFlags, 0o644)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error opening output file: %v\n", err)
 			os.Exit(1)
@@ -205,6 +219,7 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 			}
 		}()
 		outputFile = f
+		outputOSFile = f
 	}
 
 	// Parse layer metadata
@@ -311,6 +326,17 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 				break
 			}
 		}
+	}
+
+	if ext4Format {
+		if err := handleExt4Layer(
+			outputOSFile, addFiles, importTarFlags, executableFlags, symlinkFlags, emptyFilePaths, baseMetadataPaths,
+			createParentDirectoriesFlag, layerMetadata, layerHistory, mediaTypeFlag, annotations, metadataOutputFlag,
+		); err != nil {
+			fmt.Fprintf(os.Stderr, "Writing ext4 layer: %v\n", err)
+			os.Exit(1)
+		}
+		return
 	}
 
 	casImporter := contentmanifest.NewMultiImporter(contentManifestInputFlags, api.SHA256)
@@ -575,6 +601,31 @@ func handleLayerState(
 	}
 
 	return compressorState, tw.Export(casExporter)
+}
+
+// handleExt4Layer writes the layer as an ext4 image and, if requested, the
+// layer metadata describing it.
+func handleExt4Layer(
+	image *os.File, addFiles addFiles, importTars importTars, addExecutables executables, addSymlinks symlinks, emptyFiles []string,
+	baseMetadataPaths []string, createParentDirectories bool, layerMetadata *LayerMetadata,
+	history, mediaType string, annotations map[string]string, metadataPath string,
+) error {
+	info, err := writeExt4Layer(image, addFiles, importTars, addExecutables, addSymlinks, emptyFiles, baseMetadataPaths, createParentDirectories, layerMetadata)
+	if err != nil {
+		return err
+	}
+	if metadataPath == "" {
+		return nil
+	}
+	metadataFile, err := os.OpenFile(metadataPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+	if err != nil {
+		return fmt.Errorf("opening metadata output file: %w", err)
+	}
+	if err := writeExt4Metadata(image, info.Size, history, mediaType, annotations, metadataFile); err != nil {
+		metadataFile.Close()
+		return err
+	}
+	return metadataFile.Close()
 }
 
 func writeLayer(recorder tree.Recorder, addFiles addFiles, importTars importTars, addExecutables executables, addSymlinks symlinks, emptyFiles []string, baseMetadataPaths []string, createParentDirectories bool, layerMetadata *LayerMetadata) error {

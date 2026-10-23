@@ -3,6 +3,24 @@
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 
 _common_attrs = dict(
+    format = attr.string(
+        default = "tar",
+        values = ["tar", "ext4"],
+        doc = """\
+Format of the layer.
+
+- `tar` (default): an OCI layer tar archive, optionally compressed.
+- `ext4`: an ext4 filesystem image, written directly by `img layer`. Each regular file is stored as
+  one contiguous run of blocks and the image is only as large as its content needs.
+  The layer file has the extension `.ext4`.
+
+The `ext4` format is for using the layer on its own. It is **not** a valid OCI layer: the metadata
+recorded for it (media type, digests) does not describe an OCI blob, so do not use such a layer
+in an `image_manifest`. Options that only apply to tar layers are ignored:
+`compress`, `estargz`, `soci`, the global compression settings, compact layers, and `mtree` output.
+Entries are limited to what ext4 can store (for example, file names of up to 255 bytes).
+""",
+    ),
     compress = attr.string(
         default = "auto",
         values = ["auto", "gzip", "zstd"],

@@ -4,6 +4,7 @@ go_library(
     name = "layer",
     srcs = [
         "basemetadata.go",
+        "ext4.go",
         "flagtypes.go",
         "layer.go",
         "metadata.go",
@@ -19,6 +20,7 @@ go_library(
         "//pkg/compress",
         "//pkg/contentmanifest",
         "//pkg/digestfs",
+        "//pkg/fs/ext4",
         "//pkg/kvfile",
         "//pkg/metadata",
         "//pkg/proto/baselayer",
@@ -33,6 +35,7 @@ go_library(
 go_test(
     name = "layer_test",
     srcs = [
+        "ext4_test.go",
         "layer_test.go",
         "paramfile_test.go",
         "placement_test.go",
