@@ -1,4 +1,10 @@
-load("@rules_go//go:def.bzl", "go_library")
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+# Excluding manifestfromocilayout_test.go from Gazelle generation
+# because the generated test target name "manifestfromocilayout_test"
+# exceeds Windows path length limits (MAX_PATH = 260 characters).
+# Instead, we manually define a shorter target name "main_test" below.
+# gazelle:exclude manifestfromocilayout_test.go
 
 go_library(
     name = "manifestfromocilayout",
@@ -9,7 +15,37 @@ go_library(
     importpath = "github.com/bazel-contrib/rules_img/img_tool/cmd/manifestfromocilayout",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/api",
+        "//pkg/compress",
         "//pkg/metadata",
+        "@com_github_google_go_containerregistry//pkg/v1:pkg",
+        "@com_github_google_go_containerregistry//pkg/v1/mutate",
+        "@com_github_google_go_containerregistry//pkg/v1/partial",
+        "@com_github_google_go_containerregistry//pkg/v1/tarball",
+        "@com_github_google_go_containerregistry//pkg/v1/types",
+        "@com_github_opencontainers_go_digest//:go-digest",
+        "@com_github_opencontainers_image_spec//specs-go",
+        "@com_github_opencontainers_image_spec//specs-go/v1:specs-go",
+    ],
+)
+
+go_test(
+    name = "main_test",
+    size = "small",
+    # keep
+    srcs = ["manifestfromocilayout_test.go"],
+    embed = [":manifestfromocilayout"],
+    # keep
+    deps = [
+        "//pkg/api",
+        "@com_github_google_go_containerregistry//pkg/name",
+        "@com_github_google_go_containerregistry//pkg/v1:pkg",
+        "@com_github_google_go_containerregistry//pkg/v1/empty",
+        "@com_github_google_go_containerregistry//pkg/v1/layout",
+        "@com_github_google_go_containerregistry//pkg/v1/mutate",
+        "@com_github_google_go_containerregistry//pkg/v1/tarball",
+        "@com_github_google_go_containerregistry//pkg/v1/types",
+        "@com_github_klauspost_compress//zstd",
         "@com_github_opencontainers_image_spec//specs-go/v1:specs-go",
     ],
 )
