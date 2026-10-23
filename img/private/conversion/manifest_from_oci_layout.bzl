@@ -54,6 +54,7 @@ def _image_manifest_from_oci_layout(ctx):
     layer_infos = [
         SingleLayerInfo(
             blob = layer_blobs[i],
+            generated_blob = None,
             estargz = False,
             media_type = layer_media_types[i],
             metadata = metadata_jsons[i],

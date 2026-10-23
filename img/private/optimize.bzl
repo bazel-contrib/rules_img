@@ -4,6 +4,7 @@ load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("//img/private:oci_layout_action.bzl", "run_oci_layout_action")
 load("//img/private/common:build.bzl", "TOOLCHAIN", "TOOLCHAINS")
 load("//img/private/common:layer_helper.bzl", "IMAGE_MTREE_ATTRS", "compression_tuning_args", "image_mtree_or_none")
+load("//img/private/common:layout_blob.bzl", "blob_for_layout")
 load("//img/private/common:transitions.bzl", "reset_platform_transition")
 load("//img/private/providers:index_info.bzl", "ImageIndexInfo")
 load("//img/private/providers:manifest_info.bzl", "ImageManifestInfo")
@@ -93,6 +94,7 @@ def _optimize_layer(ctx, layer, settings, manifest_position, layer_position):
 
     return SingleLayerInfo(
         blob = output,
+        generated_blob = None,
         metadata = metadata,
         media_type = settings.media_type,
         estargz = settings.estargz,
@@ -182,9 +184,10 @@ def _build_manifest_oci_layout(ctx, format, manifest):
 
     inputs = [manifest.manifest, manifest.config]
     for layer in manifest.layers:
-        args.add("--layer", "{}={}".format(layer.metadata.path, layer.blob.path))
+        blob = blob_for_layout(ctx, layer, format)
+        args.add("--layer", "{}={}".format(layer.metadata.path, blob.path))
         inputs.append(layer.metadata)
-        inputs.append(layer.blob)
+        inputs.append(blob)
 
     run_oci_layout_action(
         ctx,
@@ -219,9 +222,10 @@ def _build_index_oci_layout(ctx, format, index_out, manifests):
         inputs.append(manifest.manifest)
         inputs.append(manifest.config)
         for layer in manifest.layers:
-            args.add("--layer", "{}={}".format(layer.metadata.path, layer.blob.path))
+            blob = blob_for_layout(ctx, layer, format)
+            args.add("--layer", "{}={}".format(layer.metadata.path, blob.path))
             inputs.append(layer.metadata)
-            inputs.append(layer.blob)
+            inputs.append(blob)
 
     run_oci_layout_action(
         ctx,

@@ -21,6 +21,7 @@ bzl_library(
         "//img:providers",
         "//img/private/common:build",
         "//img/private/common:layer_helper",
+        "//img/private/common:layout_blob",
         "//img/private/common:sparse_oci_layout",
         "//img/private/common:transitions",
         "@bazel_skylib//rules:common_settings",
@@ -33,6 +34,7 @@ bzl_library(
     visibility = ["//img:__subpackages__"],
     deps = [
         "//img/private/common:build",
+        "//img/private/common:layout_blob",
     ],
 )
 
@@ -47,6 +49,7 @@ bzl_library(
         ":stamp",
         "//img:providers",
         "//img/private/common:build",
+        "//img/private/common:layout_blob",
         "//img/private/common:transitions",
         "//img/private/common:write_index_json",
         "//img/private/providers:load_config_info",
@@ -176,6 +179,7 @@ bzl_library(
         "//img/private/common:build",
         "//img/private/common:inherit",
         "//img/private/common:layer_helper",
+        "//img/private/common:layout_blob",
         "//img/private/common:transitions",
         "//img/private/config:defs",
         "//img/private/providers:index_info",
@@ -200,6 +204,7 @@ bzl_library(
         ":oci_layout_action",
         "//img/private/common:build",
         "//img/private/common:layer_helper",
+        "//img/private/common:layout_blob",
         "//img/private/common:transitions",
         "//img/private/providers:index_info",
         "//img/private/providers:manifest_info",

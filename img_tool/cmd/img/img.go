@@ -12,6 +12,7 @@ import (
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/casdir"
 	compactstreamcmd "github.com/bazel-contrib/rules_img/img_tool/cmd/compactstream"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/compress"
+	"github.com/bazel-contrib/rules_img/img_tool/cmd/copyfiles"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/cst"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/deploy"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/deploymetadata"
@@ -72,6 +73,7 @@ Commands:
   ztoc                     generates a ztoc (SOCI table of contents) for a gzip-compressed layer
   compact-stream           inspects or reconstructs a compact stream (subcommands: reconstruct, list)
   cas-dir                  builds a content-addressed directory (sha256/<hex>) from input files
+  copy-files               copies files, preferring hardlinks and reflinks over real copies
   sync-oci-ref-graph       syncs OCI reference graph by downloading manifests in parallel
   validate                 validates layers and images
   image-structure-test     validates an image's structure (config + mtree) against container-structure-test configs
@@ -164,6 +166,8 @@ func Run(ctx context.Context, args []string) {
 		compactstreamcmd.CompactStreamProcess(ctx, args[2:])
 	case "cas-dir":
 		casdir.CASDirProcess(ctx, args[2:])
+	case "copy-files":
+		copyfiles.CopyFilesProcess(ctx, args[2:])
 	case "expand-template":
 		expandtemplate.ExpandTemplateProcess(ctx, args[2:])
 	default:

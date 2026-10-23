@@ -3,6 +3,7 @@
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("//img/private/common:build.bzl", "TOOLCHAIN")
 load("//img/private/common:layer_helper.bzl", "build_layer_mtree", "image_mtree_or_none", "media_type_is_tar")
+load("//img/private/common:layout_blob.bzl", "copy_blobs_to_output_base")
 load("//img/private/common:sparse_oci_layout.bzl", "build_sparse_oci_layout_for_index", "build_sparse_oci_layout_for_manifest")
 load("//img/private/common:transitions.bzl", "reset_platform_transition")
 load("//img/private/providers:index_info.bzl", "ImageIndexInfo")
@@ -22,6 +23,59 @@ def _digest_to_file(ctx, digest):
         fail("invalid number of files for digest: {}".format(digest))
     return files[0]
 
+def _image_blobs(ctx):
+    """Resolve every blob digest of the image to the files the rule hands out.
+
+    A pulled image's blobs are source files of the repository that `image_pull`
+    generated, and a source file lives outside the output base. Referencing one
+    from inside a tree artifact (which is what the OCI layouts do, by relative
+    symlink) therefore only works in the execroot of the build that created the
+    tree. To keep the layouts self-contained, the source files are copied into
+    the output base -- hardlinked, reflinked or, failing both, really copied.
+
+    Manifests, indexes and configs are small, and the layouts always embed them,
+    so they are always copied and the copy is what the providers carry. Layer
+    blobs are large and most consumers (pushing, loading, mtree) read them
+    directly, so they keep pointing at the source file and the copy is recorded
+    as `SingleLayerInfo.generated_blob` on the side. A single action copies all
+    of them, so it only ever runs for an image whose layout is actually built.
+
+    Args:
+        ctx: Rule context.
+
+    Returns:
+        struct with two digest-keyed dicts: `file`, the manifest, index, config
+        or layer file to put in this rule's providers, and `generated_layer`,
+        the output-base copy of a layer blob that is a source file.
+    """
+    files = {}
+    generated_layers = {}
+    metadata_pairs = []
+    layer_pairs = []
+
+    for digest in ctx.attr.files:
+        source = _digest_to_file(ctx, digest)
+        files[digest] = source
+        if not source.is_source:
+            continue
+        copy = ctx.actions.declare_file("{}_blobs/{}".format(ctx.label.name, digest.replace("sha256:", "sha256/")))
+
+        # Everything in `data` is a manifest, an index, or a config: the blobs
+        # the repository rule inlined into the generated BUILD file.
+        if digest in ctx.attr.data:
+            files[digest] = copy
+            metadata_pairs.append((source, copy))
+        else:
+            generated_layers[digest] = copy
+            layer_pairs.append((source, copy))
+
+    if len(metadata_pairs) > 0:
+        copy_blobs_to_output_base(ctx, metadata_pairs, "CopyImageMetadataBlobs")
+    if len(layer_pairs) > 0:
+        copy_blobs_to_output_base(ctx, layer_pairs, "CopyImageLayerBlobs")
+
+    return struct(file = files, generated_layer = generated_layers)
+
 def _normalize_history_entry(entry):
     """Copy only the known OCI history fields.
 
@@ -37,7 +91,7 @@ def _normalize_history_entry(entry):
             normalized[field] = entry[field]
     return normalized
 
-def _write_layer_info(ctx, manifest, config, history, layer_index, index_position = None):
+def _write_layer_info(ctx, blobs, manifest, config, history, layer_index, index_position = None):
     """Write layer info to file and return SingleLayerInfo provider."""
     layers = manifest.get("layers", [])
     if layer_index >= len(layers):
@@ -87,7 +141,7 @@ def _write_layer_info(ctx, manifest, config, history, layer_index, index_positio
     layer_metadata = ctx.actions.declare_file(ctx.attr.name + "_{}{}_layer_metadata.json".format(index_position_str, layer_index))
     ctx.actions.write(layer_metadata, json.encode(metadata))
 
-    blob = _digest_to_file(ctx, digest)
+    blob = blobs.file.get(digest)
 
     # Record where this layer can be fetched from upstream. Every registry mirror
     # of this image's repository is a candidate source for the blob (the blob is
@@ -112,6 +166,7 @@ def _write_layer_info(ctx, manifest, config, history, layer_index, index_positio
 
     return SingleLayerInfo(
         blob = blob,
+        generated_blob = blobs.generated_layer.get(digest),
         metadata = layer_metadata,
         media_type = media_type,
         estargz = layer.get("annotations", {}).get(TOC_JSON_DIGEST_ANNOTATION) != None,
@@ -138,7 +193,7 @@ def _write_manifest_descriptor(ctx, digest, manifest, platform, descriptor = Non
     ctx.actions.write(out, json.encode(descriptor))
     return out
 
-def _build_manifest_info(ctx, digest, descriptor = None, index_position = None, platform = None):
+def _build_manifest_info(ctx, blobs, digest, descriptor = None, index_position = None, platform = None):
     if not digest in ctx.attr.data:
         fail("missing blob for digest: " + digest)
     manifest = json.decode(ctx.attr.data[digest])
@@ -187,11 +242,11 @@ def _build_manifest_info(ctx, digest, descriptor = None, index_position = None, 
         elif manifest.get("layers", []):
             history_by_layer.append(current_layer)
     for layer_index in range(len(manifest.get("layers", []))):
-        layer_info = _write_layer_info(ctx, manifest, config, history_by_layer, layer_index, index_position)
+        layer_info = _write_layer_info(ctx, blobs, manifest, config, history_by_layer, layer_index, index_position)
         layers.append(layer_info)
 
-    manifest_file = _digest_to_file(ctx, digest)
-    config_file = _digest_to_file(ctx, config_digest)
+    manifest_file = blobs.file.get(digest)
+    config_file = blobs.file.get(config_digest)
 
     if index_position == None:
         sparse_layout = build_sparse_oci_layout_for_manifest(ctx, manifest_file, config_file, layers)
@@ -225,8 +280,10 @@ def _image_import_impl(ctx):
     if not media_type in [MEDIA_TYPE_MANIFEST, DOCKER_MANIFEST_V2, MEDIA_TYPE_INDEX, DOCKER_MANIFEST_LIST_V2]:
         fail("invalid mediaType in root blob: {}".format(media_type))
 
+    blobs = _image_blobs(ctx)
+
     providers = [
-        DefaultInfo(files = depset([_digest_to_file(ctx, ctx.attr.digest)])),
+        DefaultInfo(files = depset([blobs.file.get(ctx.attr.digest)])),
         PullInfo(
             registries = ctx.attr.registries,
             repository = ctx.attr.repository,
@@ -236,12 +293,12 @@ def _image_import_impl(ctx):
     ]
     if media_type in [MEDIA_TYPE_MANIFEST, DOCKER_MANIFEST_V2]:
         # this is a single-platform manifest
-        providers.append(_build_manifest_info(ctx, ctx.attr.digest))
+        providers.append(_build_manifest_info(ctx, blobs, ctx.attr.digest))
     elif media_type in [MEDIA_TYPE_INDEX, DOCKER_MANIFEST_LIST_V2]:
         # this is a multi-platform index
         omitted = {digest: None for digest in ctx.attr.omitted_manifests}
         manifests = [
-            _build_manifest_info(ctx, manifest["digest"], descriptor = manifest, index_position = position, platform = manifest.get("platform"))
+            _build_manifest_info(ctx, blobs, manifest["digest"], descriptor = manifest, index_position = position, platform = manifest.get("platform"))
             for (position, manifest) in enumerate(root_blob.get("manifests", []))
             if manifest["digest"] not in omitted
         ]
@@ -252,7 +309,7 @@ def _image_import_impl(ctx):
             digest = ctx.attr.digest,
         )
         ctx.actions.write(index_descriptor_file, json.encode(index_descriptor))
-        index_file = _digest_to_file(ctx, ctx.attr.digest)
+        index_file = blobs.file.get(ctx.attr.digest)
         sparse_layout = build_sparse_oci_layout_for_index(ctx, index_file, manifests)
         providers.append(ImageIndexInfo(
             descriptor = index_descriptor_file,

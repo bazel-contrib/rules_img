@@ -42,6 +42,22 @@ func copyFile(src, dst string, useSymlinks bool) error {
 		return os.Symlink(rel, dst)
 	}
 
+	return CopyFile(src, dst)
+}
+
+// CopyFile materializes src at dst as a regular file, using the most efficient
+// strategy available: hardlink, else reflink (copy-on-write on btrfs/xfs via
+// FICLONE), else a plain byte copy.
+//
+// Symlinks in src are resolved first. link(2) does not follow them, so
+// hardlinking a symlink would produce another symlink — and Bazel action inputs
+// are commonly symlinks into the execroot or sandbox, whose targets must not
+// leak into an output.
+func CopyFile(src, dst string) error {
+	if resolved, err := filepath.EvalSymlinks(src); err == nil {
+		src = resolved
+	}
+
 	if err := os.Link(src, dst); err == nil {
 		return nil
 	}

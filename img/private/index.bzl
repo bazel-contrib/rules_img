@@ -6,6 +6,7 @@ load("//img/private:push_metadata.bzl", "process_deploy_specs")
 load("//img/private:soci_deploy.bzl", "soci_deploy_children")
 load("//img/private:stamp.bzl", "expand_or_write")
 load("//img/private/common:build.bzl", "TOOLCHAIN", "TOOLCHAINS")
+load("//img/private/common:layout_blob.bzl", "blob_for_layout")
 load("//img/private/common:transitions.bzl", "multi_platform_image_transition", "reset_platform_transition")
 load("//img/private/common:write_index_json.bzl", "write_index_json")
 load("//img/private/providers:index_info.bzl", "ImageIndexInfo")
@@ -56,10 +57,11 @@ def _build_oci_layout(ctx, format, index_out, manifests):
 
         # Add layers with metadata=blob mapping
         for layer in manifest.layers:
-            if layer.blob != None:
-                args.add("--layer", "{}={}".format(layer.metadata.path, layer.blob.path))
+            blob = blob_for_layout(ctx, layer, format)
+            if blob != None:
+                args.add("--layer", "{}={}".format(layer.metadata.path, blob.path))
                 inputs.append(layer.metadata)
-                inputs.append(layer.blob)
+                inputs.append(blob)
 
     run_oci_layout_action(
         ctx,
