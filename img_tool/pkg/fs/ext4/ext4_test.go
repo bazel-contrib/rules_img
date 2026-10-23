@@ -829,3 +829,45 @@ func TestDeduplicateLinkLimit(t *testing.T) {
 		}
 	}
 }
+
+// TestDeterminismStress builds the same tree many times with every feature that
+// iterates over a map (directories, extended attributes, deduplication, hard
+// links, derived UUID) and requires identical images. Go randomizes map
+// iteration per run, so an unsorted iteration shows up quickly.
+func TestDeterminismStress(t *testing.T) {
+	build := func() []byte {
+		b := mustBuilder(t, Options{Deduplicate: true, DigestFiles: true, BlockSize: 1024})
+		for i := 0; i < 400; i++ {
+			content := pattern(100+i%7*3000, byte(i%5)) // many duplicates
+			hdr := &tar.Header{
+				Typeflag: tar.TypeReg, Name: fmt.Sprintf("d%d/f%d", i%11, i), Size: int64(len(content)),
+				Mode: 0o644, Uid: i % 3, ModTime: time.Unix(1_600_000_000+int64(i%4), 0),
+				PAXRecords: map[string]string{
+					"SCHILY.xattr.user.a": "1", "SCHILY.xattr.user.b": "2", "SCHILY.xattr.security.capability": "x",
+					"SCHILY.xattr.user.c": strings.Repeat("c", i%40),
+				},
+			}
+			if err := b.WriteRegularDeduplicated(hdr, bytes.NewReader(content)); err != nil {
+				t.Fatal(err)
+			}
+			if i%9 == 0 {
+				if err := b.WriteHeader(&tar.Header{Typeflag: tar.TypeLink, Name: fmt.Sprintf("links/l%d", i), Linkname: hdr.Name}); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+		for i := 0; i < 50; i++ {
+			if err := b.WriteHeader(&tar.Header{Typeflag: tar.TypeSymlink, Name: fmt.Sprintf("s/%d", i), Linkname: fmt.Sprint(i)}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		m, _ := build(t, b)
+		return m.b
+	}
+	first := build()
+	for i := 0; i < 20; i++ {
+		if got := build(); !bytes.Equal(got, first) {
+			t.Fatalf("build %d differs from the first one", i+2)
+		}
+	}
+}
