@@ -281,7 +281,6 @@ def compute_push_metadata(
         executable = img_toolchain_info.tool_exe,
         arguments = push_metadata_args,
         mnemonic = "PushMetadata",
-        execution_requirements = {"supports-path-mapping": "1"},
     )
     return metadata_out, layer_hints_file
 
