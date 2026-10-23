@@ -297,7 +297,7 @@ repo(
     default_package_metadata = ["//:package_metadata"],
 )
 """)
-    if len(digest) > 0 and hasattr(rctx, "repo_metadata"):
+    if len(rctx.attr.digest) > 0 and hasattr(rctx, "repo_metadata"):
         # allows participating in repo contents cache
         return rctx.repo_metadata(reproducible = True)
 
