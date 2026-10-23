@@ -3,9 +3,14 @@ load("//tests/layering:defs.bzl", "layer_contents_test")
 
 # gazelle:exclude_from_release
 
-# Reused by the //tests/layering/testcases/from_tar_optimize case.
+# source.tar.zst is reused by the from_tar_optimize, from_tar_estargz and
+# from_tar_zstd_chunked cases; expected.ndjson by from_tar_zstd_chunked, whose
+# rewrite keeps the entry set unchanged.
 exports_files(
-    ["source.tar.zst"],
+    [
+        "expected.ndjson",
+        "source.tar.zst",
+    ],
     visibility = ["//tests/layering/testcases:__subpackages__"],
 )
 

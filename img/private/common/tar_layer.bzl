@@ -3,7 +3,7 @@
 load("@bazel_skylib//lib:paths.bzl", "paths")
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("//img/private/common:build.bzl", "TOOLCHAIN")
-load("//img/private/common:layer_helper.bzl", "build_layer_mtree", "compression_tuning_args", "layer_history_args")
+load("//img/private/common:layer_helper.bzl", "build_layer_mtree", "compression_tuning_args", "layer_history_args", "resolve_tar_format", "tar_format_args")
 load("//img/private/common:media_types.bzl", "EROFS_LAYER", "EROFS_ZSTD_LAYER", "GZIP_LAYER", "UNCOMPRESSED_LAYER", "ZSTD_LAYER")
 load("//img/private/providers:layers_info.bzl", "LayersInfo")
 load("//img/private/providers:single_layer_info.bzl", "SingleLayerInfo")
@@ -218,7 +218,7 @@ def get_repo_mapping_manifest(src):
 def resolve_layer_settings(ctx):
     """Resolve layer settings from common attributes and build settings.
 
-    Resolves 'auto' values for compression, layer_format, estargz,
+    Resolves 'auto' values for compression, layer_format, estargz, zstd_chunked,
     create_parent_directories, and tree_artifact_handling from global build
     settings. Computes derived values (media type and output file extension) and
     rejects combinations the layer formats do not support.
@@ -227,9 +227,10 @@ def resolve_layer_settings(ctx):
         ctx: Rule context. Must have attrs from layer_attrs.common.
 
     Returns:
-        struct with fields: compression, layer_format, estargz,
-        create_parent_directories, tree_artifact_handling, media_type, out_ext,
-        erofs_block_size, erofs_inline_threshold, erofs_synthetic_directories.
+        struct with fields: compression, layer_format, tar_format, estargz,
+        zstd_chunked, create_parent_directories, tree_artifact_handling,
+        media_type, out_ext, erofs_block_size, erofs_inline_threshold,
+        erofs_synthetic_directories.
     """
     layer_format = ctx.attr.format
     if layer_format == "auto":
@@ -244,10 +245,7 @@ def resolve_layer_settings(ctx):
         else:
             compression = ctx.attr._default_compression[BuildSettingInfo].value
 
-    estargz = ctx.attr.estargz
-    if estargz == "auto":
-        estargz = "disabled" if layer_format == "erofs" else ctx.attr._default_estargz[BuildSettingInfo].value
-    estargz_enabled = estargz == "enabled"
+    tar_format = resolve_tar_format(ctx, compression, erofs = layer_format == "erofs")
 
     soci = ctx.attr.soci
     if soci == "auto":
@@ -274,8 +272,6 @@ def resolve_layer_settings(ctx):
             fail(("format = \"erofs\" cannot be gzip-compressed: there is no " +
                   "application/vnd.erofs.layer.v1+gzip media type. Set compress = \"none\" " +
                   "(the blob is then mountable as it is) or compress = \"zstd\"."))
-        if estargz_enabled:
-            fail("estargz is a tar format and cannot be combined with format = \"erofs\".")
         if soci_enabled:
             fail("soci indexes gzip tar layers and cannot be combined with format = \"erofs\".")
         erofs_block_size = ctx.attr._erofs_block_size[BuildSettingInfo].value
@@ -310,7 +306,9 @@ def resolve_layer_settings(ctx):
     return struct(
         compression = compression,
         layer_format = layer_format,
-        estargz = estargz_enabled,
+        tar_format = tar_format,
+        estargz = tar_format.estargz,
+        zstd_chunked = tar_format.zstd_chunked,
         create_parent_directories = create_parent_directories_enabled,
         tree_artifact_handling = tree_artifact_handling,
         media_type = media_type,
@@ -373,9 +371,8 @@ def create_single_layer(ctx, settings, name, extra_args = [], extra_inputs = [])
         args.extend(["--erofs-synthetic-directories", settings.erofs_synthetic_directories])
     if ctx.attr.media_type:
         args.extend(["--media-type", ctx.attr.media_type])
-    args.extend(compression_tuning_args(ctx, settings.compression, settings.estargz))
-    if settings.estargz:
-        args.append("--estargz")
+    args.extend(compression_tuning_args(ctx, settings.compression, settings.tar_format))
+    args.extend(tar_format_args(settings.tar_format))
     if settings.create_parent_directories:
         args.append("--create-parent-directories")
     args.extend(["--layer-tree-artifact-handling", settings.tree_artifact_handling])
@@ -472,6 +469,7 @@ def create_single_layer(ctx, settings, name, extra_args = [], extra_inputs = [])
             metadata = metadata_out,
             media_type = settings.media_type,
             estargz = settings.estargz,
+            zstd_chunked = settings.zstd_chunked,
             compact_stream = compact_stream_out,
             layer_input_files = layer_input_files,
             layer_input_files_cas = layer_input_files_cas,

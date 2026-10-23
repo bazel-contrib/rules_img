@@ -74,14 +74,17 @@ string_flag(
     visibility = ["//visibility:public"],
 )
 
-# Global default for the `index_platform` attribute of image_index, which
-# defaults to "auto" and then defers to this flag.
+# Global zstd:chunked toggle. Per-layer `zstd_chunked` attributes default to
+# "auto", which defers to this flag. When enabled, zstd layers are written in
+# the zstd:chunked format (containers/storage) with content-defined chunks that
+# can be fetched and deduplicated individually. Mutually exclusive with estargz
+# and requires zstd compression.
 string_flag(
-    name = "index_platform",
-    build_setting_default = "inherited",
+    name = "zstd_chunked",
+    build_setting_default = "disabled",
     values = [
-        "inherited",
-        "multiarch",
+        "enabled",
+        "disabled",
     ],
     visibility = ["//visibility:public"],
 )
@@ -138,6 +141,18 @@ string_flag(
     values = [
         "enabled",
         "disabled",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+# Global default for the `index_platform` attribute of image_index, which
+# defaults to "auto" and then defers to this flag.
+string_flag(
+    name = "index_platform",
+    build_setting_default = "inherited",
+    values = [
+        "inherited",
+        "multiarch",
     ],
     visibility = ["//visibility:public"],
 )

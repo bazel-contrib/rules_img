@@ -464,6 +464,7 @@ def _image_manifest_impl(ctx):
                 tar_file = tar_file,
                 metadata_file = metadata_file,
                 estargz = False,
+                zstd_chunked = False,
                 annotations = {},
             )
             layers.append(layer_info)

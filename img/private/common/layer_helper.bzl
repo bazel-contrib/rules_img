@@ -125,7 +125,64 @@ def layer_history_args(ctx):
         fail("history supports at most one entry (the img tool records a single --history value); got {}".format(history))
     return ["--history", history[0] if history else ""]
 
-def compression_tuning_args(ctx, compression, estargz):
+def resolve_tar_format(ctx, compression, erofs = False):
+    """Resolve the estargz / zstd_chunked attributes into a tar format.
+
+    Both attributes default to "auto", which defers to the matching global
+    build setting. The two formats are mutually exclusive and zstd:chunked
+    requires zstd compression; violating either is a configuration error.
+    Both are tar formats: an EROFS layer resolves "auto" to disabled and
+    rejects an explicit "enabled".
+
+    Args:
+        ctx: Rule context with `estargz`, `zstd_chunked`, `_default_estargz`
+            and `_default_zstd_chunked` attributes.
+        compression: Resolved compression algorithm name.
+        erofs: Whether the layer is an EROFS filesystem image.
+
+    Returns:
+        struct with boolean fields `estargz` and `zstd_chunked`.
+    """
+    estargz = ctx.attr.estargz
+    if estargz == "auto":
+        estargz = "disabled" if erofs else ctx.attr._default_estargz[BuildSettingInfo].value
+    estargz_enabled = estargz == "enabled"
+
+    zstd_chunked = ctx.attr.zstd_chunked
+    if zstd_chunked == "auto":
+        zstd_chunked = "disabled" if erofs else ctx.attr._default_zstd_chunked[BuildSettingInfo].value
+    zstd_chunked_enabled = zstd_chunked == "enabled"
+
+    if erofs and estargz_enabled:
+        fail("estargz is a tar format and cannot be combined with format = \"erofs\".")
+    if erofs and zstd_chunked_enabled:
+        fail("zstd_chunked is a tar format and cannot be combined with format = \"erofs\".")
+    if estargz_enabled and zstd_chunked_enabled:
+        fail("estargz and zstd_chunked are mutually exclusive; set one of them to \"disabled\" (attribute or //img/settings flag)")
+    if zstd_chunked_enabled and compression != "zstd":
+        fail("zstd_chunked requires zstd compression, got {}".format(compression))
+
+    return struct(
+        estargz = estargz_enabled,
+        zstd_chunked = zstd_chunked_enabled,
+    )
+
+def tar_format_args(tar_format):
+    """Returns the img tool flags selecting the tar stream format.
+
+    Args:
+        tar_format: struct returned by resolve_tar_format().
+
+    Returns:
+        list[string]: `["--estargz"]`, `["--zstd-chunked"]` or `[]`.
+    """
+    if tar_format.estargz:
+        return ["--estargz"]
+    if tar_format.zstd_chunked:
+        return ["--zstd-chunked"]
+    return []
+
+def compression_tuning_args(ctx, compression, tar_format):
     """Compression tuning arguments for img tools based on build mode.
 
     Returns additional CLI arguments to tune compression defaults
@@ -134,13 +191,14 @@ def compression_tuning_args(ctx, compression, estargz):
     smaller, single-threaded high-compression in opt. For gzip the job count
     also selects the compressor implementation; zstd parallelizes a single
     stream without changing its output, so it defaults to 2 jobs in every mode
-    and takes a configured job count as-is.
+    and takes a configured job count as-is. estargz and zstd:chunked layers
+    are never parallelized, so they get no job count.
 
     Args:
         ctx: Rule context used to read `COMPILATION_MODE`.
         compression: String name of the target compression algorithm
             (e.g., "gzip", "zstd", "none").
-        estargz: Boolean indicating whether the layer is an estargz layer.
+        tar_format: struct returned by resolve_tar_format().
 
     Returns:
         list[string]: Flat list of flags and values, suitable for
@@ -181,10 +239,11 @@ def compression_tuning_args(ctx, compression, estargz):
         level = max_level
 
     tuned_args = []
-    if compression == "gzip" and not estargz:
+    single_stream = tar_format.estargz or tar_format.zstd_chunked
+    if compression == "gzip" and not single_stream:
         # For gzip, we can tune the number of compression threads (pgzip)
         tuned_args.extend(["--compressor-jobs", jobs])
-    if compression == "zstd" and not estargz:
+    if compression == "zstd" and not single_stream:
         # zstd compresses a single stream in parallel, so the job count is a
         # pure speed/memory trade-off: it does not change the output bytes the
         # way it does for gzip (where it also picks the implementation), and 2
@@ -490,7 +549,7 @@ def image_mtree_or_none(ctx, name, layers):
         return None
     return build_image_mtree(ctx, name, layer_mtrees)
 
-def calculate_layer_info(*, ctx, media_type, tar_file, metadata_file, estargz, annotations = {}, digest_modes = ["digest", "diff_id"], mtree = None):
+def calculate_layer_info(*, ctx, media_type, tar_file, metadata_file, estargz, zstd_chunked = False, annotations = {}, digest_modes = ["digest", "diff_id"], mtree = None):
     """Calculates the layer info for a file.
 
     Args:
@@ -499,6 +558,7 @@ def calculate_layer_info(*, ctx, media_type, tar_file, metadata_file, estargz, a
         tar_file: Input file (tar or arbitrary blob).
         metadata_file: Output metadata file.
         estargz: Boolean indicating whether the layer is an estargz layer.
+        zstd_chunked: Boolean indicating whether the layer is a zstd:chunked layer.
         annotations: Dict of string annotations to add to the layer metadata.
         digest_modes: List of digest modes to compute. Supported modes:
             "digest" - sha256 of the file as-is (the blob digest).
@@ -555,6 +615,7 @@ def calculate_layer_info(*, ctx, media_type, tar_file, metadata_file, estargz, a
         metadata = metadata_file,
         media_type = media_type,
         estargz = estargz,
+        zstd_chunked = zstd_chunked,
         compact_stream = None,
         layer_input_files = None,
         layer_input_files_cas = None,
@@ -563,7 +624,7 @@ def calculate_layer_info(*, ctx, media_type, tar_file, metadata_file, estargz, a
         ztoc = None,
     )
 
-def recompress_layer(*, ctx, media_type, tar_file, metadata_file, output, target_compression, estargz, annotations):
+def recompress_layer(*, ctx, media_type, tar_file, metadata_file, output, target_compression, tar_format, annotations):
     """Recompresses a tar file.
 
     Args:
@@ -573,7 +634,7 @@ def recompress_layer(*, ctx, media_type, tar_file, metadata_file, output, target
         metadata_file: Input metadata file.
         output: Output recompressed file.
         target_compression: Target compression format.
-        estargz: Boolean indicating whether the layer is an estargz layer.
+        tar_format: struct returned by resolve_tar_format().
         annotations: Dict of string annotations to add to the layer metadata.
 
     Returns:
@@ -583,12 +644,11 @@ def recompress_layer(*, ctx, media_type, tar_file, metadata_file, output, target
     args.add("compress")
     args.add("--history", layer_history(layer_name(ctx.label)))
     args.add("--format", target_compression)
-    if estargz:
-        args.add("--estargz")
+    args.add_all(tar_format_args(tar_format))
     for key, value in annotations.items():
         args.add("--annotation", "{}={}".format(key, value))
     args.add("--metadata", metadata_file.path)
-    args.add_all(compression_tuning_args(ctx, target_compression, estargz))
+    args.add_all(compression_tuning_args(ctx, target_compression, tar_format))
     args.add(tar_file.path)
     args.add(output)
     img_toolchain_info = ctx.toolchains[TOOLCHAIN].imgtoolchaininfo
@@ -604,7 +664,8 @@ def recompress_layer(*, ctx, media_type, tar_file, metadata_file, output, target
         generated_blob = None,
         metadata = metadata_file,
         media_type = media_type,
-        estargz = estargz,
+        estargz = tar_format.estargz,
+        zstd_chunked = tar_format.zstd_chunked,
         compact_stream = None,
         layer_input_files = None,
         layer_input_files_cas = None,
@@ -613,7 +674,7 @@ def recompress_layer(*, ctx, media_type, tar_file, metadata_file, output, target
         ztoc = None,
     )
 
-def optimize_layer(*, ctx, media_type, tar_file, metadata_file, output, target_compression, estargz, annotations, layer_format = "tar", erofs_block_size = 0, erofs_inline_threshold = 0, erofs_synthetic_directories = ""):
+def optimize_layer(*, ctx, media_type, tar_file, metadata_file, output, target_compression, tar_format, annotations, layer_format = "tar", erofs_block_size = 0, erofs_inline_threshold = 0, erofs_synthetic_directories = ""):
     """Rewrites a tar file through the layer writer, deduplicating its contents.
 
     With layer_format = "erofs" the same rewrite converts the tar into an EROFS
@@ -628,7 +689,7 @@ def optimize_layer(*, ctx, media_type, tar_file, metadata_file, output, target_c
         metadata_file: Output metadata file.
         output: Output rewritten layer file.
         target_compression: Target compression format.
-        estargz: Boolean indicating whether the layer is an estargz layer.
+        tar_format: struct returned by resolve_tar_format().
         annotations: Dict of string annotations to add to the layer metadata.
         layer_format: "tar" or "erofs".
         erofs_block_size: EROFS filesystem block size (only for layer_format = "erofs").
@@ -651,13 +712,12 @@ def optimize_layer(*, ctx, media_type, tar_file, metadata_file, output, target_c
         args.add("--erofs-block-size", str(erofs_block_size))
         args.add("--erofs-inline-threshold", str(erofs_inline_threshold))
         args.add("--erofs-synthetic-directories", erofs_synthetic_directories)
-    if estargz:
-        args.add("--estargz")
+    args.add_all(tar_format_args(tar_format))
     for key, value in annotations.items():
         args.add("--annotation", "{}={}".format(key, value))
     args.add("--metadata", metadata_file.path)
     args.add("--import-tar", tar_file.path)
-    args.add_all(compression_tuning_args(ctx, target_compression, estargz))
+    args.add_all(compression_tuning_args(ctx, target_compression, tar_format))
     args.add(output)
     img_toolchain_info = ctx.toolchains[TOOLCHAIN].imgtoolchaininfo
     ctx.actions.run(
@@ -676,7 +736,8 @@ def optimize_layer(*, ctx, media_type, tar_file, metadata_file, output, target_c
         generated_blob = None,
         metadata = metadata_file,
         media_type = media_type,
-        estargz = estargz,
+        estargz = tar_format.estargz,
+        zstd_chunked = tar_format.zstd_chunked,
         compact_stream = None,
         layer_input_files = None,
         layer_input_files_cas = None,

@@ -1,0 +1,27 @@
+load("@rules_img//img:layer.bzl", "layer_from_tar")
+load("//tests/layering:defs.bzl", "layer_contents_test")
+
+# gazelle:exclude_from_release
+
+# layer_from_tar with zstd_chunked over the same hand-crafted tar as the
+# //tests/layering/testcases/from_tar case. The source is already zstd
+# compressed, so without a format change it would be passed through verbatim;
+# enabling zstd_chunked forces a rewrite through the zstd:chunked compressor.
+# That compressor keeps the tar stream byte-for-byte (only the TOC and
+# tar-split live in skippable frames), so the from_tar golden applies as-is.
+layer_from_tar(
+    name = "layer",
+    src = "//tests/layering/testcases/from_tar:source.tar.zst",
+    compress = "zstd",
+    zstd_chunked = "enabled",
+)
+
+layer_contents_test(
+    name = "test",
+    size = "small",
+    layer = ":layer",
+    manifests = ["//tests/layering/testcases/from_tar:expected.ndjson"],
+    # layer_from_tar recompresses via the layer helper path, which never emits a
+    # compact stream, so there is nothing to reconstruct.
+    test_compact_stream = False,
+)

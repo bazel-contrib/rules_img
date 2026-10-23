@@ -210,6 +210,8 @@ const (
 	TocDigestAnnotation = "containerd.io/snapshot/stargz/toc.digest"
 	// UncompressedSizeAnnotation is the annotation key for the uncompressed size in estargz layers
 	UncompressedSizeAnnotation = "io.containers.estargz.uncompressed-size"
+	// ZstdChunkedAnnotationPrefix is the prefix of the annotation keys describing the TOC and tar-split of zstd:chunked layers
+	ZstdChunkedAnnotationPrefix = "io.github.containers.zstd-chunked."
 )
 
 // SOCI Index Manifest v2 media/artifact types and annotation keys. These match

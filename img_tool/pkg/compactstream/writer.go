@@ -8,6 +8,8 @@ import (
 	"io"
 
 	"github.com/klauspost/compress/zstd"
+
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/compress"
 )
 
 const (
@@ -47,7 +49,7 @@ const (
 
 type OriginalCompressionInfo struct {
 	Compression      uint8
-	Seekable         bool
+	Format           compress.TarFormat
 	CompressionLevel int8
 	CompressorJobs   uint8
 	EndPadding       uint32
@@ -208,9 +210,7 @@ func (w *Writer) Close() error {
 	binary.BigEndian.PutUint16(header[10:12], uint16(w.hashSize))
 	header[12] = w.streamCompression
 	header[13] = w.originalCompression.Compression
-	if w.originalCompression.Seekable {
-		header[14] = 1
-	}
+	header[14] = uint8(w.originalCompression.Format)
 	header[15] = byte(w.originalCompression.CompressionLevel)
 	header[16] = w.originalCompression.CompressorJobs
 	header[17] = w.contentFormat

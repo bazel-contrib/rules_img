@@ -58,7 +58,7 @@ func TestStoreTreeReusesFileHashes(t *testing.T) {
 		t.Helper()
 		f := &readCountingFS{MapFS: files}
 		var buf bytes.Buffer
-		appender, err := compress.TarAppenderFactory("sha256", "none", false, &buf)
+		appender, err := compress.TarAppenderFactory("sha256", "none", compress.TarFormatPlain, &buf)
 		if err != nil {
 			t.Fatal(err)
 		}

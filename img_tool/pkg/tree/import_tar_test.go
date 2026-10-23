@@ -51,7 +51,7 @@ func writeTestTar(t *testing.T, entries map[string][]byte, order []string) strin
 // tests can walk the result without a decompressor in the way.
 func newTestRecorder(t *testing.T, out io.Writer) (Recorder, api.TarCAS) {
 	t.Helper()
-	appender, err := compress.TarAppenderFactory("sha256", "none", false, out)
+	appender, err := compress.TarAppenderFactory("sha256", "none", compress.TarFormatPlain, out)
 	if err != nil {
 		t.Fatal(err)
 	}
