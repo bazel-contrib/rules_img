@@ -164,6 +164,8 @@ bzl_library(
     srcs = ["convert.bzl"],
     visibility = ["//visibility:public"],
     deps = [
+        "//img/private/conversion:archive",
+        "//img/private/conversion:flatten",
         "//img/private/conversion:index_from_oci_layout",
         "//img/private/conversion:manifest_from_oci_layout",
     ],
