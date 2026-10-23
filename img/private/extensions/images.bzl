@@ -2,6 +2,7 @@
 
 load("@bazel_skylib//lib:sets.bzl", "sets")
 load("//img/private/extensions:images_helpers.bzl", "build_facts_to_store", "build_image_files_dict", "build_reverse_blob_mappings", "collect_blobs_to_create", "get_merged_sources_from_images", "get_registries_from_image", "merge_pull_attrs", "normalize_repository_name", "pull_tag_to_struct", "sync_oci_ref_graph")
+load("//img/private/repository_rules:download.bzl", "learn_digest_from_tag")
 load("//img/private/repository_rules:image_repo.bzl", "image_repo")
 load("//img/private/repository_rules:pull_blob.bzl", "pull_blob_file", "pull_manifest_blob")
 
@@ -48,11 +49,25 @@ def _images_impl(ctx):
     expose_hub_repo = expose_hub_repo == "enabled" or (expose_hub_repo == "auto" and not support_dict_in_root_module_direct_deps)
     expose_image_repos = expose_image_repos == "enabled" or (expose_image_repos == "auto" and support_dict_in_root_module_direct_deps)
 
+    resolved_any_tag = False
     for mod in ctx.modules:
         names = sets.make()
         digests = sets.make()
         for img in mod.tags.pull:
             digest = img.digest
+            if not digest and img.unsafe_allow_tag_without_digest:
+                if not img.tag:
+                    fail("Image '{}' sets unsafe_allow_tag_without_digest but has no tag to resolve.".format(img.repository))
+                digest = learn_digest_from_tag(
+                    ctx,
+                    tag = img.tag,
+                    downloader = downloader,
+                    sources = pull_tag_to_struct(img).sources,
+                    credential_helper = credential_helper,
+                    docker_config_path = docker_config_path,
+                    timeout = timeout,
+                )
+                resolved_any_tag = True
             sets.insert(digests, digest)
             name = img.name or img.repository
             if sets.contains(names, name):
@@ -63,9 +78,9 @@ def _images_impl(ctx):
             if not digest or not digest.startswith("sha256:") or len(digest) != 71:
                 fail("Invalid digest '{}' for image '{}'. Must be of the form 'sha256:<64-hex-chars>'.".format(digest, img.repository))
             if digest not in images_by_digest:
-                images_by_digest[digest] = pull_tag_to_struct(img)
+                images_by_digest[digest] = pull_tag_to_struct(img, digest)
             else:
-                images_by_digest[digest] = merge_pull_attrs(images_by_digest[digest], pull_tag_to_struct(img), other_is_root = mod.is_root)
+                images_by_digest[digest] = merge_pull_attrs(images_by_digest[digest], pull_tag_to_struct(img, digest), other_is_root = mod.is_root)
             if digest not in digest_visibility:
                 digest_visibility[digest] = []
             visibility_identifier = "{}/{}/{}".format(mod.name, mod.version, img.name or img.repository)
@@ -193,7 +208,7 @@ def _images_impl(ctx):
     kwargs = {
         "root_module_direct_deps": root_module_direct_deps if ctx.root_module_has_non_dev_dependency else [],
         "root_module_direct_dev_deps": [] if ctx.root_module_has_non_dev_dependency else root_module_direct_deps,
-        "reproducible": True,
+        "reproducible": not resolved_any_tag,
     }
     if hasattr(ctx, "facts"):
         kwargs["facts"] = build_facts_to_store(oci_ref_graph)
@@ -308,6 +323,17 @@ While optional, it's recommended to also specify a digest for reproducible build
 
 When specified, the image is pulled by digest instead of tag, ensuring reproducible builds.
 The digest must be a full SHA256 digest starting with "sha256:".""",
+        ),
+        "unsafe_allow_tag_without_digest": attr.bool(
+            default = False,
+            doc = """Resolve `tag` to a digest each time the extension is evaluated, instead of requiring `digest`.
+
+**WARNING:** Builds then follow the tag, so they are not reproducible.
+
+The extension reports itself as not reproducible, so Bazel re-evaluates it in each new
+server instead of recording the digest in the lockfile. Image and blob repositories stay
+keyed by digest, so they come from the repo contents cache until the tag moves. Their
+repository names contain the digest: reference the image through the hub's `image()`.""",
         ),
         "layer_handling": attr.string(
             default = "shallow",
