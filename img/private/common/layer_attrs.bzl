@@ -58,7 +58,29 @@ When True (default), executables in srcs will include their runfiles tree.
 When False, only the executable file itself is included, without runfiles.
 
 Either way, any additional default outputs of the target (the rest of `DefaultInfo.files`
-beyond the executable) are copied into the layer, placed relative to the executable.
+beyond the executable) are copied into the layer, placed relative to the executable,
+as configured by `extra_default_outputs`.
+""",
+    ),
+    extra_default_outputs = attr.string(
+        default = "best_effort",
+        values = ["best_effort", "drop", "strict"],
+        doc = """\
+How to handle an executable's additional default outputs (the rest of `DefaultInfo.files`
+beyond the executable itself).
+
+Those files are placed at the same offset relative to the executable that they have in the
+source tree, so a file that lives above the executable's directory needs a path in the image
+that is deep enough to place it. This setting decides what happens when it isn't:
+
+- `"best_effort"` (default): place every additional default output that fits, and silently
+  drop the ones that would land above the image root. This is what wrapper rules such as
+  bazel-lib's `transition_binary` need, where the executable is a symlink in a sibling
+  directory of the real outputs.
+- `"drop"`: never place additional default outputs. Only the executable itself (and its
+  runfiles, if `include_runfiles` is True) is included.
+- `"strict"`: place every additional default output, and fail the build if any of them
+  would land above the image root.
 """,
     ),
     annotations = attr.string_dict(

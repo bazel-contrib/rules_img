@@ -1,0 +1,22 @@
+load("@rules_img//img:layer.bzl", "image_layer")
+load("//tests/layering:defs.bzl", "layer_contents_test")
+
+# gazelle:exclude_from_release
+
+# A bazel-lib platform_transition_binary wrapper symlinks the executable into a
+# subdirectory of its own package, so every other default output of the wrapped
+# binary sits above the executable's directory. With the executable at the image
+# root none of them can be placed, and the default "best_effort" policy drops
+# them instead of failing the build. The executable and its runfiles (which carry
+# the wrapped binary's own outputs anyway) are unaffected.
+image_layer(
+    name = "layer",
+    srcs = {"/launcher": "//tests/layering/testcases:transitioned_tool"},
+)
+
+layer_contents_test(
+    name = "test",
+    size = "small",
+    layer = ":layer",
+    manifests = ["expected.ndjson"],
+)

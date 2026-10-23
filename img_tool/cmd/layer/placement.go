@@ -2,6 +2,7 @@ package layer
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"os"
 	"path"
@@ -24,7 +25,7 @@ import (
 //
 // The header line has the form:
 //
-//	mode\0dest\0anchor\0skip
+//	mode\0dest\0anchor\0skip[\0on_escape]
 //
 // where:
 //   - mode is one of:
@@ -45,14 +46,27 @@ import (
 //     Empty means the image root.
 //   - skip is a rebased short_path to omit (the executable, which is added
 //     separately). Empty means skip nothing.
-//
-// Any resolved path that escapes the image root (retains a leading "..") fails.
+//   - on_escape decides what happens to a file whose resolved path escapes the
+//     image root: "error" (the default when the field is absent) fails, "skip"
+//     omits the file. Bazel sends "skip" for the best-effort placement of an
+//     executable's extra default outputs, where a wrapper rule commonly puts
+//     the executable in a subdirectory of its other default outputs.
 type placeFilesSpec struct {
-	Mode   string
-	Dest   string
-	Anchor string
-	Skip   string
+	Mode     string
+	Dest     string
+	Anchor   string
+	Skip     string
+	OnEscape string
 }
+
+const (
+	onEscapeError = "error"
+	onEscapeSkip  = "skip"
+)
+
+// errAboveImageRoot marks a placement that resolves above the image root, so
+// that the caller can skip the file instead of failing when asked to.
+var errAboveImageRoot = errors.New("placed above the image root")
 
 type placeFilesEntry struct {
 	ShortPath string
@@ -108,6 +122,16 @@ func readPlaceFilesParamFile(paramFile string) (addFiles, error) {
 	for _, entry := range entries {
 		pathInImage, err := spec.place(entry.ShortPath, len(entries))
 		if err != nil {
+			if errors.Is(err, errAboveImageRoot) {
+				if spec.OnEscape == onEscapeSkip {
+					// Best-effort placement: the file has no home under the
+					// image root, so leave it out of the layer.
+					continue
+				}
+				if spec.Mode == "relative" {
+					return nil, fmt.Errorf("%w; alternatively, set extra_default_outputs to \"best_effort\" to skip it or to \"drop\" to place no extra default outputs at all", err)
+				}
+			}
 			return nil, err
 		}
 		typ, err := parseFileType(entry.Type, entry.Source)
@@ -124,20 +148,29 @@ func readPlaceFilesParamFile(paramFile string) (addFiles, error) {
 }
 
 func parsePlaceFilesHeader(line string) (placeFilesSpec, error) {
-	parts := strings.SplitN(line, "\x00", 4)
-	if len(parts) != 4 {
-		return placeFilesSpec{}, fmt.Errorf("expected 4 null-separated fields (mode, dest, anchor, skip), got %d in line: %q", len(parts), line)
+	parts := strings.SplitN(line, "\x00", 5)
+	if len(parts) < 4 {
+		return placeFilesSpec{}, fmt.Errorf("expected at least 4 null-separated fields (mode, dest, anchor, skip[, on_escape]), got %d in line: %q", len(parts), line)
 	}
 	spec := placeFilesSpec{
-		Mode:   parts[0],
-		Dest:   strings.TrimPrefix(parts[1], "/"),
-		Anchor: parts[2],
-		Skip:   parts[3],
+		Mode:     parts[0],
+		Dest:     strings.TrimPrefix(parts[1], "/"),
+		Anchor:   parts[2],
+		Skip:     parts[3],
+		OnEscape: onEscapeError,
+	}
+	if len(parts) == 5 && parts[4] != "" {
+		spec.OnEscape = parts[4]
 	}
 	switch spec.Mode {
 	case "relative", "package_relative", "flatten":
 	default:
 		return placeFilesSpec{}, fmt.Errorf("invalid placement mode %q (want \"relative\", \"package_relative\", or \"flatten\")", spec.Mode)
+	}
+	switch spec.OnEscape {
+	case onEscapeError, onEscapeSkip:
+	default:
+		return placeFilesSpec{}, fmt.Errorf("invalid placement escape policy %q (want %q or %q)", spec.OnEscape, onEscapeError, onEscapeSkip)
 	}
 	return spec, nil
 }
@@ -162,7 +195,7 @@ func (s placeFilesSpec) place(shortPath string, count int) (string, error) {
 	// path.Join already cleans the result, but a result that climbs above the
 	// image root retains a leading "..".
 	if dest == ".." || strings.HasPrefix(dest, "../") {
-		return "", fmt.Errorf("file %q would be placed above the image root (resolved to %q); use a deeper path_in_image", shortPath, dest)
+		return "", fmt.Errorf("file %q would be placed above the image root (resolved to %q); use a deeper path_in_image: %w", shortPath, dest, errAboveImageRoot)
 	}
 	return dest, nil
 }

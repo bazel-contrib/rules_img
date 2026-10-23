@@ -1,0 +1,19 @@
+load("@rules_img//img:layer.bzl", "image_layer")
+load("//tests/layering:defs.bzl", "layer_contents_test")
+
+# gazelle:exclude_from_release
+
+# Same wrapper as the binary_transition_wrapper case, but placed deep enough that
+# the wrapped binary's default outputs do have a home above the executable: they
+# are placed there, keeping their offset relative to the executable.
+image_layer(
+    name = "layer",
+    srcs = {"/opt/app/wrapper/launcher": "//tests/layering/testcases:transitioned_tool"},
+)
+
+layer_contents_test(
+    name = "test",
+    size = "small",
+    layer = ":layer",
+    manifests = ["expected.ndjson"],
+)

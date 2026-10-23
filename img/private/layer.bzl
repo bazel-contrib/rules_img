@@ -169,7 +169,9 @@ values are labels to files or executables.
 When a value is an executable, the executable is placed at the path key and its runfiles tree is
 included (unless include_runfiles is set to False). Any additional default outputs of the target
 (the rest of `DefaultInfo.files` beyond the executable) are also copied, each placed at the same
-location relative to the executable that it has in the source tree.
+location relative to the executable that it has in the source tree. Outputs that live above the
+executable need a path key deep enough to hold them; `extra_default_outputs` decides what happens
+to the ones that don't fit (by default they are dropped).
 
 When a value is a non-executable target that produces more than one default output, the path key is
 treated as a directory and the outputs are placed inside it according to `multi_file_layout`. A path

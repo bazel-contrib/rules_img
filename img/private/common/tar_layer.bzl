@@ -95,16 +95,16 @@ def _rebase_short_path(f):
     """
     return empty_runfile_short_path(f.short_path)
 
-def _place_files_header(mode, dest, anchor, skip):
+def _place_files_header(mode, dest, anchor, skip, on_escape = "error"):
     """Build the header line for a --place-files parameter file.
 
     The header carries the per-target placement context that the Go tool needs
     to resolve each file's final path. It cannot be baked into the per-file
     lines because those are produced lazily by a map_each callback, which may
     not capture rule context. Fields are null-separated: mode, dest, anchor,
-    skip. See placement.go for the consuming side.
+    skip, on_escape. See placement.go for the consuming side.
     """
-    return "{}\0{}\0{}\0{}".format(mode, dest, anchor, skip)
+    return "{}\0{}\0{}\0{}\0{}".format(mode, dest, anchor, skip, on_escape)
 
 def place_extra_executable_files(ctx, files, exe, path_in_image, extra_args, extra_inputs):
     """Lazily place a target's default outputs other than the executable.
@@ -113,7 +113,10 @@ def place_extra_executable_files(ctx, files, exe, path_in_image, extra_args, ext
     directory, so that with the executable anchored at path_in_image, sidecar
     files keep their relative layout. The executable itself is skipped. Files
     above the executable's directory are allowed as long as they stay under the
-    image root (enforced by the Go tool at execution time).
+    image root; the `extra_default_outputs` attribute decides what happens to
+    the ones that are not: they are dropped silently ("best_effort", the
+    default) or fail the build ("strict"). With "drop", nothing is placed at all
+    and no parameter file is written.
 
     The depset is streamed via add_all(map_each=...) and never flattened in
     Starlark.
@@ -127,6 +130,12 @@ def place_extra_executable_files(ctx, files, exe, path_in_image, extra_args, ext
         extra_inputs: list of depsets; `files` is appended so the outputs are
             available to the action.
     """
+    policy = ctx.attr.extra_default_outputs
+    if policy == "drop":
+        # Nothing to place, but the executable is placed by the caller from this
+        # same depset in some code paths, so it still has to reach the action.
+        extra_inputs.append(depset([exe]))
+        return
     args = ctx.actions.args()
     args.set_param_file_format("multiline")
     args.use_param_file("--place-files=%s", use_always = True)
@@ -135,6 +144,7 @@ def place_extra_executable_files(ctx, files, exe, path_in_image, extra_args, ext
         paths.dirname(path_in_image),
         paths.dirname(_rebase_short_path(exe)),
         _rebase_short_path(exe),
+        "error" if policy == "strict" else "skip",
     ))
     args.add_all(files, map_each = to_short_path_pair, expand_directories = False, uniquify = True)
     extra_args.append(args)
