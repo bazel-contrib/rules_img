@@ -4,6 +4,7 @@ import (
 	"compress/gzip"
 	"crypto/sha256"
 	"errors"
+	"fmt"
 	"io"
 
 	"github.com/klauspost/compress/zstd"
@@ -207,6 +208,14 @@ func ResumeSHA256EstargzZstdTarAppender(state api.AppenderState, w io.Writer, op
 	return &appender, nil
 }
 
+func NewSHA256ZstdChunkedTarAppender(w io.Writer, options ...Option) (*TarAppender[*ZstdChunkedWriter], error) {
+	appender, err := NewTar[*ZstdChunkedWriter, SHA256Maker, ZstdChunkedCompressorMaker](w, options...)
+	if err != nil {
+		return nil, err
+	}
+	return &appender, nil
+}
+
 func collectOptions(optionsList ...Option) options {
 	opts := options{}
 	for _, o := range optionsList {
@@ -250,46 +259,85 @@ func ResumeFactory(hashAlgorithm, compressionAlgorithm string, state api.Appende
 	return nil, errors.New("unsupported hash or compression algorithm")
 }
 
-func TarAppenderFactory(hashAlgorithm, compressionAlgorithm string, seekable bool, w io.Writer, optionsList ...Option) (api.TarAppender, error) {
-	opts := collectOptions(optionsList...)
+type TarFormat uint8
+
+const (
+	TarFormatPlain TarFormat = iota
+	TarFormatEstargz
+	TarFormatZstdChunked
+)
+
+func ResolveTarFormat(estargz, zstdChunked bool, compressionAlgorithm string) (TarFormat, error) {
 	switch {
-	case hashAlgorithm == "sha256" && compressionAlgorithm == "gzip" && seekable:
-		// estargz path: cannot (easily) parallelize gzip here
-		return NewSHA256EstargzGzipTarAppender(w, optionsList...)
-	case hashAlgorithm == "sha256" && compressionAlgorithm == "gzip" && !seekable:
-		usePGzip := opts.jobs() > 1
-		if usePGzip {
-			appender, err := NewSHA256PGzipAppender(w, optionsList...)
+	case estargz && zstdChunked:
+		return TarFormatPlain, errors.New("--estargz and --zstd-chunked are mutually exclusive")
+	case zstdChunked && compressionAlgorithm != "zstd":
+		return TarFormatPlain, fmt.Errorf("--zstd-chunked requires zstd compression, got %s", compressionAlgorithm)
+	case estargz:
+		return TarFormatEstargz, nil
+	case zstdChunked:
+		return TarFormatZstdChunked, nil
+	}
+	return TarFormatPlain, nil
+}
+
+func TarAppenderFactory(hashAlgorithm, compressionAlgorithm string, format TarFormat, w io.Writer, optionsList ...Option) (api.TarAppender, error) {
+	opts := collectOptions(optionsList...)
+	if hashAlgorithm != "sha256" {
+		return nil, errors.New("unsupported hash algorithm")
+	}
+	switch format {
+	case TarFormatEstargz:
+		switch compressionAlgorithm {
+		case "gzip":
+			return NewSHA256EstargzGzipTarAppender(w, optionsList...)
+		case "zstd":
+			return NewSHA256EstargzZstdTarAppender(w, optionsList...)
+		}
+		return nil, errors.New("estargz requires gzip or zstd compression")
+	case TarFormatZstdChunked:
+		if compressionAlgorithm != "zstd" {
+			return nil, errors.New("zstd:chunked requires zstd compression")
+		}
+		return NewSHA256ZstdChunkedTarAppender(w, optionsList...)
+	case TarFormatPlain:
+		switch compressionAlgorithm {
+		case "gzip":
+			if opts.jobs() > 1 {
+				appender, err := NewSHA256PGzipAppender(w, optionsList...)
+				if err != nil {
+					return nil, err
+				}
+				return appender.TarAppender(), nil
+			}
+			appender, err := NewSHA256GzipAppender(w, optionsList...)
+			if err != nil {
+				return nil, err
+			}
+			return appender.TarAppender(), nil
+		case "zstd":
+			appender, err := NewSHA256ZstdAppender(w, optionsList...)
+			if err != nil {
+				return nil, err
+			}
+			return appender.TarAppender(), nil
+		case "uncompressed", "none":
+			appender, err := New[nopCompressor, SHA256Maker, UncompressedMaker](w, optionsList...)
 			if err != nil {
 				return nil, err
 			}
 			return appender.TarAppender(), nil
 		}
-		appender, err := NewSHA256GzipAppender(w, optionsList...)
-		if err != nil {
-			return nil, err
-		}
-		return appender.TarAppender(), nil
-	case hashAlgorithm == "sha256" && compressionAlgorithm == "zstd" && seekable:
-		return NewSHA256EstargzZstdTarAppender(w, optionsList...)
-	case hashAlgorithm == "sha256" && compressionAlgorithm == "zstd" && !seekable:
-		appender, err := NewSHA256ZstdAppender(w, optionsList...)
-		if err != nil {
-			return nil, err
-		}
-		return appender.TarAppender(), nil
-	case hashAlgorithm == "sha256" && (compressionAlgorithm == "uncompressed" || compressionAlgorithm == "none") && !seekable:
-		appender, err := New[nopCompressor, SHA256Maker, UncompressedMaker](w, optionsList...)
-		if err != nil {
-			return nil, err
-		}
-		return appender.TarAppender(), nil
 	}
 	return nil, errors.New("unsupported hash or compression algorithm")
 }
 
-func ResumeTarFactory(hashAlgorithm, compressionAlgorithm string, seekable bool, state api.AppenderState, w io.Writer, optionsList ...Option) (api.TarAppender, error) {
+func ResumeTarFactory(hashAlgorithm, compressionAlgorithm string, format TarFormat, state api.AppenderState, w io.Writer, optionsList ...Option) (api.TarAppender, error) {
 	opts := collectOptions(optionsList...)
+	if format == TarFormatZstdChunked {
+		return nil, errors.New("zstd:chunked does not support resuming")
+	}
+	seekable := format == TarFormatEstargz
 	switch {
 	case hashAlgorithm == "sha256" && compressionAlgorithm == "gzip" && seekable:
 		return ResumeSHA256EstargzGzipTarAppender(state, w, optionsList...)

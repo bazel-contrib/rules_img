@@ -170,6 +170,7 @@ def _write_layer_info(ctx, blobs, manifest, config, history, layer_index, index_
         metadata = layer_metadata,
         media_type = media_type,
         estargz = layer.get("annotations", {}).get(TOC_JSON_DIGEST_ANNOTATION) != None,
+        zstd_chunked = layer.get("annotations", {}).get(ZSTD_CHUNKED_MANIFEST_CHECKSUM_ANNOTATION) != None,
         compact_stream = None,
         layer_input_files = None,
         layer_input_files_cas = None,
@@ -371,3 +372,4 @@ DOCKER_MANIFEST_V2 = "application/vnd.docker.distribution.manifest.v2+json"
 MEDIA_TYPE_CONFIG = "application/vnd.oci.image.config.v1+json"
 TOC_JSON_DIGEST_ANNOTATION = "containerd.io/snapshot/stargz/toc.digest"
 STORE_UNCOMPRESSED_SIZE_ANNOTATION = "io.containers.estargz.uncompressed-size"
+ZSTD_CHUNKED_MANIFEST_CHECKSUM_ANNOTATION = "io.github.containers.zstd-chunked.manifest-checksum"

@@ -16,7 +16,7 @@ import (
 // bit-for-bit.
 
 func TestReconstructEstargzGzip(t *testing.T) {
-	settings := tarSettings{compression: "gzip", estargz: true, compressionLevel: 6, compressorJobs: 1}
+	settings := tarSettings{compression: "gzip", format: compress.TarFormatEstargz, compressionLevel: 6, compressorJobs: 1}
 	content := []byte("estargz gzip payload that is reasonably long to compress")
 	entries := []testEntry{
 		{hdr: &tar.Header{Typeflag: tar.TypeDir, Name: "dir/", Mode: 0o755}},
@@ -32,7 +32,7 @@ func TestReconstructEstargzGzip(t *testing.T) {
 }
 
 func TestReconstructEstargzZstd(t *testing.T) {
-	settings := tarSettings{compression: "zstd", estargz: true, compressionLevel: 3, compressorJobs: 1}
+	settings := tarSettings{compression: "zstd", format: compress.TarFormatEstargz, compressionLevel: 3, compressorJobs: 1}
 	content := []byte("estargz zstd payload that is reasonably long to compress")
 	entries := []testEntry{
 		{hdr: &tar.Header{Typeflag: tar.TypeReg, Name: "file.bin", Size: int64(len(content)), Mode: 0o644}, content: content},
@@ -42,6 +42,22 @@ func TestReconstructEstargzZstd(t *testing.T) {
 	reconstructed := buildIndexAndReconstruct(t, entries, settings, compactstream.StreamCompressionZstd, 0)
 	if !bytes.Equal(direct, reconstructed) {
 		t.Fatalf("estargz zstd mismatch: direct=%d bytes, reconstructed=%d bytes", len(direct), len(reconstructed))
+	}
+}
+
+func TestReconstructZstdChunked(t *testing.T) {
+	settings := tarSettings{compression: "zstd", format: compress.TarFormatZstdChunked, compressionLevel: 3, compressorJobs: 1}
+	content := bytes.Repeat([]byte("zstd:chunked payload that is reasonably long to compress "), 4096)
+	entries := []testEntry{
+		{hdr: &tar.Header{Typeflag: tar.TypeDir, Name: "dir/", Mode: 0o755}},
+		{hdr: &tar.Header{Typeflag: tar.TypeReg, Name: "dir/file.bin", Size: int64(len(content)), Mode: 0o644}, content: content},
+		{hdr: &tar.Header{Typeflag: tar.TypeSymlink, Name: "dir/link", Linkname: "file.bin"}},
+	}
+
+	direct := buildTarDirect(t, entries, settings)
+	reconstructed := buildIndexAndReconstruct(t, entries, settings, compactstream.StreamCompressionZstd, 0)
+	if !bytes.Equal(direct, reconstructed) {
+		t.Fatalf("zstd:chunked mismatch: direct=%d bytes, reconstructed=%d bytes", len(direct), len(reconstructed))
 	}
 }
 
@@ -72,7 +88,7 @@ func TestReconstructThroughRealCAS(t *testing.T) {
 	content2 := []byte("second file, distinct contents to dedup separately")
 
 	var tarBuf bytes.Buffer
-	appender, err := compress.TarAppenderFactory("sha256", "gzip", false, &tarBuf,
+	appender, err := compress.TarAppenderFactory("sha256", "gzip", compress.TarFormatPlain, &tarBuf,
 		compress.CompressionLevel(6), compress.CompressorJobs(1))
 	if err != nil {
 		t.Fatal(err)

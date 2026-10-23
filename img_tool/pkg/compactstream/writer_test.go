@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"github.com/klauspost/compress/zstd"
+
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/compress"
 )
 
 func TestWriterEmptyStream(t *testing.T) {
@@ -62,7 +64,7 @@ func TestWriterOriginalCompressionMetadata(t *testing.T) {
 	var buf bytes.Buffer
 	iw := NewWriter(&buf, HashAlgoSHA256, 32, StreamCompressionNone, OriginalCompressionInfo{
 		Compression:      OriginalCompressionGzip,
-		Seekable:         true,
+		Format:           compress.TarFormatEstargz,
 		CompressionLevel: 6,
 		CompressorJobs:   4,
 	}, 0)
@@ -74,8 +76,8 @@ func TestWriterOriginalCompressionMetadata(t *testing.T) {
 	if data[13] != OriginalCompressionGzip {
 		t.Fatalf("expected original compression gzip (%d), got %d", OriginalCompressionGzip, data[13])
 	}
-	if data[14] != 1 {
-		t.Fatalf("expected seekable=1, got %d", data[14])
+	if data[14] != uint8(compress.TarFormatEstargz) {
+		t.Fatalf("expected format estargz (%d), got %d", compress.TarFormatEstargz, data[14])
 	}
 	if int8(data[15]) != 6 {
 		t.Fatalf("expected compression level 6, got %d", int8(data[15]))

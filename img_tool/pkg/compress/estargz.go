@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"hash"
 	"io"
+	"maps"
 
 	"github.com/containerd/stargz-snapshotter/estargz"
 	"github.com/containerd/stargz-snapshotter/estargz/zstdchunked"
@@ -112,8 +113,7 @@ func (a *TarAppender[C]) AppendTar(r io.Reader) error {
 func (a *TarAppender[C]) Finalize() (api.AppenderState, error) {
 	// Closing the compressor flushes the data to the output
 	// and ensures a trailer is written (if needed).
-	tocDigest, err := a.compressor.Close()
-	if err != nil {
+	if err := a.compressor.Close(); err != nil {
 		return api.AppenderState{}, err
 	}
 
@@ -126,9 +126,8 @@ func (a *TarAppender[C]) Finalize() (api.AppenderState, error) {
 		return api.AppenderState{}, err
 	}
 
-	// Populate layer annotations for estargz
 	layerAnnotations := make(map[string]string)
-	layerAnnotations[api.TocDigestAnnotation] = tocDigest
+	maps.Copy(layerAnnotations, a.compressor.Annotations())
 	layerAnnotations[api.UncompressedSizeAnnotation] = fmt.Sprintf("%d", a.contentHash.BytesWritten())
 
 	state := api.AppenderState{
@@ -176,7 +175,8 @@ func setupTarWriterPipeline[C TarCompressor, CM tarCompressorMaker[C]](output io
 // TarCompressor interface for estargz-based compression
 type TarCompressor interface {
 	AppendTar(r io.Reader) error
-	Close() (string, error)
+	Close() error
+	Annotations() map[string]string
 }
 
 type tarCompressorMaker[T TarCompressor] interface {
@@ -244,6 +244,7 @@ func (h contentHashingHash) Write(p []byte) (int, error) {
 type EstargzWriter struct {
 	writer            *estargz.Writer
 	compressionFormat string
+	tocDigest         string
 }
 
 // NewEstargzWriter creates a new EstargzWriter with default gzip compression
@@ -281,9 +282,17 @@ func (e *EstargzWriter) AppendTar(r io.Reader) error {
 }
 
 // Close closes the estargz writer
-func (e *EstargzWriter) Close() (string, error) {
+func (e *EstargzWriter) Close() error {
 	digest, err := e.writer.Close()
-	return digest.String(), err
+	if err != nil {
+		return err
+	}
+	e.tocDigest = digest.String()
+	return nil
+}
+
+func (e *EstargzWriter) Annotations() map[string]string {
+	return map[string]string{api.TocDigestAnnotation: e.tocDigest}
 }
 
 // EstargzGzipCompressorMaker implements tarCompressorMaker for EstargzWriter with gzip

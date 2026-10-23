@@ -45,6 +45,7 @@ func LayerProcess(ctx context.Context, args []string) {
 	var baseMetadataFromFiles baseMetadataFromFileArgs
 	var formatFlag string
 	var estargzFlag bool
+	var zstdChunkedFlag bool
 	var mediaTypeFlag string
 	var metadataOutputFlag string
 	var contentManifestOutputFlag string
@@ -96,6 +97,7 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 	flagSet.StringVar(&contentManifestCollection, "deduplicate-collection", "", `Path of a content manifest collection file that can be used for deduplication.`)
 	flagSet.StringVar(&formatFlag, "format", "", `The compression format of the output layer. Can be "gzip", "zstd", or "none". Default is to guess the algorithm based on the filename, but fall back to "gzip".`)
 	flagSet.BoolVar(&estargzFlag, "estargz", false, `Use estargz format for compression. This creates seekable gzip streams optimized for lazy pulling.`)
+	flagSet.BoolVar(&zstdChunkedFlag, "zstd-chunked", false, `Use zstd:chunked format for compression. Requires --format zstd. Files are split into content-defined chunks that can be fetched and deduplicated individually.`)
 	flagSet.StringVar(&mediaTypeFlag, "media-type", "", `Override the layer media type in the metadata output. If empty, auto-detected from the compression format.`)
 	flagSet.StringVar(&compressorJobsFlag, "compressor-jobs", "", `Number of compressor jobs. For gzip, 1 uses single-threaded stdlib gzip and n>1 uses pgzip. For zstd, it is the number of parallel encoder goroutines, which is always at least 2. "nproc" uses the available cores. If unset, gzip is single-threaded and zstd uses 2 jobs.`)
 	flagSet.IntVar(&compressionLevelFlag, "compression-level", -1, `Compression level. For gzip: 0-9. If unset, use library default.`)
@@ -186,6 +188,12 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 
 	if ztocOutputFlag != "" && compressionAlgorithm != api.Gzip {
 		fmt.Fprintf(os.Stderr, "Error: --ztoc is only supported for gzip-compressed layers, got %s\n", compressionAlgorithm)
+		os.Exit(1)
+	}
+
+	tarFormat, err := compress.ResolveTarFormat(estargzFlag, zstdChunkedFlag, string(compressionAlgorithm))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -326,7 +334,7 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 	}
 
 	compressorState, err := handleLayerState(
-		compressionAlgorithm, estargzFlag, addFiles, importTarFlags, executableFlags, symlinkFlags, emptyFilePaths,
+		compressionAlgorithm, tarFormat, addFiles, importTarFlags, executableFlags, symlinkFlags, emptyFilePaths,
 		baseMetadataPaths,
 		casImporter, casExporter, outputFile, layerMetadata,
 		compressorJobsFlag, compressionLevelFlag, createParentDirectoriesFlag,
@@ -361,7 +369,7 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 			}
 		}()
 
-		if err := writeMetadata(layerHistory, compressionAlgorithm, estargzFlag, mediaTypeFlag, annotations, compressorState, metadataOutputFile); err != nil {
+		if err := writeMetadata(layerHistory, compressionAlgorithm, tarFormat, mediaTypeFlag, annotations, compressorState, metadataOutputFile); err != nil {
 			fmt.Fprintf(os.Stderr, "Writing metadata: %v\n", err)
 			os.Exit(1)
 		}
@@ -430,7 +438,7 @@ func compactStreamCompressionLevel(level int) (int8, error) {
 }
 
 func handleLayerState(
-	compressionAlgorithm api.CompressionAlgorithm, useEstargz bool, addFiles addFiles, importTars importTars, addExecutables executables, addSymlinks symlinks, emptyFiles []string,
+	compressionAlgorithm api.CompressionAlgorithm, tarFormat compress.TarFormat, addFiles addFiles, importTars importTars, addExecutables executables, addSymlinks symlinks, emptyFiles []string,
 	baseMetadataPaths []string,
 	casImporter api.CASStateSupplier, casExporter api.CASStateExporter, outputFile io.Writer, layerMetadata *LayerMetadata,
 	compressorJobsFlag string, compressionLevelFlag int, createParentDirectories bool,
@@ -459,7 +467,7 @@ func handleLayerState(
 		}
 	}
 
-	compressor, err := compress.TarAppenderFactory("sha256", string(compressionAlgorithm), useEstargz, outputFile, opts...)
+	compressor, err := compress.TarAppenderFactory("sha256", string(compressionAlgorithm), tarFormat, outputFile, opts...)
 	if err != nil {
 		return compressorState, fmt.Errorf("creating compressor: %w", err)
 	}
@@ -510,7 +518,7 @@ func handleLayerState(
 			compactstream.StreamCompressionZstd,
 			compactstream.OriginalCompressionInfo{
 				Compression:      origComp,
-				Seekable:         useEstargz,
+				Format:           tarFormat,
 				CompressionLevel: csLevel,
 				CompressorJobs:   recordedCompressorJobs(compressorJobsFlag),
 			},
@@ -646,7 +654,7 @@ func writeLayer(recorder tree.Recorder, addFiles addFiles, importTars importTars
 	return nil
 }
 
-func writeMetadata(history string, compressionAlgorithm api.CompressionAlgorithm, useEstargz bool, mediaTypeOverride string, annotations map[string]string, compressorState api.AppenderState, outputFile io.Writer) error {
+func writeMetadata(history string, compressionAlgorithm api.CompressionAlgorithm, _ compress.TarFormat, mediaTypeOverride string, annotations map[string]string, compressorState api.AppenderState, outputFile io.Writer) error {
 	// An empty --history asks for a layer with no history entries at all;
 	// omitting the flag defaults to MissingHistoryMarker, which falls
 	// through to the non-empty case below like any other value.
