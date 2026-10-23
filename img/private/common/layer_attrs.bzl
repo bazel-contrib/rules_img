@@ -18,6 +18,16 @@ Whether to use estargz format. If set to 'auto', uses the global default estargz
 When enabled, the layer will be optimized for lazy pulling and will be compatible with the estargz format.
 """,
     ),
+    zstd_chunked = attr.string(
+        default = "auto",
+        values = ["auto", "enabled", "disabled"],
+        doc = """\
+Whether to use the zstd:chunked format. If set to 'auto', uses the global default zstd_chunked setting.
+When enabled, the layer is written with content-defined chunks and a table of contents, so
+compatible runtimes (podman, CRI-O) can fetch and deduplicate individual chunks.
+Requires zstd compression and cannot be combined with estargz.
+""",
+    ),
     soci = attr.string(
         default = "auto",
         values = ["auto", "enabled", "disabled"],
@@ -128,6 +138,10 @@ Override the layer media type. By default, the media type is auto-detected from 
     ),
     _default_estargz = attr.label(
         default = Label("//img/settings:estargz"),
+        providers = [BuildSettingInfo],
+    ),
+    _default_zstd_chunked = attr.label(
+        default = Label("//img/settings:zstd_chunked"),
         providers = [BuildSettingInfo],
     ),
     _default_soci = attr.label(

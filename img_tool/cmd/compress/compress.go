@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"slices"
 	"strconv"
+	"strings"
 
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/api"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/compress"
@@ -22,6 +23,7 @@ var (
 	sourceFormat       string
 	format             string
 	estargzFlag        bool
+	zstdChunkedFlag    bool
 	metadataOutputFile string
 	sourceMetadataFile string
 )
@@ -49,6 +51,7 @@ func CompressProcess(ctx context.Context, args []string) {
 	flagSet.StringVar(&sourceFormat, "source-format", "", `The format of the source layer. Can be "tar" or "gzip".`)
 	flagSet.StringVar(&format, "format", "", `The format of the output layer. Can be "tar" or "gzip".`)
 	flagSet.BoolVar(&estargzFlag, "estargz", false, `Use estargz format for compression. This creates seekable gzip streams optimized for lazy pulling.`)
+	flagSet.BoolVar(&zstdChunkedFlag, "zstd-chunked", false, `Use zstd:chunked format for compression. Requires --format zstd. Files are split into content-defined chunks that can be fetched and deduplicated individually.`)
 	flagSet.StringVar(&compressorJobsFlag, "compressor-jobs", "", `Number of compressor jobs. For gzip, 1 uses single-threaded stdlib gzip and n>1 uses pgzip. For zstd, it is the number of parallel encoder goroutines, which is always at least 2. "nproc" uses the available cores. If unset, gzip is single-threaded and zstd uses 2 jobs.`)
 	flagSet.IntVar(&compressionLevelFlag, "compression-level", -1, `Compression level. For gzip: 0-9. If unset, use library default.`)
 	flagSet.Var(&annotations, "annotation", `Add an annotation as key=value. Can be specified multiple times.`)
@@ -116,7 +119,13 @@ func CompressProcess(ctx context.Context, args []string) {
 		}
 	}()
 
-	compressorState, mediaType, err := recompress(reader, outputHandle, outputFormat, estargzFlag, compressorJobsFlag, compressionLevelFlag)
+	tarFormat, err := compress.ResolveTarFormat(estargzFlag, zstdChunkedFlag, string(outputFormat.CompressionAlgorithm()))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	compressorState, mediaType, err := recompress(reader, outputHandle, outputFormat, tarFormat, compressorJobsFlag, compressionLevelFlag)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Recompressing layer: %v\n", err)
 		os.Exit(1)
@@ -146,7 +155,7 @@ func CompressProcess(ctx context.Context, args []string) {
 	}
 }
 
-func recompress(input io.Reader, output io.Writer, format api.LayerFormat, estargz bool, compressorJobsFlag string, compressionLevelFlag int) (compressorState api.AppenderState, mediaType string, err error) {
+func recompress(input io.Reader, output io.Writer, format api.LayerFormat, tarFormat compress.TarFormat, compressorJobsFlag string, compressionLevelFlag int) (compressorState api.AppenderState, mediaType string, err error) {
 	var CompressionAlgorithm api.CompressionAlgorithm
 	switch format {
 	case api.TarLayer:
@@ -170,7 +179,7 @@ func recompress(input io.Reader, output io.Writer, format api.LayerFormat, estar
 			opts = append(opts, compress.CompressorJobs(n))
 		}
 	}
-	compressor, err := compress.TarAppenderFactory(string(api.SHA256), string(CompressionAlgorithm), estargz, output, append(opts, compress.ContentType("tar"))...)
+	compressor, err := compress.TarAppenderFactory(string(api.SHA256), string(CompressionAlgorithm), tarFormat, output, append(opts, compress.ContentType("tar"))...)
 	if err != nil {
 		return compressorState, "", fmt.Errorf("creating compressor: %w", err)
 	}
@@ -206,7 +215,7 @@ func writeMetadata(compressorState api.AppenderState, annotations map[string]str
 	mergedAnnotations := make(map[string]string)
 	if sourceMetadata != nil {
 		for k, v := range sourceMetadata.Annotations {
-			if k == api.TocDigestAnnotation || k == api.UncompressedSizeAnnotation {
+			if k == api.TocDigestAnnotation || k == api.UncompressedSizeAnnotation || strings.HasPrefix(k, api.ZstdChunkedAnnotationPrefix) {
 				continue
 			}
 			mergedAnnotations[k] = v

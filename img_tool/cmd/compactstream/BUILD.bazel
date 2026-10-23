@@ -9,7 +9,10 @@ go_library(
     ],
     importpath = "github.com/bazel-contrib/rules_img/img_tool/cmd/compactstream",
     visibility = ["//visibility:public"],
-    deps = ["//pkg/compactstream"],
+    deps = [
+        "//pkg/compactstream",
+        "//pkg/compress",
+    ],
 )
 
 go_test(

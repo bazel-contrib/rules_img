@@ -26,6 +26,7 @@ base and Bazel does not track a tree artifact's symlinks into it.
     metadata = _metadata_doc,
     media_type = "The media type of the layer as a string. Example: application/vnd.oci.image.layer.v1.tar+gzip.",
     estargz = "Boolean indicating whether the layer is an estargz layer.",
+    zstd_chunked = "Boolean indicating whether the layer is a zstd:chunked layer.",
     compact_stream = "File containing the compact stream (.cstream) for the layer, or None.",
     layer_input_files = "Depset of files that went into this layer, or None.",
     layer_input_files_cas = "Tree artifact (directory) with the layer's input files content-addressed at sha256/<hex>, used to reconstruct the layer from its compact stream, or None.",

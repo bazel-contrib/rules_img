@@ -2,7 +2,7 @@
 
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("//img/private/common:build.bzl", "TOOLCHAINS")
-load("//img/private/common:layer_helper.bzl", "allow_tar_files", "build_layer_mtree", "calculate_layer_info", "extension_to_compression", "optimize_layer", "recompress_layer")
+load("//img/private/common:layer_helper.bzl", "allow_tar_files", "build_layer_mtree", "calculate_layer_info", "extension_to_compression", "optimize_layer", "recompress_layer", "resolve_layer_format")
 load("//img/private/providers:layers_info.bzl", "LayersInfo")
 
 def _layer_from_tar_impl(ctx):
@@ -13,15 +13,13 @@ def _layer_from_tar_impl(ctx):
     if compression == "auto":
         compression = ctx.attr._default_compression[BuildSettingInfo].value
 
-    estargz = ctx.attr.estargz
-    if estargz == "auto":
-        estargz = ctx.attr._default_estargz[BuildSettingInfo].value
-    estargz_enabled = estargz == "enabled"
+    layer_format = resolve_layer_format(ctx, compression)
+    format_enabled = layer_format.estargz or layer_format.zstd_chunked
 
-    target_compression = compression if (explicit_target_compression or estargz_enabled or optimize) else source_compression
+    target_compression = compression if (explicit_target_compression or format_enabled or optimize) else source_compression
 
     needs_recompression = source_compression != target_compression
-    needs_rewrite = needs_recompression or optimize
+    needs_rewrite = needs_recompression or optimize or format_enabled
 
     media_type = ctx.attr.media_type
     if media_type == "":
@@ -47,7 +45,7 @@ def _layer_from_tar_impl(ctx):
             media_type = media_type,
             tar_file = ctx.file.src,
             metadata_file = metadata_file,
-            estargz = estargz_enabled,
+            estargz = False,
             annotations = ctx.attr.annotations,
             mtree = build_layer_mtree(ctx, ctx.attr.name, tar_blob = ctx.file.src),
         )
@@ -61,7 +59,7 @@ def _layer_from_tar_impl(ctx):
             metadata_file = metadata_file,
             output = ctx.actions.declare_file(ctx.attr.name + output_name_extension),
             target_compression = target_compression,
-            estargz = estargz_enabled,
+            layer_format = layer_format,
             annotations = ctx.attr.annotations,
         )
     else:
@@ -74,7 +72,7 @@ def _layer_from_tar_impl(ctx):
             metadata_file = metadata_file,
             output = ctx.actions.declare_file(ctx.attr.name + output_name_extension),
             target_compression = target_compression,
-            estargz = estargz_enabled,
+            layer_format = layer_format,
             annotations = ctx.attr.annotations,
         )
 
@@ -157,6 +155,14 @@ This is useful for reducing the size of the image, but will take extra time and 
             doc = """Whether to use estargz format. If set to 'auto', uses the global default estargz setting.
 When enabled, the layer will be optimized for lazy pulling and will be compatible with the estargz format.""",
         ),
+        "zstd_chunked": attr.string(
+            default = "auto",
+            values = ["auto", "enabled", "disabled"],
+            doc = """Whether to use the zstd:chunked format. If set to 'auto', uses the global default zstd_chunked setting.
+When enabled, the layer is written with content-defined chunks and a table of contents, so
+compatible runtimes (podman, CRI-O) can fetch and deduplicate individual chunks.
+Requires zstd compression and cannot be combined with estargz.""",
+        ),
         "annotations": attr.string_dict(
             default = {},
             doc = """Annotations to add to the layer metadata as key-value pairs.""",
@@ -171,6 +177,10 @@ When enabled, the layer will be optimized for lazy pulling and will be compatibl
         ),
         "_default_estargz": attr.label(
             default = Label("//img/settings:estargz"),
+            providers = [BuildSettingInfo],
+        ),
+        "_default_zstd_chunked": attr.label(
+            default = Label("//img/settings:zstd_chunked"),
             providers = [BuildSettingInfo],
         ),
         "_compression_jobs": attr.label(

@@ -3,7 +3,7 @@
 load("@bazel_skylib//lib:paths.bzl", "paths")
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("//img/private/common:build.bzl", "TOOLCHAIN")
-load("//img/private/common:layer_helper.bzl", "build_layer_mtree", "compression_tuning_args", "layer_history_args")
+load("//img/private/common:layer_helper.bzl", "build_layer_mtree", "compression_tuning_args", "layer_format_args", "layer_history_args", "resolve_layer_format")
 load("//img/private/providers:layers_info.bzl", "LayersInfo")
 load("//img/private/providers:single_layer_info.bzl", "SingleLayerInfo")
 
@@ -217,25 +217,23 @@ def get_repo_mapping_manifest(src):
 def resolve_layer_settings(ctx):
     """Resolve layer settings from common attributes and build settings.
 
-    Resolves 'auto' values for compression, estargz, create_parent_directories,
-    and tree_artifact_handling from global build settings. Computes derived values
-    (media type and output file extension) based on the resolved compression.
+    Resolves 'auto' values for compression, estargz, zstd_chunked,
+    create_parent_directories, and tree_artifact_handling from global build
+    settings. Computes derived values (media type and output file extension)
+    based on the resolved compression.
 
     Args:
         ctx: Rule context. Must have attrs from layer_attrs.common.
 
     Returns:
-        struct with fields: compression, estargz, create_parent_directories,
-        tree_artifact_handling, media_type, out_ext.
+        struct with fields: compression, layer_format, estargz, zstd_chunked,
+        create_parent_directories, tree_artifact_handling, media_type, out_ext.
     """
     compression = ctx.attr.compress
     if compression == "auto":
         compression = ctx.attr._default_compression[BuildSettingInfo].value
 
-    estargz = ctx.attr.estargz
-    if estargz == "auto":
-        estargz = ctx.attr._default_estargz[BuildSettingInfo].value
-    estargz_enabled = estargz == "enabled"
+    layer_format = resolve_layer_format(ctx, compression)
 
     soci = ctx.attr.soci
     if soci == "auto":
@@ -270,7 +268,9 @@ def resolve_layer_settings(ctx):
 
     return struct(
         compression = compression,
-        estargz = estargz_enabled,
+        layer_format = layer_format,
+        estargz = layer_format.estargz,
+        zstd_chunked = layer_format.zstd_chunked,
         create_parent_directories = create_parent_directories_enabled,
         tree_artifact_handling = tree_artifact_handling,
         media_type = media_type,
@@ -319,9 +319,8 @@ def create_tar_single_layer(ctx, settings, name, extra_args = [], extra_inputs =
     args = ["layer"] + layer_history_args(ctx) + ["--metadata", metadata_out.path, "--format", settings.compression]
     if ctx.attr.media_type:
         args.extend(["--media-type", ctx.attr.media_type])
-    args.extend(compression_tuning_args(ctx, settings.compression, settings.estargz))
-    if settings.estargz:
-        args.append("--estargz")
+    args.extend(compression_tuning_args(ctx, settings.compression, settings.layer_format))
+    args.extend(layer_format_args(settings.layer_format))
     if settings.create_parent_directories:
         args.append("--create-parent-directories")
     args.extend(["--layer-tree-artifact-handling", settings.tree_artifact_handling])
@@ -410,6 +409,7 @@ def create_tar_single_layer(ctx, settings, name, extra_args = [], extra_inputs =
             metadata = metadata_out,
             media_type = settings.media_type,
             estargz = settings.estargz,
+            zstd_chunked = settings.zstd_chunked,
             compact_stream = compact_stream_out,
             layer_input_files = layer_input_files,
             layer_input_files_cas = layer_input_files_cas,

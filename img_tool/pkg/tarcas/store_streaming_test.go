@@ -94,7 +94,7 @@ func TestStoreSeekableMatchesBuffered(t *testing.T) {
 		t.Helper()
 		var tarBuf bytes.Buffer
 		// Uncompressed so the buffer is a plain tar the test can walk.
-		appender, err := compress.TarAppenderFactory("sha256", "none", false, &tarBuf)
+		appender, err := compress.TarAppenderFactory("sha256", "none", compress.TarFormatPlain, &tarBuf)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -163,7 +163,7 @@ func TestWriteRegularDeduplicatedKnownHashMatchesBuffered(t *testing.T) {
 	write := func(knownHash bool) []byte {
 		t.Helper()
 		var tarBuf bytes.Buffer
-		appender, err := compress.TarAppenderFactory("sha256", "none", false, &tarBuf)
+		appender, err := compress.TarAppenderFactory("sha256", "none", compress.TarFormatPlain, &tarBuf)
 		if err != nil {
 			t.Fatal(err)
 		}

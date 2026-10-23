@@ -8,6 +8,8 @@ import (
 	"math"
 
 	"github.com/klauspost/compress/zstd"
+
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/compress"
 )
 
 // maxRefTableSize bounds the CAS reference table size accepted from a header
@@ -132,7 +134,7 @@ func parseHeader(raw [headerSize]byte) (Header, error) {
 		StreamCompression: raw[12],
 		OriginalCompression: OriginalCompressionInfo{
 			Compression:      raw[13],
-			Seekable:         raw[14] == 1,
+			Format:           compress.TarFormat(raw[14]),
 			CompressionLevel: int8(raw[15]),
 			CompressorJobs:   raw[16],
 			EndPadding:       binary.BigEndian.Uint32(raw[20:24]),
