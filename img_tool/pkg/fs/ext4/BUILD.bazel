@@ -1,0 +1,24 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "ext4",
+    srcs = [
+        "builder.go",
+        "crc.go",
+        "emit.go",
+        "ext4.go",
+        "plan.go",
+        "xattr.go",
+    ],
+    importpath = "github.com/bazel-contrib/rules_img/img_tool/pkg/fs/ext4",
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "ext4_test",
+    srcs = [
+        "checker_test.go",
+        "ext4_test.go",
+    ],
+    embed = [":ext4"],
+)

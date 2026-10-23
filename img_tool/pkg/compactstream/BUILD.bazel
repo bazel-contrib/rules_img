@@ -4,6 +4,7 @@ go_library(
     name = "compactstream",
     srcs = [
         "blobstream.go",
+        "image.go",
         "inspect.go",
         "plan.go",
         "reader.go",
@@ -22,6 +23,7 @@ go_test(
     name = "compactstream_test",
     srcs = [
         "blobstream_test.go",
+        "image_test.go",
         "reader_test.go",
         "reconstruct_uncompressed_test.go",
         "writer_test.go",
