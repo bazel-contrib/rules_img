@@ -94,7 +94,7 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 	flagSet.Var(&baseMetadataFromFiles, "base-metadata-from-file", `Add the base metadata streams listed in the parameter file, one path per line, in order. The parameter file is usually written by Bazel.`)
 	flagSet.Var(&contentManifestInputFlags, "deduplicate", `Path of a content manifest of a previous layer that can be used for deduplication.`)
 	flagSet.StringVar(&contentManifestCollection, "deduplicate-collection", "", `Path of a content manifest collection file that can be used for deduplication.`)
-	flagSet.StringVar(&formatFlag, "format", "", `The format of the output layer. Can be "gzip", "zstd" or "none" (a tar file with the given compression), or "ext4" (an ext4 filesystem image, not an OCI layer: options that only apply to tar layers are ignored). Default is to guess the compression based on the filename, but fall back to "gzip".`)
+	flagSet.StringVar(&formatFlag, "format", "", `The format of the output layer. Can be "gzip", "zstd" or "none" (a tar file with the given compression), or "ext4" (an ext4 filesystem image, not an OCI layer: options that only apply to tar layers are ignored, while --compact-stream writes a compact stream of the image). Default is to guess the compression based on the filename, but fall back to "gzip".`)
 	flagSet.BoolVar(&estargzFlag, "estargz", false, `Use estargz format for compression. This creates seekable gzip streams optimized for lazy pulling.`)
 	flagSet.StringVar(&mediaTypeFlag, "media-type", "", `Override the layer media type in the metadata output. If empty, auto-detected from the compression format.`)
 	flagSet.StringVar(&compressorJobsFlag, "compressor-jobs", "", `Number of compressor jobs. For gzip, 1 uses single-threaded stdlib gzip and n>1 uses pgzip. For zstd, it is the number of parallel encoder goroutines, which is always at least 2. "nproc" uses the available cores. If unset, gzip is single-threaded and zstd uses 2 jobs.`)
@@ -121,10 +121,10 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 
 	ext4Format := formatFlag == "ext4"
 	if ext4Format {
-		// Options that only apply to tar layers are ignored.
+		// Options that only apply to tar layers are ignored. A compact stream
+		// is written next to the image, and an image is always written.
 		estargzFlag = false
 		compactStreamOnlyFlag = false
-		compactStreamOutputFlag = ""
 		ztocOutputFlag = ""
 	}
 
@@ -332,6 +332,7 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 		if err := handleExt4Layer(
 			outputOSFile, addFiles, importTarFlags, executableFlags, symlinkFlags, emptyFilePaths, baseMetadataPaths,
 			createParentDirectoriesFlag, layerMetadata, layerHistory, mediaTypeFlag, annotations, metadataOutputFlag,
+			compactStreamOutputFlag, compactStreamInlineThresholdFlag,
 		); err != nil {
 			fmt.Fprintf(os.Stderr, "Writing ext4 layer: %v\n", err)
 			os.Exit(1)
@@ -609,8 +610,19 @@ func handleExt4Layer(
 	image *os.File, addFiles addFiles, importTars importTars, addExecutables executables, addSymlinks symlinks, emptyFiles []string,
 	baseMetadataPaths []string, createParentDirectories bool, layerMetadata *LayerMetadata,
 	history, mediaType string, annotations map[string]string, metadataPath string,
+	compactStreamPath string, compactStreamInlineThreshold uint64,
 ) error {
-	info, err := writeExt4Layer(image, addFiles, importTars, addExecutables, addSymlinks, emptyFiles, baseMetadataPaths, createParentDirectories, layerMetadata)
+	// A nil *os.File in an io.Writer would not be a nil io.Writer.
+	var compactStream io.Writer
+	if compactStreamPath != "" {
+		f, err := os.OpenFile(compactStreamPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+		if err != nil {
+			return fmt.Errorf("opening compact stream output file: %w", err)
+		}
+		defer f.Close()
+		compactStream = f
+	}
+	info, err := writeExt4Layer(image, addFiles, importTars, addExecutables, addSymlinks, emptyFiles, baseMetadataPaths, createParentDirectories, layerMetadata, compactStream, compactStreamInlineThreshold)
 	if err != nil {
 		return err
 	}
