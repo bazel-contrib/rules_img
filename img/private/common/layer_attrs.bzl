@@ -5,7 +5,7 @@ load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 _common_attrs = dict(
     format = attr.string(
         default = "tar",
-        values = ["tar", "ext4"],
+        values = ["tar", "ext4", "fat32"],
         doc = """\
 Format of the layer.
 
@@ -14,12 +14,19 @@ Format of the layer.
   one contiguous run of blocks and the image is only as large as its content needs. As in tar layers,
   regular files with the same content and metadata are stored once, as hard links.
   The layer file has the extension `.ext4`.
+- `fat32`: a FAT32 filesystem image, written directly by `img layer`. Each regular file is stored as
+  one contiguous run of clusters. FAT32 volumes need at least 65525 clusters, so the image is at least
+  about 33 MiB (a sparse file, if the file system supports it). FAT cannot store symbolic links, device
+  nodes, FIFOs, ownership or permissions: a layer with symbolic links or special files fails to build,
+  hard links become copies, and the owner write bit becomes the read-only attribute. Timestamps are
+  limited to 1980 through 2107 with a resolution of two seconds. Names are case insensitive.
+  The layer file has the extension `.fat32`.
 
-The `ext4` format is for using the layer on its own. It is **not** a valid OCI layer: the metadata
-recorded for it (media type, digests) does not describe an OCI blob, so do not use such a layer
-in an `image_manifest`. Options that only apply to tar layers are ignored:
+The `ext4` and `fat32` formats are for using the layer on its own. They are **not** valid OCI layers:
+the metadata recorded for them (media type, digests) does not describe an OCI blob, so do not use such
+a layer in an `image_manifest`. Options that only apply to tar layers are ignored:
 `compress`, `estargz`, `soci`, the global compression settings, compact layers, and `mtree` output.
-Entries are limited to what ext4 can store (for example, file names of up to 255 bytes).
+Entries are limited to what the file system can store (for example, file names of up to 255 bytes).
 """,
     ),
     compress = attr.string(

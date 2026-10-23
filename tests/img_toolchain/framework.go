@@ -300,7 +300,7 @@ func parseAssertion(line string) *AssertionSpec {
 			assertion.Path = strings.TrimSpace(parts[0])
 			assertion.Content = strings.Trim(strings.TrimSpace(parts[1]), `"`)
 		}
-	case "file_valid_json", "file_valid_gzip", "file_valid_tar", "file_valid_ext4":
+	case "file_valid_json", "file_valid_gzip", "file_valid_tar", "file_valid_ext4", "file_valid_fat32":
 		assertion.Path = value
 	case "json_field_equals", "json_field_exists":
 		parts := strings.SplitN(value, ",", 3)
@@ -692,6 +692,15 @@ func (tf *TestFramework) checkAssertion(assertion AssertionSpec, result *Command
 		}
 		if err := validateExt4(image); err != nil {
 			return fmt.Errorf("file %s is not a valid ext4 image: %w", assertion.Path, err)
+		}
+	case "file_valid_fat32":
+		fullPath := filepath.Join(tf.tempDir, assertion.Path)
+		image, err := os.ReadFile(fullPath)
+		if err != nil {
+			return fmt.Errorf("failed to read file %s: %w", assertion.Path, err)
+		}
+		if err := validateFat32(image); err != nil {
+			return fmt.Errorf("file %s is not a valid FAT32 image: %w", assertion.Path, err)
 		}
 	case "json_field_equals":
 		fullPath := filepath.Join(tf.tempDir, assertion.Path)
@@ -1333,6 +1342,65 @@ func validateExt4(image []byte) error {
 	}
 	if le.Uint16(sb[0x3A:])&1 == 0 {
 		return fmt.Errorf("filesystem is not marked clean")
+	}
+	return nil
+}
+
+// validateFat32 checks the boot area of a FAT32 image: the BPB, the FSInfo
+// sector, the backup boot sectors, and that the volume has enough clusters
+// (and is exactly as large as the boot sector says) to be recognized as FAT32.
+func validateFat32(image []byte) error {
+	if len(image) < 8*512 {
+		return fmt.Errorf("image is only %d bytes", len(image))
+	}
+	le := binary.LittleEndian
+	boot := image[:512]
+	if boot[510] != 0x55 || boot[511] != 0xAA {
+		return fmt.Errorf("missing boot sector signature")
+	}
+	if string(boot[82:90]) != "FAT32   " {
+		return fmt.Errorf("file system type is %q", boot[82:90])
+	}
+	sectorSize := int64(le.Uint16(boot[11:]))
+	switch sectorSize {
+	case 512, 1024, 2048, 4096:
+	default:
+		return fmt.Errorf("bytes per sector is %d", sectorSize)
+	}
+	spc := int64(boot[13])
+	if spc == 0 || spc&(spc-1) != 0 {
+		return fmt.Errorf("sectors per cluster is %d", spc)
+	}
+	reserved, numFATs := int64(le.Uint16(boot[14:])), int64(boot[16])
+	if numFATs != 2 || le.Uint16(boot[17:]) != 0 || le.Uint16(boot[19:]) != 0 || le.Uint16(boot[22:]) != 0 {
+		return fmt.Errorf("not a FAT32 BPB (FATs %d, root entries %d)", numFATs, le.Uint16(boot[17:]))
+	}
+	total, fatSize := int64(le.Uint32(boot[32:])), int64(le.Uint32(boot[36:]))
+	if total*sectorSize != int64(len(image)) {
+		return fmt.Errorf("image is %d bytes, but the boot sector says %d sectors of %d bytes", len(image), total, sectorSize)
+	}
+	dataStart := reserved + numFATs*fatSize
+	if clusters := (total - dataStart) / spc; clusters < 65525 {
+		return fmt.Errorf("only %d clusters: the volume would not be recognized as FAT32", clusters)
+	}
+	if (dataStart)%spc != 0 {
+		return fmt.Errorf("data region at sector %d is not aligned to the cluster size", dataStart)
+	}
+	if le.Uint32(boot[44:]) != 2 || le.Uint16(boot[48:]) != 1 || le.Uint16(boot[50:]) != 6 {
+		return fmt.Errorf("root cluster, FSInfo sector or backup boot sector wrong")
+	}
+	info := image[sectorSize : 2*sectorSize]
+	if le.Uint32(info[0:]) != 0x41615252 || le.Uint32(info[484:]) != 0x61417272 || le.Uint32(info[508:]) != 0xAA550000 {
+		return fmt.Errorf("bad FSInfo signatures")
+	}
+	for i := int64(0); i < 3; i++ {
+		if !bytes.Equal(image[i*sectorSize:(i+1)*sectorSize], image[(6+i)*sectorSize:(7+i)*sectorSize]) {
+			return fmt.Errorf("backup of boot sector %d differs", i)
+		}
+	}
+	first, second := image[reserved*sectorSize:][:8], image[(reserved+fatSize)*sectorSize:][:8]
+	if !bytes.Equal(first, second) || le.Uint32(first[0:]) != 0x0FFFFFF8 || le.Uint32(first[4:]) != 0x0FFFFFFF {
+		return fmt.Errorf("bad FATs: % x and % x", first, second)
 	}
 	return nil
 }

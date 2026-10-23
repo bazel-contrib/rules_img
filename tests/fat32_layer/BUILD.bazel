@@ -1,0 +1,49 @@
+load("@bazel_skylib//rules:build_test.bzl", "build_test")
+load("@rules_img//img:layer.bzl", "image_layer")
+
+# gazelle:exclude_from_release
+
+genrule(
+    name = "hello",
+    outs = ["hello.txt"],
+    cmd = "echo 'hello from a FAT32 layer' > $@",
+)
+
+# Options that only apply to tar layers are ignored for FAT32 layers.
+image_layer(
+    name = "fat32_layer",
+    srcs = {
+        "/etc/hello.txt": ":hello",
+    },
+    compress = "zstd",
+    estargz = "enabled",
+    format = "fat32",
+)
+
+# Fails the build unless the layer is a FAT32 image holding the file.
+genrule(
+    name = "check_fat32_layer",
+    srcs = [":fat32_layer"],
+    outs = ["fat32_layer_ok"],
+    cmd = """
+layer="$(location :fat32_layer)"
+case "$$layer" in *.fat32) ;; *) echo "expected a .fat32 layer, got $$layer" >&2; exit 1;; esac
+# The file system type is at offset 82 of the boot sector, the signature at 510.
+[ "$$(dd if="$$layer" bs=1 skip=82 count=8 2>/dev/null)" = "FAT32   " ] || { echo "not a FAT32 image" >&2; exit 1; }
+sig="$$(od -An -tx1 -j510 -N2 "$$layer" | tr -d ' \\n')"
+[ "$$sig" = "55aa" ] || { echo "no boot signature: $$sig" >&2; exit 1; }
+grep -q "hello from a FAT32 layer" "$$layer" || { echo "file content not found in the image" >&2; exit 1; }
+touch $@
+""",
+)
+
+build_test(
+    name = "fat32_layer_test",
+    targets = [":check_fat32_layer"],
+)
+
+filegroup(
+    name = "all_files",
+    srcs = glob(["**"]),
+    visibility = ["//img/private/release:__subpackages__"],
+)
