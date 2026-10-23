@@ -165,6 +165,18 @@ string_flag(
     visibility = ["//img/private:__subpackages__"],
 )
 
+# Whether directory (tree artifact) outputs may point at their blobs with
+# relative symlinks that leave the tree artifact, instead of embedding the blob.
+string_flag(
+    name = "treeartifact_symlinks",
+    build_setting_default = "enabled",
+    values = [
+        "enabled",
+        "disabled",
+    ],
+    visibility = ["//visibility:public"],
+)
+
 # Global signing mode. Per-target `sign` attributes default to "auto", which
 # defers to this flag.
 string_flag(

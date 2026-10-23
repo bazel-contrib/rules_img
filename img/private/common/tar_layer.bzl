@@ -461,7 +461,7 @@ def _build_input_files_cas(ctx, name, extra_inputs):
     args.add("--output", output_dir.path)
 
     img_toolchain_info = ctx.toolchains[TOOLCHAIN].imgtoolchaininfo
-    if img_toolchain_info.supports_treeartifact_uplevel_symlinks:
+    if img_toolchain_info.use_treeartifact_uplevel_symlinks:
         args.add("--symlink")
     ctx.actions.run(
         outputs = [output_dir],

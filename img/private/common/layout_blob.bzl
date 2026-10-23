@@ -58,7 +58,7 @@ def layout_uses_uplevel_symlinks(ctx, format):
     """Whether a layout of this format references blobs outside the tree by symlink.
 
     A tar layout always embeds its blobs, and so does a directory layout on a
-    toolchain that does not permit uplevel symlinks in a tree artifact.
+    toolchain that does not use uplevel symlinks in a tree artifact.
 
     Args:
         ctx: Rule context.
@@ -67,7 +67,7 @@ def layout_uses_uplevel_symlinks(ctx, format):
     Returns:
         True if the layout will be written with `--symlink`.
     """
-    return format == "directory" and ctx.toolchains[TOOLCHAIN].imgtoolchaininfo.supports_treeartifact_uplevel_symlinks
+    return format == "directory" and ctx.toolchains[TOOLCHAIN].imgtoolchaininfo.use_treeartifact_uplevel_symlinks
 
 def blob_for_layout(ctx, layer, format):
     """Returns the file to use as a layer's blob inside a tree artifact layout.

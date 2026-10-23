@@ -1,0 +1,38 @@
+load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@rules_img//img:image.bzl", "image_manifest")
+load("@rules_img//img:layer.bzl", "image_layer")
+load(":defs.bzl", "treeartifact_symlinks_test_suite")
+
+# gazelle:exclude_from_release
+
+write_file(
+    name = "hello_txt",
+    out = "hello.txt",
+    content = ["hello\n"],
+)
+
+image_layer(
+    name = "layer",
+    srcs = {"/etc/hello.txt": ":hello_txt"},
+)
+
+image_manifest(
+    name = "image",
+    layers = [":layer"],
+)
+
+treeartifact_symlinks_test_suite(
+    name = "tests",
+    image = ":image",
+)
+
+bzl_library(
+    name = "defs",
+    testonly = True,
+    srcs = ["defs.bzl"],
+    deps = [
+        "@bazel_features//:features",
+        "@bazel_skylib//lib:unittest",
+    ],
+)
