@@ -1,0 +1,1 @@
+platform transition test application

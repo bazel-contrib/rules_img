@@ -10,7 +10,6 @@ load("//img/private/common:build.bzl", "TOOLCHAINS")
 load("//img/private/common:default_deploy_tool.bzl", "default_deploy_tool")
 load("//img/private/common:deploy_attrs.bzl", "COMMON_PUSH_ATTRS")
 load("//img/private/common:deploy_helpers.bzl", "add_build_time_push_outputs", "content_tracking_json_vars", "cross_mount_blob_repository", "extract_cross_mount_from", "extract_referrers", "get_image_providers", "get_tags", "image_target_vars", "resolve_push_at_build_time", "resolve_push_registry", "resolve_push_strategy", "resolve_signing")
-load("//img/private/common:transitions.bzl", "reset_platform_transition")
 load("//img/private/providers:deploy_info.bzl", "DeployInfo")
 load("//img/private/providers:deploy_tool_info.bzl", "DeployToolInfo")
 load("//img/private/providers:pull_info.bzl", "PullInfo")
@@ -389,7 +388,6 @@ Available options:
         ),
     ),
     executable = True,
-    cfg = reset_platform_transition,
     toolchains = [
         launcher.finalizer_toolchain_type,
     ] + TOOLCHAINS,

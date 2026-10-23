@@ -3,7 +3,6 @@
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("//img/private/common:deploy_attrs.bzl", "COMMON_LOAD_ATTRS")
 load("//img/private/common:deploy_helpers.bzl", "get_tags", "resolve_daemon", "resolve_load_destination", "resolve_load_strategy")
-load("//img/private/common:transitions.bzl", "reset_platform_transition")
 load("//img/private/providers:load_config_info.bzl", "LoadConfigInfo")
 load("//img/private/providers:stamp_setting_info.bzl", "StampSettingInfo")
 
@@ -92,5 +91,4 @@ multi_deploy(
 """,
     attrs = COMMON_LOAD_ATTRS,
     provides = [LoadConfigInfo],
-    cfg = reset_platform_transition,
 )

@@ -6,7 +6,6 @@ load("//img/private:root_symlinks.bzl", "calculate_root_symlinks", "symlink_name
 load("//img/private:sign_settings.bzl", "add_sign_setting_symlinks")
 load("//img/private/common:build.bzl", "TOOLCHAIN", "TOOLCHAINS")
 load("//img/private/common:default_deploy_tool.bzl", "default_deploy_tool")
-load("//img/private/common:transitions.bzl", "reset_platform_transition")
 load("//img/private/providers:deploy_info.bzl", "DeployInfo")
 load("//img/private/providers:deploy_tool_info.bzl", "DeployToolInfo")
 load("//img/private/providers:index_info.bzl", "ImageIndexInfo")
@@ -400,7 +399,6 @@ Available options:
         ),
     },
     executable = True,
-    cfg = reset_platform_transition,
     toolchains = [
         launcher.finalizer_toolchain_type,
     ] + TOOLCHAINS,
