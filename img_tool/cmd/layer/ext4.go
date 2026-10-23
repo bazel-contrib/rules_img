@@ -13,6 +13,7 @@ import (
 
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/api"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/fs/ext4"
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/fs/ext4/ext4cstream"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/metadata"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/tree"
 )
@@ -138,11 +139,23 @@ func handleImageLayer(
 	format api.ContainerFormat, image *os.File, addFiles addFiles, importTars importTars, addExecutables executables, addSymlinks symlinks, emptyFiles []string,
 	baseMetadataPaths []string, createParentDirectories bool, layerMetadata *LayerMetadata,
 	history, mediaType string, annotations map[string]string, metadataPath string,
+	compactStreamPath string, compactStreamInlineThreshold uint64,
 ) error {
+	// A nil *os.File in an io.Writer would not be a nil io.Writer.
+	var compactStream io.Writer
+	if compactStreamPath != "" {
+		f, err := os.OpenFile(compactStreamPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+		if err != nil {
+			return fmt.Errorf("opening compact stream output file: %w", err)
+		}
+		defer f.Close()
+		compactStream = f
+	}
+
 	var size int64
 	switch format {
 	case api.Ext4Format:
-		info, err := writeExt4Layer(image, addFiles, importTars, addExecutables, addSymlinks, emptyFiles, baseMetadataPaths, createParentDirectories, layerMetadata)
+		info, err := writeExt4Layer(image, addFiles, importTars, addExecutables, addSymlinks, emptyFiles, baseMetadataPaths, createParentDirectories, layerMetadata, compactStream, compactStreamInlineThreshold)
 		if err != nil {
 			return err
 		}
@@ -166,13 +179,15 @@ func handleImageLayer(
 }
 
 // writeExt4Layer writes the layer as an ext4 image to out, which must be a new,
-// empty file. Options that only apply to tar layers (compression, estargz,
-// compact streams, ztoc) have no effect.
+// empty file. If compactStream is set, a compact stream of the image is
+// written to it. Options that only apply to tar layers (compression, estargz,
+// ztoc) have no effect.
 func writeExt4Layer(
 	out *os.File, addFiles addFiles, importTars importTars, addExecutables executables, addSymlinks symlinks, emptyFiles []string,
 	baseMetadataPaths []string, createParentDirectories bool, layerMetadata *LayerMetadata,
+	compactStream io.Writer, compactStreamInlineThreshold uint64,
 ) (*ext4.Info, error) {
-	builder, err := ext4.NewBuilder(ext4.Options{Deduplicate: true})
+	builder, err := ext4.NewBuilder(ext4.Options{Deduplicate: true, DigestFiles: compactStream != nil})
 	if err != nil {
 		return nil, err
 	}
@@ -190,7 +205,12 @@ func writeExt4Layer(
 			return nil, err
 		}
 	}
-	return builder.Build(out)
+	if compactStream == nil {
+		return builder.Build(out)
+	}
+	// Like for tar layers, files smaller than the inline threshold stay in the
+	// compact stream. Zero disables inlining.
+	return ext4cstream.Build(builder, out, compactStream, ext4cstream.Options{MinSize: max(int64(compactStreamInlineThreshold), 1)})
 }
 
 // writeExt4Metadata writes the layer metadata file for an ext4 layer. The

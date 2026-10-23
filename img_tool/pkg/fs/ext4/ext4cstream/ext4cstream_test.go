@@ -147,3 +147,132 @@ func TestMinSizeAndErrors(t *testing.T) {
 		t.Error("builder without digests accepted")
 	}
 }
+
+// TestStreamHoldsEverythingButTheReferencedFiles is the defining property of
+// the compact stream of an image: the references are exactly the files of at
+// least the minimum size (a merged file once), and every other byte of the
+// image is in the stream. So without any blobs, reconstruction yields the image
+// with just the referenced ranges zeroed, and with the blobs it is the image.
+func TestStreamHoldsEverythingButTheReferencedFiles(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		opts ext4.Options
+		min  int64
+	}{
+		{"4k", ext4.Options{}, 0},
+		{"1k", ext4.Options{BlockSize: 1024}, 0},
+		{"dedup", ext4.Options{Deduplicate: true}, 0},
+		{"threshold", ext4.Options{}, 1},
+		{"large-free-space", ext4.Options{Size: 256 << 20}, 0},
+		{"no-lost-found", ext4.Options{OmitLostAndFound: true}, 8192},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			opts := tc.opts
+			opts.DigestFiles = true
+			b, err := ext4.NewBuilder(opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer b.Close()
+
+			blobs := store{}
+			add := func(name string, content []byte, mutate func(*tar.Header)) {
+				t.Helper()
+				sum := sha256.Sum256(content)
+				blobs[string(sum[:])] = content
+				hdr := &tar.Header{Typeflag: tar.TypeReg, Name: name, Size: int64(len(content)), Mode: 0o644}
+				if mutate != nil {
+					mutate(hdr)
+				}
+				if err := b.WriteRegularDeduplicated(hdr, bytes.NewReader(content)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			minSize := tc.min
+			if minSize == 0 {
+				minSize = DefaultMinSize
+			}
+			// Files around the threshold, an empty one, duplicates and a hard link.
+			add("below", pattern(int(minSize)-1, 1), nil)
+			add("exact", pattern(int(minSize), 2), nil)
+			add("above", pattern(int(minSize)+1, 3), nil)
+			add("empty", nil, nil)
+			add("dup/a", pattern(30000, 4), nil)
+			add("dup/b", pattern(30000, 4), nil)
+			add("xattr", pattern(9000, 5), func(h *tar.Header) {
+				h.PAXRecords = map[string]string{"SCHILY.xattr.user.k": "v"}
+			})
+			add("holes", append(make([]byte, 20000), pattern(5000, 6)...), nil)
+			if err := b.WriteHeader(&tar.Header{Typeflag: tar.TypeLink, Name: "link-to-above", Linkname: "above"}); err != nil {
+				t.Fatal(err)
+			}
+			if err := b.WriteHeader(&tar.Header{Typeflag: tar.TypeSymlink, Name: "symlink", Linkname: "above"}); err != nil {
+				t.Fatal(err)
+			}
+
+			img, err := os.Create(filepath.Join(t.TempDir(), "image"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer img.Close()
+			var stream bytes.Buffer
+			info, err := Build(b, img, &stream, Options{MinSize: tc.min})
+			if err != nil {
+				t.Fatal(err)
+			}
+			image, err := os.ReadFile(img.Name())
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			// The references are the qualifying files, in image order.
+			cs, err := compactstream.Inspect(bytes.NewReader(stream.Bytes()))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var want []ext4.FileLayout
+			for _, f := range info.Files {
+				if f.Size >= minSize {
+					want = append(want, f)
+				}
+			}
+			if len(cs.Refs) != len(want) || len(want) == 0 {
+				t.Fatalf("%d references, want %d", len(cs.Refs), len(want))
+			}
+			zeroed := append([]byte(nil), image...)
+			for i, ref := range cs.Refs {
+				f := want[i]
+				if int64(ref.Offset) != f.Offset || int64(ref.Size) != f.Size || !bytes.Equal(ref.Digest, f.Digest) {
+					t.Errorf("reference %d is %+v, want file %+v", i, ref, f)
+				}
+				if got := sha256.Sum256(image[f.Offset : f.Offset+f.Size]); !bytes.Equal(got[:], ref.Digest) {
+					t.Errorf("%s: the digest does not match the bytes in the image", f.Path)
+				}
+				clear(zeroed[f.Offset : f.Offset+f.Size])
+			}
+			if hdr := cs.Header; !hdr.HasCompressedStreamInfo || hdr.CompressedStreamSize != uint64(len(image)) {
+				t.Errorf("header: %+v", hdr)
+			} else if sum := sha256.Sum256(image); !bytes.Equal(hdr.CompressedStreamDigest, sum[:]) {
+				t.Error("the header does not carry the digest of the image")
+			}
+
+			// Without blobs: everything but the referenced bytes.
+			var skeleton bytes.Buffer
+			if err := compactstream.ReconstructUncompressed(context.Background(), bytes.NewReader(stream.Bytes()), compactstream.NullBlobStore{}, &skeleton); err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(skeleton.Bytes(), zeroed) {
+				t.Error("the stream without blobs is not the image with the referenced files zeroed")
+			}
+
+			// With blobs: the image itself.
+			var rebuilt bytes.Buffer
+			if err := compactstream.Reconstruct(context.Background(), bytes.NewReader(stream.Bytes()), blobs, &rebuilt); err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(rebuilt.Bytes(), image) {
+				t.Error("the reconstructed image differs")
+			}
+		})
+	}
+}

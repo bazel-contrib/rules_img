@@ -22,6 +22,7 @@ go_library(
         "//pkg/digestfs",
         "//pkg/erofscas",
         "//pkg/fs/ext4",
+        "//pkg/fs/ext4/ext4cstream",
         "//pkg/kvfile",
         "//pkg/metadata",
         "//pkg/proto/baselayer",
@@ -44,6 +45,7 @@ go_test(
     embed = [":layer"],
     deps = [
         "//pkg/api",
+        "//pkg/compactstream",
         "//pkg/contentmanifest",
     ],
 )
