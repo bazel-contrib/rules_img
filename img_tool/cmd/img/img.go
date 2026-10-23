@@ -20,6 +20,7 @@ import (
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/downloadmanifest"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/expandtemplate"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/hash"
+	"github.com/bazel-contrib/rules_img/img_tool/cmd/imagesizetest"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/index"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/indexfromocilayout"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/layer"
@@ -75,6 +76,7 @@ Commands:
   sync-oci-ref-graph       syncs OCI reference graph by downloading manifests in parallel
   validate                 validates layers and images
   image-structure-test     validates an image's structure (config + mtree) against container-structure-test configs
+  image-size-test          checks an image's wasted and duplicated layer bytes (per-layer mtrees) against budgets
   deploy                   pushes an image to a registry or loads it into a local container runtime
   deploy-metadata          calculates metadata for deploying an image (push/load)
   deploy-merge             merges multiple deploy manifests into a single deployment
@@ -122,6 +124,8 @@ func Run(ctx context.Context, args []string) {
 		ocilayoutmetadata.OCILayoutMetadataProcess(ctx, args[2:])
 	case "image-structure-test":
 		cst.Process(ctx, args[2:])
+	case "image-size-test":
+		imagesizetest.Process(ctx, args[2:])
 	case "index":
 		index.IndexProcess(ctx, args[2:])
 	case "index-from-oci-layout":
