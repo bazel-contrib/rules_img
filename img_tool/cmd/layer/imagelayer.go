@@ -21,7 +21,7 @@ func handleImageLayer(
 	format api.ContainerFormat, image *os.File, addFiles addFiles, importTars importTars, addExecutables executables, addSymlinks symlinks, emptyFiles []string,
 	baseMetadataPaths []string, createParentDirectories bool, layerMetadata *LayerMetadata,
 	history, mediaType string, annotations map[string]string, metadataPath string,
-	compactStreamPath string, compactStreamInlineThreshold uint64,
+	compactStreamPath string, compactStreamInlineThreshold uint64, fat32SectorSize int,
 ) error {
 	// A nil *os.File in an io.Writer would not be a nil io.Writer.
 	var compactStream io.Writer
@@ -44,7 +44,7 @@ func handleImageLayer(
 		}
 		size, defaultMediaType = info.Size, api.Ext4Layer
 	case api.Fat32Format:
-		info, err := writeFat32Layer(image, addFiles, importTars, addExecutables, addSymlinks, emptyFiles, baseMetadataPaths, createParentDirectories, layerMetadata, compactStream, compactStreamInlineThreshold)
+		info, err := writeFat32Layer(image, addFiles, importTars, addExecutables, addSymlinks, emptyFiles, baseMetadataPaths, createParentDirectories, layerMetadata, compactStream, compactStreamInlineThreshold, fat32SectorSize)
 		if err != nil {
 			return err
 		}

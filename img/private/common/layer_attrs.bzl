@@ -45,6 +45,19 @@ compact layers, and `mtree` output. Entries are limited to what the file system 
 file names of up to 255 bytes).
 """,
     ),
+    sector_size = attr.int(
+        default = 0,
+        values = [0, 512, 1024, 2048, 4096],
+        doc = """\
+Logical sector size of a `fat32` layer in bytes. 0 (the default) is 512. It has to match the
+sector size of the disk image the layer ends up in (see `disk_image`): firmware reads the FAT of a
+volume with the sector size of the disk. A FAT32 volume needs at least 65525 clusters, so with
+4096 byte sectors the image is at least about 256 MiB (a sparse file, if the file system
+supports it).
+
+Only used by the `fat32` layer format.
+""",
+    ),
     estargz = attr.string(
         default = "auto",
         values = ["auto", "enabled", "disabled"],

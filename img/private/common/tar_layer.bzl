@@ -263,6 +263,7 @@ def resolve_layer_settings(ctx):
             compact_layers_materialize_blob = False,
             soci = False,
             soci_span_size = 0,
+            sector_size = ctx.attr.sector_size,
             erofs_block_size = 0,
             erofs_inline_threshold = 0,
             erofs_synthetic_directories = "",
@@ -402,6 +403,8 @@ def create_single_layer(ctx, settings, name, extra_args = [], extra_inputs = [])
     args = ["layer"] + layer_history_args(ctx) + ["--metadata", metadata_out.path, "--format", settings.compression]
     if is_image:
         args.extend(["--layer-format", settings.layer_format])
+        if settings.layer_format == "fat32" and settings.sector_size:
+            args.extend(["--fat32-sector-size", str(settings.sector_size)])
     if is_erofs:
         args.extend(["--layer-format", "erofs"])
         args.extend(["--erofs-block-size", str(settings.erofs_block_size)])

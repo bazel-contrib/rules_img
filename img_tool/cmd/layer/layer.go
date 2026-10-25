@@ -50,6 +50,7 @@ func LayerProcess(ctx context.Context, args []string) {
 	var erofsInlineThresholdFlag uint64
 	var erofsSyntheticDirectoriesFlag string
 	var erofsNoVerifyCASRefsFlag bool
+	var fat32SectorSizeFlag int
 	var estargzFlag bool
 	var mediaTypeFlag string
 	var metadataOutputFlag string
@@ -106,6 +107,7 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 	flagSet.Uint64Var(&erofsInlineThresholdFlag, "erofs-inline-threshold", 0, `Maximum size (in bytes) of a file payload an EROFS layer may tail-pack into its inode. A file at least this large gets a data extent of its own, and therefore becomes a content-addressed reference in the compact stream rather than inline bytes. 0 packs whatever fits in the inode's block. Only used with --layer-format erofs.`)
 	flagSet.StringVar(&erofsSyntheticDirectoriesFlag, "erofs-synthetic-directories", "inherit", `Attributes for directories an EROFS layer has to invent because nothing describes them. "inherit" copies the nearest described ancestor's ownership (what mkfs.erofs does), "default" uses 0755 root:root, "strict" fails the layer instead of guessing. Only used with --layer-format erofs.`)
 	flagSet.BoolVar(&erofsNoVerifyCASRefsFlag, "erofs-no-verify-cas-refs", false, `Skip re-hashing each region an EROFS layer's compact stream replaces with a content-addressed reference. Verification is cheap and turns a wrong layout plan into a build failure, so only disable it to work around a bug.`)
+	flagSet.IntVar(&fat32SectorSizeFlag, "fat32-sector-size", 0, `Logical sector size of a FAT32 layer in bytes: 512 (the default for 0), 1024, 2048 or 4096. It has to match the sector size of the disk the file system ends up in. Only used with --layer-format fat32.`)
 	flagSet.BoolVar(&estargzFlag, "estargz", false, `Use estargz format for compression. This creates seekable gzip streams optimized for lazy pulling.`)
 	flagSet.StringVar(&mediaTypeFlag, "media-type", "", `Override the layer media type in the metadata output. If empty, auto-detected from the compression format.`)
 	flagSet.StringVar(&compressorJobsFlag, "compressor-jobs", "", `Number of compressor jobs. For gzip, 1 uses single-threaded stdlib gzip and n>1 uses pgzip. For zstd, it is the number of parallel encoder goroutines, which is always at least 2. "nproc" uses the available cores. If unset, gzip is single-threaded and zstd uses 2 jobs.`)
@@ -402,7 +404,7 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 		if err := handleImageLayer(
 			containerFormat, outputOSFile, addFiles, importTarFlags, executableFlags, symlinkFlags, emptyFilePaths, baseMetadataPaths,
 			createParentDirectoriesFlag, layerMetadata, layerHistory, mediaTypeFlag, annotations, metadataOutputFlag,
-			compactStreamOutputFlag, compactStreamInlineThresholdFlag,
+			compactStreamOutputFlag, compactStreamInlineThresholdFlag, fat32SectorSizeFlag,
 		); err != nil {
 			fmt.Fprintf(os.Stderr, "Writing %s layer: %v\n", containerFormat, err)
 			os.Exit(1)

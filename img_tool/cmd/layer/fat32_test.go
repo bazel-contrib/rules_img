@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -126,8 +127,31 @@ func TestFat32LayerRejectsWhatFATCannotStore(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer out.Close()
-	_, err = writeFat32Layer(out, addFiles{{PathInImage: "/f", File: file, FileType: api.RegularFile}}, nil, nil, symlinks{{LinkName: "/link", Target: "f"}}, nil, nil, false, nil, nil, 0)
+	_, err = writeFat32Layer(out, addFiles{{PathInImage: "/f", File: file, FileType: api.RegularFile}}, nil, nil, symlinks{{LinkName: "/link", Target: "f"}}, nil, nil, false, nil, nil, 0, 0)
 	if err == nil {
 		t.Fatal("a symbolic link was accepted")
+	}
+}
+
+func TestFat32LayerSectorSize(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "f")
+	if err := os.WriteFile(file, []byte("content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, size := range []int{0, 512, 4096} {
+		out := filepath.Join(dir, fmt.Sprintf("layer-%d.fat32", size))
+		LayerProcess(context.Background(), []string{"--layer-format", "fat32", "--fat32-sector-size", fmt.Sprint(size), "--add", "/f=" + file, out})
+		img, err := os.ReadFile(out)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := size
+		if want == 0 {
+			want = 512
+		}
+		if got := int(binary.LittleEndian.Uint16(img[11:])); got != want {
+			t.Errorf("--fat32-sector-size %d: the file system has %d byte sectors", size, got)
+		}
 	}
 }

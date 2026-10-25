@@ -13,13 +13,13 @@ import (
 // empty file. If compactStream is set, a compact stream of the image is
 // written to it. Options that only apply to tar layers (compression, estargz,
 // ztoc) have no effect. FAT cannot store symbolic links, device nodes and
-// FIFOs, so layers with such entries fail.
+// FIFOs, so layers with such entries fail. A sectorSize of zero is 512 bytes.
 func writeFat32Layer(
 	out *os.File, addFiles addFiles, importTars importTars, addExecutables executables, addSymlinks symlinks, emptyFiles []string,
 	baseMetadataPaths []string, createParentDirectories bool, layerMetadata *LayerMetadata,
-	compactStream io.Writer, compactStreamInlineThreshold uint64,
+	compactStream io.Writer, compactStreamInlineThreshold uint64, sectorSize int,
 ) (*fat32.Info, error) {
-	builder, err := fat32.NewBuilder(fat32.Options{DigestFiles: compactStream != nil})
+	builder, err := fat32.NewBuilder(fat32.Options{DigestFiles: compactStream != nil, SectorSize: sectorSize})
 	if err != nil {
 		return nil, err
 	}
