@@ -8,7 +8,8 @@ Public API for rules_img module extensions.
 
 <pre>
 images = use_extension("@rules_img//img:extensions.bzl", "images")
-images.pull(<a href="#images.pull-name">name</a>, <a href="#images.pull-digest">digest</a>, <a href="#images.pull-layer_handling">layer_handling</a>, <a href="#images.pull-registries">registries</a>, <a href="#images.pull-registry">registry</a>, <a href="#images.pull-repository">repository</a>, <a href="#images.pull-tag">tag</a>)
+images.pull(<a href="#images.pull-name">name</a>, <a href="#images.pull-digest">digest</a>, <a href="#images.pull-layer_handling">layer_handling</a>, <a href="#images.pull-registries">registries</a>, <a href="#images.pull-registry">registry</a>, <a href="#images.pull-repository">repository</a>, <a href="#images.pull-tag">tag</a>,
+            <a href="#images.pull-unsafe_allow_tag_without_digest">unsafe_allow_tag_without_digest</a>)
 images.settings(<a href="#images.settings-credential_helper">credential_helper</a>, <a href="#images.settings-docker_config_path">docker_config_path</a>, <a href="#images.settings-downloader">downloader</a>, <a href="#images.settings-hub_repo">hub_repo</a>, <a href="#images.settings-image_repos">image_repos</a>, <a href="#images.settings-timeout">timeout</a>)
 </pre>
 
@@ -83,6 +84,7 @@ required for reproducibility.
 | <a id="images.pull-registry"></a>registry |  Primary registry to pull from (e.g., "index.docker.io", "gcr.io").<br><br>If not specified, defaults to Docker Hub. Can be overridden by entries in registries list.   | String | optional |  `""`  |
 | <a id="images.pull-repository"></a>repository |  The image repository within the registry (e.g., "library/ubuntu", "my-project/my-image").<br><br>For Docker Hub, official images use "library/" prefix (e.g., "library/ubuntu").   | String | required |  |
 | <a id="images.pull-tag"></a>tag |  The image tag to pull (e.g., "latest", "24.04", "v1.2.3").<br><br>While optional, it's recommended to also specify a digest for reproducible builds.   | String | optional |  `""`  |
+| <a id="images.pull-unsafe_allow_tag_without_digest"></a>unsafe_allow_tag_without_digest |  Resolve `tag` to a digest each time the extension is evaluated, instead of requiring `digest`.<br><br>**WARNING:** Builds then follow the tag, so they are not reproducible.<br><br>The extension reports itself as not reproducible, so Bazel re-evaluates it in each new server instead of recording the digest in the lockfile. Image and blob repositories stay keyed by digest, so they come from the repo contents cache until the tag moves. Their repository names contain the digest: reference the image through the hub's `image()`.   | Boolean | optional |  `False`  |
 
 <a id="images.settings"></a>
 

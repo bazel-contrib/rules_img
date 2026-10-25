@@ -169,6 +169,16 @@ images.pull(
     ],
     repository = "library/nginx",
 )
+images.pull(
+    name = "nginx_floating",
+    registries = [
+        "mirror.gcr.io",
+        "index.docker.io",
+    ],
+    repository = "library/nginx",
+    tag = "stable-alpine",
+    unsafe_allow_tag_without_digest = True,
+)
 images.settings(
     hub_repo = "enabled",
     image_repos = "enabled",

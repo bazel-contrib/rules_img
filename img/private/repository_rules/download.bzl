@@ -83,14 +83,17 @@ _MANIFEST_ACCEPT_HEADERS = {
     ]),
 }
 
-def learn_digest_from_tag(rctx, *, tag, downloader, sources):
+def learn_digest_from_tag(rctx, *, tag, downloader, sources, credential_helper = None, docker_config_path = None, timeout = None):
     """Learn the digest of an image from its tag by downloading manifest headers.
 
     Args:
-        rctx: Repository context.
+        rctx: Repository or module context.
         tag: The tag to resolve.
         downloader: "img_tool" or "bazel".
         sources: Sources dict mapping repositories to registries.
+        credential_helper: Optional credential helper path, as in auth_environment.
+        docker_config_path: Optional Docker-compatible auth config path, as in auth_environment.
+        timeout: Optional timeout in seconds for the img tool, as in execute_kwargs.
 
     Returns:
         The resolved digest as a string (e.g., "sha256:abc123...") or None if resolution failed.
@@ -135,7 +138,11 @@ def learn_digest_from_tag(rctx, *, tag, downloader, sources):
             "--source={}".format(source)
             for source in sources_list
         ]
-        result = rctx.execute(args, environment = auth_environment(rctx), **execute_kwargs(rctx))
+        result = rctx.execute(
+            args,
+            environment = auth_environment(rctx, credential_helper = credential_helper, docker_config_path = docker_config_path),
+            **execute_kwargs(rctx, timeout)
+        )
         if result.return_code != 0:
             # Failed to get digest
             fail("Failed to learn digest from tag {}: {}".format(tag, result.stderr))

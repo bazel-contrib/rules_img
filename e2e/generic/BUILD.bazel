@@ -92,6 +92,12 @@ image_manifest(
     layers = [":empty_tar"],
 )
 
+image_manifest(
+    name = "image_on_floating_tag",
+    base = image("nginx_floating"),
+    layers = [":empty_tar"],
+)
+
 # Edge case: Source directory
 image_layer(
     name = "src_dir_layer",
