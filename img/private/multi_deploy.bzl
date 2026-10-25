@@ -6,6 +6,7 @@ load("//img/private:root_symlinks.bzl", "calculate_root_symlinks", "symlink_name
 load("//img/private:sign_settings.bzl", "add_sign_setting_symlinks")
 load("//img/private/common:build.bzl", "TOOLCHAIN", "TOOLCHAINS")
 load("//img/private/common:default_deploy_tool.bzl", "default_deploy_tool")
+load("//img/private/common:deploy_helpers.bzl", "add_tool_settings_args", "resolve_tool_settings")
 load("//img/private/common:transitions.bzl", "reset_platform_transition")
 load("//img/private/providers:deploy_info.bzl", "DeployInfo")
 load("//img/private/providers:deploy_tool_info.bzl", "DeployToolInfo")
@@ -73,6 +74,7 @@ def _compute_multi_deploy_metadata(*, ctx, deploy_infos):
     merge_args = ctx.actions.args()
     merge_args.add("--push-strategy", _multi_deploy_strategy(ctx, "push"))
     merge_args.add("--load-strategy", _multi_deploy_strategy(ctx, "load"))
+    add_tool_settings_args(merge_args, resolve_tool_settings(ctx))
 
     # Filter the assembled operations by kind. push_specs contribute push (and
     # their associated registry_tag) operations; load_specs contribute load

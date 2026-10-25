@@ -78,14 +78,34 @@ const EnvInsecure = "IMG_INSECURE"
 // hence the atomic.
 var insecure atomic.Bool
 
+// insecureExplicit records that EnvInsecure or [SetInsecure] decided the value,
+// so that a build-time default from a deploy manifest ([SetInsecureDefault])
+// knows to keep its hands off.
+var insecureExplicit atomic.Bool
+
 func init() {
-	insecure.Store(insecureFromEnv())
+	value, explicit := insecureFromEnv()
+	insecure.Store(value)
+	insecureExplicit.Store(explicit)
 }
 
 // SetInsecure enables or disables insecure registry access for the rest of the
 // process. It is called by the global --insecure flag before any subcommand runs
 // and overrides EnvInsecure.
 func SetInsecure(enabled bool) {
+	insecure.Store(enabled)
+	insecureExplicit.Store(true)
+}
+
+// SetInsecureDefault applies a build-time default -- the insecure setting
+// recorded in a deploy manifest -- for the rest of the process. Unlike
+// [SetInsecure] it is only a default: an explicit IMG_INSECURE (including
+// IMG_INSECURE=0) or --insecure keeps whatever it decided, so the precedence
+// stays manifest < environment < flag.
+func SetInsecureDefault(enabled bool) {
+	if insecureExplicit.Load() {
+		return
+	}
 	insecure.Store(enabled)
 }
 
@@ -95,13 +115,17 @@ func Insecure() bool {
 	return insecure.Load()
 }
 
-// insecureFromEnv reports whether EnvInsecure asks for insecure registry access.
-func insecureFromEnv() bool {
+// insecureFromEnv reports whether EnvInsecure asks for insecure registry access,
+// and whether it said anything at all. An unset or empty value (as set by a
+// Bazel RunEnvironmentInfo default) says nothing.
+func insecureFromEnv() (value bool, explicit bool) {
 	switch strings.ToLower(strings.TrimSpace(os.Getenv(EnvInsecure))) {
-	case "", "0", "false":
-		return false
+	case "":
+		return false, false
+	case "0", "false":
+		return false, true
 	default:
-		return true
+		return true, true
 	}
 }
 

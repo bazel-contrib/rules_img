@@ -37,9 +37,16 @@ type deployWorkerHandler struct {
 
 	// casBlobs is the connection pool to the remote CAS and the blob cache in
 	// front of it, which lives for the lifetime of the worker so requests that
-	// share a blob only fetch it once. It is nil when no remote cache is
-	// configured.
+	// share a blob only fetch it once. It is opened by casSource on the first
+	// request that needs it (guarded by casMu) and stays nil when no remote cache
+	// is configured.
+	casMu    sync.Mutex
+	casOpen  bool
 	casBlobs *casSources
+
+	// toolSettingsOnce applies the tool settings recorded in a deploy manifest
+	// once per worker, from the first request that carries them.
+	toolSettingsOnce sync.Once
 
 	// deduplicatedPush holds the process-wide overrides of the deduplicated push
 	// settings. An empty field lets each work request's deploy manifest decide, and a
@@ -94,10 +101,10 @@ func newDeployWorkerHandler(ctx context.Context, jobs int, sinkSpec string, dedu
 
 	baseBuilder := deployvfs.NewBuilder(api.DeployManifest{}).
 		WithContainerRegistryOptions(registryopts.Default().WithTransport(pullTransport).Remote()...)
-	// We set needsCAS to true unconditionally.
-	// The reason is that we just cannot know in advance whether a future work request
-	// wants to connect to the remote cache or not.
-	baseBuilder, casBlobs, err := configureBuilderFromEnv(ctx, baseBuilder, true /* needsCAS */, jobs)
+	// The remote cache is left out here (needsCAS=false) and opened on demand by
+	// casSource: the first work request may carry the remote cache settings in
+	// its deploy manifest (see applyToolSettings), which are not known yet.
+	baseBuilder, _, err = configureBuilderFromEnv(ctx, baseBuilder, false /* needsCAS */, jobs)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "warning: failed to configure VFS from environment: %v\n", err)
 	}
@@ -106,7 +113,6 @@ func newDeployWorkerHandler(ctx context.Context, jobs int, sinkSpec string, dedu
 		jobs:             jobs,
 		baseBuilder:      baseBuilder,
 		pushTransport:    pushTransport,
-		casBlobs:         casBlobs,
 		deduplicatedPush: deduplicatedPush,
 		printSpec:        printSpec,
 		// Requests arrive one at a time, so a blob's home is settled the first time a
@@ -142,7 +148,31 @@ func newDeployWorkerHandler(ctx context.Context, jobs int, sinkSpec string, dedu
 // Close releases resources held for the lifetime of the worker. Blobs already
 // cached on disk are kept for the next run.
 func (h *deployWorkerHandler) Close() error {
+	h.casMu.Lock()
+	defer h.casMu.Unlock()
 	return h.casBlobs.Close()
+}
+
+// casSource returns the remote-CAS blob source shared by every work request,
+// opening it on first use. A work request's deploy manifest may be what names
+// the remote cache (see applyToolSettings), so the connection cannot be made
+// before the first request arrives. Returns nil when no remote cache is
+// configured, which leaves the VFS without a CAS source exactly as before.
+//
+// The connections outlive the request that opened them, so they carry the
+// worker's own request metadata rather than that request's.
+func (h *deployWorkerHandler) casSource(ctx context.Context) deployvfs.CASReader {
+	h.casMu.Lock()
+	defer h.casMu.Unlock()
+	if !h.casOpen {
+		h.casOpen = true
+		sources, err := casSourcesFromEnv(protohelper.WithRequestMetadata(ctx, h.requestMetadata), h.jobs)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to configure the remote cache: %v\n", err)
+		}
+		h.casBlobs = sources
+	}
+	return h.casBlobs.reader()
 }
 
 func (h *deployWorkerHandler) HandleRequest(ctx context.Context, req persistentworker.WorkRequest) persistentworker.WorkResponse {
@@ -178,6 +208,18 @@ func (h *deployWorkerHandler) processRequest(ctx context.Context, req persistent
 		return "", fmt.Errorf("unmarshalling deploy manifest: %w", err)
 	}
 
+	// The tool settings recorded in the deploy manifest are process-wide (they are
+	// read from the environment), so they are applied once, from the first request
+	// that carries them. Every request of one build agrees on them: they come from
+	// global build settings. Anything the worker's own environment already says
+	// wins, which is the usual case under Bazel -- a worker is started by a build,
+	// which sets the environment it wants.
+	//
+	// The registry transports are built before any request arrives, so a recorded
+	// insecure setting reaches reference parsing but not the transport's TLS
+	// verification. Pass IMG_INSECURE to the worker's environment to get both.
+	h.toolSettingsOnce.Do(func() { applyToolSettings(dm.Settings.Tool, os.Stderr) })
+
 	// Resolve the push strategy. The work request's --deduplicated-push* values win
 	// over the ones img deploy was started with (more specific beats less specific, as
 	// for --registry/--repository), and both override each operation's own settings.
@@ -199,6 +241,9 @@ func (h *deployWorkerHandler) processRequest(ctx context.Context, req persistent
 	}
 
 	vfsBuilder := h.baseBuilder.Clone().WithDeployManifest(dm).WithContext(ctx)
+	if casReader := h.casSource(ctx); casReader != nil {
+		vfsBuilder = vfsBuilder.WithCASReader(casReader)
+	}
 	for _, layoutPath := range opts.ociLayouts {
 		vfsBuilder = vfsBuilder.WithOCILayout(layoutPath)
 	}

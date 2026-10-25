@@ -383,3 +383,79 @@ def resolve_signing(ctx):
         best_effort = mode == "best_effort",
         targets = config_info.targets,
     )
+
+def resolve_tool_settings(ctx):
+    """Resolve the `img` tool settings to record in a deploy manifest.
+
+    These are settings of the deploy tool itself rather than of what is deployed:
+    the remote cache that lazy layers are read from, the credential helpers, the
+    registry auth file and insecure-registry access. Bazel also passes them to a
+    generated launcher through `RunEnvironmentInfo`, but only `bazel run` applies
+    that, so recording them in the deploy manifest is what makes a launcher that
+    is built, copied elsewhere and executed directly work. The environment still
+    wins over the recorded values at deploy time.
+
+    Push and load have separate settings for the same thing (the rules are
+    configured independently), so a rule carrying both -- `multi_deploy`, or an
+    image with `push_specs` and `load_specs` -- takes the push value and falls
+    back to the load value, matching how `multi_deploy` builds its launcher's
+    environment.
+
+    Args:
+        ctx: Rule context, optionally with _push_settings, _load_settings and
+            _docker_config_path attributes.
+
+    Returns:
+        A struct of the resolved settings, as expected by
+        `add_tool_settings_args`.
+    """
+    settings = []
+    if hasattr(ctx.attr, "_push_settings"):
+        settings.append(ctx.attr._push_settings[PushSettingsInfo])
+    if hasattr(ctx.attr, "_load_settings"):
+        settings.append(ctx.attr._load_settings[LoadSettingsInfo])
+
+    def first(field):
+        for info in settings:
+            value = getattr(info, field, "")
+            if value:
+                return value
+        return ""
+
+    registry_auth_file = ""
+    if hasattr(ctx.attr, "_docker_config_path"):
+        registry_auth_file = ctx.attr._docker_config_path[BuildSettingInfo].value
+
+    return struct(
+        remote_cache = first("remote_cache"),
+        remote_instance_name = first("remote_instance_name"),
+        credential_helper = first("credential_helper"),
+        credential_helper_oci_registry = first("credential_helper_oci_registry"),
+        credential_helper_remote_cache = first("credential_helper_remote_cache"),
+        registry_auth_file = registry_auth_file,
+        insecure = any([getattr(info, "insecure", False) for info in settings]),
+    )
+
+def add_tool_settings_args(args, tool_settings):
+    """Add the `--tool-*` flags recording tool settings in a deploy manifest.
+
+    Args:
+        args: `ctx.actions.args()` of an `img deploy-metadata` or
+            `img deploy-merge` action.
+        tool_settings: Result of `resolve_tool_settings`, or None to record
+            nothing.
+    """
+    if tool_settings == None:
+        return
+    for flag, value in [
+        ("--tool-remote-cache", tool_settings.remote_cache),
+        ("--tool-remote-instance-name", tool_settings.remote_instance_name),
+        ("--tool-credential-helper", tool_settings.credential_helper),
+        ("--tool-credential-helper-oci-registry", tool_settings.credential_helper_oci_registry),
+        ("--tool-credential-helper-remote-cache", tool_settings.credential_helper_remote_cache),
+        ("--tool-registry-auth-file", tool_settings.registry_auth_file),
+    ]:
+        if value:
+            args.add(flag, value)
+    if tool_settings.insecure:
+        args.add("--tool-insecure")

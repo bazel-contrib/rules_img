@@ -9,7 +9,7 @@ load("//img/private:root_symlinks.bzl", "runfiles_slot")
 load("//img/private:soci_deploy.bzl", "soci_deploy_children")
 load("//img/private:stamp.bzl", "expand_or_write")
 load("//img/private/common:build.bzl", "TOOLCHAIN")
-load("//img/private/common:deploy_helpers.bzl", "add_build_time_push_outputs", "content_tracking_json_vars", "cross_mount_blob_repository")
+load("//img/private/common:deploy_helpers.bzl", "add_build_time_push_outputs", "add_tool_settings_args", "content_tracking_json_vars", "cross_mount_blob_repository", "resolve_tool_settings")
 load("//img/private/providers:deploy_info.bzl", "DeployInfo")
 load("//img/private/providers:load_config_info.bzl", "LoadConfigInfo")
 load("//img/private/providers:load_settings_info.bzl", "LoadSettingsInfo")
@@ -98,6 +98,7 @@ def compute_push_metadata(
         destination_file,
         output_prefix,
         signing = None,
+        tool_settings = None,
         blob_repository = "",
         forbid_layer_push = False,
         deduplicated_push = "disabled",
@@ -120,6 +121,9 @@ def compute_push_metadata(
         output_prefix: String prefix for declared output files.
         signing: struct(config_info, best_effort, targets) to enable signing of
             this push, or None.
+        tool_settings: Result of `resolve_tool_settings` to record the deploy
+            tool's settings (remote cache, credential helpers, ...) in the deploy
+            manifest, or None to record none.
         blob_repository: Staging repository for layer blobs, or "" (recorded in the
             deploy manifest so both push-at-build-time and `bazel run` honor it).
         forbid_layer_push: When True, records in the deploy manifest that layer
@@ -153,6 +157,7 @@ def compute_push_metadata(
     args.add("--command", "push")
     args.add("--strategy", strategy)
     args.add("--configuration-file", configuration_json)
+    add_tool_settings_args(args, tool_settings)
     if blob_repository:
         args.add("--blob-repository", blob_repository)
     if forbid_layer_push:
@@ -332,7 +337,7 @@ def expand_manifest_tags_for_child(
         stamp_settings_override = stamp_settings_override,
     )
 
-def merge_deploy_manifests(ctx, *, deploy_infos, push_strategy, load_strategy):
+def merge_deploy_manifests(ctx, *, deploy_infos, push_strategy, load_strategy, tool_settings = None):
     """Merge multiple deploy manifests using the deploy-merge tool.
 
     Args:
@@ -341,6 +346,9 @@ def merge_deploy_manifests(ctx, *, deploy_infos, push_strategy, load_strategy):
         push_strategy: Resolved push strategy for the merge ("eager", "lazy",
             "cas_registry" or "bes").
         load_strategy: Resolved load strategy for the merge ("eager" or "lazy").
+        tool_settings: Result of `resolve_tool_settings` to record for the merged
+            deployment, or None to carry the inputs' own settings through. See
+            `compute_push_metadata`.
 
     Returns:
         Tuple of (merged_metadata_file, merged_layer_hints_file).
@@ -350,6 +358,7 @@ def merge_deploy_manifests(ctx, *, deploy_infos, push_strategy, load_strategy):
     args.add("deploy-merge")
     args.add("--push-strategy", push_strategy)
     args.add("--load-strategy", load_strategy)
+    add_tool_settings_args(args, tool_settings)
 
     layer_hints_files = []
     for info in deploy_infos:
@@ -393,7 +402,8 @@ def compute_load_metadata(
         index_info,
         strategy,
         pull_info,
-        output_prefix):
+        output_prefix,
+        tool_settings = None):
     """Compute load metadata for a deploy operation.
 
     Args:
@@ -404,6 +414,9 @@ def compute_load_metadata(
         strategy: Resolved load strategy string (never 'auto').
         pull_info: PullInfo or None (for original registry/repository/tag/digest).
         output_prefix: String prefix for declared output files.
+        tool_settings: Result of `resolve_tool_settings` to record the deploy
+            tool's settings in the deploy manifest, or None to record none. See
+            `compute_push_metadata`.
 
     Returns:
         Tuple of (metadata_file, layer_hints_file).
@@ -420,6 +433,7 @@ def compute_load_metadata(
     args.add("--command", "load")
     args.add("--strategy", strategy)
     args.add("--configuration-file", configuration_json)
+    add_tool_settings_args(args, tool_settings)
 
     if pull_info != None:
         if pull_info.registries:
@@ -807,6 +821,10 @@ def process_deploy_specs(
         "image_target_name": ctx.label.name,
     }
 
+    # Recorded in every deploy manifest produced here, so that a launcher built
+    # from them works outside `bazel run` (see resolve_tool_settings).
+    tool_settings = resolve_tool_settings(ctx)
+
     deploy_infos = []
     referrers = []
     sign_config_infos = []
@@ -877,6 +895,7 @@ def process_deploy_specs(
             destination_file = push_config.destination_file,
             output_prefix = "{}.push_deploy.{}".format(ctx.label.name, push_idx),
             signing = push_config.signing,
+            tool_settings = tool_settings,
             # Only record the staging repository for cross-mounting when this spec
             # actually pushes at build time; otherwise a deploy would try to mount
             # from a repository nothing was staged to.
@@ -956,6 +975,7 @@ def process_deploy_specs(
             strategy = load_config.strategy,
             pull_info = pull_info,
             output_prefix = "{}.load_deploy.{}".format(ctx.label.name, load_idx),
+            tool_settings = tool_settings,
         )
         deploy_infos.append(struct(metadata = deploy_metadata, layer_hints = layer_hints))
 
@@ -982,6 +1002,7 @@ def process_deploy_specs(
         deploy_infos = deploy_infos,
         push_strategy = first_push_strategy,
         load_strategy = first_load_strategy,
+        tool_settings = tool_settings,
     )
     return DeployInfo(
         image = image_info,

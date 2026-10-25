@@ -417,7 +417,7 @@ func (vfs *VFS) SizeOf(digest registryv1.Hash) (int64, error) {
 // Use Clone() to create an independent copy for per-request customization.
 type Builder struct {
 	dm                         api.DeployManifest
-	casReader                  casReader
+	casReader                  CASReader
 	diskCachePath              string // path to Bazel disk cache directory (contains cas/ subdirectory)
 	containerRegistryOptions   []remote.Option
 	runfilesRootSymlinksPrefix string
@@ -485,7 +485,7 @@ func (b *Builder) WithDeployManifest(dm api.DeployManifest) *Builder {
 	return b
 }
 
-func (b *Builder) WithCASReader(br casReader) *Builder {
+func (b *Builder) WithCASReader(br CASReader) *Builder {
 	b.casReader = br
 	return b
 }
@@ -1238,7 +1238,9 @@ func uploadForbiddenReason(mountOnly bool, hint api.CrossMountSource) string {
 	return "layer uploads are forbidden (forbid_layer_push); the blob is expected to already be in the registry (e.g. pushed at build time and mounted server-side)"
 }
 
-type casReader interface {
+// CASReader is the blob source a VFS reads lazy layers from: Bazel's remote CAS,
+// or the local blob cache in front of it.
+type CASReader interface {
 	FindMissingBlobs(ctx context.Context, digests []cas.Digest) ([]cas.Digest, error)
 	ReadBlob(ctx context.Context, digest cas.Digest) ([]byte, error)
 	ReaderForBlob(ctx context.Context, digest cas.Digest) (io.ReadCloser, error)

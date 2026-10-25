@@ -127,33 +127,60 @@ func TestTransportBuilds(t *testing.T) {
 func setInsecureForTest(t *testing.T, enabled bool) {
 	t.Helper()
 	previous := Insecure()
+	previousExplicit := insecureExplicit.Load()
 	SetInsecure(enabled)
-	t.Cleanup(func() { SetInsecure(previous) })
+	t.Cleanup(func() {
+		SetInsecure(previous)
+		insecureExplicit.Store(previousExplicit)
+	})
 }
 
 func TestInsecureFromEnv(t *testing.T) {
 	tests := []struct {
-		value string
-		want  bool
+		value        string
+		want         bool
+		wantExplicit bool
 	}{
-		{value: "", want: false},
-		{value: "0", want: false},
-		{value: "false", want: false},
-		{value: "FALSE", want: false},
-		{value: " ", want: false},
-		{value: "1", want: true},
-		{value: "true", want: true},
-		{value: "True", want: true},
-		{value: "yes", want: true},
+		{value: "", want: false, wantExplicit: false},
+		{value: " ", want: false, wantExplicit: false},
+		{value: "0", want: false, wantExplicit: true},
+		{value: "false", want: false, wantExplicit: true},
+		{value: "FALSE", want: false, wantExplicit: true},
+		{value: "1", want: true, wantExplicit: true},
+		{value: "true", want: true, wantExplicit: true},
+		{value: "True", want: true, wantExplicit: true},
+		{value: "yes", want: true, wantExplicit: true},
 	}
 	for _, tc := range tests {
 		t.Run("value="+tc.value, func(t *testing.T) {
 			t.Setenv(EnvInsecure, tc.value)
-			if got := insecureFromEnv(); got != tc.want {
-				t.Fatalf("insecureFromEnv() with %s=%q = %v, want %v", EnvInsecure, tc.value, got, tc.want)
+			got, gotExplicit := insecureFromEnv()
+			if got != tc.want || gotExplicit != tc.wantExplicit {
+				t.Fatalf("insecureFromEnv() with %s=%q = (%v, %v), want (%v, %v)", EnvInsecure, tc.value, got, gotExplicit, tc.want, tc.wantExplicit)
 			}
 		})
 	}
+}
+
+// TestSetInsecureDefault covers the precedence of the insecure setting recorded
+// in a deploy manifest: it is a default, so an explicit flag or environment
+// variable wins.
+func TestSetInsecureDefault(t *testing.T) {
+	t.Run("no explicit value", func(t *testing.T) {
+		setInsecureForTest(t, false)
+		insecureExplicit.Store(false)
+		SetInsecureDefault(true)
+		if !Insecure() {
+			t.Fatal("SetInsecureDefault(true) with nothing explicit did not enable insecure mode")
+		}
+	})
+	t.Run("explicit flag wins", func(t *testing.T) {
+		setInsecureForTest(t, false) // as the --insecure flag / IMG_INSECURE=0 would
+		SetInsecureDefault(true)
+		if Insecure() {
+			t.Fatal("SetInsecureDefault(true) overrode an explicit value")
+		}
+	})
 }
 
 // TestNameOptionsInsecure covers the half of insecure mode that made pushes to a
