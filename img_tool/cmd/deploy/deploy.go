@@ -311,6 +311,7 @@ func DeployWithExtras(ctx context.Context, rawRequest []byte, opts DeployOptions
 	if err := decoder.Decode(&req); err != nil {
 		return fmt.Errorf("unmarshalling deploy manifest file: %w", err)
 	}
+	applyToolSettings(req.Settings.Tool, os.Stderr)
 
 	// Resolve the push strategy before the VFS is built: the deduplicated strategy
 	// registers its own cross-mount sources (per still-missing manifest, after
@@ -826,6 +827,9 @@ func credentialHelperInstance() credential.Helper {
 
 // configureBuilderFromEnv points the VFS builder at the blob sources described
 // by the environment: the Bazel disk cache and, when needed, the remote CAS.
+// The settings a deploy manifest recorded are applied to that environment first
+// (see [applyToolSettings]), so a launcher run outside `bazel run` finds its
+// remote cache here too.
 //
 // CAS reads go through a local blob cache (see casBlobCacheFromEnv). Both it and
 // the connection pool behind it are returned so the caller can report their
@@ -839,12 +843,26 @@ func configureBuilderFromEnv(ctx context.Context, builder *deployvfs.Builder, ne
 	if !needsCAS {
 		return builder, nil, nil
 	}
-	reapiEndpoint := os.Getenv("IMG_REAPI_ENDPOINT")
-	if reapiEndpoint == "" {
+	sources, err := casSourcesFromEnv(ctx, jobs)
+	if err != nil {
+		return nil, nil, err
+	}
+	if sources == nil {
 		return builder, nil, nil
 	}
+	return builder.WithCASReader(sources.reader()), sources, nil
+}
 
-	reapiInstanceName := os.Getenv("IMG_REAPI_INSTANCE_NAME")
+// casSourcesFromEnv opens the connection pool to the remote CAS named by the
+// environment, with the local blob cache in front of it. It returns nil when no
+// remote cache is configured.
+func casSourcesFromEnv(ctx context.Context, jobs int) (*casSources, error) {
+	reapiEndpoint := os.Getenv(envREAPIEndpoint)
+	if reapiEndpoint == "" {
+		return nil, nil
+	}
+
+	reapiInstanceName := os.Getenv(envREAPIInstanceName)
 	credHelper := credentialHelperInstance()
 	// A single gRPC connection multiplexes all CAS reads onto one TCP
 	// connection, which bottlenecks bulk downloads on high-latency
@@ -856,11 +874,11 @@ func configureBuilderFromEnv(ctx context.Context, builder *deployvfs.Builder, ne
 	for range numConns {
 		grpcConn, err := protohelper.ClientWithRequestMetadata(reapiEndpoint, credHelper, requestMetadata)
 		if err != nil {
-			return nil, nil, fmt.Errorf("creating gRPC client for REAPI: %w", err)
+			return nil, fmt.Errorf("creating gRPC client for REAPI: %w", err)
 		}
 		member, err := cas.New(grpcConn, cas.WithInstanceName(reapiInstanceName))
 		if err != nil {
-			return nil, nil, fmt.Errorf("creating CAS client: %w", err)
+			return nil, fmt.Errorf("creating CAS client: %w", err)
 		}
 		members = append(members, member)
 	}
@@ -870,12 +888,9 @@ func configureBuilderFromEnv(ctx context.Context, builder *deployvfs.Builder, ne
 	if err != nil {
 		// Caching is an optimization: read straight from the remote cache instead.
 		fmt.Fprintf(os.Stderr, "WARNING: not caching remote cache blobs locally: %v\n", err)
-		return builder.WithCASReader(pool), &casSources{pool: pool}, nil
+		return &casSources{pool: pool}, nil
 	}
-	if blobCache == nil {
-		return builder.WithCASReader(pool), &casSources{pool: pool}, nil
-	}
-	return builder.WithCASReader(blobCache), &casSources{pool: pool, cache: blobCache}, nil
+	return &casSources{pool: pool, cache: blobCache}, nil
 }
 
 // casSources is what the remote cache configuration produced: the pool of
@@ -886,6 +901,18 @@ type casSources struct {
 	cache *cas.CachingReader
 }
 
+// reader is the blob source the VFS reads from: the local blob cache when there
+// is one, the connection pool itself otherwise.
+func (s *casSources) reader() deployvfs.CASReader {
+	if s == nil {
+		return nil
+	}
+	if s.cache == nil {
+		return s.pool
+	}
+	return s.cache
+}
+
 // Close releases the local blob cache. It is safe to call on a nil *casSources,
 // which is what a deploy without a remote cache gets.
 func (s *casSources) Close() error {
@@ -894,6 +921,20 @@ func (s *casSources) Close() error {
 	}
 	return s.cache.Close()
 }
+
+// Environment variables naming the remote cache that layer blobs are read from
+// under the lazy push strategy, and the registry auth file. They are also
+// recorded in the deploy manifest (see [api.ToolSettings]).
+const (
+	// envREAPIEndpoint is the remote cache / REAPI endpoint.
+	envREAPIEndpoint = "IMG_REAPI_ENDPOINT"
+	// envREAPIInstanceName is the REAPI instance name used for CAS requests.
+	envREAPIInstanceName = "IMG_REAPI_INSTANCE_NAME"
+	// envRegistryAuthFile is the Docker/Podman config file registry credentials
+	// are read from. It is go-containerregistry's, not ours, so it carries no
+	// IMG_ prefix.
+	envRegistryAuthFile = "REGISTRY_AUTH_FILE"
+)
 
 // Environment variables configuring the local cache of blobs read from the
 // remote CAS.

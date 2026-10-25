@@ -124,6 +124,57 @@ type DeploySettings struct {
 	// time (and mounted server-side): if the deploy is ever asked to upload a
 	// layer, it fails loudly instead of silently re-uploading.
 	ForbidLayerPush bool `json:"forbid_layer_push,omitempty"`
+	// Tool records the `img` tool settings Bazel resolved at build time (the
+	// remote cache to read lazy layers from, credential helpers, ...). They are
+	// the lowest-priority source: see ToolSettings.
+	Tool *ToolSettings `json:"tool_settings,omitempty"`
+}
+
+// ToolSettings are the settings of the `img` tool itself -- as opposed to the
+// description of what to deploy -- that Bazel resolved at build time and
+// recorded in the deploy manifest.
+//
+// Bazel also passes them to a generated deploy launcher through
+// RunEnvironmentInfo, but only `bazel run` applies that, so a launcher that is
+// built, copied elsewhere and executed directly (for example a release flow that
+// builds remotely, downloads the binary and runs it on an agent) would otherwise
+// lose every one of them -- and a lazy push would fail on the first locally-built
+// layer, having no remote cache to read it from. Recording them here makes the
+// launcher self-contained.
+//
+// They are the lowest-priority source of each setting: the environment overrides
+// what the build recorded, and a command-line flag overrides the environment.
+// That keeps `bazel run` (which sets the environment from the same build
+// settings) and an operator exporting IMG_* in control.
+type ToolSettings struct {
+	// RemoteCache is the Bazel remote cache / REAPI endpoint that layer blobs are
+	// read from under the lazy push strategy (IMG_REAPI_ENDPOINT).
+	RemoteCache string `json:"remote_cache,omitempty"`
+	// RemoteInstanceName is the REAPI instance name used for CAS requests
+	// (IMG_REAPI_INSTANCE_NAME).
+	RemoteInstanceName string `json:"remote_instance_name,omitempty"`
+	// CredentialHelper is the Bazel credential helper used for every operation
+	// that has no more specific helper (IMG_CREDENTIAL_HELPER).
+	CredentialHelper string `json:"credential_helper,omitempty"`
+	// CredentialHelperOCIRegistry is the credential helper used for OCI registry
+	// operations (IMG_CREDENTIAL_HELPER_OCI_REGISTRY).
+	CredentialHelperOCIRegistry string `json:"credential_helper_oci_registry,omitempty"`
+	// CredentialHelperRemoteCache is the credential helper used to authenticate
+	// gRPC calls to the remote cache (IMG_CREDENTIAL_HELPER_REMOTE_CACHE).
+	CredentialHelperRemoteCache string `json:"credential_helper_remote_cache,omitempty"`
+	// RegistryAuthFile is the Docker/Podman config file registry credentials are
+	// read from (REGISTRY_AUTH_FILE).
+	RegistryAuthFile string `json:"registry_auth_file,omitempty"`
+	// Insecure requests that registries be addressed over plain HTTP, accepting
+	// untrusted TLS certificates (IMG_INSECURE). Only ever recorded as true: the
+	// setting is enabling only, exactly like the global --insecure flag.
+	Insecure bool `json:"insecure,omitempty"`
+}
+
+// Empty reports whether these settings carry nothing, in which case they are
+// left out of the deploy manifest entirely.
+func (s ToolSettings) Empty() bool {
+	return s == ToolSettings{}
 }
 
 // Signature artifact / sign_setting media types and target selectors.

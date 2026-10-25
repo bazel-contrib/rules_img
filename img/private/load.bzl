@@ -8,7 +8,7 @@ load("//img/private:stamp.bzl", "expand_or_write")
 load("//img/private/common:build.bzl", "TOOLCHAIN", "TOOLCHAINS")
 load("//img/private/common:default_deploy_tool.bzl", "default_deploy_tool")
 load("//img/private/common:deploy_attrs.bzl", "COMMON_LOAD_ATTRS")
-load("//img/private/common:deploy_helpers.bzl", "content_tracking_json_vars", "get_image_providers", "get_tags", "image_target_vars", "resolve_daemon", "resolve_load_destination", "resolve_load_strategy")
+load("//img/private/common:deploy_helpers.bzl", "content_tracking_json_vars", "get_image_providers", "get_tags", "image_target_vars", "resolve_daemon", "resolve_load_destination", "resolve_load_strategy", "resolve_tool_settings")
 load("//img/private/common:transitions.bzl", "reset_platform_transition")
 load("//img/private/providers:deploy_info.bzl", "DeployInfo")
 load("//img/private/providers:deploy_tool_info.bzl", "DeployToolInfo")
@@ -28,6 +28,7 @@ def _compute_load_metadata(*, ctx, configuration_json):
         strategy = resolve_load_strategy(ctx),
         pull_info = pull_info,
         output_prefix = ctx.label.name,
+        tool_settings = resolve_tool_settings(ctx),
     )
 
 def _build_docker_tarball(ctx, configuration_json, manifest_info = None, index_info = None):

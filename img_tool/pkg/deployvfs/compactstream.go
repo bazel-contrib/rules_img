@@ -240,7 +240,7 @@ func (b *Builder) layerFromCompactStream(compactStreamPath, casDirPath string, d
 type casDirStore struct {
 	shaDir        string // <inputfilecas>/sha256, or "" if no input directory was shipped
 	diskCachePath string
-	casReader     casReader
+	casReader     CASReader
 }
 
 func (s *casDirStore) ReaderForBlob(ctx context.Context, digest []byte, size int64) (io.ReadCloser, error) {

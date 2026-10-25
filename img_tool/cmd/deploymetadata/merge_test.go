@@ -87,7 +87,7 @@ func TestMergeDeployManifestsFiltersByOperation(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			output := filepath.Join(tmp, tc.name+".json")
-			if err := MergeDeployManifests(context.Background(), []string{input}, output, tc.operations); err != nil {
+			if err := MergeDeployManifests(context.Background(), []string{input}, output, tc.operations, nil); err != nil {
 				t.Fatalf("MergeDeployManifests: %v", err)
 			}
 			if got := mergedCommands(t, output); !reflect.DeepEqual(got, tc.want) {
@@ -104,7 +104,7 @@ func TestMergeDeployManifestsFiltersByOperation(t *testing.T) {
 func TestMergeDeployManifestsAcceptsNoInputs(t *testing.T) {
 	output := filepath.Join(t.TempDir(), "out.json")
 
-	if err := MergeDeployManifests(context.Background(), nil, output, []string{"push", "load"}); err != nil {
+	if err := MergeDeployManifests(context.Background(), nil, output, []string{"push", "load"}, nil); err != nil {
 		t.Fatalf("MergeDeployManifests: %v", err)
 	}
 	if got := mergedCommands(t, output); len(got) != 0 {
@@ -131,7 +131,7 @@ func TestMergeDeployManifestsKeepsUnknownCommands(t *testing.T) {
 	input := writeDeployManifest(t, filepath.Join(tmp, "in.json"), "push", "mystery", "load")
 	output := filepath.Join(tmp, "out.json")
 
-	if err := MergeDeployManifests(context.Background(), []string{input}, output, []string{"load"}); err != nil {
+	if err := MergeDeployManifests(context.Background(), []string{input}, output, []string{"load"}, nil); err != nil {
 		t.Fatalf("MergeDeployManifests: %v", err)
 	}
 	if got, want := mergedCommands(t, output), []string{"mystery", "load"}; !reflect.DeepEqual(got, want) {
@@ -159,7 +159,7 @@ func TestMergeDeployManifestsPreservesSettings(t *testing.T) {
 	}, "push", "load")
 	output := filepath.Join(tmp, "out.json")
 
-	if err := MergeDeployManifests(context.Background(), []string{input1, input2}, output, nil); err != nil {
+	if err := MergeDeployManifests(context.Background(), []string{input1, input2}, output, nil, nil); err != nil {
 		t.Fatalf("MergeDeployManifests: %v", err)
 	}
 
@@ -183,7 +183,7 @@ func TestMergeDeployManifestsForbidLayerPushORs(t *testing.T) {
 	on := writeDeployManifestWithSettings(t, filepath.Join(tmp, "on.json"), api.DeploySettings{ForbidLayerPush: true}, "push")
 	output := filepath.Join(tmp, "out.json")
 
-	if err := MergeDeployManifests(context.Background(), []string{off, on}, output, nil); err != nil {
+	if err := MergeDeployManifests(context.Background(), []string{off, on}, output, nil, nil); err != nil {
 		t.Fatalf("MergeDeployManifests: %v", err)
 	}
 	if !readManifest(t, output).Settings.ForbidLayerPush {
@@ -200,7 +200,7 @@ func TestMergeDeployManifestsConflictingBlobRepository(t *testing.T) {
 	b := writeDeployManifestWithSettings(t, filepath.Join(tmp, "b.json"), api.DeploySettings{BlobRepository: "repo-b"}, "push")
 	output := filepath.Join(tmp, "out.json")
 
-	err := MergeDeployManifests(context.Background(), []string{a, b}, output, nil)
+	err := MergeDeployManifests(context.Background(), []string{a, b}, output, nil, nil)
 	if err == nil {
 		t.Fatalf("MergeDeployManifests: expected error for conflicting blob_repository, got nil")
 	}
@@ -298,4 +298,56 @@ func writeDeployManifest(t *testing.T, path string, commands ...string) string {
 		t.Fatalf("writing deploy manifest: %v", err)
 	}
 	return path
+}
+
+// TestMergeDeployManifestsToolSettings verifies the two ways the merged manifest
+// gets its tool settings: recorded explicitly by the caller (multi_deploy passes
+// its own --tool-* flags), or carried through from the first input that has any.
+func TestMergeDeployManifestsToolSettings(t *testing.T) {
+	tmp := t.TempDir()
+	fromInput := writeDeployManifestWithSettings(t, filepath.Join(tmp, "in1.json"), api.DeploySettings{
+		Tool: &api.ToolSettings{RemoteCache: "grpcs://from-input.example.com", Insecure: true},
+	}, "push")
+	// A load manifest may legitimately name a different remote cache: push and
+	// load are configured by separate build settings.
+	other := writeDeployManifestWithSettings(t, filepath.Join(tmp, "in2.json"), api.DeploySettings{
+		Tool: &api.ToolSettings{RemoteCache: "grpcs://other.example.com"},
+	}, "load")
+
+	t.Run("carried through", func(t *testing.T) {
+		output := filepath.Join(tmp, "carried.json")
+		if err := MergeDeployManifests(context.Background(), []string{fromInput, other}, output, nil, nil); err != nil {
+			t.Fatalf("MergeDeployManifests: %v", err)
+		}
+		tool := readManifest(t, output).Settings.Tool
+		if tool == nil {
+			t.Fatal("Tool = nil, want the first input's settings")
+		}
+		if tool.RemoteCache != "grpcs://from-input.example.com" || !tool.Insecure {
+			t.Errorf("Tool = %+v, want the first input's settings", tool)
+		}
+	})
+
+	t.Run("caller wins", func(t *testing.T) {
+		output := filepath.Join(tmp, "explicit.json")
+		explicit := &api.ToolSettings{RemoteCache: "grpcs://explicit.example.com"}
+		if err := MergeDeployManifests(context.Background(), []string{fromInput, other}, output, nil, explicit); err != nil {
+			t.Fatalf("MergeDeployManifests: %v", err)
+		}
+		tool := readManifest(t, output).Settings.Tool
+		if tool == nil || tool.RemoteCache != "grpcs://explicit.example.com" || tool.Insecure {
+			t.Errorf("Tool = %+v, want only the caller's settings", tool)
+		}
+	})
+
+	t.Run("none", func(t *testing.T) {
+		output := filepath.Join(tmp, "none.json")
+		plain := writeDeployManifestWithSettings(t, filepath.Join(tmp, "plain.json"), api.DeploySettings{}, "push")
+		if err := MergeDeployManifests(context.Background(), []string{plain}, output, nil, nil); err != nil {
+			t.Fatalf("MergeDeployManifests: %v", err)
+		}
+		if tool := readManifest(t, output).Settings.Tool; tool != nil {
+			t.Errorf("Tool = %+v, want nil", tool)
+		}
+	})
 }

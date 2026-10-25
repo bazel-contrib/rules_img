@@ -72,6 +72,10 @@ var (
 	signBestEffort         bool
 	signTargets            []string
 	defaultSignSettingFile string
+
+	// toolSettings are the `img` tool settings resolved by Bazel that this
+	// deploy manifest records (see toolsettings.go).
+	toolSettings *toolSettingsFlags
 )
 
 func DeployMetadataProcess(ctx context.Context, args []string) {
@@ -173,6 +177,8 @@ func DeployMetadataProcess(ctx context.Context, args []string) {
 		}
 	})
 	flagSet.StringVar(&defaultSignSettingFile, "default-sign-setting-file", "", `(Optional) path to a sign_setting config file used as the manifest-level default for operations that request signing but carry no setting of their own.`)
+	toolSettings = &toolSettingsFlags{}
+	toolSettings.register(flagSet)
 
 	if err := flagSet.Parse(args); err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())
@@ -418,6 +424,9 @@ func WriteMetadata(ctx context.Context, outputPath string) error {
 
 	var operationBytes []byte
 	var deploySettings api.DeploySettings
+	// The tool settings are about the deploy tool rather than this operation, so
+	// they are recorded for push and load alike.
+	deploySettings.Tool = toolSettings.value()
 
 	var registryTagOps []json.RawMessage
 	if command == "push" {

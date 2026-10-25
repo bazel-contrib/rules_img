@@ -58,6 +58,8 @@ func DeployMergeProcess(ctx context.Context, args []string) {
 		return nil
 	})
 	flagSet.StringVar(&mergeLayerHintsOutputPath, "layer-hints-output", "", `(Optional) path to write merged layer hints output.`)
+	mergeToolSettings := &toolSettingsFlags{}
+	mergeToolSettings.register(flagSet)
 
 	if err := flagSet.Parse(args); err != nil {
 		flagSet.Usage()
@@ -107,7 +109,7 @@ func DeployMergeProcess(ctx context.Context, args []string) {
 		}
 	}
 
-	if err := MergeDeployManifests(ctx, inputPaths, outputPath, operations); err != nil {
+	if err := MergeDeployManifests(ctx, inputPaths, outputPath, operations, mergeToolSettings.value()); err != nil {
 		fmt.Fprintf(os.Stderr, "Error merging deploy manifests: %v\n", err)
 		os.Exit(1)
 	}
@@ -134,7 +136,10 @@ func keepOperation(command string, kinds map[string]bool) bool {
 // requested operation kinds ("push" and/or "load") are retained; an empty
 // operations slice keeps every operation. An empty inputPaths writes a manifest
 // with no operations.
-func MergeDeployManifests(ctx context.Context, inputPaths []string, outputPath string, operations []string) error {
+//
+// toolSettings are the tool settings to record for the merged deployment; nil
+// carries the inputs' own settings through instead.
+func MergeDeployManifests(ctx context.Context, inputPaths []string, outputPath string, operations []string, toolSettings *api.ToolSettings) error {
 	var kinds map[string]bool
 	if len(operations) > 0 {
 		kinds = make(map[string]bool, len(operations))
@@ -162,9 +167,15 @@ func MergeDeployManifests(ctx context.Context, inputPaths []string, outputPath s
 	//
 	// deduplicated_push needs no merging: it is an assumption about one destination,
 	// so it lives on each operation and travels with it.
+	//
+	// The tool settings (api.ToolSettings) are carried through too, but the caller's
+	// --tool-* flags win over them; see below.
 	var blobRepository string
 	var forbidLayerPush bool
 	var defaultSignSetting *api.Descriptor
+	// mergedToolSettings is the tool settings carried through from the inputs, used
+	// when the caller recorded none of its own.
+	var mergedToolSettings *api.ToolSettings
 
 	// Read and merge all input deploy manifests
 	for _, inputPath := range inputPaths {
@@ -192,6 +203,15 @@ func MergeDeployManifests(ctx context.Context, inputPaths []string, outputPath s
 			}
 			defaultSignSetting = settings.DefaultSignSetting
 		}
+		// The caller's --tool-* flags describe the merged deployment as a whole and
+		// win; without them, the first input that recorded any tool settings speaks
+		// for the merge. A push and a load manifest can legitimately disagree here
+		// (they are configured by separate build settings), so this is "first
+		// non-empty wins" rather than a conflict, mirroring how multi_deploy picks
+		// one value for the launcher's environment.
+		if toolSettings == nil && mergedToolSettings == nil && settings.Tool != nil {
+			mergedToolSettings = settings.Tool
+		}
 
 		// Append the operations from this manifest, keeping only the requested
 		// kinds when a filter was provided.
@@ -212,6 +232,9 @@ func MergeDeployManifests(ctx context.Context, inputPaths []string, outputPath s
 	}
 
 	// Create merged deploy manifest with unified settings
+	if toolSettings == nil {
+		toolSettings = mergedToolSettings
+	}
 	mergedManifest := api.DeployManifest{
 		Operations: allOperations,
 		Settings: api.DeploySettings{
@@ -220,6 +243,7 @@ func MergeDeployManifests(ctx context.Context, inputPaths []string, outputPath s
 			BlobRepository:     blobRepository,
 			ForbidLayerPush:    forbidLayerPush,
 			DefaultSignSetting: defaultSignSetting,
+			Tool:               toolSettings,
 		},
 	}
 

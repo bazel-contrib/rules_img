@@ -315,6 +315,7 @@ bzl_library(
         ":sign_settings",
         "//img/private/common:build",
         "//img/private/common:default_deploy_tool",
+        "//img/private/common:deploy_helpers",
         "//img/private/common:transitions",
         "//img/private/providers:deploy_info",
         "//img/private/providers:deploy_tool_info",
