@@ -4,6 +4,7 @@ go_library(
     name = "compactstream",
     srcs = [
         "blobstream.go",
+        "dirstore.go",
         "image.go",
         "inspect.go",
         "plan.go",
@@ -14,6 +15,7 @@ go_library(
     importpath = "github.com/bazel-contrib/rules_img/img_tool/pkg/compactstream",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/casdirlayout",
         "//pkg/compress",
         "@com_github_klauspost_compress//zstd",
     ],
@@ -23,6 +25,7 @@ go_test(
     name = "compactstream_test",
     srcs = [
         "blobstream_test.go",
+        "dirstore_test.go",
         "image_test.go",
         "reader_test.go",
         "reconstruct_uncompressed_test.go",
@@ -30,6 +33,7 @@ go_test(
     ],
     embed = [":compactstream"],
     deps = [
+        "//pkg/casdirlayout",
         "//pkg/compress",
         "@com_github_klauspost_compress//zstd",
     ],
