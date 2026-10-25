@@ -18,11 +18,10 @@ extension_to_compression = {
     "tzst": "zstd",
 }
 
-# Hidden build-setting attributes an image rule must expose to compute an
-# image-level mtree via image_mtree_or_none (path prefix and field set are shared
-# with the per-layer mtree; layer/image layouts are separate). Spread this into a
-# rule's `attrs`.
-IMAGE_MTREE_ATTRS = {
+# Hidden build-setting attributes a rule must expose to render a per-layer mtree
+# via build_layer_mtree / layer_mtree_or_none. Spread this into a rule's (or
+# aspect's) `attrs`.
+LAYER_MTREE_ATTRS = {
     "_mtree_path_prefix": attr.label(
         default = Label("//img/settings:mtree_path_prefix"),
         providers = [BuildSettingInfo],
@@ -35,11 +34,19 @@ IMAGE_MTREE_ATTRS = {
         default = Label("//img/settings:mtree_layer_layout"),
         providers = [BuildSettingInfo],
     ),
-    "_mtree_image_layout": attr.label(
+}
+
+# Hidden build-setting attributes an image rule must expose to compute an
+# image-level mtree via image_mtree_or_none (path prefix and field set are shared
+# with the per-layer mtree; layer/image layouts are separate). Spread this into a
+# rule's `attrs`.
+IMAGE_MTREE_ATTRS = dict(
+    LAYER_MTREE_ATTRS,
+    _mtree_image_layout = attr.label(
         default = Label("//img/settings:mtree_image_layout"),
         providers = [BuildSettingInfo],
     ),
-}
+)
 
 def layer_name(label):
     """Returns a label's string form for use as a layer's history created_by.
@@ -351,23 +358,59 @@ def media_type_is_tar(media_type):
     """
     return media_type != None and "tar" in media_type
 
+def media_type_ships_no_filesystem(media_type):
+    """Whether this media type positively states the layer carries no files.
+
+    True only for a media type that is known and is neither a tar changeset nor
+    an EROFS filesystem image -- an empty layer, say, or a non-tar artifact
+    blob. Unlike `not media_type_is_tar(...)`, an absent or "unknown" media type
+    is NOT reported as such: a layer whose descriptor simply omits the field may
+    well be a filesystem layer, and a consumer that must account for every byte
+    of the image (image_size_test) has to treat it as unknown rather than skip
+    it silently.
+    """
+    if media_type == None or media_type == "" or media_type == "unknown":
+        return False
+    return not media_type_is_tar(media_type) and not media_type_is_erofs(media_type)
+
+def layer_mtree_or_none(ctx, layer, name):
+    """The mtree File describing one layer's tar entries, or None.
+
+    Uses the layer's own `mtree` when it carries one (produced by a rules_img
+    layer rule, or by the pull/import rule for a blob-bearing layer); otherwise
+    renders one on the fly from the layer's materialized blob (a tar changeset
+    or an EROFS filesystem image) or compact stream -- this covers raw tars
+    added via `DefaultInfo` and any other blob-bearing layer whose source did
+    not precompute one. Returns None for a layer whose filesystem content is not
+    available: a shallow/lazy layer with no blob, or a blob that is neither,
+    such as an empty layer or a non-tar artifact.
+
+    Args:
+        ctx: Rule or aspect context exposing the LAYER_MTREE_ATTRS settings.
+        layer: A SingleLayerInfo provider.
+        name: Base name for an on-the-fly mtree (the result is name + ".mtree").
+            Must be unique within the rule.
+
+    Returns:
+        The per-layer mtree File, or None.
+    """
+    if layer.mtree != None:
+        return layer.mtree
+    if layer.blob != None and media_type_is_erofs(layer.media_type):
+        return build_layer_mtree(ctx, name, erofs_blob = layer.blob)
+    if layer.blob != None and media_type_is_tar(layer.media_type):
+        return build_layer_mtree(ctx, name, tar_blob = layer.blob)
+    if layer.compact_stream != None:
+        return build_layer_mtree(ctx, name, compact_stream = layer.compact_stream)
+    return None
+
 def image_layer_mtrees(ctx, layers, name_prefix = None):
     """Ordered per-layer mtree Files for an image, building missing ones on the fly.
 
-    For each layer (in image/layer order):
-    - if it already carries an `mtree` (produced by a rules_img layer rule, or by
-      the pull/import rule for a blob-bearing layer), use it;
-    - else if it has a materialized blob whose media type can be rendered (a tar
-      changeset or an EROFS filesystem image), render an mtree from that blob on
-      the fly with build_layer_mtree -- this covers raw tars added via
-      `DefaultInfo` and any other blob-bearing layer whose source did not
-      precompute one;
-    - else skip it (a shallow/lazy layer with no blob, or a blob that is neither,
-      such as an empty layer or a non-tar artifact).
-
-    Skips are best-effort: if any layer is skipped the merged mtree represents only
-    a subset of the image. The rule must expose the same hidden _mtree_* attributes
-    build_layer_mtree reads (path prefix, options, and layer layout).
+    Resolves every layer with layer_mtree_or_none and drops the layers it cannot
+    describe. Skips are best-effort: if any layer is skipped the merged mtree
+    represents only a subset of the image. The rule must expose the same hidden
+    _mtree_* attributes build_layer_mtree reads (LAYER_MTREE_ATTRS).
 
     Args:
         ctx: Rule context of an image rule.
@@ -383,14 +426,9 @@ def image_layer_mtrees(ctx, layers, name_prefix = None):
     prefix = name_prefix if name_prefix != None else ctx.label.name
     mtrees = []
     for i, layer in enumerate(layers):
-        if layer.mtree != None:
-            mtrees.append(layer.mtree)
-        elif layer.blob == None:
-            continue
-        elif media_type_is_erofs(layer.media_type):
-            mtrees.append(build_layer_mtree(ctx, "{}_layer_{}".format(prefix, i), erofs_blob = layer.blob))
-        elif media_type_is_tar(layer.media_type):
-            mtrees.append(build_layer_mtree(ctx, "{}_layer_{}".format(prefix, i), tar_blob = layer.blob))
+        mtree_file = layer_mtree_or_none(ctx, layer, "{}_layer_{}".format(prefix, i))
+        if mtree_file != None:
+            mtrees.append(mtree_file)
     return mtrees
 
 def image_layer_ztocs(ctx, layers, *, span_size, name_prefix = None):

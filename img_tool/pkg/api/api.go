@@ -132,6 +132,12 @@ type History struct {
 // was provided, so every layer carries at least a created_by entry.
 const MissingHistoryMarker = "history missing"
 
+// BazelBuildHistoryPrefix is what the rules_img layer rules put in front of a
+// layer's label when assembling its created_by (see layer_history in
+// //img/private/common:layer_helper.bzl). Readers strip it to recover the bare
+// label.
+const BazelBuildHistoryPrefix = "bazel build "
+
 // LayerHistory returns the history for a layer whose creating command is
 // createdBy (e.g. "bazel build //pkg:target", assembled by the caller). When
 // createdBy is empty (no --history was provided), it records the

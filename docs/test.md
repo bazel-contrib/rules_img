@@ -3,8 +3,71 @@
 Public API for testing container images.
 
 ```python
-load("@rules_img//img:test.bzl", "image_structure_test")
+load("@rules_img//img:test.bzl", "image_size_test", "image_structure_test")
 ```
+
+<a id="image_size_test"></a>
+
+## image_size_test
+
+<pre>
+load("@rules_img//img:test.bzl", "image_size_test")
+
+image_size_test(<a href="#image_size_test-name">name</a>, <a href="#image_size_test-image">image</a>, <a href="#image_size_test-max_duplicated_bytes">max_duplicated_bytes</a>, <a href="#image_size_test-max_wasted_bytes">max_wasted_bytes</a>)
+</pre>
+
+Budgets the wasted and duplicated bytes an image ships across its layers.
+
+`image_size_test` replays the image's per-layer mtrees in layer order -- the
+test itself never reads a layer blob -- and fails when a budget is exceeded:
+
+- **Wasted bytes** (`max_wasted_bytes`): file bytes shipped in a layer that a
+  later layer shadows with an overwrite, a whiteout (`.wh.<name>`), or an
+  opaque whiteout (`.wh..wh..opq`). They are pulled with every image but are
+  unreachable in the final filesystem.
+- **Duplicated bytes** (`max_duplicated_bytes`): identical file content (by
+  `sha256digest`) live at multiple paths, counted once per extra copy. A
+  hardlink group ships its content once however many names point at it, and
+  symlinks carry no file bytes, so neither inflates the count.
+
+Both are counted in uncompressed tar entry sizes, so they are larger than the
+compressed bytes a registry reports for the same layers. At least one budget
+must be set. On failure the test lists the largest offenders, each attributed to
+the layer that wrote the bytes and the layer that shadowed them (with the
+producing target where the layer history records it).
+
+The `image` must be a rules_img `image_manifest` or `image_index`; for an
+index, every single-platform child image is checked.
+
+Every layer must expose its filesystem content, otherwise the test fails with an
+"incomplete layer metadata" error rather than silently passing on a subset of
+the image. In particular a base image pulled with the default
+`layer_handling = "shallow"` never fetches its layer blobs, so it has no mtree
+to replay: pull it with `layer_handling = "eager"` to make an image on top of it
+measurable.
+
+Example:
+
+```python
+load("@rules_img//img:test.bzl", "image_size_test")
+
+image_size_test(
+    name = "app_size_test",
+    image = ":app",
+    max_wasted_bytes = "10MiB",
+)
+```
+
+**ATTRIBUTES**
+
+
+| Name  | Description | Type | Mandatory | Default |
+| :------------- | :------------- | :------------- | :------------- | :------------- |
+| <a id="image_size_test-name"></a>name |  A unique name for this target.   | <a href="https://bazel.build/concepts/labels#target-names">Name</a> | required |  |
+| <a id="image_size_test-image"></a>image |  Image to check: a rules_img image_manifest or image_index.   | <a href="https://bazel.build/concepts/labels">Label</a> | required |  |
+| <a id="image_size_test-max_duplicated_bytes"></a>max_duplicated_bytes |  Budget for duplicated bytes (identical file content live at multiple paths, counted once per extra copy).<br><br>A byte count, optionally with a `KiB`/`MiB`/`GiB`/`TiB` suffix (e.g. `"10000000"`, `"512MiB"`). Empty (the default) leaves duplicated bytes unchecked; the measured value is still reported.   | String | optional |  `""`  |
+| <a id="image_size_test-max_wasted_bytes"></a>max_wasted_bytes |  Budget for wasted bytes (shipped file bytes shadowed by a later layer).<br><br>A byte count, optionally with a `KiB`/`MiB`/`GiB`/`TiB` suffix (e.g. `"10000000"`, `"512MiB"`). Empty (the default) leaves wasted bytes unchecked; the measured value is still reported.   | String | optional |  `""`  |
+
 
 <a id="image_structure_test"></a>
 

@@ -43,7 +43,7 @@ func collectErofs(ra io.ReaderAt, digester ContentDigester, rangeDigester func(o
 		}
 
 		if isOverlayOpaque(hdr) {
-			marker := path.Join(p, whiteoutOpaque)
+			marker := path.Join(p, WhiteoutOpaque)
 			out = append(out, collectedEntry{
 				path: marker,
 				hdr: &tar.Header{
@@ -63,7 +63,7 @@ func collectErofs(ra io.ReaderAt, digester ContentDigester, rangeDigester func(o
 		}
 		nlink := st.Nlink
 		if isOverlayWhiteout(hdr) {
-			p = path.Join(path.Dir(p), whiteoutPrefix+path.Base(p))
+			p = path.Join(path.Dir(p), WhiteoutPrefix+path.Base(p))
 			hdr.Name = p
 			hdr.Typeflag = tar.TypeReg
 			nlink = 1
