@@ -13,6 +13,7 @@ and using them, and the byte-level specification of the on-disk format:
   [What this means in practice](#what-this-means-in-practice) ·
   [Usage (CLI)](#usage) ·
   [ext4 and FAT32 images](#compact-streams-of-ext4-and-fat32-images) ·
+  [disk images](#compact-streams-of-disk-images) ·
   [Materializing the blob on demand](#materializing-the-blob-on-demand) ·
   [Reconstructing a layer](#reconstructing-a-layer-from-a-compact-stream) ·
   [Inspecting a compact stream](#inspecting-a-compact-stream-without-reconstruction) ·
@@ -424,6 +425,32 @@ FAT32 images of `img_tool/pkg/fs/fat32`, which also store every file contiguousl
 `img layer --format ext4` or `--format fat32`, `--compact-stream` writes the stream next to the
 image, and `--compact-stream-inline-threshold` is the minimum size of a referenced file (zero
 references every file).
+
+## Compact streams of disk images
+
+A [disk image](disk-images.md) with a GPT or MBR partition table is a byte stream
+too, and `disk_image` can emit a compact stream of it. The streams of the
+partitions are **spliced** into the stream of the disk: the inline bytes of a
+partition's stream are written at the partition's offset, and its CAS references
+are kept with their offset moved. A compact stream of a disk therefore references
+the same blobs as the streams of the layers it was made of, without reading them.
+
+The Go helpers are in `img_tool/pkg/compactstream`:
+
+- `AppendStream(w, index, patches)` splices another compact stream (of plain
+  bytes: not compressed, same hash algorithm, not a tar) and returns its size.
+  `Patch`es overwrite inline bytes (the hidden sectors of a FAT32 boot sector,
+  for example); a patch over a reference is an error.
+- `AppendImage` and `AppendImageRef` append an image inline, or as one reference
+  to the whole image.
+- `Writer.WriteZeroRun(n)` appends zeros. The format has no zero-run primitive, so
+  they are inline bytes, which a stream compressed with `CompressIncrementally`
+  keeps small. Placeholders for zero regions would make huge, mostly empty disks
+  cheaper to write.
+- `ReconstructedSize` is the size a stream reconstructs to.
+
+`compact-stream reconstruct` takes `--cas-dir` several times: a blob is taken from
+the first directory that has it.
 
 ## Materializing the blob on demand
 
