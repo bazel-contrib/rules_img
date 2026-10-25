@@ -249,6 +249,11 @@ def _multi_deploy_impl(ctx):
         ),
         OutputGroupInfo(
             deploy_manifest = depset([deploy_metadata]),
+            push_at_build_time = depset(transitive = [
+                op[OutputGroupInfo].push_at_build_time
+                for op in ctx.attr.operations
+                if OutputGroupInfo in op and hasattr(op[OutputGroupInfo], "push_at_build_time")
+            ]),
         ),
         RunEnvironmentInfo(
             environment = environment,
