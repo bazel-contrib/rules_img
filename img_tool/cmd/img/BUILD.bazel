@@ -10,6 +10,7 @@ go_library(
         "//cmd/base",
         "//cmd/casdir",
         "//cmd/compactstream",
+        "//cmd/diskimage",
         "//cmd/compress",
         "//cmd/copyfiles",
         "//cmd/cst",
