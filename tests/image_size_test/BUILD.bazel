@@ -1,9 +1,11 @@
 load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
+load("@bazel_skylib//rules:build_test.bzl", "build_test")
 load("@bazel_skylib//rules:write_file.bzl", "write_file")
 load("@rules_img//img:image.bzl", "image_index", "image_manifest")
 load("@rules_img//img:layer.bzl", "file_metadata", "image_layer")
 load("@rules_img//img:test.bzl", "image_size_test")
-load(":defs.bzl", "shallow_image")
+load("@rules_pkg//pkg:tar.bzl", "pkg_tar")
+load(":defs.bzl", "opaque_layer_image")
 
 # gazelle:exclude_from_release
 
@@ -75,8 +77,8 @@ image_size_test(
     name = "clean_test",
     size = "small",
     image = ":clean",
-    max_duplicated_bytes = 0,
-    max_wasted_bytes = 0,
+    max_duplicated_bytes = "0",
+    max_wasted_bytes = "0",
 )
 
 # Multi-platform image (image_index -> ImageIndexInfo branch): every
@@ -110,8 +112,8 @@ image_size_test(
     name = "clean_index_test",
     size = "small",
     image = ":clean_index",
-    max_duplicated_bytes = 0,
-    max_wasted_bytes = 0,
+    max_duplicated_bytes = "0",
+    max_wasted_bytes = "0",
 )
 
 # --- a wasteful image: layer 2 overwrites the library and whiteouts hello.txt ---
@@ -146,13 +148,49 @@ image_manifest(
     ],
 )
 
-# Wasted bytes are exactly the shadowed lib_v1 (55) + hello.txt (6) = 61; a
-# budget at the measured value passes.
+# Wasted bytes are exactly the shadowed lib_v1 (55) + hello.txt (6) = 61. The
+# pair of budgets brackets the measured value: one byte less must fail (see
+# wasteful_over_budget_test), so together they assert the exact number rather
+# than just an upper bound.
 image_size_test(
     name = "wasteful_within_budget_test",
     size = "small",
     image = ":wasteful",
-    max_wasted_bytes = 61,
+    max_wasted_bytes = "61",
+)
+
+# --- the same waste, but the base layer is a raw tar added via DefaultInfo ---
+#
+# A tar file target has no precomputed mtree, so this is the only fixture that
+# exercises the aspect's on-the-fly `img mtree` branch.
+pkg_tar(
+    name = "raw_lib_tar",
+    srcs = [":lib_v1"],
+    package_dir = "/usr/lib",
+)
+
+image_layer(
+    name = "raw_lib_replacement_layer",
+    srcs = {"/usr/lib/lib_v1.so": ":lib_v2"},
+    default_metadata = file_metadata(
+        mode = "0644",
+        mtime = "2023-01-01T00:00:00Z",
+    ),
+)
+
+image_manifest(
+    name = "raw_tar_wasteful",
+    layers = [
+        ":raw_lib_tar",  # tar files can be passed directly
+        ":raw_lib_replacement_layer",
+    ],
+)
+
+image_size_test(
+    name = "raw_tar_wasteful_within_budget_test",
+    size = "small",
+    image = ":raw_tar_wasteful",
+    max_wasted_bytes = "55",
 )
 
 # --- a duplicated image: the same content at two paths in two layers ---
@@ -183,23 +221,35 @@ image_manifest(
     ],
 )
 
-# One extra copy of lib_v1 (55 bytes); a budget at the measured value passes.
+# One extra copy of lib_v1 (55 bytes); bracketed by duplicated_over_budget_test
+# at 54.
 image_size_test(
     name = "duplicated_within_budget_test",
     size = "small",
     image = ":duplicated",
-    max_duplicated_bytes = 55,
-    max_wasted_bytes = 0,
+    max_duplicated_bytes = "55",
+    max_wasted_bytes = "0",
 )
 
-# Negative cases (run manually to confirm the budgets fail loudly):
+# Negative cases. Each budget is one byte below the value the matching
+# within-budget test above accepts, so the pair pins the measured number
+# exactly: an analyzer that under-counted would pass the within-budget test but
+# also pass these, which the comments below are checked against by hand.
+#
 #   bazel test //tests/image_size_test:wasteful_over_budget_test     # -> fails: 61 wasted bytes over a 60 budget
-#   bazel test //tests/image_size_test:duplicated_over_budget_test   # -> fails: 55 duplicated bytes over a 0 budget
+#   bazel test //tests/image_size_test:duplicated_over_budget_test   # -> fails: 55 duplicated bytes over a 54 budget
+#   bazel test //tests/image_size_test:shallow_incomplete_test       # -> fails: incomplete layer metadata
+#   bazel test //tests/image_size_test:unknown_media_type_test       # -> fails: incomplete layer metadata
+#
+# They are `manual` because the repository has no expect-failure harness for
+# test rules; build_test below keeps CI analyzing and building them, and the
+# exhaustive exact-value assertions live in
+# //img_tool/cmd/imagesizetest:imagesizetest_test.
 image_size_test(
     name = "wasteful_over_budget_test",
     size = "small",
     image = ":wasteful",
-    max_wasted_bytes = 60,
+    max_wasted_bytes = "60",
     tags = ["manual"],
 )
 
@@ -207,20 +257,21 @@ image_size_test(
     name = "duplicated_over_budget_test",
     size = "small",
     image = ":duplicated",
-    max_duplicated_bytes = 0,
+    max_duplicated_bytes = "54",
     tags = ["manual"],
 )
 
 # A shallow base-image layer (no blob, no mtree) must fail with an
-# "incomplete layer metadata" error, not silently pass:
-#   bazel test //tests/image_size_test:shallow_incomplete_test  # -> fails: incomplete layer metadata
+# "incomplete layer metadata" error, not silently pass. So must a layer whose
+# media type is absent, which must not be mistaken for a layer that positively
+# ships no filesystem entries.
 write_file(
     name = "shallow_metadata",
     out = "shallow_metadata.json",
     content = ['{"mediaType":"application/vnd.oci.image.layer.v1.tar+gzip","digest":"sha256:0000000000000000000000000000000000000000000000000000000000000000","size":1234,"history":[{"created_by":"bazel build //tests/image_size_test:shallow"}]}'],
 )
 
-shallow_image(
+opaque_layer_image(
     name = "shallow",
     metadata = ":shallow_metadata",
 )
@@ -229,8 +280,35 @@ image_size_test(
     name = "shallow_incomplete_test",
     size = "small",
     image = ":shallow",
-    max_wasted_bytes = 0,
+    max_wasted_bytes = "0",
     tags = ["manual"],
+)
+
+opaque_layer_image(
+    name = "unknown_media_type",
+    media_type = "",
+    metadata = ":shallow_metadata",
+)
+
+image_size_test(
+    name = "unknown_media_type_test",
+    size = "small",
+    image = ":unknown_media_type",
+    max_wasted_bytes = "0",
+    tags = ["manual"],
+)
+
+# The manual tests above are excluded from wildcard expansion for running AND
+# for building, so build them explicitly: a provider or aspect change that
+# breaks their analysis should not wait for someone to run them by hand.
+build_test(
+    name = "negative_cases_build_test",
+    targets = [
+        ":duplicated_over_budget_test",
+        ":shallow_incomplete_test",
+        ":unknown_media_type_test",
+        ":wasteful_over_budget_test",
+    ],
 )
 
 bzl_library(

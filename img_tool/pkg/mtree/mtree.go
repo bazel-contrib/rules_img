@@ -73,8 +73,12 @@ const schilyXattrPrefix = "SCHILY.xattr."
 
 // OCI layer whiteout markers (see the OCI image-spec layer changeset rules).
 const (
-	whiteoutPrefix = ".wh."
-	whiteoutOpaque = ".wh..wh..opq"
+	// WhiteoutPrefix marks a tar entry as the deletion of the sibling entry
+	// whose name follows the prefix.
+	WhiteoutPrefix = ".wh."
+	// WhiteoutOpaque is the name of the marker that hides everything lower
+	// layers put in the entry's directory.
+	WhiteoutOpaque = ".wh..wh..opq"
 )
 
 // Options controls how the inputs are rendered as an mtree spec.
@@ -441,7 +445,7 @@ func writeChangeset(dh *gomtree.DirectoryHierarchy, collected []collectedEntry, 
 		parentComps := comps[:len(comps)-1]
 
 		switch {
-		case base == whiteoutOpaque:
+		case base == WhiteoutOpaque:
 			// Opaque whiteout: hide every entry inherited from lower layers in
 			// this directory (recursively), keeping entries contributed by the
 			// current layer (input) and any container directories they need. For
@@ -454,10 +458,10 @@ func writeChangeset(dh *gomtree.DirectoryHierarchy, collected []collectedEntry, 
 				}
 			}
 			continue
-		case strings.HasPrefix(base, whiteoutPrefix):
+		case strings.HasPrefix(base, WhiteoutPrefix):
 			// Regular whiteout: remove the named sibling if present.
 			parent := root.ensureDir(parentComps, input)
-			delete(parent.children, strings.TrimPrefix(base, whiteoutPrefix))
+			delete(parent.children, strings.TrimPrefix(base, WhiteoutPrefix))
 			continue
 		}
 

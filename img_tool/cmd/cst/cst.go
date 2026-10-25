@@ -10,7 +10,6 @@ package cst
 import (
 	"context"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"os"
 
@@ -18,29 +17,16 @@ import (
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/mtree"
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/structuretest"
 )
 
 // Process is the entry point for `img image-structure-test`.
 func Process(_ context.Context, args []string) {
-	var requestPath string
-	flagSet := flag.NewFlagSet("image-structure-test", flag.ExitOnError)
-	flagSet.Usage = func() {
-		fmt.Fprintf(flagSet.Output(), "Validates an image's structure using its config JSON and mtree.\n\n")
-		fmt.Fprintf(flagSet.Output(), "Usage: img image-structure-test --request <request.json>\n")
-		flagSet.PrintDefaults()
-	}
-	flagSet.StringVar(&requestPath, "request", "", "Path to the JSON request file (required).")
-	if err := flagSet.Parse(args); err != nil {
-		os.Exit(1)
-	}
-	if requestPath == "" && flagSet.NArg() > 0 {
-		requestPath = flagSet.Arg(0)
-	}
-	if requestPath == "" {
-		fmt.Fprintln(os.Stderr, "Error: --request is required")
-		flagSet.Usage()
-		os.Exit(1)
-	}
+	requestPath := structuretest.RequestPathFlag(
+		"image-structure-test",
+		"Validates an image's structure using its config JSON and mtree.",
+		args,
+	)
 
 	ok, err := run(requestPath)
 	if err != nil {

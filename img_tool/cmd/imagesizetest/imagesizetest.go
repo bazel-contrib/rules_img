@@ -11,7 +11,6 @@ package imagesizetest
 import (
 	"context"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"os"
 	"strings"
@@ -19,6 +18,7 @@ import (
 	"github.com/bazelbuild/rules_go/go/runfiles"
 
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/api"
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/bytesize"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/mtree"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/structuretest"
 )
@@ -46,9 +46,10 @@ type ImageSpec struct {
 }
 
 // LayerSpec is one layer of an image, bottom (base) to top. Exactly one of
-// Mtree, Missing, or NonTar describes it: a tar layer with an mtree, a tar
-// layer without one (incomplete metadata), or a non-tar layer (which
-// contributes no filesystem entries and is safe to skip).
+// Mtree, Missing, or NonTar describes it: a tar layer with an mtree, a layer
+// whose filesystem content is unknown (incomplete metadata), or a layer of a
+// media type that positively carries no filesystem entries (and is therefore
+// safe to skip).
 type LayerSpec struct {
 	Mtree    string `json:"mtree,omitempty"`    // runfiles rlocation path
 	Metadata string `json:"metadata,omitempty"` // runfiles rlocation path of the layer metadata JSON
@@ -58,25 +59,11 @@ type LayerSpec struct {
 
 // Process is the entry point for `img image-size-test`.
 func Process(_ context.Context, args []string) {
-	var requestPath string
-	flagSet := flag.NewFlagSet("image-size-test", flag.ExitOnError)
-	flagSet.Usage = func() {
-		fmt.Fprintf(flagSet.Output(), "Checks an image's wasted and duplicated layer bytes against budgets.\n\n")
-		fmt.Fprintf(flagSet.Output(), "Usage: img image-size-test --request <request.json>\n")
-		flagSet.PrintDefaults()
-	}
-	flagSet.StringVar(&requestPath, "request", "", "Path to the JSON request file (required).")
-	if err := flagSet.Parse(args); err != nil {
-		os.Exit(1)
-	}
-	if requestPath == "" && flagSet.NArg() > 0 {
-		requestPath = flagSet.Arg(0)
-	}
-	if requestPath == "" {
-		fmt.Fprintln(os.Stderr, "Error: --request is required")
-		flagSet.Usage()
-		os.Exit(1)
-	}
+	requestPath := structuretest.RequestPathFlag(
+		"image-size-test",
+		"Checks an image's wasted and duplicated layer bytes against budgets.",
+		args,
+	)
 
 	ok, err := run(requestPath)
 	if err != nil {
@@ -123,38 +110,44 @@ func run(requestPath string) (bool, error) {
 
 func checkImage(img ImageSpec, req *Request) (bool, error) {
 	layers := make([]layerInput, 0, len(img.Layers))
+	measured := 0
 	for _, spec := range img.Layers {
 		layer, err := loadLayer(spec)
 		if err != nil {
 			return false, err
+		}
+		if !spec.NonTar {
+			measured++
 		}
 		layers = append(layers, layer)
 	}
 
 	rep, err := analyze(layers, req.MaxDuplicatedBytes != nil)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "FAIL image %s: %v\n", img.Platform, err)
-		return false, nil
+		// An analysis error is a configuration problem, not a budget
+		// violation, so it is reported as an error rather than a FAIL.
+		return false, err
 	}
 
+	scope := fmt.Sprintf("%d of %d layers", measured, len(layers))
 	pass := true
 	if req.MaxWastedBytes != nil && rep.WastedBytes > *req.MaxWastedBytes {
 		pass = false
-		fmt.Fprintf(os.Stderr, "FAIL image %s: wasted bytes %d (%s) exceeds budget %d (%s)\n",
-			img.Platform, rep.WastedBytes, humanBytes(rep.WastedBytes), *req.MaxWastedBytes, humanBytes(*req.MaxWastedBytes))
+		fmt.Fprintf(os.Stderr, "FAIL image %s: wasted bytes %d (%s uncompressed) exceeds budget %d (%s)\n",
+			img.Platform, rep.WastedBytes, bytesize.Format(rep.WastedBytes), *req.MaxWastedBytes, bytesize.Format(*req.MaxWastedBytes))
 		if len(rep.Waste) > 0 {
 			fmt.Fprintf(os.Stderr, "  largest waste:\n")
 			for _, w := range rep.Waste[:min(len(rep.Waste), maxReported)] {
 				fmt.Fprintf(os.Stderr, "      %-10s /%s  written by %s, %s %s\n",
-					humanBytes(w.Size), w.Path, layerRef(layers, w.WrittenLayer), shadowVerb(w.Reason), layerRef(layers, w.ShadowedLayer))
+					bytesize.Format(w.Size), w.Path, layerRef(layers, w.WrittenLayer), w.Reason.Phrase(), layerRef(layers, w.ShadowedLayer))
 			}
 			fmt.Fprintf(os.Stderr, "  hint: remove the file from the earlier layer, or avoid overwriting it in the later one.\n")
 		}
 	}
 	if req.MaxDuplicatedBytes != nil && rep.DuplicatedBytes > *req.MaxDuplicatedBytes {
 		pass = false
-		fmt.Fprintf(os.Stderr, "FAIL image %s: duplicated bytes %d (%s) exceeds budget %d (%s)\n",
-			img.Platform, rep.DuplicatedBytes, humanBytes(rep.DuplicatedBytes), *req.MaxDuplicatedBytes, humanBytes(*req.MaxDuplicatedBytes))
+		fmt.Fprintf(os.Stderr, "FAIL image %s: duplicated bytes %d (%s uncompressed) exceeds budget %d (%s)\n",
+			img.Platform, rep.DuplicatedBytes, bytesize.Format(rep.DuplicatedBytes), *req.MaxDuplicatedBytes, bytesize.Format(*req.MaxDuplicatedBytes))
 		if len(rep.Duplicates) > 0 {
 			fmt.Fprintf(os.Stderr, "  largest duplicates:\n")
 			for _, g := range rep.Duplicates[:min(len(rep.Duplicates), maxReported)] {
@@ -163,39 +156,39 @@ func checkImage(img ImageSpec, req *Request) (bool, error) {
 					paths[i] = "/" + p
 				}
 				fmt.Fprintf(os.Stderr, "      %-10s extra for %d copies of %s content: %s\n",
-					humanBytes(g.ExtraBytes()), len(g.Paths), humanBytes(g.Size), strings.Join(paths, ", "))
+					bytesize.Format(g.ExtraBytes()), len(g.Paths), bytesize.Format(g.Size), strings.Join(paths, ", "))
 			}
 			fmt.Fprintf(os.Stderr, "  hint: keep one copy and link or reference it from the other paths.\n")
 		}
 	}
 	if pass {
-		fmt.Fprintf(os.Stderr, "PASS image %s: wasted bytes %s, duplicated bytes %s\n",
-			img.Platform, budgetSummary(rep.WastedBytes, req.MaxWastedBytes), budgetSummary(rep.DuplicatedBytes, req.MaxDuplicatedBytes))
+		fmt.Fprintf(os.Stderr, "PASS image %s (%s): wasted bytes %s, duplicated bytes %s\n",
+			img.Platform, scope,
+			budgetSummary(rep.WastedBytes, true, req.MaxWastedBytes),
+			budgetSummary(rep.DuplicatedBytes, rep.DuplicatesMeasured, req.MaxDuplicatedBytes))
 	}
 	return pass, nil
 }
 
-func budgetSummary(value int64, budget *int64) string {
-	if budget == nil {
-		return fmt.Sprintf("%d (%s, no budget)", value, humanBytes(value))
+// budgetSummary renders a measured value against its budget. A value that was
+// never measured is said so rather than reported as zero.
+func budgetSummary(value int64, measured bool, budget *int64) string {
+	if !measured {
+		return "not measured"
 	}
-	return fmt.Sprintf("%d (%s, budget %s)", value, humanBytes(value), humanBytes(*budget))
+	if budget == nil {
+		return fmt.Sprintf("%d (%s, no budget)", value, bytesize.Format(value))
+	}
+	return fmt.Sprintf("%d (%s, budget %s)", value, bytesize.Format(value), bytesize.Format(*budget))
 }
 
 // layerRef renders "layer 2" or "layer 2 (//app:deps)" for a 0-based index.
 func layerRef(layers []layerInput, i int) string {
 	ref := fmt.Sprintf("layer %d", i+1)
-	if i >= 0 && i < len(layers) && layers[i].name != "" {
+	if layers[i].name != "" {
 		ref += " (" + layers[i].name + ")"
 	}
 	return ref
-}
-
-func shadowVerb(reason string) string {
-	if strings.HasPrefix(reason, "hidden") {
-		return reason + " in"
-	}
-	return reason + " by"
 }
 
 func loadLayer(spec LayerSpec) (layerInput, error) {
@@ -232,22 +225,30 @@ func loadLayer(spec LayerSpec) (layerInput, error) {
 }
 
 // layerName attributes a layer to its producing target where possible: the
-// created_by of the layer's first history entry, with the "bazel build "
-// prefix the layer rules add stripped back to the bare label.
+// created_by of the history entry that actually shipped filesystem bytes, with
+// the "bazel build " prefix the layer rules add stripped back to the bare
+// label. A pulled image's layer carries the metadata-only steps that preceded
+// it (ENV, WORKDIR, ...) as empty_layer history entries, which named no bytes
+// and so must not be reported as the layer's origin.
 func layerName(metadataPath string) (string, error) {
 	desc, err := loadJSON[api.Descriptor](metadataPath)
 	if err != nil {
 		return "", fmt.Errorf("reading layer metadata: %w", err)
 	}
-	for _, h := range desc.History {
-		name := strings.TrimSpace(strings.TrimPrefix(h.CreatedBy, "bazel build "))
-		if name == "" || name == api.MissingHistoryMarker {
-			continue
+	for _, skipEmpty := range []bool{true, false} {
+		for _, h := range desc.History {
+			if skipEmpty && h.EmptyLayer {
+				continue
+			}
+			name := strings.TrimSpace(strings.TrimPrefix(h.CreatedBy, api.BazelBuildHistoryPrefix))
+			if name == "" || name == api.MissingHistoryMarker {
+				continue
+			}
+			if runes := []rune(name); len(runes) > 80 {
+				name = string(runes[:80]) + "…"
+			}
+			return name, nil
 		}
-		if runes := []rune(name); len(runes) > 80 {
-			name = string(runes[:80]) + "…"
-		}
-		return name, nil
 	}
 	return "", nil
 }

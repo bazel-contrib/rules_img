@@ -25,14 +25,14 @@ bzl_library(
 )
 
 bzl_library(
-    name = "image_structure_test_info",
-    srcs = ["image_structure_test_info.bzl"],
+    name = "image_size_test_info",
+    srcs = ["image_size_test_info.bzl"],
     visibility = ["//img:__subpackages__"],
 )
 
 bzl_library(
-    name = "image_size_test_info",
-    srcs = ["image_size_test_info.bzl"],
+    name = "image_structure_test_info",
+    srcs = ["image_structure_test_info.bzl"],
     visibility = ["//img:__subpackages__"],
 )
 

@@ -2,11 +2,11 @@
 
 load("@rules_img//img:providers.bzl", "ImageManifestInfo", "SingleLayerInfo")
 
-def _shallow_image_impl(ctx):
+def _opaque_layer_impl(ctx):
     layer = SingleLayerInfo(
         blob = None,
         metadata = ctx.file.metadata,
-        media_type = "application/vnd.oci.image.layer.v1.tar+gzip",
+        media_type = ctx.attr.media_type,
         estargz = False,
         compact_stream = None,
         layer_input_files = None,
@@ -22,13 +22,21 @@ def _shallow_image_impl(ctx):
         layers = [layer],
     )]
 
-shallow_image = rule(
-    implementation = _shallow_image_impl,
+opaque_layer_image = rule(
+    implementation = _opaque_layer_impl,
     attrs = {
         "metadata": attr.label(allow_single_file = True, mandatory = True),
+        "media_type": attr.string(
+            doc = """Media type of the single layer.
+
+A tar type models a pulled base-image layer that is never fetched; the empty
+string models a provider that does not record the field at all. Either way the
+layer's filesystem content is unknown.""",
+            default = "application/vnd.oci.image.layer.v1.tar+gzip",
+        ),
     },
-    doc = """Minimal ImageManifestInfo stand-in whose only layer is shallow
-(no blob, no mtree), like a pulled base image layer that is never fetched.
-image_size_test must fail on it with an "incomplete layer metadata" error
-instead of silently passing on a subset of the image.""",
+    doc = """Minimal ImageManifestInfo stand-in whose only layer exposes no
+filesystem content (no blob, no mtree, no compact stream). image_size_test must
+fail on it with an "incomplete layer metadata" error instead of silently passing
+on a subset of the image.""",
 )

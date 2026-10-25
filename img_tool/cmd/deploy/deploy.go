@@ -26,6 +26,7 @@ import (
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/auth/credential"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/auth/protohelper"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/auth/registry"
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/bytesize"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/cas"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/deployvfs"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/gateway"
@@ -760,28 +761,12 @@ func printBlobStats(vfs *deployvfs.VFS, casBlobs *casSources) {
 		return
 	}
 	fmt.Fprintf(os.Stderr, "    remote cache blobs: %d from local cache (%s), %d fetched (%s), %d deduplicated, %d evicted\n",
-		cacheStats.Hits, humanizeBytes(cacheStats.BytesFromCache),
-		cacheStats.Fetches, humanizeBytes(cacheStats.BytesFetched),
+		cacheStats.Hits, bytesize.Format(cacheStats.BytesFromCache),
+		cacheStats.Fetches, bytesize.Format(cacheStats.BytesFetched),
 		cacheStats.Deduped, cacheStats.Evicted)
 	if cacheStats.DiskDisabled {
 		fmt.Fprintf(os.Stderr, "    remote cache blobs: local caching was disabled (see the warning above)\n")
 	}
-}
-
-// humanizeBytes renders a byte count with a binary unit.
-func humanizeBytes(n int64) string {
-	const unit = 1024
-	if n < unit {
-		return fmt.Sprintf("%d B", n)
-	}
-	value := float64(n)
-	for _, suffix := range []string{"KiB", "MiB", "GiB", "TiB"} {
-		value /= unit
-		if value < unit {
-			return fmt.Sprintf("%.1f %s", value, suffix)
-		}
-	}
-	return fmt.Sprintf("%.1f PiB", value/unit)
 }
 
 // stringSliceFlag implements flag.Value for collecting multiple string values
@@ -970,42 +955,12 @@ func byteSizeFromEnv(name string, fallback int64) (int64, bool) {
 	if raw == "" {
 		return 0, false
 	}
-	size, err := parseByteSize(raw)
+	size, err := bytesize.Parse(raw)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "WARNING: ignoring invalid %s=%q: %v, using %d\n", name, raw, err, fallback)
 		return 0, false
 	}
 	return size, true
-}
-
-// parseByteSize parses a byte count, optionally with a binary unit suffix
-// (K/KB/KiB, M/MB/MiB, G/GB/GiB, T/TB/TiB, case-insensitive). Suffixes are
-// powers of 1024 either way, as everywhere else in Bazel's ecosystem.
-func parseByteSize(raw string) (int64, error) {
-	digits := strings.TrimRight(raw, "kKmMgGtTiIbB \t")
-	unit := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(raw, digits)))
-	value, err := strconv.ParseFloat(strings.TrimSpace(digits), 64)
-	if err != nil {
-		return 0, fmt.Errorf("not a byte count")
-	}
-	multiplier := int64(1)
-	switch unit {
-	case "", "b":
-	case "k", "kb", "kib":
-		multiplier = 1 << 10
-	case "m", "mb", "mib":
-		multiplier = 1 << 20
-	case "g", "gb", "gib":
-		multiplier = 1 << 30
-	case "t", "tb", "tib":
-		multiplier = 1 << 40
-	default:
-		return 0, fmt.Errorf("unknown unit %q", unit)
-	}
-	if value < 0 {
-		return 0, fmt.Errorf("negative size")
-	}
-	return int64(value * float64(multiplier)), nil
 }
 
 // reapiMaxConnections returns the size of the gRPC connection pool used to read

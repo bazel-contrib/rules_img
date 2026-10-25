@@ -10,6 +10,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/api",
+        "//pkg/bytesize",
         "//pkg/mtree",
         "//pkg/structuretest",
         "@rules_go//go/runfiles",
@@ -18,7 +19,13 @@ go_library(
 
 go_test(
     name = "imagesizetest_test",
-    srcs = ["analyze_test.go"],
+    srcs = [
+        "analyze_test.go",
+        "imagesizetest_test.go",
+    ],
     embed = [":imagesizetest"],
-    deps = ["//pkg/mtree"],
+    deps = [
+        "//pkg/api",
+        "//pkg/mtree",
+    ],
 )
