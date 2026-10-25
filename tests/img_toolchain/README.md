@@ -77,6 +77,8 @@ Define validation checks to run after command execution. Multiple assertions can
 - `file_valid_tar = path`: File is valid tar format
 - `file_valid_ext4 = path`: File is an ext4 image with a valid superblock (magic, checksum, size)
 - `file_valid_fat32 = path`: File is a FAT32 image with a valid boot area (BPB, FSInfo, backup sectors, cluster count)
+- `file_valid_gpt = path`: File is a disk image with a valid GUID partition table (protective MBR, both headers and CRCs, entries, usable range)
+- `file_valid_mbr = path`: File is a disk image with a valid MBR partition table (signature, entries, overlaps, bounds)
 
 **Output Assertions:**
 - `stdout_contains = "text"`: Stdout contains text

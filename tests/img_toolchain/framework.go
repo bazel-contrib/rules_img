@@ -300,7 +300,7 @@ func parseAssertion(line string) *AssertionSpec {
 			assertion.Path = strings.TrimSpace(parts[0])
 			assertion.Content = strings.Trim(strings.TrimSpace(parts[1]), `"`)
 		}
-	case "file_valid_json", "file_valid_gzip", "file_valid_tar", "file_valid_ext4", "file_valid_fat32":
+	case "file_valid_json", "file_valid_gzip", "file_valid_tar", "file_valid_ext4", "file_valid_fat32", "file_valid_gpt", "file_valid_mbr":
 		assertion.Path = value
 	case "json_field_equals", "json_field_exists":
 		parts := strings.SplitN(value, ",", 3)
@@ -701,6 +701,19 @@ func (tf *TestFramework) checkAssertion(assertion AssertionSpec, result *Command
 		}
 		if err := validateFat32(image); err != nil {
 			return fmt.Errorf("file %s is not a valid FAT32 image: %w", assertion.Path, err)
+		}
+	case "file_valid_gpt", "file_valid_mbr":
+		fullPath := filepath.Join(tf.tempDir, assertion.Path)
+		image, err := os.ReadFile(fullPath)
+		if err != nil {
+			return fmt.Errorf("failed to read file %s: %w", assertion.Path, err)
+		}
+		validate := validateGPT
+		if assertion.Type == "file_valid_mbr" {
+			validate = validateMBR
+		}
+		if err := validate(image); err != nil {
+			return fmt.Errorf("file %s is not a valid %s disk image: %w", assertion.Path, strings.TrimPrefix(assertion.Type, "file_valid_"), err)
 		}
 	case "json_field_equals":
 		fullPath := filepath.Join(tf.tempDir, assertion.Path)
@@ -1401,6 +1414,137 @@ func validateFat32(image []byte) error {
 	first, second := image[reserved*sectorSize:][:8], image[(reserved+fatSize)*sectorSize:][:8]
 	if !bytes.Equal(first, second) || le.Uint32(first[0:]) != 0x0FFFFFF8 || le.Uint32(first[4:]) != 0x0FFFFFFF {
 		return fmt.Errorf("bad FATs: % x and % x", first, second)
+	}
+	return nil
+}
+
+// validateMBR checks the partition table of a disk with an MBR: the signature,
+// the partition entries (types, order, overlaps, bounds) and that the first
+// partition does not start inside the MBR.
+func validateMBR(image []byte) error {
+	if len(image) < 512 || image[510] != 0x55 || image[511] != 0xAA {
+		return fmt.Errorf("no MBR signature")
+	}
+	if string(image[512:520]) == "EFI PART" {
+		return fmt.Errorf("the disk has a GPT")
+	}
+	le := binary.LittleEndian
+	sectors := uint64(len(image) / 512)
+	var prevEnd uint64 = 1
+	active, count := 0, 0
+	for i := 0; i < 4; i++ {
+		e := image[446+16*i : 446+16*(i+1)]
+		if bytes.Equal(e, make([]byte, 16)) {
+			continue
+		}
+		count++
+		start, length := uint64(le.Uint32(e[8:])), uint64(le.Uint32(e[12:]))
+		switch e[0] {
+		case 0x80:
+			active++
+		case 0:
+		default:
+			return fmt.Errorf("partition %d: boot flag %#x", i+1, e[0])
+		}
+		if e[4] == 0 || e[4] == 0xEE {
+			return fmt.Errorf("partition %d: type %#x", i+1, e[4])
+		}
+		if start < prevEnd || length == 0 || start+length > sectors {
+			return fmt.Errorf("partition %d: sectors %d..%d are outside the disk (%d sectors) or overlap", i+1, start, start+length, sectors)
+		}
+		prevEnd = start + length
+	}
+	if count == 0 {
+		return fmt.Errorf("no partitions")
+	}
+	if active > 1 {
+		return fmt.Errorf("%d active partitions", active)
+	}
+	return nil
+}
+
+// validateGPT checks the GUID partition table of a disk: the protective MBR,
+// both headers and their CRCs, the partition entries and their CRC, and that
+// the partitions are in the usable range and do not overlap.
+func validateGPT(image []byte) error {
+	le := binary.LittleEndian
+	var sector int
+	for _, ss := range []int{512, 4096} {
+		if len(image) >= 2*ss && string(image[ss:ss+8]) == "EFI PART" {
+			sector = ss
+			break
+		}
+	}
+	if sector == 0 {
+		return fmt.Errorf("no GPT header in the second sector (512 or 4096 bytes)")
+	}
+	if len(image)%sector != 0 {
+		return fmt.Errorf("the disk is %d bytes, not a multiple of the sector size %d", len(image), sector)
+	}
+	sectors := uint64(len(image) / sector)
+	if image[510] != 0x55 || image[511] != 0xAA || image[450] != 0xEE {
+		return fmt.Errorf("no protective MBR")
+	}
+
+	checkHeader := func(name string, lba uint64) (first, last uint64, entriesLBA uint64, err error) {
+		h := image[lba*uint64(sector) : lba*uint64(sector)+92]
+		if string(h[:8]) != "EFI PART" || le.Uint32(h[8:]) != 0x00010000 || le.Uint32(h[12:]) != 92 {
+			return 0, 0, 0, fmt.Errorf("%s header: bad signature, revision or size", name)
+		}
+		cp := append([]byte(nil), h...)
+		copy(cp[16:20], []byte{0, 0, 0, 0})
+		if got := crc32.ChecksumIEEE(cp); got != le.Uint32(h[16:]) {
+			return 0, 0, 0, fmt.Errorf("%s header: CRC %#x, want %#x", name, le.Uint32(h[16:]), got)
+		}
+		if le.Uint64(h[24:]) != lba {
+			return 0, 0, 0, fmt.Errorf("%s header: it says it is at LBA %d, but is at %d", name, le.Uint64(h[24:]), lba)
+		}
+		count, size := le.Uint32(h[80:]), le.Uint32(h[84:])
+		entriesLBA = le.Uint64(h[72:])
+		end := entriesLBA*uint64(sector) + uint64(count)*uint64(size)
+		if size != 128 || end > uint64(len(image)) {
+			return 0, 0, 0, fmt.Errorf("%s header: %d entries of %d bytes at LBA %d", name, count, size, entriesLBA)
+		}
+		entries := image[entriesLBA*uint64(sector) : end]
+		if got := crc32.ChecksumIEEE(entries); got != le.Uint32(h[88:]) {
+			return 0, 0, 0, fmt.Errorf("%s header: entries CRC %#x, want %#x", name, le.Uint32(h[88:]), got)
+		}
+		return le.Uint64(h[40:]), le.Uint64(h[48:]), entriesLBA, nil
+	}
+	first, last, entriesLBA, err := checkHeader("primary", 1)
+	if err != nil {
+		return err
+	}
+	bFirst, bLast, bEntriesLBA, err := checkHeader("backup", sectors-1)
+	if err != nil {
+		return err
+	}
+	if first != bFirst || last != bLast {
+		return fmt.Errorf("the usable range differs between the headers")
+	}
+	if entriesLBA != 2 || bEntriesLBA+uint64(128*128/sector) != sectors-1 {
+		return fmt.Errorf("the entries are at LBA %d and %d, not at the start and in front of the backup header", entriesLBA, bEntriesLBA)
+	}
+	entries := image[entriesLBA*uint64(sector) : entriesLBA*uint64(sector)+128*128]
+	if !bytes.Equal(entries, image[bEntriesLBA*uint64(sector):bEntriesLBA*uint64(sector)+128*128]) {
+		return fmt.Errorf("the backup entries differ from the primary entries")
+	}
+	var prevEnd uint64
+	count := 0
+	for i := 0; i < 128; i++ {
+		e := entries[i*128 : (i+1)*128]
+		if bytes.Equal(e[:16], make([]byte, 16)) {
+			continue
+		}
+		count++
+		start, end := le.Uint64(e[32:]), le.Uint64(e[40:])
+		if start < first || end > last || end < start || start < prevEnd {
+			return fmt.Errorf("partition %d: sectors %d..%d are outside %d..%d or overlap the previous partition", i+1, start, end, first, last)
+		}
+		prevEnd = end + 1
+	}
+	if count == 0 {
+		return fmt.Errorf("no partitions")
 	}
 	return nil
 }
