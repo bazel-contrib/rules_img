@@ -8,6 +8,11 @@ stardoc_with_diff_test(
 )
 
 stardoc_with_diff_test(
+    name = "disk_image",
+    bzl_library_target = "//img:disk_image",
+)
+
+stardoc_with_diff_test(
     name = "image",
     bzl_library_target = "//img:image",
 )

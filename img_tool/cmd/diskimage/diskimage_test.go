@@ -389,8 +389,8 @@ func TestCompactInheritsReferences(t *testing.T) {
 		t.Errorf("reconstructs to %d bytes", info.ReconstructedSize())
 	}
 	// Nothing had to be put in the CAS: no image was referenced as a whole.
-	if _, err := os.Stat(cfg.outputCASDir); err == nil {
-		t.Error("an output CAS directory was created")
+	if entries, err := os.ReadDir(filepath.Join(cfg.outputCASDir, "sha256")); err != nil || len(entries) != 0 {
+		t.Errorf("the output CAS directory should exist and be empty: %v, %v", entries, err)
 	}
 }
 
@@ -443,6 +443,39 @@ func TestCompactReferencesLargeImages(t *testing.T) {
 		if len(info.Refs) != 0 {
 			t.Errorf("%d references with a high threshold", len(info.Refs))
 		}
+	}
+}
+
+// TestRelativePathsWithSymlinks runs like a build action does: with paths
+// relative to the working directory.
+func TestRelativePathsWithSymlinks(t *testing.T) {
+	f := newFixtures(t)
+	wd, _ := os.Getwd()
+	if err := os.Chdir(f.dir); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(wd)
+	cfg := &config{
+		table: "gpt", sectorSize: 512, alignment: "1MiB", inlineThreshold: "1MiB",
+		partitions:   []*partitionConfig{{label: "root", typ: "linux", image: "root.ext4"}},
+		output:       "rel.cstream",
+		compact:      true,
+		outputCASDir: "rel.cas",
+		casSymlink:   true,
+	}
+	if err := run(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := reconstructDigest(t, "rel.cstream", "rel.cas"); got == "" {
+		t.Fatal("no digest")
+	}
+	entries, err := os.ReadDir("rel.cas/sha256")
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("%v, %v", entries, err)
+	}
+	target, err := os.Readlink(filepath.Join("rel.cas/sha256", entries[0].Name()))
+	if err != nil || filepath.IsAbs(target) {
+		t.Errorf("the link is %q, %v; want a relative link", target, err)
 	}
 }
 

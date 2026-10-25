@@ -350,6 +350,13 @@ func writeCompact(ctx context.Context, cfg *config, l *disk.Layout, inputs []*in
 	if err != nil {
 		return err
 	}
+	// The directory exists even if no image ends up in it, so that it can be a
+	// declared output of a build action.
+	if cfg.outputCASDir != "" {
+		if err := os.MkdirAll(filepath.Join(cfg.outputCASDir, "sha256"), 0o755); err != nil {
+			return err
+		}
+	}
 	out, err := os.OpenFile(cfg.output, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
 	if err != nil {
 		return err
@@ -441,7 +448,11 @@ func addToCAS(dir string, digest []byte, path string, symlink bool) error {
 		return err
 	}
 	if symlink {
-		rel, err := filepath.Rel(filepath.Dir(dst), abs)
+		absDst, err := filepath.Abs(dst)
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(filepath.Dir(absDst), abs)
 		if err != nil {
 			return err
 		}
