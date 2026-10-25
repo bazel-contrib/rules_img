@@ -1,0 +1,23 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "disk",
+    srcs = [
+        "gpt.go",
+        "guid.go",
+        "layout.go",
+        "mbr.go",
+        "size.go",
+    ],
+    importpath = "github.com/bazel-contrib/rules_img/img_tool/pkg/disk",
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "disk_test",
+    srcs = [
+        "checker_test.go",
+        "disk_test.go",
+    ],
+    embed = [":disk"],
+)
