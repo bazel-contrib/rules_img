@@ -5,9 +5,25 @@ load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 _common_attrs = dict(
     compress = attr.string(
         default = "auto",
-        values = ["auto", "gzip", "zstd"],
+        values = ["auto", "gzip", "zstd", "none"],
         doc = """\
 Compression algorithm to use. If set to 'auto', uses the global default compression setting.
+
+'none' leaves the layer uncompressed, which is the useful choice for an EROFS layer
+(the blob is then mountable as it is). EROFS layers cannot be gzip-compressed.
+""",
+    ),
+    format = attr.string(
+        default = "auto",
+        values = ["auto", "tar", "erofs"],
+        doc = """\
+Container format of the layer blob, orthogonal to `compress`.
+
+'tar' writes an OCI tar changeset. 'erofs' writes a mountable EROFS filesystem image. If set to 'auto', uses the global default
+--@rules_img//img/settings:layer_format setting.
+
+An EROFS layer is a filesystem, not a changeset, which changes what an absent
+directory entry means. See docs/erofs-layers.md before using it.
 """,
     ),
     estargz = attr.string(
@@ -124,6 +140,22 @@ Override the layer media type. By default, the media type is auto-detected from 
     ),
     _default_compression = attr.label(
         default = Label("//img/settings:compress"),
+        providers = [BuildSettingInfo],
+    ),
+    _default_layer_format = attr.label(
+        default = Label("//img/settings:layer_format"),
+        providers = [BuildSettingInfo],
+    ),
+    _erofs_block_size = attr.label(
+        default = Label("//img/settings:erofs_block_size"),
+        providers = [BuildSettingInfo],
+    ),
+    _erofs_inline_threshold = attr.label(
+        default = Label("//img/settings:erofs_inline_threshold"),
+        providers = [BuildSettingInfo],
+    ),
+    _erofs_synthetic_directories = attr.label(
+        default = Label("//img/settings:erofs_synthetic_directories"),
         providers = [BuildSettingInfo],
     ),
     _default_estargz = attr.label(

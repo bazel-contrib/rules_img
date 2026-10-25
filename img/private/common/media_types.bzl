@@ -7,8 +7,29 @@ UNCOMPRESSED_LAYER = "application/vnd.oci.image.layer.v1.tar"
 GZIP_LAYER = "application/vnd.oci.image.layer.v1.tar+gzip"
 ZSTD_LAYER = "application/vnd.oci.image.layer.v1.tar+zstd"
 
+# EROFS layers. The blob is a mountable EROFS filesystem image rather than a tar
+# changeset; see docs/erofs-layers.md.
+EROFS_LAYER = "application/vnd.erofs.layer.v1"
+EROFS_ZSTD_LAYER = "application/vnd.erofs.layer.v1+zstd"
+
+EROFS_LAYER_TYPES = [
+    EROFS_LAYER,
+    EROFS_ZSTD_LAYER,
+]
+
 LAYER_TYPES = [
     UNCOMPRESSED_LAYER,
     GZIP_LAYER,
     ZSTD_LAYER,
-]
+] + EROFS_LAYER_TYPES
+
+def media_type_is_erofs(media_type):
+    """Whether a layer blob with this media type is an EROFS filesystem image.
+
+    Args:
+        media_type: Layer media type string, or None.
+
+    Returns:
+        True if the media type belongs to the EROFS layer family.
+    """
+    return media_type != None and media_type in EROFS_LAYER_TYPES

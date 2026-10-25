@@ -1,4 +1,10 @@
-package tarcas
+// Package tarmeta holds the canonical definitions of a tar entry's normalized
+// form and its content hash, shared by every content-addressed layer sink.
+//
+// The hashes here are what a content manifest records, so two sinks that agree
+// on them produce interchangeable manifests: a layer's deduplication state
+// stays meaningful across the tar and EROFS layer formats.
+package tarmeta
 
 import (
 	"archive/tar"
@@ -43,7 +49,9 @@ func hashMapStrStr(h hash.Hash, m map[string]string) {
 	}
 }
 
-func cloneTarHeader(th *tar.Header) tar.Header {
+// Clone returns a copy of th carrying only the fields that describe the entry,
+// so a caller can normalize or hash it without disturbing the original.
+func Clone(th *tar.Header) tar.Header {
 	return tar.Header{
 		Typeflag:   th.Typeflag,
 		Name:       th.Name,
@@ -65,7 +73,12 @@ func cloneTarHeader(th *tar.Header) tar.Header {
 	}
 }
 
-func normalizeTarHeader(th *tar.Header) {
+// Normalize rewrites th into the canonical form the content hash is defined
+// over: PAX format, directory type inferred from a trailing slash, link names
+// and device numbers cleared for types that have none, timestamps rounded to
+// whole UTC seconds, and extended attributes folded into their SCHILY.xattr.*
+// PAX records.
+func Normalize(th *tar.Header) {
 	th.Format = tar.FormatPAX
 	if strings.HasSuffix(th.Name, "/") && th.Typeflag == tar.TypeReg {
 		th.Typeflag = tar.TypeDir
@@ -97,9 +110,12 @@ func normalizeTarHeader(th *tar.Header) {
 	}
 }
 
-func hashTarHeader(h hash.Hash, th tar.Header) {
-	th = cloneTarHeader(&th)
-	normalizeTarHeader(&th)
+// Hash writes the normalized form of th into h. Combined with the digest of the
+// entry's content it forms the entry's node hash, which identifies an entry with
+// both its metadata and its content.
+func Hash(h hash.Hash, th tar.Header) {
+	th = Clone(&th)
+	Normalize(&th)
 
 	h.Write([]byte{th.Typeflag})
 	hashString(h, th.Name)
@@ -120,7 +136,11 @@ func hashTarHeader(h hash.Hash, th tar.Header) {
 	hash64(h, uint64(th.Format))
 }
 
-func isBlobTarHeader(hdr *tar.Header) bool {
+// IsBlob reports whether an entry carries no metadata beyond its path and
+// content, and can therefore be identified by its content digest alone. Such an
+// entry can be deduplicated against any other entry with the same content,
+// where an entry with metadata of its own needs its full node hash.
+func IsBlob(hdr *tar.Header) bool {
 	if hdr.Typeflag != tar.TypeReg {
 		return false
 	}

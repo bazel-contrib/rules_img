@@ -63,6 +63,7 @@ func writeListing(w io.Writer, name string, info *compactstream.Info, indexSize 
 
 	fmt.Fprintln(w, "Header")
 	row(w, "Format:", fmt.Sprintf("compact stream, version %d", h.Version))
+	row(w, "Content:", contentFormatName(h.ContentFormat))
 	row(w, "Hash algorithm:", fmt.Sprintf("%s (%d-byte digests)", hashAlgoName(h.HashAlgo), h.HashSize))
 	row(w, "Stream compression:", streamCompressionName(h.StreamCompression))
 	row(w, "Layer compression:", describeOriginalCompression(h.OriginalCompression))
@@ -93,7 +94,7 @@ func writeListing(w io.Writer, name string, info *compactstream.Info, indexSize 
 	row(w, "Referenced content (in CAS):", humanizeBytes(info.ReferencedBytes()))
 	row(w, "Byte stream (uncompressed):", humanizeBytes(info.StreamUncompressedSize))
 	row(w, fmt.Sprintf("Byte stream (on disk, %s):", streamCompressionName(h.StreamCompression)), humanizeBytes(h.StreamSize))
-	row(w, "Reconstructed tar (uncompressed):", humanizeBytes(reconstructed))
+	row(w, fmt.Sprintf("Reconstructed %s (uncompressed):", contentFormatNoun(h.ContentFormat)), humanizeBytes(reconstructed))
 	layerLabel := fmt.Sprintf("Reconstructed layer (%s):", originalCompressionName(h.OriginalCompression.Compression))
 	if h.HasCompressedStreamInfo {
 		row(w, layerLabel, humanizeBytes(h.CompressedStreamSize))
@@ -103,7 +104,7 @@ func writeListing(w io.Writer, name string, info *compactstream.Info, indexSize 
 	row(w, "Compact stream file size:", humanizeBytes(uint64(indexSize)))
 
 	fmt.Fprintln(w, "\nEfficiency")
-	writeEfficiency(w, "Compact stream vs reconstructed tar (uncompressed):", uint64(indexSize), reconstructed)
+	writeEfficiency(w, fmt.Sprintf("Compact stream vs reconstructed %s (uncompressed):", contentFormatNoun(h.ContentFormat)), uint64(indexSize), reconstructed)
 	if h.HasCompressedStreamInfo && h.CompressedStreamSize > 0 {
 		writeEfficiency(w, "Compact stream vs reconstructed layer (compressed):", uint64(indexSize), h.CompressedStreamSize)
 	}
@@ -135,6 +136,35 @@ func hashAlgoName(algo uint16) string {
 		return "sha256"
 	default:
 		return fmt.Sprintf("unknown(%d)", algo)
+	}
+}
+
+// contentFormatName names what the reconstructed stream is, so the report does
+// not claim a tar for a layer that is an EROFS filesystem image.
+func contentFormatName(f uint8) string {
+	switch f {
+	case compactstream.ContentFormatUnknown:
+		return "unknown (not declared in the compact stream)"
+	case compactstream.ContentFormatTar:
+		return "tar"
+	case compactstream.ContentFormatErofs:
+		return "erofs"
+	default:
+		return fmt.Sprintf("unknown(%d)", f)
+	}
+}
+
+// contentFormatNoun is contentFormatName for use inside a label, where a stream
+// that declares no format reads better as the neutral "content" than as a claim
+// about what it holds.
+func contentFormatNoun(f uint8) string {
+	switch f {
+	case compactstream.ContentFormatTar:
+		return "tar"
+	case compactstream.ContentFormatErofs:
+		return "erofs"
+	default:
+		return "content"
 	}
 }
 

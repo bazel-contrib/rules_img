@@ -312,11 +312,19 @@ func ManifestProcess(_ context.Context, args []string) {
 	// because the default depends on the host that ran the build. Such manifests
 	// ask for --omit-platform; everything else gets its platform.
 	if !omitPlatform {
-		descriptor.Platform = &specv1.Platform{
+		platform := &specv1.Platform{
 			Architecture: architecture,
 			OS:           operatingSystem,
 			Variant:      variant,
 		}
+		// The EROFS layer spec wants the feature declared on the index's platform
+		// descriptor as well as in the config, so an index can be filtered without
+		// fetching every config. `img index` writes the descriptors this command
+		// produces verbatim, so setting it here is enough.
+		if hasErofsLayer(layers) {
+			platform.OSFeatures = addOSFeature(platform.OSFeatures, api.ErofsOSFeature)
+		}
+		descriptor.Platform = platform
 	}
 
 	descriptorRaw, err := json.Marshal(descriptor)
@@ -554,6 +562,13 @@ func overlayNewConfigValues(config *specv1.Image, layers []api.Descriptor, templ
 	config.RootFS.DiffIDs = make([]digest.Digest, len(layers))
 	for i, layer := range layers {
 		config.RootFS.DiffIDs[i] = digest.Digest(layer.DiffID)
+	}
+
+	// An image whose layers are EROFS images has to declare it, so a runtime
+	// that cannot mount them does not try. Derived from the layers rather than
+	// asked of the user, because there is exactly one right answer.
+	if hasErofsLayer(layers) {
+		config.Platform.OSFeatures = addOSFeature(config.Platform.OSFeatures, api.ErofsOSFeature)
 	}
 
 	// Apply the image config value from the --user flag with three-way semantics:

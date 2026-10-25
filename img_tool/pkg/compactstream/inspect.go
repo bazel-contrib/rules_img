@@ -26,10 +26,16 @@ type Header struct {
 	HashSize            int
 	StreamCompression   uint8
 	OriginalCompression OriginalCompressionInfo
-	RefTableOffset      uint64
-	RefTableSize        uint64
-	StreamOffset        uint64
-	StreamSize          uint64
+	// ContentFormat says what the reconstructed stream is (see the
+	// ContentFormat constants), which a reader needs in order to interpret the
+	// content rather than just rebuild the blob. Streams written before this
+	// field existed leave it zero, which is ContentFormatUnknown: they declare
+	// nothing, even though in practice they all hold a tar.
+	ContentFormat  uint8
+	RefTableOffset uint64
+	RefTableSize   uint64
+	StreamOffset   uint64
+	StreamSize     uint64
 	// HasCompressedStreamInfo reports whether the optional compressed-stream
 	// digest and size fields below are present in the header.
 	HasCompressedStreamInfo bool
@@ -137,6 +143,7 @@ func parseHeader(raw [headerSize]byte) (Header, error) {
 			CompressorJobs:   raw[16],
 			EndPadding:       binary.BigEndian.Uint32(raw[20:24]),
 		},
+		ContentFormat:  raw[17],
 		RefTableOffset: binary.BigEndian.Uint64(raw[24:32]),
 		RefTableSize:   binary.BigEndian.Uint64(raw[32:40]),
 		StreamOffset:   binary.BigEndian.Uint64(raw[40:48]),

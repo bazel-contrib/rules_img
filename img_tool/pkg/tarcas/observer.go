@@ -32,6 +32,9 @@ type compactStreamObserver[HM hashHelper] struct {
 }
 
 func newCompactStreamObserver[HM hashHelper](iw *compactstream.Writer) *compactStreamObserver[HM] {
+	// A zero ContentFormat means "not declared", so the sink that knows it is
+	// feeding this writer a tar has to say so.
+	iw.SetContentFormat(compactstream.ContentFormatTar)
 	return &compactStreamObserver[HM]{
 		compactStreamWriter: iw,
 		inlineThreshold:     iw.InlineThreshold(),

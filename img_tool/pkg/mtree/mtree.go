@@ -10,6 +10,11 @@
 //     materialized tar; the recorded CAS reference digest or inlined bytes for a
 //     compact stream). Hardlinks (tar TypeLink) are replaced by a copy of the
 //     entry they point at, so "link" is emitted only for symlinks.
+//   - EROFS inputs (an EROFS filesystem image, or a compact stream read as a
+//     sparse image whose payloads are absent) are walked and rendered as if
+//     their inodes had been tar entries. Every intermediate directory is
+//     present. Overlayfs deletions are converted to tar-style whiteout markers
+//     so they can be preserved in per-layer mtree specs and applied on merge.
 //   - Mtree inputs are existing mtree specs; their entries are folded in as
 //     though they came from a tar. Their paths are re-normalized to the
 //     configured layout and their keywords are filtered down to the requested
@@ -103,6 +108,8 @@ const (
 	TarInput InputKind = iota
 	// MtreeInput reads the Reader as an existing mtree spec.
 	MtreeInput
+	// ErofsInput reads the ReaderAt as an EROFS filesystem image.
+	ErofsInput
 )
 
 // Input is one ordered source of entries.
@@ -110,9 +117,20 @@ type Input struct {
 	Kind InputKind
 	// Reader is an uncompressed tar (TarInput) or an mtree spec (MtreeInput).
 	Reader io.Reader
-	// Digester supplies content digests for TarInput regular files. Ignored for
-	// MtreeInput.
+	// ReaderAt is an EROFS filesystem image (ErofsInput). It may read the
+	// payload ranges as zeros, in which case the Digester has to supply the
+	// content digests.
+	ReaderAt io.ReaderAt
+	// Digester supplies content digests for TarInput and ErofsInput regular
+	// files. Ignored for MtreeInput.
 	Digester ContentDigester
+	// RangeDigester optionally reports a digest already recorded for a byte
+	// range of an ErofsInput's image, which lets a file whose payload is absent
+	// (a compact stream read as a sparse image) still get a sha256digest.
+	// Ranges it does not know (found == false) fall back to Digester; an error
+	// means the range cannot be digested from the image at all. Ignored for
+	// other kinds.
+	RangeDigester func(offset, size int64) (digest []byte, found bool, err error)
 }
 
 // ContentDigester computes the sha256 of a regular file's content for the
@@ -155,6 +173,12 @@ func WriteMulti(w io.Writer, opts Options, inputs []Input) error {
 		switch in.Kind {
 		case TarInput:
 			es, err := collectTar(in.Reader, in.Digester, idx)
+			if err != nil {
+				return err
+			}
+			collected = append(collected, es...)
+		case ErofsInput:
+			es, err := collectErofs(in.ReaderAt, in.Digester, in.RangeDigester, idx)
 			if err != nil {
 				return err
 			}
@@ -211,6 +235,7 @@ type collectedEntry struct {
 	digest  []byte           // tar-origin content sha256
 	keyvals []gomtree.KeyVal // mtree-origin, already filtered/ordered
 	isDir   bool             // mtree-origin (tar-origin derives it from hdr)
+	nlink   int              // explicit link count (EROFS-origin); 0 = derive from the tar structure
 	input   int              // index of the Input this entry came from (layer order)
 }
 
@@ -343,9 +368,14 @@ func materialize(collected []collectedEntry, inodes map[string]*inode, hardlinkO
 		kvs, err := keywordsForHeader(in.hdr, in.digest, in.nlink, opts.Keywords)
 		return ce.path, false, kvs, err
 	}
-	nlink := 1
-	if in, ok := inodes[ce.path]; ok {
-		nlink = in.nlink
+	// An EROFS inode records its own link count; a tar expresses the same thing
+	// with TypeLink entries, which groupHardlinks counted.
+	nlink := ce.nlink
+	if nlink == 0 {
+		nlink = 1
+		if in, ok := inodes[ce.path]; ok {
+			nlink = in.nlink
+		}
 	}
 	kvs, err := keywordsForHeader(ce.hdr, ce.digest, nlink, opts.Keywords)
 	return ce.path, ce.hdr.Typeflag == tar.TypeDir, kvs, err

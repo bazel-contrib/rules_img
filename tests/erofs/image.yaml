@@ -1,0 +1,37 @@
+schemaVersion: "2.0.0"
+
+metadataTest:
+  envVars:
+    - key: GREETING
+      value: hello-erofs
+  workdir: /app
+
+# An EROFS layer's structure is read from its image, not from tar headers, so
+# these assertions exercise the whole path: layer -> mtree -> image mtree ->
+# structure test. Directories the layer never described (/etc, /usr, ...) are
+# present because a filesystem image needs a complete tree, which a tar layer
+# would not have.
+fileExistenceTests:
+  - name: deduplicated file present with its metadata
+    path: /etc/app/config.txt
+    shouldExist: true
+    permissions: "-rw-r--r--"
+    uid: 1000
+    gid: 1000
+  - name: the second copy of the same content is reachable too
+    path: /etc/app/config_dup.txt
+    shouldExist: true
+    permissions: "-rw-r--r--"
+  - name: a payload large enough to get its own extent
+    path: /var/lib/data/big.txt
+    shouldExist: true
+  - name: an intermediate directory the layer never described
+    path: /usr/local/bin
+    shouldExist: true
+    permissions: "drwxr-xr-x"
+  - name: the upper layer's file
+    path: /opt/app/app.txt
+    shouldExist: true
+  - name: no stray file
+    path: /nonexistent
+    shouldExist: false
