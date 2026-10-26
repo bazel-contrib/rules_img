@@ -7,6 +7,7 @@ load("//img:layer.bzl", "image_layer")
 _LINUX_AMD64 = Label(":linux_amd64")
 _OUTER_PLATFORM = Label(":outer_platform")
 _PLATFORMS = "//command_line_option:platforms"
+_INDEX_PLATFORM = str(Label("//img/settings:index_platform"))
 _IMAGE_DEPENDENCY_ATTRS = ["manifests", "base"]
 
 _ConfigurationsInfo = provider(
@@ -92,6 +93,20 @@ _default_base_index_on_manifest_platform_test = analysistest.make(
     _default_base_index_on_manifest_platform_test_impl,
     attrs = {"expected_manifest_branches": attr.int(mandatory = True)},
     config_settings = {_PLATFORMS: [str(_OUTER_PLATFORM)]},
+    extra_target_under_test_aspects = [_collect_configurations],
+)
+
+_flag_multiarch_shares_base_index_test = analysistest.make(
+    _multiarch_shares_base_index_test_impl,
+    attrs = {"expected_manifest_branches": attr.int(mandatory = True)},
+    config_settings = {_PLATFORMS: [str(_OUTER_PLATFORM)], _INDEX_PLATFORM: "multiarch"},
+    extra_target_under_test_aspects = [_collect_configurations],
+)
+
+_flag_multiarch_base_index_on_manifest_platform_test = analysistest.make(
+    _default_base_index_on_manifest_platform_test_impl,
+    attrs = {"expected_manifest_branches": attr.int(mandatory = True)},
+    config_settings = {_PLATFORMS: [str(_OUTER_PLATFORM)], _INDEX_PLATFORM: "multiarch"},
     extra_target_under_test_aspects = [_collect_configurations],
 )
 
@@ -196,10 +211,23 @@ def transitions_test_suite(name):
         tags = ["manual"],
     )
 
+    # split: the manifest takes each platform of the index's split.
+    # same: the manifest's platform already matches the split.
+    # override: the manifest forces amd64 under an arm64 split.
+    cases = [
+        ("split", None, [":linux_amd64", ":linux_arm64"]),
+        ("same", ":linux_amd64", [":linux_amd64"]),
+        ("override", ":linux_amd64", [":linux_arm64"]),
+    ]
+
+    # flag: the global setting is multiarch and the attribute defers to it.
+    # inherited: the attribute overrides a multiarch global setting.
     tests = []
-    for mode, index_platform, test_rule, test_suffix in [
-        ("default", "inherited", _default_base_index_on_manifest_platform_test, "_base_follows_manifest_test"),
-        ("multiarch", "multiarch", _multiarch_shares_base_index_test, "_base_shared_test"),
+    for mode, index_platform, test_rule, test_suffix, mode_cases in [
+        ("default", "auto", _default_base_index_on_manifest_platform_test, "_base_follows_manifest_test", cases),
+        ("multiarch", "multiarch", _multiarch_shares_base_index_test, "_base_shared_test", cases),
+        ("flag", "auto", _flag_multiarch_shares_base_index_test, "_base_shared_test", cases),
+        ("inherited", "inherited", _flag_multiarch_base_index_on_manifest_platform_test, "_base_follows_manifest_test", cases[:1]),
     ]:
         image_index(
             name = mode + "_base_index",
@@ -209,14 +237,7 @@ def transitions_test_suite(name):
             tags = ["manual"],
         )
 
-        # split: the manifest takes each platform of the index's split.
-        # same: the manifest's platform already matches the split.
-        # override: the manifest forces amd64 under an arm64 split.
-        for case, platform, platforms in [
-            ("split", None, [":linux_amd64", ":linux_arm64"]),
-            ("same", ":linux_amd64", [":linux_amd64"]),
-            ("override", ":linux_amd64", [":linux_arm64"]),
-        ]:
+        for case, platform, platforms in mode_cases:
             prefix = mode + "_" + case
             image_manifest(
                 name = prefix + "_manifest",

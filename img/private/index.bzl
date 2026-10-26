@@ -312,11 +312,12 @@ Output groups:
             doc = "(Optional) list of target platforms to build the manifest for. Uses a split transition. If specified, the 'manifests' attribute should contain exactly one manifest.",
         ),
         "index_platform": attr.string(
-            default = "inherited",
-            values = ["inherited", "multiarch"],
+            default = "auto",
+            values = ["auto", "inherited", "multiarch"],
             doc = """The platform this index is configured on when it has `platforms`.
 
-- **`inherited`** (default): the platform it is reached from. An index used as the `base` of an image is configured on the platform of each manifest that uses it, so its attributes can `select()` on that platform.
+- **`auto`** (default): defers to the global `--@rules_img//img/settings:index_platform` setting, which defaults to `inherited`.
+- **`inherited`**: the platform it is reached from. An index used as the `base` of an image is configured on the platform of each manifest that uses it, so its attributes can `select()` on that platform.
 - **`multiarch`**: `@rules_img//img/private/platforms:multiarch`, a platform with no constraints. An index used as the `base` of several images, or of an image built for several platforms, is then configured and analyzed once. Its manifests are still built for each of `platforms`.
 
 Under `multiarch`, the index's own attributes are resolved on that platform:

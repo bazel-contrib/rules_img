@@ -87,6 +87,12 @@ common --@rules_img//img/settings:runfiles_sharing_mode=auto
 # Path for shared runfiles inside the image when runfiles sharing is enabled.
 common --@rules_img//img/settings:runfiles_shared_path=/.shared_runfiles
 
+# The platform an image_index with platforms is configured on, unless its
+# index_platform attribute says otherwise.
+# "inherited" uses the platform it is reached from, "multiarch" configures it
+# once on a platform with no constraints.
+common --@rules_img//img/settings:index_platform=inherited
+
 # Opt-in to stamping of image_push rules
 common --@rules_img//img/settings:stamp=disabled
 

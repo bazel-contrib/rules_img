@@ -3,6 +3,7 @@
 _platforms_setting = "//command_line_option:platforms"
 _host_platform_setting = "//command_line_option:host_platform"
 _multiarch_platform = str(Label("//img/private/platforms:multiarch"))
+_index_platform_setting = str(Label("//img/settings:index_platform"))
 
 def _multi_platform_image_transition_impl(_settings, attr):
     if len(attr.platforms) == 0:
@@ -19,20 +20,23 @@ multi_platform_image_transition = transition(
     outputs = [_platforms_setting],
 )
 
-def _image_index_transition_impl(_settings, attr):
+def _image_index_transition_impl(settings, attr):
     # An index with platforms builds each manifest for those platforms, so
     # moving it to one fixed platform configures it once, wherever it is
     # reached from. When attr.platforms is a select() on the platform, Bazel
     # can hide it from one evaluation of this transition; skipping it there
     # lets Bazel report the select() that can't match instead of a traceback
     # here.
-    if getattr(attr, "index_platform", "inherited") == "multiarch" and hasattr(attr, "platforms") and len(attr.platforms) > 0:
+    index_platform = getattr(attr, "index_platform", "auto")
+    if index_platform == "auto":
+        index_platform = settings[_index_platform_setting]
+    if index_platform == "multiarch" and hasattr(attr, "platforms") and len(attr.platforms) > 0:
         return {_platforms_setting: _multiarch_platform}
     return {}
 
 image_index_transition = transition(
     implementation = _image_index_transition_impl,
-    inputs = [],
+    inputs = [_index_platform_setting],
     outputs = [_platforms_setting],
 )
 
