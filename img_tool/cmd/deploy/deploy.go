@@ -819,6 +819,11 @@ func credentialHelperInstance() credential.Helper {
 // CAS reads go through a local blob cache (see casBlobCacheFromEnv). Both it and
 // the connection pool behind it are returned so the caller can report their
 // statistics and close them; the result is nil when no CAS is configured.
+//
+// The builder is returned configured as far as it got even when an error is
+// reported, so that a caller treating the failure as a warning (the persistent
+// worker does, because the remote cache is not needed for every request) is
+// left with a usable builder rather than nil.
 func configureBuilderFromEnv(ctx context.Context, builder *deployvfs.Builder, needsCAS bool, jobs int) (*deployvfs.Builder, *casSources, error) {
 	diskCachePath := os.Getenv("IMG_DISK_CACHE")
 	if diskCachePath != "" {
@@ -830,7 +835,7 @@ func configureBuilderFromEnv(ctx context.Context, builder *deployvfs.Builder, ne
 	}
 	sources, err := casSourcesFromEnv(ctx, jobs)
 	if err != nil {
-		return nil, nil, err
+		return builder, nil, err
 	}
 	if sources == nil {
 		return builder, nil, nil
