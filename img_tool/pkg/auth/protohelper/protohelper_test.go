@@ -203,6 +203,26 @@ func TestClientTarget(t *testing.T) {
 			uri:        "unix:///mnt/ephemeral/buildbarn/.cache/bb_clientd/grpc",
 			wantTarget: "unix:///mnt/ephemeral/buildbarn/.cache/bb_clientd/grpc",
 		},
+		{
+			name:       "unix endpoint without authority",
+			uri:        "unix:/mnt/ephemeral/buildbarn/.cache/bb_clientd/grpc",
+			wantTarget: "unix:/mnt/ephemeral/buildbarn/.cache/bb_clientd/grpc",
+		},
+		{
+			name:       "host and port without scheme",
+			uri:        "example.com:443",
+			wantTarget: "dns:example.com:443",
+		},
+		{
+			name:       "host without scheme",
+			uri:        "example.com",
+			wantTarget: "dns:example.com",
+		},
+		{
+			name:       "userinfo without scheme",
+			uri:        "user:pass@example.com:443",
+			wantTarget: "dns:example.com:443",
+		},
 	}
 
 	for _, tt := range tests {
@@ -217,6 +237,52 @@ func TestClientTarget(t *testing.T) {
 				t.Fatalf("Client(%q).Target() = %q, want %q", tt.uri, got, tt.wantTarget)
 			}
 		})
+	}
+}
+
+// TestWithDefaultGRPCScheme pins which endpoints get a scheme filled in, and
+// therefore which ones are dialed with TLS: everything but grpc:// and unix:,
+// as under Bazel's --remote_cache / --remote_executor.
+func TestWithDefaultGRPCScheme(t *testing.T) {
+	tests := []struct {
+		name string
+		uri  string
+		want string
+	}{
+		{name: "host", uri: "cache.example.com", want: "grpcs://cache.example.com"},
+		{name: "host and port", uri: "cache.example.com:443", want: "grpcs://cache.example.com:443"},
+		{name: "localhost and port", uri: "localhost:8980", want: "grpcs://localhost:8980"},
+		{name: "ipv4 and port", uri: "10.0.0.1:8980", want: "grpcs://10.0.0.1:8980"},
+		{name: "userinfo", uri: "user:pass@cache.example.com:443", want: "grpcs://user:pass@cache.example.com:443"},
+		{name: "explicit grpcs", uri: "grpcs://cache.example.com:443", want: "grpcs://cache.example.com:443"},
+		{name: "explicit grpc", uri: "grpc://cache.example.com:8980", want: "grpc://cache.example.com:8980"},
+		{name: "unix socket", uri: "unix:/run/bb_clientd/grpc", want: "unix:/run/bb_clientd/grpc"},
+		{name: "unix socket with authority", uri: "unix:///run/bb_clientd/grpc", want: "unix:///run/bb_clientd/grpc"},
+		// Left alone so that client() reports it as an unsupported scheme rather
+		// than dialing a host named "https".
+		{name: "unsupported scheme", uri: "https://cache.example.com", want: "https://cache.example.com"},
+		{name: "empty", uri: "", want: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := withDefaultGRPCScheme(tt.uri); got != tt.want {
+				t.Errorf("withDefaultGRPCScheme(%q) = %q, want %q", tt.uri, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestClientRejectsUnsupportedScheme keeps an explicitly wrong scheme an error:
+// defaulting a bare host to grpcs must not turn it into a silent dial attempt.
+func TestClientRejectsUnsupportedScheme(t *testing.T) {
+	conn, err := Client("https://cache.example.com", credential.NopHelper())
+	if err == nil {
+		conn.Close()
+		t.Fatal("Client with an https:// endpoint returned no error")
+	}
+	if !strings.Contains(err.Error(), "unsupported scheme") {
+		t.Errorf("error = %v, want it to mention an unsupported scheme", err)
 	}
 }
 

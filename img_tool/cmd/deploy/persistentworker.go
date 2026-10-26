@@ -104,9 +104,17 @@ func newDeployWorkerHandler(ctx context.Context, jobs int, sinkSpec string, dedu
 	// The remote cache is left out here (needsCAS=false) and opened on demand by
 	// casSource: the first work request may carry the remote cache settings in
 	// its deploy manifest (see applyToolSettings), which are not known yet.
-	baseBuilder, _, err = configureBuilderFromEnv(ctx, baseBuilder, false /* needsCAS */, jobs)
+	//
+	// A failure here is a warning, not a fatal error: a request whose layers are
+	// all available locally still deploys. The builder configured so far is kept
+	// (configureBuilderFromEnv returns it even with an error) -- dropping it would
+	// leave every request's Clone() dereferencing nil.
+	configuredBuilder, _, err := configureBuilderFromEnv(ctx, baseBuilder, false /* needsCAS */, jobs)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "warning: failed to configure VFS from environment: %v\n", err)
+	}
+	if configuredBuilder != nil {
+		baseBuilder = configuredBuilder
 	}
 
 	h := &deployWorkerHandler{

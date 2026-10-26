@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -114,6 +115,28 @@ func WithToolInvocationID(ctx context.Context, toolInvocationID string) context.
 	return grpcheaderinterceptor.WithToolInvocationID(ctx, toolInvocationID)
 }
 
+// grpcURIScheme matches an explicit URI scheme followed by an authority, which
+// is what distinguishes "grpc://host:1234" from the bare "host:1234".
+var grpcURIScheme = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9+.\-]*://`)
+
+// withDefaultGRPCScheme supplies the scheme an endpoint without one gets: grpcs,
+// matching Bazel's --remote_cache / --remote_executor, where everything that
+// does not start with "grpc://" or "unix:" is TLS-enabled
+// (GoogleAuthUtils.isTlsEnabled). The scheme has to be filled in before parsing
+// rather than after, because url.Parse reads a bare "HOST:PORT" as a scheme
+// ("host.example.com:443" parses as scheme "host.example.com", opaque "443")
+// and a bare "HOST" as a relative path, neither of which names a transport.
+//
+// A URI that does carry a scheme is left alone, including an unsupported one, so
+// that an explicit "https://..." is reported as such instead of being treated as
+// a hostname.
+func withDefaultGRPCScheme(uri string) string {
+	if uri == "" || grpcURIScheme.MatchString(uri) || strings.HasPrefix(uri, "unix:") {
+		return uri
+	}
+	return "grpcs://" + uri
+}
+
 func client(uri string, helper credhelper.Helper, requestMetadata grpcheaderinterceptor.RequestMetadata, opts ...grpc.DialOption) (*grpc.ClientConn, error) {
 	// Ours goes first so a caller passing its own MaxCallRecvMsgSize wins: grpc
 	// applies call options in order and the last one set takes effect.
@@ -121,6 +144,7 @@ func client(uri string, helper credhelper.Helper, requestMetadata grpcheaderinte
 		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(maxRecvMsgSize())),
 	}, opts...)
 
+	uri = withDefaultGRPCScheme(uri)
 	parsed, err := url.Parse(uri)
 	if err != nil {
 		return nil, fmt.Errorf("invalid uri for grpc: %s: %w", uri, err)
@@ -140,7 +164,7 @@ func client(uri string, helper credhelper.Helper, requestMetadata grpcheaderinte
 		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
 		target = uri
 	default:
-		return nil, fmt.Errorf("unsupported scheme for grpc: %s", parsed.Scheme)
+		return nil, fmt.Errorf("unsupported scheme for grpc: %s (in %q)", parsed.Scheme, uri)
 	}
 
 	// If userinfo is present, add Basic auth credentials
