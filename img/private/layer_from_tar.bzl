@@ -2,8 +2,9 @@
 
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("//img/private/common:build.bzl", "TOOLCHAINS")
-load("//img/private/common:layer_helper.bzl", "allow_tar_files", "build_layer_mtree", "calculate_layer_info", "extension_to_compression", "optimize_layer", "recompress_layer", "resolve_tar_format")
-load("//img/private/common:media_types.bzl", "EROFS_LAYER", "EROFS_ZSTD_LAYER")
+load("//img/private/common:layer_helper.bzl", "allow_tar_files", "build_layer_mtree", "calculate_layer_info", "extension_to_compression", "format_config_args", "optimize_layer", "recompress_layer", "resolve_format_config", "resolve_tar_format")
+load("//img/private/common:media_types.bzl", "EROFS_LAYER", "EROFS_ZSTD_LAYER", "EXT4_LAYER")
+load("//img/private/providers:format_config_info.bzl", "ErofsConfigInfo", "Ext4ConfigInfo")
 load("//img/private/providers:layers_info.bzl", "LayersInfo")
 
 def _layer_from_tar_impl(ctx):
@@ -18,6 +19,13 @@ def _layer_from_tar_impl(ctx):
     if layer_format == "auto":
         layer_format = ctx.attr._default_layer_format[BuildSettingInfo].value
     is_erofs = layer_format == "erofs"
+    is_ext4 = layer_format == "ext4"
+
+    if is_ext4:
+        # Like an EROFS layer, an ext4 layer is rebuilt from the tar entry by
+        # entry. It is never compressed, and the options that only apply to tar
+        # layers are ignored rather than rejected, as for a built ext4 layer.
+        compression = "none"
 
     if is_erofs:
         # An EROFS layer is a different container format, not a different
@@ -31,17 +39,19 @@ def _layer_from_tar_impl(ctx):
             fail(("format = \"erofs\" cannot be gzip-compressed: there is no " +
                   "application/vnd.erofs.layer.v1+gzip media type. Set compress = \"none\" or compress = \"zstd\"."))
 
-    tar_format = resolve_tar_format(ctx, compression, erofs = is_erofs)
+    tar_format = resolve_tar_format(ctx, compression, erofs = is_erofs, ext4 = is_ext4)
     tar_format_enabled = tar_format.estargz or tar_format.zstd_chunked
 
-    target_compression = compression if (explicit_target_compression or tar_format_enabled or optimize or is_erofs) else source_compression
+    target_compression = compression if (explicit_target_compression or tar_format_enabled or optimize or is_erofs or is_ext4) else source_compression
 
     needs_recompression = source_compression != target_compression
-    needs_rewrite = needs_recompression or optimize or is_erofs or tar_format_enabled
+    needs_rewrite = needs_recompression or optimize or is_erofs or is_ext4 or tar_format_enabled
 
     media_type = ctx.attr.media_type
     if media_type == "":
-        if is_erofs:
+        if is_ext4:
+            media_type = EXT4_LAYER
+        elif is_erofs:
             media_type = EROFS_ZSTD_LAYER if target_compression == "zstd" else EROFS_LAYER
         else:
             media_type = "application/vnd.oci.image.layer.v1.tar"
@@ -49,7 +59,9 @@ def _layer_from_tar_impl(ctx):
                 media_type += "+{}".format(target_compression)
 
     metadata_file = ctx.actions.declare_file("{}_metadata.json".format(ctx.attr.name))
-    if is_erofs:
+    if is_ext4:
+        output_name_extension = ".ext4"
+    elif is_erofs:
         output_name_extension = ".erofs.zst" if target_compression == "zstd" else ".erofs"
     elif target_compression == "gzip":
         output_name_extension = ".tgz"
@@ -72,7 +84,7 @@ def _layer_from_tar_impl(ctx):
             annotations = ctx.attr.annotations,
             mtree = build_layer_mtree(ctx, ctx.attr.name, tar_blob = ctx.file.src),
         )
-    elif not optimize and not is_erofs:
+    elif not optimize and not is_erofs and not is_ext4:
         # here, we recompress the tar file and calculate the layer info
         # (recompress_layer builds the mtree from the recompressed blob).
         layer_info = recompress_layer(
@@ -87,8 +99,8 @@ def _layer_from_tar_impl(ctx):
         )
     else:
         # here, we rewrite the tar entry by entry -- deduplicating it, converting
-        # it to an EROFS image, or both -- and calculate the layer info
-        # (optimize_layer builds the mtree from the rewritten blob).
+        # it to a filesystem image (EROFS or ext4), or both -- and calculate the
+        # layer info (optimize_layer builds the mtree from the rewritten blob).
         layer_info = optimize_layer(
             ctx = ctx,
             media_type = media_type,
@@ -99,9 +111,7 @@ def _layer_from_tar_impl(ctx):
             tar_format = tar_format,
             annotations = ctx.attr.annotations,
             layer_format = layer_format,
-            erofs_block_size = ctx.attr._erofs_block_size[BuildSettingInfo].value,
-            erofs_inline_threshold = ctx.attr._erofs_inline_threshold[BuildSettingInfo].value,
-            erofs_synthetic_directories = ctx.attr._erofs_synthetic_directories[BuildSettingInfo].value,
+            format_args = format_config_args(layer_format, resolve_format_config(ctx, layer_format)),
         )
 
     return [
@@ -193,14 +203,26 @@ Requires zstd compression and cannot be combined with estargz.""",
         ),
         "format": attr.string(
             default = "auto",
-            values = ["auto", "tar", "erofs"],
+            values = ["auto", "tar", "erofs", "ext4"],
             doc = """Container format of the layer blob. If set to 'auto', uses the global default
 --@rules_img//img/settings:layer_format setting.
 
 'erofs' converts the tar into a mountable EROFS filesystem image. That always rewrites the
 layer (a format change cannot preserve the source blob) and defaults to `compress = "none"`,
 since the resulting blob is mountable as it is. See docs/erofs-layers.md for what a
-filesystem image means for the layers below it.""",
+filesystem image means for the layers below it.
+
+'ext4' converts the tar into an ext4 filesystem image the same way (always rewritten, never
+compressed). Like every ext4 layer, it is not a valid OCI layer: use it on its own. The options
+that only apply to tar layers (`compress`, `estargz`, `zstd_chunked`) are ignored. See docs/filesystems.md.""",
+        ),
+        "format_config": attr.label(
+            providers = [[Ext4ConfigInfo], [ErofsConfigInfo]],
+            doc = """Options of the filesystem image the layer is written as: an `ext4_config` target
+for `format = "ext4"`, or an `erofs_config` target for `format = "erofs"`.
+
+Without it, every option of the format is left at its default. A config for a format other
+than the layer's own is a configuration error, since it would silently have no effect.""",
         ),
         "annotations": attr.string_dict(
             default = {},
@@ -226,12 +248,12 @@ filesystem image means for the layers below it.""",
             default = Label("//img/settings:layer_format"),
             providers = [BuildSettingInfo],
         ),
-        "_erofs_block_size": attr.label(
-            default = Label("//img/settings:erofs_block_size"),
-            providers = [BuildSettingInfo],
-        ),
         "_erofs_inline_threshold": attr.label(
             default = Label("//img/settings:erofs_inline_threshold"),
+            providers = [BuildSettingInfo],
+        ),
+        "_ext4_deduplicate": attr.label(
+            default = Label("//img/settings:ext4_deduplicate"),
             providers = [BuildSettingInfo],
         ),
         "_erofs_synthetic_directories": attr.label(

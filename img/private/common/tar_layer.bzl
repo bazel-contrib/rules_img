@@ -3,8 +3,8 @@
 load("@bazel_skylib//lib:paths.bzl", "paths")
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("//img/private/common:build.bzl", "TOOLCHAIN")
-load("//img/private/common:layer_helper.bzl", "build_layer_mtree", "compression_tuning_args", "layer_history_args", "resolve_tar_format", "tar_format_args")
-load("//img/private/common:media_types.bzl", "EROFS_LAYER", "EROFS_ZSTD_LAYER", "GZIP_LAYER", "UNCOMPRESSED_LAYER", "ZSTD_LAYER")
+load("//img/private/common:layer_helper.bzl", "build_layer_mtree", "compression_tuning_args", "format_config_args", "layer_history_args", "resolve_format_config", "resolve_tar_format", "tar_format_args")
+load("//img/private/common:media_types.bzl", "EROFS_LAYER", "EROFS_ZSTD_LAYER", "EXT4_LAYER", "GZIP_LAYER", "UNCOMPRESSED_LAYER", "ZSTD_LAYER")
 load("//img/private/providers:layers_info.bzl", "LayersInfo")
 load("//img/private/providers:single_layer_info.bzl", "SingleLayerInfo")
 
@@ -223,34 +223,45 @@ def resolve_layer_settings(ctx):
     settings. Computes derived values (media type and output file extension) and
     rejects combinations the layer formats do not support.
 
+    With layer_format "ext4", the options that only apply to tar layers
+    (compression, estargz, soci) are ignored and resolve to their disabled
+    values. Compact layers apply as for every other format.
+
     Args:
         ctx: Rule context. Must have attrs from layer_attrs.common.
 
     Returns:
         struct with fields: compression, layer_format, tar_format, estargz,
         zstd_chunked, create_parent_directories, tree_artifact_handling,
-        media_type, out_ext, erofs_block_size, erofs_inline_threshold,
-        erofs_synthetic_directories.
+        media_type, out_ext, format_config.
     """
     layer_format = ctx.attr.format
     if layer_format == "auto":
         layer_format = ctx.attr._default_layer_format[BuildSettingInfo].value
+    is_erofs = layer_format == "erofs"
+    is_ext4 = layer_format == "ext4"
 
     compression = ctx.attr.compress
     if compression == "auto":
-        if layer_format == "erofs":
+        if is_erofs:
             # The global default (gzip) has no EROFS media type, so an EROFS
             # layer that did not ask for a compression is left uncompressed.
             compression = "none"
         else:
             compression = ctx.attr._default_compression[BuildSettingInfo].value
+    if is_ext4:
+        # An ext4 layer is a filesystem image the layer command writes directly,
+        # so the options that only apply to tar layers resolve to their disabled
+        # values instead of being rejected -- an explicit compress, estargz,
+        # zstd_chunked or soci on such a layer is ignored, not an error.
+        compression = "none"
 
-    tar_format = resolve_tar_format(ctx, compression, erofs = layer_format == "erofs")
+    tar_format = resolve_tar_format(ctx, compression, erofs = is_erofs, ext4 = is_ext4)
 
     soci = ctx.attr.soci
     if soci == "auto":
-        soci = "disabled" if layer_format == "erofs" else ctx.attr._default_soci[BuildSettingInfo].value
-    soci_enabled = soci == "enabled"
+        soci = "disabled" if is_erofs else ctx.attr._default_soci[BuildSettingInfo].value
+    soci_enabled = soci == "enabled" and not is_ext4
     soci_span_size = ctx.attr._default_soci_span_size[BuildSettingInfo].value
 
     create_parent_directories = ctx.attr.create_parent_directories
@@ -262,10 +273,11 @@ def resolve_layer_settings(ctx):
     if tree_artifact_handling == "auto":
         tree_artifact_handling = ctx.attr._default_tree_artifact_handling[BuildSettingInfo].value
 
-    erofs_block_size = 0
-    erofs_inline_threshold = 0
-    erofs_synthetic_directories = ""
-    if layer_format == "erofs":
+    format_config = resolve_format_config(ctx, layer_format)
+    if is_ext4:
+        out_ext = ".ext4"
+        media_type = EXT4_LAYER
+    elif is_erofs:
         # An EROFS layer's blob is a filesystem image, so gzip has no media type
         # in the family, and the tar-specific lazy-pulling formats do not apply.
         if compression == "gzip":
@@ -274,9 +286,6 @@ def resolve_layer_settings(ctx):
                   "(the blob is then mountable as it is) or compress = \"zstd\"."))
         if soci_enabled:
             fail("soci indexes gzip tar layers and cannot be combined with format = \"erofs\".")
-        erofs_block_size = ctx.attr._erofs_block_size[BuildSettingInfo].value
-        erofs_inline_threshold = ctx.attr._erofs_inline_threshold[BuildSettingInfo].value
-        erofs_synthetic_directories = ctx.attr._erofs_synthetic_directories[BuildSettingInfo].value
 
         if compression == "zstd":
             out_ext = ".erofs.zst"
@@ -318,9 +327,7 @@ def resolve_layer_settings(ctx):
         compact_layers_materialize_blob = compact_layers_materialize_blob,
         soci = soci_enabled,
         soci_span_size = soci_span_size,
-        erofs_block_size = erofs_block_size,
-        erofs_inline_threshold = erofs_inline_threshold,
-        erofs_synthetic_directories = erofs_synthetic_directories,
+        format_config = format_config,
     )
 
 def create_single_layer(ctx, settings, name, extra_args = [], extra_inputs = []):
@@ -330,8 +337,8 @@ def create_single_layer(ctx, settings, name, extra_args = [], extra_inputs = [])
     name and returns the layer components directly, allowing the caller to
     assemble providers from multiple layers.
 
-    The layer's container format comes from `settings.layer_format`: either a tar
-    changeset or an EROFS filesystem image. Everything else here -- the compact
+    The layer's container format comes from `settings.layer_format`: a tar
+    changeset, an EROFS filesystem image or an ext4 filesystem image. Everything else here -- the compact
     stream, the cas-dir of input files, the mtree, provider assembly -- is
     format-agnostic.
 
@@ -347,6 +354,7 @@ def create_single_layer(ctx, settings, name, extra_args = [], extra_inputs = [])
         tuple of (SingleLayerInfo, out_file_or_None, metadata_file, compact_stream_file_or_None, mtree_file, ztoc_file_or_None).
     """
     is_erofs = settings.layer_format == "erofs"
+    is_ext4 = settings.layer_format == "ext4"
     metadata_out = ctx.actions.declare_file(name + "_metadata.json")
     out = None
     compact_stream_out = None
@@ -364,11 +372,7 @@ def create_single_layer(ctx, settings, name, extra_args = [], extra_inputs = [])
         ztoc_out = ctx.actions.declare_file(name + settings.out_ext + ".ztoc")
 
     args = ["layer"] + layer_history_args(ctx) + ["--metadata", metadata_out.path, "--format", settings.compression]
-    if is_erofs:
-        args.extend(["--layer-format", "erofs"])
-        args.extend(["--erofs-block-size", str(settings.erofs_block_size)])
-        args.extend(["--erofs-inline-threshold", str(settings.erofs_inline_threshold)])
-        args.extend(["--erofs-synthetic-directories", settings.erofs_synthetic_directories])
+    args.extend(format_config_args(settings.layer_format, settings.format_config))
     if ctx.attr.media_type:
         args.extend(["--media-type", ctx.attr.media_type])
     args.extend(compression_tuning_args(ctx, settings.compression, settings.tar_format))
@@ -413,7 +417,7 @@ def create_single_layer(ctx, settings, name, extra_args = [], extra_inputs = [])
         inputs = depset(transitive = inputs),
         executable = img_toolchain_info.tool_exe,
         arguments = args,
-        mnemonic = "LayerErofs" if is_erofs else "LayerTar",
+        mnemonic = "LayerErofs" if is_erofs else ("LayerExt4" if is_ext4 else "LayerTar"),
     )
 
     layer_input_files = depset(transitive = extra_inputs) if settings.compact_layers else None
@@ -427,8 +431,14 @@ def create_single_layer(ctx, settings, name, extra_args = [], extra_inputs = [])
     # Produce the mtree metadata description from whichever layer artifact exists.
     # For a tar layer the mtree comes from the headers alone, so the
     # compact-stream case needs no content; for an EROFS layer the metadata is
-    # likewise carried inline, so the sparse image is enough.
-    if is_erofs:
+    # likewise carried inline, so the sparse image is enough. The same holds for
+    # an ext4 layer.
+    if is_ext4:
+        if out:
+            mtree_out = build_layer_mtree(ctx, name, ext4_blob = out)
+        else:
+            mtree_out = build_layer_mtree(ctx, name, ext4_compact_stream = compact_stream_out)
+    elif is_erofs:
         if out:
             mtree_out = build_layer_mtree(ctx, name, erofs_blob = out)
         else:

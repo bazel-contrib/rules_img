@@ -1,0 +1,207 @@
+load("@bazel_skylib//rules:build_test.bzl", "build_test")
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@rules_img//img:layer.bzl", "ext4_config", "file_metadata", "image_layer", "layer_from_tar")
+load("@rules_pkg//pkg:tar.bzl", "pkg_tar")
+load("//tests/mtree:defs.bzl", "mtree_golden_test")
+
+# gazelle:exclude_from_release
+
+genrule(
+    name = "hello",
+    outs = ["hello.txt"],
+    cmd = "echo 'hello from an ext4 layer' > $@",
+)
+
+# Options that only apply to tar layers are ignored for ext4 layers -- even
+# estargz and zstd_chunked together, which a tar layer rejects as exclusive.
+image_layer(
+    name = "ext4_layer",
+    srcs = {
+        "/etc/hello.txt": ":hello",
+    },
+    compress = "zstd",
+    estargz = "enabled",
+    format = "ext4",
+    symlinks = {
+        "/hello": "/etc/hello.txt",
+    },
+    zstd_chunked = "enabled",
+)
+
+# Fails the build unless the layer is an ext4 image holding the file.
+genrule(
+    name = "check_ext4_layer",
+    srcs = [":ext4_layer"],
+    outs = ["ext4_layer_ok"],
+    cmd = """
+layer="$(location :ext4_layer)"
+case "$$layer" in *.ext4) ;; *) echo "expected a .ext4 layer, got $$layer" >&2; exit 1;; esac
+# The ext4 magic number 0xEF53 is at offset 0x38 of the superblock, which starts at 1024.
+magic="$$(od -An -tx1 -j1080 -N2 "$$layer" | tr -d ' \\n')"
+[ "$$magic" = "53ef" ] || { echo "not an ext4 image: magic is $$magic" >&2; exit 1; }
+grep -q "hello from an ext4 layer" "$$layer" || { echo "file content not found in the image" >&2; exit 1; }
+touch $@
+""",
+)
+
+build_test(
+    name = "ext4_layer_test",
+    targets = [":check_ext4_layer"],
+)
+
+# Files for the mtree tests. config_dup.txt has the same content as config.txt, so
+# the layer stores it once, as a hard link. big.txt is large enough to become a
+# content-addressed reference in the compact stream; its digest then has to come
+# from the reference table.
+write_file(
+    name = "config_txt",
+    out = "config.txt",
+    content = ["server.port=8080\n"],
+    newline = "unix",
+)
+
+write_file(
+    name = "config_dup_txt",
+    out = "config_dup.txt",
+    content = ["server.port=8080\n"],
+    newline = "unix",
+)
+
+write_file(
+    name = "tool_sh",
+    out = "tool.sh",
+    content = ["#!/bin/sh\necho hi\n"],
+    newline = "unix",
+)
+
+write_file(
+    name = "big_txt",
+    out = "big.txt",
+    content = ["payload line %d\n" % i for i in range(1000)],
+    newline = "unix",
+)
+
+image_layer(
+    name = "mtree_layer",
+    srcs = {
+        "/etc/app/config.txt": ":config_txt",
+        "/etc/app/config_dup.txt": ":config_dup_txt",
+        "/usr/local/bin/tool": ":tool_sh",
+        "/var/lib/data/big.txt": ":big_txt",
+    },
+    default_metadata = file_metadata(
+        gid = 1000,
+        gname = "devs",
+        mode = "0644",
+        mtime = "2023-01-01T00:00:00Z",
+        uid = 1000,
+        uname = "alice",
+    ),
+    format = "ext4",
+    symlinks = {"/etc/app/current.txt": "/etc/app/config.txt"},
+)
+
+# The layer's mtree is identical whether the image was materialized (rendered
+# with `img mtree --ext4`) or only described by a compact stream (rendered with
+# `img mtree --ext4-cstream`, which reads the image without the file payloads).
+mtree_golden_test(
+    name = "layer_mtree_test",
+    golden = "expected.mtree",
+    layer = ":mtree_layer",
+)
+
+# Converting an existing tar layer rewrites it entry by entry into an image.
+pkg_tar(
+    name = "source_tar",
+    srcs = [
+        ":config_txt",
+        ":tool_sh",
+    ],
+    package_dir = "/etc/app",
+)
+
+# The tar-only options are ignored when converting, exactly as for a built layer.
+layer_from_tar(
+    name = "converted_layer",
+    src = ":source_tar",
+    compress = "zstd",
+    estargz = "enabled",
+    format = "ext4",
+    zstd_chunked = "enabled",
+)
+
+mtree_golden_test(
+    name = "converted_mtree_test",
+    golden = "converted_expected.mtree",
+    layer = ":converted_layer",
+)
+
+# The geometry of the image is configurable through format_config. Without
+# lost+found, the mtree is the one a tar or EROFS layer of the same content
+# produces: configured_expected.mtree is tests/erofs/expected.mtree.
+ext4_config(
+    name = "configured",
+    block_size = 1024,
+    bytes_per_inode = "16KiB",
+    extra_inodes = 64,
+    label = "rules_img",
+    min_size = "4MiB",
+    omit_lost_and_found = True,
+    uuid = "01234567-89ab-cdef-0123-456789abcdef",
+)
+
+image_layer(
+    name = "configured_layer",
+    srcs = {
+        "/etc/app/config.txt": ":config_txt",
+        "/etc/app/config_dup.txt": ":config_dup_txt",
+        "/usr/local/bin/tool": ":tool_sh",
+        "/var/lib/data/big.txt": ":big_txt",
+    },
+    default_metadata = file_metadata(
+        gid = 1000,
+        gname = "devs",
+        mode = "0644",
+        mtime = "2023-01-01T00:00:00Z",
+        uid = 1000,
+        uname = "alice",
+    ),
+    format = "ext4",
+    format_config = ":configured",
+    symlinks = {"/etc/app/current.txt": "/etc/app/config.txt"},
+)
+
+mtree_golden_test(
+    name = "configured_mtree_test",
+    golden = "configured_expected.mtree",
+    layer = ":configured_layer",
+)
+
+# Fails the build unless the options reached the image.
+genrule(
+    name = "check_configured_layer",
+    srcs = [":configured_layer"],
+    outs = ["configured_layer_ok"],
+    cmd = """
+layer="$(location :configured_layer)"
+size="$$(wc -c < "$$layer" | tr -d ' ')"
+[ "$$size" = "4194304" ] || { echo "image is $$size bytes, want 4194304 (min_size = \\"4MiB\\")" >&2; exit 1; }
+# s_log_block_size (0 = 1024 bytes) at offset 0x18 of the superblock, which starts at 1024.
+[ "$$(od -An -tx1 -j1048 -N1 "$$layer" | tr -d ' \\n')" = "00" ] || { echo "not a 1 KiB block image" >&2; exit 1; }
+# s_uuid at 0x68, s_volume_name at 0x78.
+[ "$$(od -An -tx1 -j1128 -N16 "$$layer" | tr -d ' \\n')" = "0123456789abcdef0123456789abcdef" ] || { echo "wrong uuid" >&2; exit 1; }
+[ "$$(od -An -c -j1144 -N9 "$$layer" | tr -d ' \\n')" = "rules_img" ] || { echo "wrong label" >&2; exit 1; }
+touch $@
+""",
+)
+
+build_test(
+    name = "configured_layer_test",
+    targets = [":check_configured_layer"],
+)
+
+filegroup(
+    name = "all_files",
+    srcs = glob(["**"]),
+    visibility = ["//img/private/release:__subpackages__"],
+)

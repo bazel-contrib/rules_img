@@ -15,22 +15,30 @@ string_flag(
 
 # Layer container format, orthogonal to :compress. "tar" writes an OCI tar
 # changeset; "erofs" writes a mountable EROFS filesystem image (see
-# docs/erofs-layers.md), which accepts only compress=none or zstd.
+# docs/erofs-layers.md), which accepts only compress=none or zstd; "ext4"
+# writes an ext4 filesystem image, which is for using a layer on its own (it is
+# not an OCI layer) and ignores the options that only apply to tar layers.
 string_flag(
     name = "layer_format",
     build_setting_default = "tar",
     values = [
         "tar",
         "erofs",
+        "ext4",
     ],
     visibility = ["//visibility:public"],
 )
 
-# Filesystem block size of an EROFS layer. 4096 matches the common page size, so
-# the image mounts without kernel support for sub-page block sizes.
-int_flag(
-    name = "erofs_block_size",
-    build_setting_default = 4096,
+# Whether an ext4 layer stores regular files with the same content and metadata
+# once, as hard links of each other (like tar layers do). Turning it off spares
+# reading file content only to find duplicates, at the cost of larger images.
+string_flag(
+    name = "ext4_deduplicate",
+    build_setting_default = "enabled",
+    values = [
+        "enabled",
+        "disabled",
+    ],
     visibility = ["//visibility:public"],
 )
 

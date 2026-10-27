@@ -58,6 +58,7 @@ bzl_library(
     visibility = ["//visibility:public"],
     deps = [
         "//img/private:file_metadata",
+        "//img/private:format_config",
         "//img/private:layer",
         "//img/private:layer_from_binary",
         "//img/private:layer_from_file",
