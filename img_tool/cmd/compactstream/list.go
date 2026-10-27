@@ -141,7 +141,7 @@ func hashAlgoName(algo uint16) string {
 }
 
 // contentFormatName names what the reconstructed stream is, so the report does
-// not claim a tar for a layer that is an EROFS filesystem image.
+// not claim a tar for a layer that is an EROFS or ext4 filesystem image.
 func contentFormatName(f uint8) string {
 	switch f {
 	case compactstream.ContentFormatUnknown:
@@ -150,6 +150,8 @@ func contentFormatName(f uint8) string {
 		return "tar"
 	case compactstream.ContentFormatErofs:
 		return "erofs"
+	case compactstream.ContentFormatExt4:
+		return "ext4"
 	default:
 		return fmt.Sprintf("unknown(%d)", f)
 	}
@@ -164,6 +166,8 @@ func contentFormatNoun(f uint8) string {
 		return "tar"
 	case compactstream.ContentFormatErofs:
 		return "erofs"
+	case compactstream.ContentFormatExt4:
+		return "ext4"
 	default:
 		return "content"
 	}

@@ -1,0 +1,22 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "ext4cstream",
+    srcs = ["ext4cstream.go"],
+    importpath = "github.com/bazel-contrib/rules_img/img_tool/pkg/fs/ext4/ext4cstream",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/compactstream",
+        "//pkg/fs/ext4",
+    ],
+)
+
+go_test(
+    name = "ext4cstream_test",
+    srcs = ["ext4cstream_test.go"],
+    embed = [":ext4cstream"],
+    deps = [
+        "//pkg/compactstream",
+        "//pkg/fs/ext4",
+    ],
+)
