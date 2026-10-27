@@ -13,6 +13,7 @@ import (
 	"strconv"
 
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/api"
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/bytesize"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/compactstream"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/compress"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/contentmanifest"
@@ -50,6 +51,14 @@ func LayerProcess(ctx context.Context, args []string) {
 	var erofsInlineThresholdFlag uint64
 	var erofsSyntheticDirectoriesFlag string
 	var erofsNoVerifyCASRefsFlag bool
+	var ext4DeduplicateFlag bool
+	var ext4BlockSizeFlag int
+	var ext4SizeFlag string
+	var ext4BytesPerInodeFlag string
+	var ext4ExtraInodesFlag uint
+	var ext4LabelFlag string
+	var ext4UUIDFlag string
+	var ext4OmitLostAndFoundFlag bool
 	var estargzFlag bool
 	var zstdChunkedFlag bool
 	var mediaTypeFlag string
@@ -102,7 +111,15 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 	flagSet.Var(&contentManifestInputFlags, "deduplicate", `Path of a content manifest of a previous layer that can be used for deduplication.`)
 	flagSet.StringVar(&contentManifestCollection, "deduplicate-collection", "", `Path of a content manifest collection file that can be used for deduplication.`)
 	flagSet.StringVar(&formatFlag, "format", "", `The compression format of the output layer. Can be "gzip", "zstd", or "none". Default is to guess the algorithm based on the filename, but fall back to "gzip".`)
-	flagSet.StringVar(&layerFormatFlag, "layer-format", "tar", `The container format of the output layer. "tar" writes an OCI tar changeset. "erofs" writes a mountable EROFS filesystem image, which accepts only --format none or zstd and no --estargz or --ztoc.`)
+	flagSet.StringVar(&layerFormatFlag, "layer-format", "tar", `The container format of the output layer. "tar" writes an OCI tar changeset. "erofs" writes a mountable EROFS filesystem image, which accepts only --format none or zstd and no --estargz or --ztoc. "ext4" writes an ext4 filesystem image instead of a tar file. It is not an OCI layer: the options that only apply to tar layers (--format, --estargz, --zstd-chunked, --ztoc and the compressor flags) are ignored, while --compact-stream writes a compact stream of the image.`)
+	flagSet.BoolVar(&ext4DeduplicateFlag, "ext4-deduplicate", true, `Store regular files with the same content and metadata of an ext4 layer once, as hard links of each other. Turning this off avoids reading file content just to find duplicates. Only used with --layer-format ext4.`)
+	flagSet.IntVar(&ext4BlockSizeFlag, "ext4-block-size", 0, `Filesystem block size of an ext4 layer, in bytes: a power of two between 1024 and 65536. 0 uses 4096. Linux can only mount block sizes up to the page size of the machine. Only used with --layer-format ext4.`)
+	flagSet.StringVar(&ext4SizeFlag, "ext4-min-size", "", `Minimum size of an ext4 layer, with an optional binary unit ("512MiB"). The filesystem is otherwise exactly as large as its content needs; a larger size leaves the extra space free. Only used with --layer-format ext4.`)
+	flagSet.StringVar(&ext4BytesPerInodeFlag, "ext4-bytes-per-inode", "", `Reserve one inode of an ext4 layer for every this many bytes of --ext4-min-size, in addition to the inodes the content needs. Empty leaves only the inodes the content needs plus --ext4-extra-inodes. Only used with --layer-format ext4.`)
+	flagSet.UintVar(&ext4ExtraInodesFlag, "ext4-extra-inodes", 0, `Number of free inodes to leave in an ext4 layer beyond those its content uses. Only used with --layer-format ext4.`)
+	flagSet.StringVar(&ext4LabelFlag, "ext4-label", "", `Volume label of an ext4 layer (at most 16 bytes). Only used with --layer-format ext4.`)
+	flagSet.StringVar(&ext4UUIDFlag, "ext4-uuid", "", `Filesystem UUID of an ext4 layer. Empty derives a UUID from the metadata of the content, so that equal inputs give equal images. Only used with --layer-format ext4.`)
+	flagSet.BoolVar(&ext4OmitLostAndFoundFlag, "ext4-omit-lost-and-found", false, `Leave out the lost+found directory of an ext4 layer, which fsck uses to reattach orphaned files. Without it, fsck reports the directory as missing. Only used with --layer-format ext4.`)
 	flagSet.IntVar(&erofsBlockSizeFlag, "erofs-block-size", 0, `Filesystem block size of an EROFS layer, in bytes. 0 uses 4096, which matches the common page size. Only used with --layer-format erofs.`)
 	flagSet.Uint64Var(&erofsInlineThresholdFlag, "erofs-inline-threshold", 0, `Maximum size (in bytes) of a file payload an EROFS layer may tail-pack into its inode. A file at least this large gets a data extent of its own, and therefore becomes a content-addressed reference in the compact stream rather than inline bytes. 0 packs whatever fits in the inode's block. Only used with --layer-format erofs.`)
 	flagSet.StringVar(&erofsSyntheticDirectoriesFlag, "erofs-synthetic-directories", "inherit", `Attributes for directories an EROFS layer has to invent because nothing describes them. "inherit" copies the nearest described ancestor's ownership (what mkfs.erofs does), "default" uses 0755 root:root, "strict" fails the layer instead of guessing. Only used with --layer-format erofs.`)
@@ -130,6 +147,62 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 	if err := flagSet.Parse(args); err != nil {
 		flagSet.Usage()
 		os.Exit(1)
+	}
+
+	var containerFormat api.ContainerFormat
+	switch layerFormatFlag {
+	case "", "tar":
+		containerFormat = api.TarFormat
+	case "erofs":
+		containerFormat = api.ErofsFormat
+	case "ext4":
+		containerFormat = api.Ext4Format
+	default:
+		fmt.Fprintf(os.Stderr, "Unknown layer format %s. Supported layer formats are tar, erofs and ext4.\n", layerFormatFlag)
+		os.Exit(1)
+	}
+	if containerFormat.IsImageFormat() {
+		// A filesystem image is written directly. Options that only apply to
+		// tar layers are ignored. A compact stream is written next to the
+		// image, or instead of it with --compact-stream-only.
+		formatFlag = "none"
+		estargzFlag = false
+		zstdChunkedFlag = false
+		ztocOutputFlag = ""
+	}
+
+	ext4Settings := ext4Settings{
+		blockSize:        ext4BlockSizeFlag,
+		label:            ext4LabelFlag,
+		omitLostAndFound: ext4OmitLostAndFoundFlag,
+		deduplicate:      ext4DeduplicateFlag,
+		deduplicateTrees: treeArtifactHandlingFlag == "deduplicate_symlink",
+	}
+	if containerFormat == api.Ext4Format {
+		var err error
+		if ext4SizeFlag != "" {
+			if ext4Settings.size, err = bytesize.Parse(ext4SizeFlag); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: --ext4-min-size %s: %v\n", ext4SizeFlag, err)
+				os.Exit(1)
+			}
+		}
+		if ext4BytesPerInodeFlag != "" {
+			if ext4Settings.bytesPerInode, err = bytesize.Parse(ext4BytesPerInodeFlag); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: --ext4-bytes-per-inode %s: %v\n", ext4BytesPerInodeFlag, err)
+				os.Exit(1)
+			}
+		}
+		if ext4ExtraInodesFlag > math.MaxUint32 {
+			fmt.Fprintf(os.Stderr, "Error: --ext4-extra-inodes %d is out of range (maximum %d)\n", ext4ExtraInodesFlag, uint32(math.MaxUint32))
+			os.Exit(1)
+		}
+		ext4Settings.extraInodes = uint32(ext4ExtraInodesFlag)
+		if ext4UUIDFlag != "" {
+			if ext4Settings.uuid, err = parseUUID(ext4UUIDFlag); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: --ext4-uuid: %v\n", err)
+				os.Exit(1)
+			}
+		}
 	}
 
 	if compactStreamOnlyFlag && compactStreamOutputFlag == "" {
@@ -170,17 +243,6 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 				annotations[k] = v
 			}
 		}
-	}
-
-	var containerFormat api.ContainerFormat
-	switch layerFormatFlag {
-	case "", "tar":
-		containerFormat = api.TarFormat
-	case "erofs":
-		containerFormat = api.ErofsFormat
-	default:
-		fmt.Fprintf(os.Stderr, "Unknown layer format %s. Supported layer formats are tar and erofs.\n", layerFormatFlag)
-		os.Exit(1)
 	}
 
 	var compressionAlgorithm api.CompressionAlgorithm
@@ -268,10 +330,15 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 	}
 
 	var outputFile io.Writer
+	var outputOSFile *os.File
 	if compactStreamOnlyFlag {
 		outputFile = io.Discard
 	} else {
-		f, err := os.OpenFile(outputFilePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+		openFlags := os.O_WRONLY | os.O_CREATE | os.O_TRUNC
+		if containerFormat.IsImageFormat() {
+			openFlags = os.O_RDWR | os.O_CREATE | os.O_TRUNC // read back for the digest
+		}
+		f, err := os.OpenFile(outputFilePath, openFlags, 0o644)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error opening output file: %v\n", err)
 			os.Exit(1)
@@ -283,6 +350,7 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 			}
 		}()
 		outputFile = f
+		outputOSFile = f
 	}
 
 	// Parse layer metadata
@@ -389,6 +457,18 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 				break
 			}
 		}
+	}
+
+	if containerFormat.IsImageFormat() {
+		if err := handleImageLayer(
+			containerFormat, ext4Settings, outputOSFile, addFiles, importTarFlags, executableFlags, symlinkFlags, emptyFilePaths, baseMetadataPaths,
+			createParentDirectoriesFlag, layerMetadata, layerHistory, mediaTypeFlag, annotations, metadataOutputFlag,
+			compactStreamOutputFlag, compactStreamInlineThresholdFlag,
+		); err != nil {
+			fmt.Fprintf(os.Stderr, "Writing %s layer: %v\n", containerFormat, err)
+			os.Exit(1)
+		}
+		return
 	}
 
 	casImporter := contentmanifest.NewMultiImporter(contentManifestInputFlags, api.SHA256)

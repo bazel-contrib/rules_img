@@ -36,6 +36,48 @@ func NewRecorder(tf api.TarCAS) Recorder {
 	}
 }
 
+// WithDeduplicate returns a new Recorder that does (or does not) ask the layer
+// to store identical regular files once. Without deduplication, imported tars
+// are not read an extra time to digest their entries.
+func (r Recorder) WithDeduplicate(deduplicate bool) Recorder {
+	r.deduplicate = deduplicate
+	return r
+}
+
+// TarArchive is a tar file that can be opened repeatedly.
+type TarArchive interface {
+	// Open starts reading the archive from its first entry.
+	Open() (*tar.Reader, io.Closer, error)
+}
+
+// TarEntrySink is implemented by layer sinks that want to read the content of
+// imported tar entries themselves, later, instead of receiving it now. That
+// spares the sink from keeping a copy of every entry until the layer is
+// written. index is the position of the entry in the archive, counting all
+// entries from zero. knownHash is the SHA-256 digest of the entry's content, or
+// nil if the recorder has not computed it.
+type TarEntrySink interface {
+	WriteRegularFromTarEntry(hdr *tar.Header, archive TarArchive, index int, knownHash []byte) error
+}
+
+// tarOnDisk is a TarArchive on disk, possibly compressed.
+type tarOnDisk string
+
+func (t tarOnDisk) Open() (*tar.Reader, io.Closer, error) {
+	tr, closeStream, err := openTarStream(string(t))
+	if err != nil {
+		return nil, nil, err
+	}
+	return tr, closeFunc(closeStream), nil
+}
+
+type closeFunc func()
+
+func (c closeFunc) Close() error {
+	c()
+	return nil
+}
+
 // WithMetadata returns a new Recorder with the given metadata provider
 func (r Recorder) WithMetadata(metadata MetadataProvider) Recorder {
 	r.metadata = metadata
@@ -111,8 +153,10 @@ func (r Recorder) importTarEntries(tarFile string, digests []tarEntryDigest) err
 	}
 	defer closeStream()
 
+	entrySink, _ := r.tf.(TarEntrySink)
+	archive := TarArchive(tarOnDisk(tarFile))
 	var seen int
-	for {
+	for index := 0; ; index++ {
 		hdr, err := tr.Next()
 		if err == io.EOF {
 			break
@@ -129,6 +173,12 @@ func (r Recorder) importTarEntries(tarFile string, digests []tarEntryDigest) err
 		}
 
 		if !r.deduplicate {
+			if entrySink != nil {
+				if err := entrySink.WriteRegularFromTarEntry(hdr, archive, index, nil); err != nil {
+					return fmt.Errorf("failed to write regular file %s: %w", hdr.Name, err)
+				}
+				continue
+			}
 			if err := r.tf.WriteRegular(hdr, tr); err != nil {
 				return fmt.Errorf("failed to write regular file %s: %w", hdr.Name, err)
 			}
@@ -145,6 +195,12 @@ func (r Recorder) importTarEntries(tarFile string, digests []tarEntryDigest) err
 		seen++
 		if entry.size != hdr.Size {
 			return fmt.Errorf("%s changed between the digest and write passes: %s is %d bytes, was %d", tarFile, hdr.Name, hdr.Size, entry.size)
+		}
+		if entrySink != nil {
+			if err := entrySink.WriteRegularFromTarEntry(hdr, archive, index, entry.digest); err != nil {
+				return fmt.Errorf("failed to write regular file %s: %w", hdr.Name, err)
+			}
+			continue
 		}
 		if err := r.tf.WriteRegularDeduplicatedKnownHash(hdr, tr, entry.digest); err != nil {
 			return fmt.Errorf("failed to write regular file %s: %w", hdr.Name, err)

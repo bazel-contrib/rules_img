@@ -13,8 +13,9 @@ type (
 	CompressionAlgorithm string
 	HashAlgorithm        string
 	LayerFormat          string
-	// ContainerFormat selects the shape of a layer blob: a tar changeset or an
-	// EROFS filesystem image. It is orthogonal to the compression algorithm.
+	// ContainerFormat selects the shape of a layer blob: a tar changeset, an
+	// EROFS filesystem image, or an ext4 filesystem image. It is orthogonal to
+	// the compression algorithm.
 	ContainerFormat string
 )
 
@@ -30,6 +31,7 @@ const (
 	// Container formats
 	TarFormat   ContainerFormat = "tar"
 	ErofsFormat ContainerFormat = "erofs"
+	Ext4Format  ContainerFormat = "ext4"
 
 	// Layer formats
 	TarLayer     = "application/vnd.oci.image.layer.v1.tar"
@@ -40,6 +42,11 @@ const (
 	// rather than a tar changeset; see docs/erofs-layers.md.
 	ErofsLayer     = "application/vnd.erofs.layer.v1"
 	ErofsZstdLayer = "application/vnd.erofs.layer.v1+zstd"
+
+	// Ext4Layer is the media type recorded for an ext4 filesystem image layer.
+	// It is not an OCI layer media type: such a layer is meant to be used on
+	// its own, not as part of an image.
+	Ext4Layer = "application/x-ext4"
 
 	// Config media types
 	MediaTypeEmptyJSON = "application/vnd.oci.empty.v1+json"
@@ -65,6 +72,13 @@ const (
 	// images must carry, so a runtime that cannot mount them does not try.
 	ErofsOSFeature = "erofs"
 )
+
+// IsImageFormat reports whether a container format is a filesystem image that
+// is written directly by the layer command, with the ext4 writer (as opposed
+// to a tar changeset, or an EROFS image built from the tar pipeline).
+func (c ContainerFormat) IsImageFormat() bool {
+	return c == Ext4Format
+}
 
 // IsErofsLayer reports whether a layer media type belongs to the EROFS family.
 func IsErofsLayer(mediaType string) bool {

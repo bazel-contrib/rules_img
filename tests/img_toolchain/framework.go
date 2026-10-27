@@ -7,9 +7,11 @@ import (
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"hash/crc32"
 	"io"
 	"os"
 	"os/exec"
@@ -298,7 +300,7 @@ func parseAssertion(line string) *AssertionSpec {
 			assertion.Path = strings.TrimSpace(parts[0])
 			assertion.Content = strings.Trim(strings.TrimSpace(parts[1]), `"`)
 		}
-	case "file_valid_json", "file_valid_gzip", "file_valid_tar":
+	case "file_valid_json", "file_valid_gzip", "file_valid_tar", "file_valid_ext4":
 		assertion.Path = value
 	case "json_field_equals", "json_field_exists":
 		parts := strings.SplitN(value, ",", 3)
@@ -682,6 +684,15 @@ func (tf *TestFramework) checkAssertion(assertion AssertionSpec, result *Command
 			return fmt.Errorf("file %s is not valid gzip: %w", assertion.Path, err)
 		}
 		gzReader.Close()
+	case "file_valid_ext4":
+		fullPath := filepath.Join(tf.tempDir, assertion.Path)
+		image, err := os.ReadFile(fullPath)
+		if err != nil {
+			return fmt.Errorf("failed to read file %s: %w", assertion.Path, err)
+		}
+		if err := validateExt4(image); err != nil {
+			return fmt.Errorf("file %s is not a valid ext4 image: %w", assertion.Path, err)
+		}
 	case "json_field_equals":
 		fullPath := filepath.Join(tf.tempDir, assertion.Path)
 		content, err := os.ReadFile(fullPath)
@@ -1293,5 +1304,35 @@ func (tf *TestFramework) RunTestCase(ctx context.Context, testCase *TestCase) er
 				err, result.Stdout, result.Stderr)
 		}
 	})
+	return nil
+}
+
+// validateExt4 checks the superblock of an ext4 image: magic number, checksum,
+// and that the image is exactly as large as the filesystem says.
+func validateExt4(image []byte) error {
+	if len(image) < 2048 {
+		return fmt.Errorf("image is only %d bytes", len(image))
+	}
+	sb := image[1024:2048]
+	le := binary.LittleEndian
+	if magic := le.Uint16(sb[0x38:]); magic != 0xEF53 {
+		return fmt.Errorf("bad magic number %#x", magic)
+	}
+	// metadata_csum (ro_compat 0x400) must be set; the superblock checksum is a
+	// crc32c with all ones as seed and without final inversion.
+	if le.Uint32(sb[0x64:])&0x400 == 0 {
+		return fmt.Errorf("metadata_csum is not enabled")
+	}
+	want := ^crc32.Checksum(sb[:0x3FC], crc32.MakeTable(crc32.Castagnoli))
+	if got := le.Uint32(sb[0x3FC:]); got != want {
+		return fmt.Errorf("superblock checksum %#x, want %#x", got, want)
+	}
+	blockSize := int64(1024) << le.Uint32(sb[0x18:])
+	if size := int64(le.Uint32(sb[0x04:])) * blockSize; size != int64(len(image)) {
+		return fmt.Errorf("image is %d bytes, but the filesystem is %d bytes", len(image), size)
+	}
+	if le.Uint16(sb[0x3A:])&1 == 0 {
+		return fmt.Errorf("filesystem is not marked clean")
+	}
 	return nil
 }
