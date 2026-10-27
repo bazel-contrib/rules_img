@@ -1,7 +1,7 @@
 load("@bazel_skylib//rules:build_test.bzl", "build_test")
 load("@bazel_skylib//rules:write_file.bzl", "write_file")
 load("@rules_img//img:image.bzl", "image_manifest")
-load("@rules_img//img:layer.bzl", "file_metadata", "image_layer", "layer_from_tar")
+load("@rules_img//img:layer.bzl", "erofs_config", "file_metadata", "image_layer", "layer_from_tar")
 load("@rules_img//img:load.bzl", "image_load")
 load("@rules_img//img:test.bzl", "image_structure_test")
 load("@rules_pkg//pkg:tar.bzl", "pkg_tar")
@@ -123,7 +123,15 @@ image_structure_test(
 # The same layer with the outer zstd compression, so the compressed media type,
 # the ".erofs.zst" output and reading a compressed blob back for the mtree are
 # all exercised. Its mtree must be the one the uncompressed layer produces:
-# compression is outside the image.
+# compression is outside the image. The options also come from a format_config
+# here, spelling out the defaults, so the blob must be the same as without one.
+erofs_config(
+    name = "layer_config",
+    block_size = 4096,
+    inline_threshold = 0,
+    synthetic_directories = "inherit",
+)
+
 image_layer(
     name = "erofs_layer_zstd",
     srcs = {
@@ -142,6 +150,7 @@ image_layer(
         uname = "alice",
     ),
     format = "erofs",
+    format_config = ":layer_config",
     symlinks = {"/etc/app/current.txt": "/etc/app/config.txt"},
 )
 

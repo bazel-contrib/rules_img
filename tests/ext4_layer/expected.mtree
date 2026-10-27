@@ -1,0 +1,15 @@
+#mtree v2.0
+./etc type=dir mode=0755 uid=0 gid=0 time=0 nlink=3
+./etc/app type=dir mode=0755 uid=0 gid=0 time=0 nlink=2
+./etc/app/config.txt type=file size=17 mode=0644 uid=1000 gid=1000 sha256digest=31efeb783903a3a459a07f0fc59c900bc2f77a49297e5f4cadf89d7e1fc7fc16 time=1672531200 nlink=2
+./etc/app/config_dup.txt type=file size=17 mode=0644 uid=1000 gid=1000 sha256digest=31efeb783903a3a459a07f0fc59c900bc2f77a49297e5f4cadf89d7e1fc7fc16 time=1672531200 nlink=2
+./etc/app/current.txt type=link size=19 mode=0644 uid=1000 gid=1000 time=1672531200 link=/etc/app/config.txt nlink=1
+./lost+found type=dir mode=0700 uid=0 gid=0 time=0 nlink=2
+./usr type=dir mode=0755 uid=0 gid=0 time=0 nlink=3
+./usr/local type=dir mode=0755 uid=0 gid=0 time=0 nlink=3
+./usr/local/bin type=dir mode=0755 uid=0 gid=0 time=0 nlink=2
+./usr/local/bin/tool type=file size=18 mode=0644 uid=1000 gid=1000 sha256digest=299001868fb8c02fd431c336c6d058f5558c5dff5b5af5e6fe04b870a6a9cbba time=1672531200 nlink=1
+./var type=dir mode=0755 uid=0 gid=0 time=0 nlink=3
+./var/lib type=dir mode=0755 uid=0 gid=0 time=0 nlink=3
+./var/lib/data type=dir mode=0755 uid=0 gid=0 time=0 nlink=2
+./var/lib/data/big.txt type=file size=17889 mode=0644 uid=1000 gid=1000 sha256digest=56023d81f648de16449ac0cf569f9a58fbadab6590c9894a5dc601113476b2a3 time=1672531200 nlink=1

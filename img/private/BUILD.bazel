@@ -264,6 +264,7 @@ bzl_library(
         "//img/private/common:build",
         "//img/private/common:layer_helper",
         "//img/private/common:media_types",
+        "//img/private/providers:format_config_info",
         "//img/private/providers:layers_info",
         "@bazel_skylib//rules:common_settings",
     ],
@@ -437,6 +438,13 @@ bzl_library(
     name = "file_metadata",
     srcs = ["file_metadata.bzl"],
     visibility = ["//img:__subpackages__"],
+)
+
+bzl_library(
+    name = "format_config",
+    srcs = ["format_config.bzl"],
+    visibility = ["//img:__subpackages__"],
+    deps = ["//img/private/providers:format_config_info"],
 )
 
 bzl_library(
