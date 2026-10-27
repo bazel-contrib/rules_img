@@ -2,6 +2,7 @@ package imagesizetest
 
 import (
 	"fmt"
+	"math"
 	"path"
 	"sort"
 	"strconv"
@@ -365,7 +366,7 @@ func (r *replay) applyEntry(li int, e mtree.ParsedEntry, open map[string]*fileGr
 // group for a plain file, or the hardlink group of this layer that still has
 // room for another name.
 func groupFor(open map[string]*fileGroup, li int, p string, size, nlink int64, digest string) *fileGroup {
-	if nlink <= 1 || digest == "" {
+	if nlink <= 1 || digest == "" || nlink > int64(math.MaxInt) {
 		return &fileGroup{layer: li, size: size, digest: digest, names: 1, live: 1, want: 1, minPath: p}
 	}
 	g := open[digest]
