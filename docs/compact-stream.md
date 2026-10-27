@@ -87,7 +87,7 @@ Header
   Hash algorithm:                    sha256 (32-byte digests)
   Stream compression:                zstd
   Layer compression:                 gzip (level 1, jobs 16)
-  Layer format:                      plain
+  Tar format:                        plain
   End padding:                       0 bytes
   Reference table:                   1 entries at offset 128 (48 bytes)
   Byte stream:                       111 bytes on disk, at offset 176
@@ -157,7 +157,7 @@ Offset  Size  Type       Field                  Description
 10      2     uint16 BE  HashSize               Digest size in bytes
 12      1     uint8      StreamCompression      On-disk compression of the byte stream section
 13      1     uint8      OriginalCompression    Compression of the original file
-14      1     uint8      LayerFormat            Layer format of the original file (0 = plain, 1 = estargz, 2 = zstd:chunked)
+14      1     uint8      TarFormat              Tar stream format of the original file (0 = plain, 1 = estargz, 2 = zstd:chunked)
 15      1     int8       CompressionLevel       Original compression level (-1 = default)
 16      1     uint8      CompressorJobs         Number of parallel compression workers (0 = default)
 17      1     uint8      ContentFormat          Identifier for the file type of the payload (see below)
@@ -229,10 +229,10 @@ The file header records two distinct compression concepts:
 - **OriginalCompression**: What compression the original file uses. After
   reconstruction (merging stream bytes with CAS blobs), the result is the
   uncompressed original. To obtain the original compressed form, re-compress
-  using `OriginalCompression`, `LayerFormat`, `CompressionLevel`,
+  using `OriginalCompression`, `TarFormat`, `CompressionLevel`,
   and `CompressorJobs`.
 
-- **LayerFormat**: `0` for a plain compressed tar, `1` for estargz (seekable
+- **TarFormat**: `0` for a plain compressed tar, `1` for estargz (seekable
   gzip/zstd with a TOC), `2` for zstd:chunked (containers/storage format with
   content-defined chunks and a TOC).
 
@@ -273,7 +273,7 @@ bytes.
 > **Compressor version compatibility.** Reconstruction reproduces the original
 > compressed layer by *re-compressing* the rebuilt tar with the recorded
 > settings (`OriginalCompression`, `CompressionLevel`, `CompressorJobs`,
-> `LayerFormat`). Bit-for-bit equality therefore depends on the
+> `TarFormat`). Bit-for-bit equality therefore depends on the
 > compression libraries producing identical bytes. The contract is implicitly
 > pinned to the compression-library versions of the `img` binary that *wrote*
 > the compact stream (the bundled gzip/pgzip, zstd, estargz and zstd:chunked
@@ -348,7 +348,7 @@ The result is the original uncompressed file. To obtain the original
 compressed form:
 
 7. If `OriginalCompression != 0`, re-compress the output using the settings
-   from the header (`OriginalCompression`, `LayerFormat`,
+   from the header (`OriginalCompression`, `TarFormat`,
    `CompressionLevel`, `CompressorJobs`).
 8. Append `EndPadding` zero bytes.
 
