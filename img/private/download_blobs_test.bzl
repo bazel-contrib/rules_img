@@ -46,6 +46,39 @@ _credential_helper_cleared_test = analysistest.make(
     },
 )
 
+def _path_mapping_test_impl(ctx):
+    env = analysistest.begin(ctx)
+    action = _download_blob_action(env)
+    if action == None:
+        return analysistest.end(env)
+
+    outputs = action.outputs.to_list()
+    asserts.equals(env, 1, len(outputs), "expected exactly one output")
+    if len(outputs) != 1 or "--output" not in action.argv:
+        asserts.true(env, False, "expected an --output argument in {}".format(action.argv))
+        return analysistest.end(env)
+
+    output = outputs[0]
+    output_arg = action.argv[action.argv.index("--output") + 1]
+    asserts.true(
+        env,
+        output_arg.endswith("/" + output.basename),
+        "expected --output to point at {}, got {}".format(output.basename, output_arg),
+    )
+    asserts.true(
+        env,
+        output_arg != output.path,
+        "expected the output path to be mapped, got the unmapped {}".format(output_arg),
+    )
+    return analysistest.end(env)
+
+_path_mapping_test = analysistest.make(
+    _path_mapping_test_impl,
+    config_settings = {
+        "//command_line_option:experimental_output_paths": "strip",
+    },
+)
+
 def download_blobs_test_suite(name):
     """Declare download_blobs analysis tests.
 
@@ -60,14 +93,25 @@ def download_blobs_test_suite(name):
         tags = ["manual"],
     )
 
+    tests = []
+
     test = name + "_credential_helper_cleared_test"
     _credential_helper_cleared_test(
         name = test,
         size = "small",
         target_under_test = ":" + subject,
     )
+    tests.append(":" + test)
+
+    test = name + "_path_mapping_test"
+    _path_mapping_test(
+        name = test,
+        size = "small",
+        target_under_test = ":" + subject,
+    )
+    tests.append(":" + test)
 
     native.test_suite(
         name = name,
-        tests = [":" + test],
+        tests = tests,
     )
