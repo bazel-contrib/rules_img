@@ -190,7 +190,7 @@ Output groups:
 <pre>
 load("@rules_img//img:image.bzl", "image_optimize")
 
-image_optimize(<a href="#image_optimize-name">name</a>, <a href="#image_optimize-compress">compress</a>, <a href="#image_optimize-estargz">estargz</a>, <a href="#image_optimize-image">image</a>)
+image_optimize(<a href="#image_optimize-name">name</a>, <a href="#image_optimize-compress">compress</a>, <a href="#image_optimize-estargz">estargz</a>, <a href="#image_optimize-image">image</a>, <a href="#image_optimize-zstd_chunked">zstd_chunked</a>)
 </pre>
 
 Rewrites every available layer in an image manifest or image index.
@@ -221,6 +221,7 @@ image_optimize(
 | <a id="image_optimize-compress"></a>compress |  Compression algorithm to use for rewritten layers. If set to 'auto', uses the global default compression setting.   | String | optional |  `"auto"`  |
 | <a id="image_optimize-estargz"></a>estargz |  Whether to rewrite layers using eStargz. If set to 'auto', uses the global default eStargz setting.   | String | optional |  `"auto"`  |
 | <a id="image_optimize-image"></a>image |  Image manifest or image index to optimize. All layer blobs must be available.   | <a href="https://bazel.build/concepts/labels">Label</a> | required |  |
+| <a id="image_optimize-zstd_chunked"></a>zstd_chunked |  Whether to rewrite layers using zstd:chunked. If set to 'auto', uses the global default zstd_chunked setting. Requires zstd compression and cannot be combined with estargz.   | String | optional |  `"auto"`  |
 
 
 <a id="image_from_binary"></a>
