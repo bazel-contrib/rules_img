@@ -6,6 +6,7 @@ load(
 load(":integration_test.bzl", "img_integration_tests")
 
 # gazelle:exclude cc
+# gazelle:exclude disk
 # gazelle:exclude go
 # gazelle:exclude generic
 # gazelle:exclude js
@@ -53,6 +54,20 @@ img_integration_tests(
         "//img/private/release/source_files:release_src_files",
     ],
     workspace_path = "cc",
+)
+
+# Builds a Linux kernel and a bootable disk image: the kernel graph compiles tools for
+# the build host, which have to be Linux binaries.
+img_integration_tests(
+    name = "disk",
+    bazel_versions = ["9.3.1"],
+    tags = TAGS,
+    target_compatible_with = ["@platforms//os:linux"],
+    test_runner = "@rules_img_internal_tools//integration_test_runner",
+    workspace_files = integration_test_utils.glob_workspace_files("disk") + [
+        "//img/private/release/source_files:release_src_files",
+    ],
+    workspace_path = "disk",
 )
 
 img_integration_tests(

@@ -1,0 +1,216 @@
+load("@rules_distroless//distroless:defs.bzl", "flatten", "group", "passwd")
+load("@rules_img//img:disk_image.bzl", "disk_image", "disk_partition")
+load("@rules_img//img:layer.bzl", "image_layer", "layer_from_tar")
+load(":uki.bzl", "initrd", "uki")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["files/os-release"])
+
+# The target platform of everything in this workspace.
+platform(
+    name = "linux_x86_64",
+    parents = ["@llvm//platforms:linux_x86_64"],
+)
+
+group(
+    name = "groups",
+    entries = [dict(
+        name = "root",
+        gid = 0,
+        users = ["root"],
+    )],
+)
+
+passwd(
+    name = "passwd",
+    entries = [dict(
+        gecos = ["root"],
+        gid = 0,
+        home = "/root",
+        shell = "/bin/sh",
+        uid = 0,
+        username = "root",
+    )],
+)
+
+genrule(
+    name = "empty_machine_id",
+    outs = ["machine-id"],
+    # An empty /etc/machine-id makes systemd generate a transient ID at every boot,
+    # since the root file system is read-only.
+    cmd = "true > $@",
+)
+
+genrule(
+    name = "free_space_placeholder",
+    outs = ["free-space-placeholder"],
+    # See files/free-space.conf.
+    cmd = "head -c 41943040 /dev/zero > $@",
+)
+
+# ---- initrd: systemd from Debian, which finds the root partition and switches to it ----
+
+image_layer(
+    name = "initrd_overlay",
+    srcs = {
+        "/etc/initrd-release": "files/os-release",
+    },
+    compress = "none",
+    format = "tar",
+    symlinks = {
+        "/init": "/lib/systemd/systemd",
+    },
+)
+
+flatten(
+    name = "initrd_tar",
+    compress = "",
+    tars = [
+        "@disk_debian//base-files/amd64",
+        "@disk_debian//systemd/amd64",
+        "@disk_debian//udev/amd64",
+        ":groups",
+        ":passwd",
+        ":initrd_overlay",
+    ],
+)
+
+initrd(
+    name = "initrd",
+    tar = ":initrd_tar",
+)
+
+# ---- unified kernel image ----
+
+flatten(
+    name = "uki_stub_tar",
+    compress = "",
+    tars = ["@disk_debian//systemd-boot-efi/amd64:data"],
+)
+
+uki(
+    name = "uki",
+    # root= is resolved by systemd in the initrd, through the udev symlinks of the GPT.
+    cmdline = "root=PARTLABEL=root rootfstype=erofs ro console=tty0 console=ttyS0,115200 systemd.show_status=1 systemd.journald.forward_to_console=1",
+    initrd = ":initrd",
+    kernel = "@disk_kernel//:kernel",
+    osrel = "files/os-release",
+    stub_path = "/usr/lib/systemd/boot/efi/linuxx64.efi.stub",
+    stub_tar = ":uki_stub_tar",
+)
+
+# ---- root file system: Debian systemd, read-only (erofs) ----
+
+image_layer(
+    name = "root_overlay",
+    srcs = {
+        "/etc/fstab": "files/fstab",
+        "/etc/hostname": "files/hostname",
+        "/etc/machine-id": ":empty_machine_id",
+        "/etc/systemd/system/hello.service": "files/hello.service",
+        "/etc/systemd/system/systemd-random-seed.service.d/order.conf": "files/random-seed-order.conf",
+        "/etc/tmpfiles.d/free-space.conf": "files/free-space.conf",
+        "/usr/local/bin/hello": "//hello",
+    },
+    compress = "none",
+    format = "tar",
+    symlinks = {
+        "/etc/systemd/system/multi-user.target.wants/hello.service": "/etc/systemd/system/hello.service",
+    },
+)
+
+flatten(
+    name = "root_tar",
+    compress = "",
+    tars = [
+        "@disk_debian//base-files/amd64",
+        "@disk_debian//systemd/amd64",
+        "@disk_debian//systemd-sysv/amd64",
+        "@disk_debian//udev/amd64",
+        "@disk_debian//util-linux/amd64",
+        "@disk_debian//mount/amd64",
+        ":groups",
+        ":passwd",
+        ":root_overlay",
+    ],
+)
+
+layer_from_tar(
+    name = "root_layer",
+    src = ":root_tar",
+    compress = "none",
+    format = "erofs",
+)
+
+# ---- partitions ----
+
+image_layer(
+    name = "esp_layer",
+    srcs = {"/EFI/BOOT/BOOTX64.EFI": ":uki"},
+    format = "fat32",
+)
+
+# Writable partitions. /var needs the directories that Debian's packages expect.
+image_layer(
+    name = "var_layer",
+    srcs = {
+        "/.free-space-placeholder": ":free_space_placeholder",
+        "/cache/README": "files/README.txt",
+        "/lib/README": "files/README.txt",
+        "/lib/systemd/README": "files/README.txt",  # systemd-random-seed keeps its seed here
+        "/log/README": "files/README.txt",
+        "/spool/README": "files/README.txt",
+        "/tmp/README": "files/README.txt",
+    },
+    format = "ext4",
+)
+
+image_layer(
+    name = "home_layer",
+    srcs = {
+        "/.free-space-placeholder": ":free_space_placeholder",
+        "/README": "files/README.txt",
+    },
+    format = "ext4",
+)
+
+disk_partition(
+    name = "esp",
+    image = ":esp_layer",
+    label = "ESP",
+    type = "esp",
+)
+
+disk_partition(
+    name = "root",
+    image = ":root_layer",
+    label = "root",
+    type = "root-x86-64",
+)
+
+disk_partition(
+    name = "var",
+    image = ":var_layer",
+    label = "var",
+    partition_size = "128MiB",
+    type = "var",
+)
+
+disk_partition(
+    name = "home",
+    image = ":home_layer",
+    label = "home",
+    partition_size = "128MiB",
+    type = "home",
+)
+
+disk_image(
+    name = "disk",
+    partitions = [
+        ":esp",
+        ":root",
+        ":var",
+        ":home",
+    ],
+)

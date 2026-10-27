@@ -1,0 +1,14 @@
+common --enable_platform_specific_config
+
+# Do not let Bazel pick up a host C++ toolchain: everything is built by the
+# hermetic LLVM toolchain registered in MODULE.bazel.
+common --repo_env=BAZEL_DO_NOT_DETECT_CPP_TOOLCHAIN=1
+common --repo_env=BAZEL_NO_APPLE_CPP_TOOLCHAIN=1
+
+# enable pathmapping for supported platforms
+common:macos --experimental_output_paths=strip
+common:linux --experimental_output_paths=strip
+
+import %workspace%/.bazelrc.common
+
+try-import %workspace%/.bazelrc.user
