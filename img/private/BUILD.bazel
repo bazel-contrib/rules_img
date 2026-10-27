@@ -23,7 +23,6 @@ bzl_library(
         "//img/private/common:layer_helper",
         "//img/private/common:layout_blob",
         "//img/private/common:sparse_oci_layout",
-        "//img/private/common:transitions",
         "@bazel_skylib//rules:common_settings",
     ],
 )
@@ -115,7 +114,6 @@ bzl_library(
         "//img/private/common:default_deploy_tool",
         "//img/private/common:deploy_attrs",
         "//img/private/common:deploy_helpers",
-        "//img/private/common:transitions",
         "//img/private/providers:deploy_info",
         "//img/private/providers:deploy_tool_info",
         "//img/private/providers:index_info",
@@ -140,7 +138,6 @@ bzl_library(
         "//img/private/common:deploy_attrs",
         "//img/private/common:deploy_helpers",
         "//img/private/common:media_types",
-        "//img/private/common:transitions",
         "//img/private/providers:deploy_info",
         "//img/private/providers:deploy_tool_info",
         "//img/private/providers:index_info",
@@ -222,7 +219,6 @@ bzl_library(
         "//img/private/common:build",
         "//img/private/common:layer_helper",
         "//img/private/common:layout_blob",
-        "//img/private/common:transitions",
         "//img/private/providers:index_info",
         "//img/private/providers:manifest_info",
         "//img/private/providers:oci_layout_settings_info",
@@ -236,7 +232,6 @@ bzl_library(
     srcs = ["image_toolchain.bzl"],
     visibility = ["//img:__subpackages__"],
     deps = [
-        "//img/private/common:transitions",
         "//img/private/providers:image_toolchain_info",
         "@bazel_features//:features",
         "@bazel_skylib//rules:common_settings",
@@ -300,7 +295,6 @@ bzl_library(
     visibility = ["//img:__subpackages__"],
     deps = [
         "//img/private/common:build",
-        "//img/private/common:transitions",
         "@bazel_skylib//rules:common_settings",
     ],
 )
@@ -332,7 +326,6 @@ bzl_library(
         "//img/private/common:build",
         "//img/private/common:default_deploy_tool",
         "//img/private/common:deploy_helpers",
-        "//img/private/common:transitions",
         "//img/private/providers:deploy_info",
         "//img/private/providers:deploy_tool_info",
         "//img/private/providers:index_info",
@@ -383,7 +376,6 @@ bzl_library(
     deps = [
         "//img/private/common:deploy_attrs",
         "//img/private/common:deploy_helpers",
-        "//img/private/common:transitions",
         "//img/private/providers:push_config_info",
         "//img/private/providers:push_settings_info",
         "//img/private/providers:stamp_setting_info",
@@ -398,7 +390,6 @@ bzl_library(
     deps = [
         "//img/private/common:deploy_attrs",
         "//img/private/common:deploy_helpers",
-        "//img/private/common:transitions",
         "//img/private/providers:load_config_info",
         "//img/private/providers:stamp_setting_info",
         "@bazel_skylib//rules:common_settings",

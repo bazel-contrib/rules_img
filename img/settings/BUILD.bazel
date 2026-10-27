@@ -74,6 +74,18 @@ string_flag(
     visibility = ["//visibility:public"],
 )
 
+# Global default for the `index_platform` attribute of image_index, which
+# defaults to "auto" and then defers to this flag.
+string_flag(
+    name = "index_platform",
+    build_setting_default = "inherited",
+    values = [
+        "inherited",
+        "multiarch",
+    ],
+    visibility = ["//visibility:public"],
+)
+
 # Global SOCI (Index Manifest v2) toggle. Per-layer and per-manifest `soci`
 # attributes default to "auto", which defers to this flag. When enabled, layers
 # emit a ztoc and images build a SOCI index for lazy pulling with

@@ -16,6 +16,12 @@ matching_test_suite(name = "matching_test")
     for name, info in PLATFORMS.items()
 ]
 
+# The platform of an image_index with platforms and
+# index_platform = "multiarch". It has no
+# constraints because the index itself is not built for any one platform; its
+# manifests are.
+platform(name = "multiarch")
+
 filegroup(
     name = "all_files",
     srcs = glob(["**"]),

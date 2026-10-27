@@ -7,7 +7,7 @@ load("//img/private:soci_deploy.bzl", "soci_deploy_children")
 load("//img/private:stamp.bzl", "expand_or_write")
 load("//img/private/common:build.bzl", "TOOLCHAIN", "TOOLCHAINS")
 load("//img/private/common:layout_blob.bzl", "blob_for_layout")
-load("//img/private/common:transitions.bzl", "multi_platform_image_transition", "reset_platform_transition")
+load("//img/private/common:transitions.bzl", "image_index_transition", "multi_platform_image_transition")
 load("//img/private/common:write_index_json.bzl", "write_index_json")
 load("//img/private/providers:index_info.bzl", "ImageIndexInfo")
 load("//img/private/providers:load_config_info.bzl", "LoadConfigInfo")
@@ -311,6 +311,24 @@ Output groups:
             providers = [platform_common.PlatformInfo],
             doc = "(Optional) list of target platforms to build the manifest for. Uses a split transition. If specified, the 'manifests' attribute should contain exactly one manifest.",
         ),
+        "index_platform": attr.string(
+            default = "auto",
+            values = ["auto", "inherited", "multiarch"],
+            doc = """The platform this index is configured on when it has `platforms`.
+
+- **`auto`** (default): defers to the global `--@rules_img//img/settings:index_platform` setting, which defaults to `inherited`.
+- **`inherited`**: the platform it is reached from. An index used as the `base` of an image is configured on the platform of each manifest that uses it, so its attributes can `select()` on that platform.
+- **`multiarch`**: `@rules_img//img/private/platforms:multiarch`, a platform with no constraints. An index used as the `base` of several images, or of an image built for several platforms, is then configured and analyzed once. Its manifests are still built for each of `platforms`.
+
+Under `multiarch`, the index's own attributes are resolved on that platform:
+
+- a `select()` on the target platform, including in `platforms`, takes its `//conditions:default` branch, or fails analysis without one;
+- `target_compatible_with` that names platform constraints, such as `@platforms//os:linux`, makes the index incompatible, and so everything that depends on it;
+- dependencies outside `manifests`, such as `subject`, `push_specs` and `load_specs`, are configured on that platform too, so an `image_manifest` among them needs its own `platform`.
+
+Has no effect on an index without `platforms`.
+""",
+        ),
         "subject": attr.label(
             doc = """Optional subject for the index.
 
@@ -424,5 +442,5 @@ When set (together with or without `push_specs`), this rule additionally returns
         ),
     },
     toolchains = TOOLCHAINS,
-    cfg = reset_platform_transition,
+    cfg = image_index_transition,
 )

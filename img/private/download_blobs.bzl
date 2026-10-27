@@ -8,7 +8,6 @@ upfront during repository fetching.
 
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("//img/private/common:build.bzl", "TOOLCHAIN", "TOOLCHAINS")
-load("//img/private/common:transitions.bzl", "reset_platform_transition")
 load("//img/private/repository_rules:registry.bzl", "get_sources_list")
 
 def _download_blob(ctx, output):
@@ -125,5 +124,4 @@ If omitted, this falls back to `//img/settings:docker_config_path`.""",
         ),
     },
     toolchains = TOOLCHAINS,
-    cfg = reset_platform_transition,
 )
