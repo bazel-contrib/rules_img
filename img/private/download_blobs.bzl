@@ -48,22 +48,22 @@ def _download_blob(ctx, output):
     if ctx.attr._insecure[BuildSettingInfo].value == "enabled":
         env["IMG_INSECURE"] = "1"
 
+    args = ctx.actions.args()
+    args.add("download-blob")
+    args.add("--digest", digest)
+    args.add("--output", output)
+    args.add_all(sources_list, format_each = "--source=%s")
+
     ctx.actions.run(
         outputs = [output],
         executable = img_toolchain_info.tool_exe,
         use_default_shell_env = True,
-        arguments = [
-            "download-blob",
-            "--digest",
-            digest,
-            "--output",
-            output.path,
-        ] + [
-            "--source={}".format(source)
-            for source in sources_list
-        ],
+        arguments = [args],
         env = env,
         mnemonic = "DownloadBlob",
+        execution_requirements = {
+            "supports-path-mapping": "1",
+        },
     )
 
 def _download_blobs_impl(ctx):
