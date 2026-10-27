@@ -23,17 +23,20 @@ type Range struct {
 // sorted by offset, must not overlap and must lie within the image; ranges of
 // size zero are ignored.
 //
-// The SHA-256 digest and size of the whole image are recorded as the
-// compressed-stream info, so reconstruction verifies it. That is only correct
-// for a writer whose original compression is none, which is what WriteImage
-// expects. The caller closes w. For large images, call
-// [Writer.CompressIncrementally] first.
+// For a writer whose original compression is none, the SHA-256 digest and size
+// of the whole image are recorded as the compressed-stream info, so
+// reconstruction verifies it. For a writer of a compressed original (the image
+// is what gets compressed), the caller has to call
+// [Writer.SetCompressedStreamInfo] with the digest and size of the compressed
+// file, because only the caller knows them. The caller closes w. For large
+// images, call [Writer.CompressIncrementally] first.
 func WriteImage(w *Writer, image io.Reader, size int64, ranges []Range, minSize int64) error {
 	if w.hashAlgo != HashAlgoSHA256 || w.hashSize != sha256.Size {
 		return fmt.Errorf("compact stream: WriteImage needs a SHA-256 writer")
 	}
-	if w.originalCompression.Compression != OriginalCompressionNone {
-		return fmt.Errorf("compact stream: WriteImage needs a writer for an uncompressed original")
+	compressed := w.originalCompression.Compression != OriginalCompressionNone
+	if compressed && !w.hasCompressedStreamInfo {
+		return fmt.Errorf("compact stream: WriteImage for a compressed original needs SetCompressedStreamInfo first")
 	}
 
 	whole := sha256.New()
@@ -84,6 +87,9 @@ func WriteImage(w *Writer, image io.Reader, size int64, ranges []Range, minSize 
 	}
 	if err := copyInline(size - pos); err != nil {
 		return err
+	}
+	if compressed {
+		return nil
 	}
 	return w.SetCompressedStreamInfo(whole.Sum(nil), uint64(size))
 }

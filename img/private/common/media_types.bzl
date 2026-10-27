@@ -17,11 +17,14 @@ EROFS_LAYER_TYPES = [
     EROFS_ZSTD_LAYER,
 ]
 
-# The media types recorded for ext4 and FAT32 filesystem image layers. They are
-# not OCI layer media types: such a layer is meant to be used on its own, not as
+# The media types recorded for ext4 and FAT32 filesystem image layers and for
+# cpio archives (initramfs). They are not OCI layer media types: such a layer is meant to be used on its own, not as
 # part of an image, so they are not among the LAYER_TYPES.
 EXT4_LAYER = "application/x-ext4"
 FAT32_LAYER = "application/x-fat32"
+CPIO_LAYER = "application/x-cpio"
+CPIO_GZIP_LAYER = "application/x-cpio+gzip"
+CPIO_ZSTD_LAYER = "application/x-cpio+zstd"
 
 LAYER_TYPES = [
     UNCOMPRESSED_LAYER,

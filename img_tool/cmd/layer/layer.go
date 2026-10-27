@@ -102,7 +102,7 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 	flagSet.Var(&contentManifestInputFlags, "deduplicate", `Path of a content manifest of a previous layer that can be used for deduplication.`)
 	flagSet.StringVar(&contentManifestCollection, "deduplicate-collection", "", `Path of a content manifest collection file that can be used for deduplication.`)
 	flagSet.StringVar(&formatFlag, "format", "", `The compression format of the output layer. Can be "gzip", "zstd", or "none". Default is to guess the algorithm based on the filename, but fall back to "gzip".`)
-	flagSet.StringVar(&layerFormatFlag, "layer-format", "tar", `The container format of the output layer. "tar" writes an OCI tar changeset. "erofs" writes a mountable EROFS filesystem image, which accepts only --format none or zstd and no --estargz or --ztoc. "ext4" and "fat32" write an ext4 or FAT32 filesystem image instead of a tar file. They are not OCI layers: the options that only apply to tar layers (--format, --estargz, --ztoc and the compressor flags) are ignored, while --compact-stream writes a compact stream of the image. FAT cannot store symbolic links, device nodes and FIFOs, so layers with such entries fail.`)
+	flagSet.StringVar(&layerFormatFlag, "layer-format", "tar", `The container format of the output layer. "tar" writes an OCI tar changeset. "erofs" writes a mountable EROFS filesystem image, which accepts only --format none or zstd and no --estargz or --ztoc. "ext4" and "fat32" write an ext4 or FAT32 filesystem image instead of a tar file. They are not OCI layers: the options that only apply to tar layers (--format, --estargz, --ztoc and the compressor flags) are ignored, while --compact-stream writes a compact stream of the image. FAT cannot store symbolic links, device nodes and FIFOs, so layers with such entries fail. "cpio" writes a cpio archive in the newc format, which is the format of a Linux initramfs (initrd). It is uncompressed unless --format is gzip or zstd (the kernel accepts both), uses the compressor flags, ignores --estargz and --ztoc, and --compact-stream writes a compact stream of the archive.`)
 	flagSet.IntVar(&erofsBlockSizeFlag, "erofs-block-size", 0, `Filesystem block size of an EROFS layer, in bytes. 0 uses 4096, which matches the common page size. Only used with --layer-format erofs.`)
 	flagSet.Uint64Var(&erofsInlineThresholdFlag, "erofs-inline-threshold", 0, `Maximum size (in bytes) of a file payload an EROFS layer may tail-pack into its inode. A file at least this large gets a data extent of its own, and therefore becomes a content-addressed reference in the compact stream rather than inline bytes. 0 packs whatever fits in the inode's block. Only used with --layer-format erofs.`)
 	flagSet.StringVar(&erofsSyntheticDirectoriesFlag, "erofs-synthetic-directories", "inherit", `Attributes for directories an EROFS layer has to invent because nothing describes them. "inherit" copies the nearest described ancestor's ownership (what mkfs.erofs does), "default" uses 0755 root:root, "strict" fails the layer instead of guessing. Only used with --layer-format erofs.`)
@@ -142,15 +142,19 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 		containerFormat = api.Ext4Format
 	case "fat32":
 		containerFormat = api.Fat32Format
+	case "cpio":
+		containerFormat = api.CpioFormat
 	default:
-		fmt.Fprintf(os.Stderr, "Unknown layer format %s. Supported layer formats are tar, erofs, ext4 and fat32.\n", layerFormatFlag)
+		fmt.Fprintf(os.Stderr, "Unknown layer format %s. Supported layer formats are tar, erofs, ext4, fat32 and cpio.\n", layerFormatFlag)
 		os.Exit(1)
 	}
 	if containerFormat.IsImageFormat() {
 		// A filesystem image is written directly. Options that only apply to
 		// tar layers are ignored. A compact stream is written next to the
 		// image, and an image is always written.
-		formatFlag = "none"
+		if containerFormat != api.CpioFormat {
+			formatFlag = "none"
+		}
 		estargzFlag = false
 		compactStreamOnlyFlag = false
 		ztocOutputFlag = ""
@@ -199,9 +203,10 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 	var compressionAlgorithm api.CompressionAlgorithm
 	switch formatFlag {
 	case "":
-		if containerFormat == api.ErofsFormat {
+		if containerFormat == api.ErofsFormat || containerFormat == api.CpioFormat {
 			// An EROFS image is mountable as it is, so leaving it uncompressed
-			// is the useful default; gzip does not exist for this family.
+			// is the useful default; gzip does not exist for this family. An
+			// initramfs is uncompressed unless asked otherwise.
 			compressionAlgorithm = api.Uncompressed
 		} else if compactStreamOnlyFlag {
 			compressionAlgorithm = api.Gzip
@@ -405,6 +410,7 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 			containerFormat, outputOSFile, addFiles, importTarFlags, executableFlags, symlinkFlags, emptyFilePaths, baseMetadataPaths,
 			createParentDirectoriesFlag, layerMetadata, layerHistory, mediaTypeFlag, annotations, metadataOutputFlag,
 			compactStreamOutputFlag, compactStreamInlineThresholdFlag, fat32SectorSizeFlag,
+			cpioCompression{algorithm: compressionAlgorithm, jobs: compressorJobsFlag, level: compressionLevelFlag},
 		); err != nil {
 			fmt.Fprintf(os.Stderr, "Writing %s layer: %v\n", containerFormat, err)
 			os.Exit(1)
@@ -544,6 +550,26 @@ type finalizer interface {
 	Finalize() (api.AppenderState, error)
 }
 
+// compressOptions turns the --compression-level and --compressor-jobs flags
+// into compressor options.
+func compressOptions(compressionLevelFlag int, compressorJobsFlag string) []compress.Option {
+	var opts []compress.Option
+	// compression level
+	if compressionLevelFlag >= 0 {
+		lvl := compress.CompressionLevel(compressionLevelFlag)
+		opts = append(opts, lvl)
+	}
+	// compressor jobs: accept numeric or "nproc"
+	if len(compressorJobsFlag) > 0 {
+		if compressorJobsFlag == "nproc" {
+			opts = append(opts, compress.CompressorJobs(runtime.NumCPU()))
+		} else if n, err := strconv.Atoi(compressorJobsFlag); err == nil {
+			opts = append(opts, compress.CompressorJobs(n))
+		}
+	}
+	return opts
+}
+
 func handleLayerState(
 	containerFormat api.ContainerFormat, erofs erofsSettings,
 	compressionAlgorithm api.CompressionAlgorithm, useEstargz bool, addFiles addFiles, importTars importTars, addExecutables executables, addSymlinks symlinks, emptyFiles []string,
@@ -560,20 +586,7 @@ func handleLayerState(
 
 	// Start precaching files in the background
 	startPrecaching(precacher, addFiles, addExecutables)
-	var opts []compress.Option
-	// compression level
-	if compressionLevelFlag >= 0 {
-		lvl := compress.CompressionLevel(compressionLevelFlag)
-		opts = append(opts, lvl)
-	}
-	// compressor jobs: accept numeric or "nproc"
-	if len(compressorJobsFlag) > 0 {
-		if compressorJobsFlag == "nproc" {
-			opts = append(opts, compress.CompressorJobs(runtime.NumCPU()))
-		} else if n, err := strconv.Atoi(compressorJobsFlag); err == nil {
-			opts = append(opts, compress.CompressorJobs(n))
-		}
-	}
+	opts := compressOptions(compressionLevelFlag, compressorJobsFlag)
 
 	var csFile *os.File
 	var csWriter *compactstream.Writer

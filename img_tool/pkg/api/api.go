@@ -33,6 +33,7 @@ const (
 	ErofsFormat ContainerFormat = "erofs"
 	Ext4Format  ContainerFormat = "ext4"
 	Fat32Format ContainerFormat = "fat32"
+	CpioFormat  ContainerFormat = "cpio"
 
 	// Layer formats
 	TarLayer     = "application/vnd.oci.image.layer.v1.tar"
@@ -44,11 +45,18 @@ const (
 	ErofsLayer     = "application/vnd.erofs.layer.v1"
 	ErofsZstdLayer = "application/vnd.erofs.layer.v1+zstd"
 
-	// Ext4Layer and Fat32Layer are the media types recorded for ext4 and FAT32
-	// filesystem image layers. They are not OCI layer media types: such a layer is meant to be used on
-	// its own, not as part of an image.
+	// Ext4Layer, Fat32Layer and CpioLayer are the media types recorded for ext4
+	// and FAT32 filesystem image layers and for cpio archives (initramfs). They
+	// are not OCI layer media types: such a layer is meant to be used on its own,
+	// not as part of an image.
 	Ext4Layer  = "application/x-ext4"
 	Fat32Layer = "application/x-fat32"
+	CpioLayer  = "application/x-cpio"
+
+	// CpioGzipLayer and CpioZstdLayer are the media types of a compressed cpio
+	// archive.
+	CpioGzipLayer = "application/x-cpio+gzip"
+	CpioZstdLayer = "application/x-cpio+zstd"
 
 	// Config media types
 	MediaTypeEmptyJSON = "application/vnd.oci.empty.v1+json"
@@ -76,11 +84,11 @@ const (
 )
 
 // IsImageFormat reports whether a container format is a filesystem image that
-// is written directly by the layer command, with the ext4 and FAT32 writers
-// (as opposed to a tar changeset, or an EROFS image built from the tar
-// pipeline).
+// (or a cpio archive) that is written directly by the layer command, with the
+// ext4, FAT32 and cpio writers (as opposed to a tar changeset, or an EROFS image
+// built from the tar pipeline).
 func (c ContainerFormat) IsImageFormat() bool {
-	return c == Ext4Format || c == Fat32Format
+	return c == Ext4Format || c == Fat32Format || c == CpioFormat
 }
 
 // IsErofsLayer reports whether a layer media type belongs to the EROFS family.

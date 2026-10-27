@@ -4,7 +4,7 @@ load("@bazel_skylib//lib:paths.bzl", "paths")
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("//img/private/common:build.bzl", "TOOLCHAIN")
 load("//img/private/common:layer_helper.bzl", "build_layer_mtree", "compression_tuning_args", "layer_history_args")
-load("//img/private/common:media_types.bzl", "EROFS_LAYER", "EROFS_ZSTD_LAYER", "EXT4_LAYER", "FAT32_LAYER", "GZIP_LAYER", "UNCOMPRESSED_LAYER", "ZSTD_LAYER")
+load("//img/private/common:media_types.bzl", "CPIO_GZIP_LAYER", "CPIO_LAYER", "CPIO_ZSTD_LAYER", "EROFS_LAYER", "EROFS_ZSTD_LAYER", "EXT4_LAYER", "FAT32_LAYER", "GZIP_LAYER", "UNCOMPRESSED_LAYER", "ZSTD_LAYER")
 load("//img/private/providers:layers_info.bzl", "LayersInfo")
 load("//img/private/providers:single_layer_info.bzl", "SingleLayerInfo")
 
@@ -96,9 +96,21 @@ def _rebase_short_path(f):
     """
     return empty_runfile_short_path(f.short_path)
 
-# Layer formats that are filesystem images written directly by `img layer`
+# Layer formats that are filesystem images (or cpio archives) written directly by `img layer`
 # (rather than tar changesets, or EROFS images built from the tar pipeline).
-IMAGE_FORMATS = ["ext4", "fat32"]
+IMAGE_FORMATS = ["ext4", "fat32", "cpio"]
+
+_IMAGE_MEDIA_TYPES = {
+    "ext4": EXT4_LAYER,
+    "fat32": FAT32_LAYER,
+}
+
+# The media types and file extensions of a cpio archive by compression.
+_CPIO_LAYERS = {
+    "none": (CPIO_LAYER, ".cpio"),
+    "gzip": (CPIO_GZIP_LAYER, ".cpio.gz"),
+    "zstd": (CPIO_ZSTD_LAYER, ".cpio.zst"),
+}
 
 def _place_files_header(mode, dest, anchor, skip, on_escape = "error"):
     """Build the header line for a --place-files parameter file.
@@ -227,9 +239,10 @@ def resolve_layer_settings(ctx):
     settings. Computes derived values (media type and output file extension) and
     rejects combinations the layer formats do not support.
 
-    With layer_format "ext4" or "fat32", the options that only apply to tar layers
-    (compression, estargz, soci, compact layers) are ignored and resolve to their
-    disabled values.
+    With layer_format "ext4", "fat32" or "cpio", the options that only apply to tar layers
+    (estargz, soci, compact layers) are ignored and resolve to their disabled values.
+    So is the compression, except for "cpio" (an initramfs is uncompressed unless
+    asked otherwise).
 
     Args:
         ctx: Rule context. Must have attrs from layer_attrs.common.
@@ -250,14 +263,24 @@ def resolve_layer_settings(ctx):
         tree_artifact_handling = ctx.attr.tree_artifact_handling
         if tree_artifact_handling == "auto":
             tree_artifact_handling = ctx.attr._default_tree_artifact_handling[BuildSettingInfo].value
+        compression = "none"
+        if layer_format == "cpio":
+            # An initramfs is left uncompressed unless asked otherwise: the
+            # global default (gzip) is for tar layers.
+            compression = ctx.attr.compress
+            if compression == "auto":
+                compression = "none"
+            media_type, out_ext = _CPIO_LAYERS[compression]
+        else:
+            media_type, out_ext = _IMAGE_MEDIA_TYPES[layer_format], "." + layer_format
         return struct(
-            compression = "none",
+            compression = compression,
             layer_format = layer_format,
             estargz = False,
             create_parent_directories = create_parent_directories == "enabled",
             tree_artifact_handling = tree_artifact_handling,
-            media_type = ctx.attr.media_type or (EXT4_LAYER if layer_format == "ext4" else FAT32_LAYER),
-            out_ext = "." + layer_format,
+            media_type = ctx.attr.media_type or media_type,
+            out_ext = out_ext,
             compact_layers = False,
             compact_layers_inline_threshold = 0,
             compact_layers_materialize_blob = False,
@@ -412,7 +435,7 @@ def create_single_layer(ctx, settings, name, extra_args = [], extra_inputs = [])
         args.extend(["--erofs-synthetic-directories", settings.erofs_synthetic_directories])
     if ctx.attr.media_type:
         args.extend(["--media-type", ctx.attr.media_type])
-    if not is_image:
+    if not is_image or settings.layer_format == "cpio":
         args.extend(compression_tuning_args(ctx, settings.compression, settings.estargz))
     if settings.estargz:
         args.append("--estargz")

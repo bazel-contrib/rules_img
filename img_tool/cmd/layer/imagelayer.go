@@ -15,13 +15,13 @@ import (
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/metadata"
 )
 
-// handleImageLayer writes the layer as a filesystem image (ext4 or FAT32)
+// handleImageLayer writes the layer as a filesystem image (ext4 or FAT32) or cpio archive
 // and, if requested, the layer metadata describing it.
 func handleImageLayer(
 	format api.ContainerFormat, image *os.File, addFiles addFiles, importTars importTars, addExecutables executables, addSymlinks symlinks, emptyFiles []string,
 	baseMetadataPaths []string, createParentDirectories bool, layerMetadata *LayerMetadata,
 	history, mediaType string, annotations map[string]string, metadataPath string,
-	compactStreamPath string, compactStreamInlineThreshold uint64, fat32SectorSize int,
+	compactStreamPath string, compactStreamInlineThreshold uint64, fat32SectorSize int, cpioCompression cpioCompression,
 ) error {
 	// A nil *os.File in an io.Writer would not be a nil io.Writer.
 	var compactStream io.Writer
@@ -36,6 +36,9 @@ func handleImageLayer(
 
 	var size int64
 	var defaultMediaType string
+	// state is set for formats that compress, where the digest of the layer file
+	// is not the one of the image.
+	var state *api.AppenderState
 	switch format {
 	case api.Ext4Format:
 		info, err := writeExt4Layer(image, addFiles, importTars, addExecutables, addSymlinks, emptyFiles, baseMetadataPaths, createParentDirectories, layerMetadata, compactStream, compactStreamInlineThreshold)
@@ -43,6 +46,20 @@ func handleImageLayer(
 			return err
 		}
 		size, defaultMediaType = info.Size, api.Ext4Layer
+	case api.CpioFormat:
+		s, err := writeCpioLayer(image, addFiles, importTars, addExecutables, addSymlinks, emptyFiles, baseMetadataPaths, createParentDirectories, layerMetadata, cpioCompression, compactStream, compactStreamInlineThreshold)
+		if err != nil {
+			return err
+		}
+		state, size = &s, s.CompressedSize
+		switch cpioCompression.algorithm {
+		case api.Gzip:
+			defaultMediaType = api.CpioGzipLayer
+		case api.Zstd:
+			defaultMediaType = api.CpioZstdLayer
+		default:
+			defaultMediaType = api.CpioLayer
+		}
 	case api.Fat32Format:
 		info, err := writeFat32Layer(image, addFiles, importTars, addExecutables, addSymlinks, emptyFiles, baseMetadataPaths, createParentDirectories, layerMetadata, compactStream, compactStreamInlineThreshold, fat32SectorSize)
 		if err != nil {
@@ -60,14 +77,14 @@ func handleImageLayer(
 	if err != nil {
 		return fmt.Errorf("opening metadata output file: %w", err)
 	}
-	if err := writeImageMetadata(image, size, history, defaultMediaType, mediaType, annotations, metadataFile); err != nil {
+	if err := writeImageMetadata(image, size, state, history, defaultMediaType, mediaType, annotations, metadataFile); err != nil {
 		metadataFile.Close()
 		return err
 	}
 	return metadataFile.Close()
 }
 
-// imageBuilder is what the filesystem image writers (ext4 and FAT32) share with
+// imageBuilder is what the image and archive writers (ext4, FAT32 and cpio) share with
 // the tar writer: tar headers, with content from a reader or a path.
 type imageBuilder interface {
 	WriteHeader(hdr *tar.Header) error
@@ -195,15 +212,22 @@ func (s *imageSink) applyMetadata(hdr *tar.Header) error {
 }
 
 // writeImageMetadata writes the layer metadata file for an image layer. The
-// digest and size describe the image file; other than that, the metadata is
+// digest and size describe the image file (the compressed one, if there is
+// state from a compressor); other than that, the metadata is
 // only as faithful as the layer rules need it to be, since image layers are not
 // OCI layers.
-func writeImageMetadata(image *os.File, size int64, history, defaultMediaType, mediaTypeOverride string, annotations map[string]string, output io.Writer) error {
-	hasher := sha256.New()
-	if _, err := io.Copy(hasher, io.NewSectionReader(image, 0, size)); err != nil {
-		return fmt.Errorf("digesting image: %w", err)
+func writeImageMetadata(image *os.File, size int64, state *api.AppenderState, history, defaultMediaType, mediaTypeOverride string, annotations map[string]string, output io.Writer) error {
+	var digest, diffID string
+	if state != nil {
+		digest, diffID = fmt.Sprintf("sha256:%x", state.OuterHash), fmt.Sprintf("sha256:%x", state.ContentHash)
+	} else {
+		hasher := sha256.New()
+		if _, err := io.Copy(hasher, io.NewSectionReader(image, 0, size)); err != nil {
+			return fmt.Errorf("digesting image: %w", err)
+		}
+		digest = fmt.Sprintf("sha256:%x", hasher.Sum(nil))
+		diffID = digest
 	}
-	digest := fmt.Sprintf("sha256:%x", hasher.Sum(nil))
 
 	var layerHistory []api.History
 	if history == "" {
@@ -215,5 +239,5 @@ func writeImageMetadata(image *os.File, size int64, history, defaultMediaType, m
 	if mediaTypeOverride != "" {
 		mediaType = mediaTypeOverride
 	}
-	return metadata.WriteLayerMetadata(digest, mediaType, digest, size, annotations, layerHistory, output)
+	return metadata.WriteLayerMetadata(diffID, mediaType, digest, size, annotations, layerHistory, output)
 }

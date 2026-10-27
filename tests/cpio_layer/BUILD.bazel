@@ -1,0 +1,93 @@
+load("@bazel_skylib//rules:build_test.bzl", "build_test")
+load("@rules_img//img:layer.bzl", "image_layer")
+
+# gazelle:exclude_from_release
+
+genrule(
+    name = "init",
+    outs = ["init.sh"],
+    cmd = "echo 'hello from an initramfs' > $@",
+)
+
+# Options that only apply to tar layers are ignored for cpio layers. An
+# initramfs is uncompressed unless asked otherwise.
+image_layer(
+    name = "cpio_layer",
+    srcs = {
+        "/init": ":init",
+    },
+    estargz = "enabled",
+    format = "cpio",
+    symlinks = {
+        "/sbin/init": "/init",
+    },
+)
+
+image_layer(
+    name = "cpio_layer_gzip",
+    srcs = {
+        "/init": ":init",
+    },
+    compress = "gzip",
+    format = "cpio",
+)
+
+image_layer(
+    name = "cpio_layer_zstd",
+    srcs = {
+        "/init": ":init",
+    },
+    compress = "zstd",
+    format = "cpio",
+)
+
+# Fails the build unless the layer is a newc cpio archive holding the file.
+genrule(
+    name = "check_cpio_layer",
+    srcs = [":cpio_layer"],
+    outs = ["cpio_layer_ok"],
+    cmd = """
+layer="$(location :cpio_layer)"
+case "$$layer" in *.cpio) ;; *) echo "expected a .cpio layer, got $$layer" >&2; exit 1;; esac
+[ "$$(dd if="$$layer" bs=1 count=6 2>/dev/null)" = "070701" ] || { echo "not a newc cpio archive" >&2; exit 1; }
+grep -q "TRAILER!!!" "$$layer" || { echo "no trailer" >&2; exit 1; }
+grep -q "hello from an initramfs" "$$layer" || { echo "file content not found in the archive" >&2; exit 1; }
+touch $@
+""",
+)
+
+# Fails the build unless the compressed layers have the right extension and
+# compression format.
+genrule(
+    name = "check_compressed_cpio_layers",
+    srcs = [
+        ":cpio_layer_gzip",
+        ":cpio_layer_zstd",
+    ],
+    outs = ["compressed_cpio_layers_ok"],
+    cmd = """
+gz="$(location :cpio_layer_gzip)"
+zst="$(location :cpio_layer_zstd)"
+case "$$gz" in *.cpio.gz) ;; *) echo "expected .cpio.gz, got $$gz" >&2; exit 1;; esac
+case "$$zst" in *.cpio.zst) ;; *) echo "expected .cpio.zst, got $$zst" >&2; exit 1;; esac
+gzip -dc "$$gz" | grep -q "hello from an initramfs" || { echo "gzip layer: content not found" >&2; exit 1; }
+[ "$$(gzip -dc "$$gz" | dd bs=1 count=6 2>/dev/null)" = "070701" ] || { echo "gzip layer: not a newc cpio archive" >&2; exit 1; }
+# The zstd frame magic number.
+[ "$$(od -An -tx1 -N4 "$$zst" | tr -d ' \n')" = "28b52ffd" ] || { echo "zstd layer: not a zstd frame" >&2; exit 1; }
+touch $@
+""",
+)
+
+build_test(
+    name = "cpio_layer_test",
+    targets = [
+        ":check_cpio_layer",
+        ":check_compressed_cpio_layers",
+    ],
+)
+
+filegroup(
+    name = "all_files",
+    srcs = glob(["**"]),
+    visibility = ["//img/private/release:__subpackages__"],
+)

@@ -4,6 +4,7 @@ go_library(
     name = "layer",
     srcs = [
         "basemetadata.go",
+        "cpio.go",
         "ext4.go",
         "fat32.go",
         "flagtypes.go",
@@ -23,6 +24,8 @@ go_library(
         "//pkg/contentmanifest",
         "//pkg/digestfs",
         "//pkg/erofscas",
+        "//pkg/fs/cpio",
+        "//pkg/fs/cpio/cpiocstream",
         "//pkg/fs/ext4",
         "//pkg/fs/ext4/ext4cstream",
         "//pkg/fs/fat32",
@@ -41,6 +44,7 @@ go_library(
 go_test(
     name = "layer_test",
     srcs = [
+        "cpio_test.go",
         "ext4_test.go",
         "fat32_test.go",
         "layer_test.go",
@@ -52,5 +56,6 @@ go_test(
         "//pkg/api",
         "//pkg/compactstream",
         "//pkg/contentmanifest",
+        "@com_github_klauspost_compress//zstd",
     ],
 )

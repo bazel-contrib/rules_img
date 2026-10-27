@@ -11,16 +11,20 @@ Compression algorithm to use. If set to 'auto', uses the global default compress
 
 'none' leaves the layer uncompressed, which is the useful choice for an EROFS layer
 (the blob is then mountable as it is). EROFS layers cannot be gzip-compressed.
+
+A `cpio` layer (an initramfs) is also left uncompressed by default. It can be compressed with `gzip` or
+`zstd`, which the kernel unpacks as it is. The other filesystem image formats (`ext4`, `fat32`) ignore this
+attribute.
 """,
     ),
     format = attr.string(
         default = "auto",
-        values = ["auto", "tar", "erofs", "ext4", "fat32"],
+        values = ["auto", "tar", "erofs", "ext4", "fat32", "cpio"],
         doc = """\
 Container format of the layer blob, orthogonal to `compress`.
 
 'tar' writes an OCI tar changeset. 'erofs' writes a mountable EROFS filesystem image. 'ext4' writes an
-ext4 filesystem image, 'fat32' a FAT32 filesystem image. If set to 'auto', uses the global default
+ext4 filesystem image, 'fat32' a FAT32 filesystem image, 'cpio' a cpio archive in the newc format (an initramfs). If set to 'auto', uses the global default
 --@rules_img//img/settings:layer_format setting.
 
 An EROFS layer is a filesystem, not a changeset, which changes what an absent
@@ -38,9 +42,17 @@ FIFOs, ownership or permissions: a layer with symbolic links or special files fa
 become copies, and the owner write bit becomes the read-only attribute. Timestamps are limited to 1980
 through 2107 with a resolution of two seconds. Names are case insensitive.
 
-`ext4` and `fat32` layers are **not** valid OCI layers: the metadata recorded for them (media type,
+A `cpio` layer is an uncompressed cpio archive in the "newc" format, which is what the Linux kernel
+unpacks as an initramfs (initrd). Entries are sorted by path,
+and directories that nothing describes are added with mode 0755 owned by root, because the kernel does not
+create parent directories. Symbolic links, device nodes, FIFOs, hard links and ownership are kept. Sizes,
+ownership, timestamps (seconds since the epoch) and device numbers must fit in 32 bits. Compact layers are
+not supported. The layer file has the extension `.cpio`, `.cpio.gz` or `.cpio.zst`, depending on `compress`;
+the kernel unpacks the compressed archives as they are.
+
+`ext4`, `fat32` and `cpio` layers are **not** valid OCI layers: the metadata recorded for them (media type,
 digests) does not describe an OCI blob, so do not use such a layer in an `image_manifest`. Options that
-only apply to tar layers are ignored: `compress`, `estargz`, `soci`, the global compression settings,
+only apply to tar layers are ignored: `compress` (except for `cpio`), `estargz`, `soci`, the global compression settings,
 compact layers, and `mtree` output. Entries are limited to what the file system can store (for example,
 file names of up to 255 bytes).
 """,

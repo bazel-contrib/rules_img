@@ -426,6 +426,19 @@ FAT32 images of `img_tool/pkg/fs/fat32`, which also store every file contiguousl
 image, and `--compact-stream-inline-threshold` is the minimum size of a referenced file (zero
 references every file).
 
+The `cpiocstream` package (`img_tool/pkg/fs/cpio/cpiocstream`) does the same for the cpio
+archives (initramfs) of `img_tool/pkg/fs/cpio`, with `img layer --layer-format cpio`. The
+content of each file is contiguous in a cpio archive too, so the references are the files of at
+least the minimum size and everything else (headers, names, symbolic link targets, padding, small
+files) is inline. The members of a set of hard links share one copy of the content.
+
+Unlike an ext4 or FAT32 image, a cpio archive is usually compressed (`--format gzip` or `zstd`,
+and `--compression-level` and `--compressor-jobs`). The compact stream then describes the
+uncompressed archive, records the compression like the compact stream of a tar layer does, and
+the digest and size of the compressed layer file as the
+[compressed-stream info](#compressed-stream-digest-and-size-optional). Reconstruction compresses
+the archive again and verifies that it got the layer file back.
+
 ## Compact streams of disk images
 
 A [disk image](disk-images.md) with a GPT or MBR partition table is a byte stream
