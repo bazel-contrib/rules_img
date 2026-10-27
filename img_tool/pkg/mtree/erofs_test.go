@@ -98,7 +98,7 @@ func equivalenceEntries(t *testing.T) []layerEntry {
 func buildTarLayer(t *testing.T, entries []layerEntry) []byte {
 	t.Helper()
 	var blob bytes.Buffer
-	appender, err := compress.TarAppenderFactory("sha256", "none", false, &blob)
+	appender, err := compress.TarAppenderFactory("sha256", "none", compress.TarFormatPlain, &blob)
 	if err != nil {
 		t.Fatal(err)
 	}
