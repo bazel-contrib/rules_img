@@ -1,15 +1,16 @@
 // Package mtree implements the `img mtree` subcommand, which writes an mtree(8)
 // specification describing the metadata of one or more layers.
 //
-// Inputs are given by repeatable --tar, --cstream, --erofs, --erofs-cstream and
-// --mtree flags and are processed in the order they appear on the command line
+// Inputs are given by repeatable --tar, --cstream, --erofs, --erofs-cstream,
+// --ext4, --ext4-cstream and --mtree flags and are processed in the order they appear on the command line
 // (they may be interleaved). A tar blob (--tar) may be gzip/zstd-compressed; a
 // compact stream (--cstream) is reconstructed with zero-filled bodies and its
 // content digests come from the CAS reference table / inlined bytes; an EROFS
 // layer blob (--erofs) is walked as a filesystem image; an EROFS layer's compact
 // stream (--erofs-cstream) is walked as a sparse image whose payloads read as
 // zeros, with the content digests again coming from the reference table; an
-// mtree spec (--mtree) is folded in with its keywords filtered to the requested
+// ext4 layer (--ext4) and its compact stream (--ext4-cstream) are handled the
+// same way; an mtree spec (--mtree) is folded in with its keywords filtered to the requested
 // field set and its paths re-normalized. The path layout, field set, and layer
 // layout are controlled by --path-prefix, --options, and --layout.
 package mtree
@@ -42,6 +43,8 @@ const (
 	cstreamKind
 	erofsKind
 	erofsCstreamKind
+	ext4Kind
+	ext4CstreamKind
 	mtreeKind
 )
 
@@ -71,7 +74,7 @@ func MtreeProcess(ctx context.Context, args []string) {
 	flagSet := flag.NewFlagSet("mtree", flag.ExitOnError)
 	flagSet.Usage = func() {
 		fmt.Fprintf(flagSet.Output(), "Writes an mtree specification of one or more layers' metadata.\n\n")
-		fmt.Fprintf(flagSet.Output(), "Usage: img mtree (--tar <tar> | --cstream <cstream> | --erofs <blob> | --erofs-cstream <cstream> | --mtree <mtree>)... --output <mtree|->\n")
+		fmt.Fprintf(flagSet.Output(), "Usage: img mtree (--tar <tar> | --cstream <cstream> | --erofs <blob> | --erofs-cstream <cstream> | --ext4 <image> | --ext4-cstream <cstream> | --mtree <mtree>)... --output <mtree|->\n")
 		flagSet.PrintDefaults()
 		fmt.Fprintf(flagSet.Output(), "\nInputs are processed in command-line order and may be interleaved.\n")
 	}
@@ -79,6 +82,8 @@ func MtreeProcess(ctx context.Context, args []string) {
 	flagSet.Var(orderedInput{cstreamKind, &inputs}, "cstream", "Add a compact stream (.cstream) input. Repeatable.")
 	flagSet.Var(orderedInput{erofsKind, &inputs}, "erofs", "Add an EROFS layer blob input (may be zstd-compressed). Repeatable.")
 	flagSet.Var(orderedInput{erofsCstreamKind, &inputs}, "erofs-cstream", "Add the compact stream of an EROFS layer, read as a sparse image whose file payloads are absent. Repeatable.")
+	flagSet.Var(orderedInput{ext4Kind, &inputs}, "ext4", "Add an ext4 layer image input. Repeatable.")
+	flagSet.Var(orderedInput{ext4CstreamKind, &inputs}, "ext4-cstream", "Add the compact stream of an ext4 layer, read as a sparse image whose file payloads are absent. Repeatable.")
 	flagSet.Var(orderedInput{mtreeKind, &inputs}, "mtree", "Add an existing mtree spec input. Repeatable.")
 	flagSet.StringVar(&outputPath, "output", "", `Path to write the mtree to, or "-" for stdout (required).`)
 	flagSet.StringVar(&pathPrefix, "path-prefix", defaults.PathPrefix, `Prefix for entry paths: "./" (full-path entries) or "" (bare tar paths).`)
@@ -91,7 +96,7 @@ func MtreeProcess(ctx context.Context, args []string) {
 	}
 
 	if len(inputs) == 0 {
-		fmt.Fprintf(os.Stderr, "Error: at least one of --tar, --cstream, --erofs, --erofs-cstream, or --mtree is required\n")
+		fmt.Fprintf(os.Stderr, "Error: at least one of --tar, --cstream, --erofs, --erofs-cstream, --ext4, --ext4-cstream, or --mtree is required\n")
 		flagSet.Usage()
 		os.Exit(1)
 	}
@@ -149,7 +154,7 @@ func run(ctx context.Context, refs []inputRef, opts mtree.Options, outputPath st
 			closers = append(closers, reader)
 			inputs = append(inputs, mtree.Input{Kind: mtree.TarInput, Reader: reader, Digester: cstreamDigester(reader)})
 		case erofsKind:
-			image, imageCloser, ierr := erofsImage(f)
+			image, imageCloser, ierr := filesystemImage(f)
 			if ierr != nil {
 				return fmt.Errorf("reading EROFS layer %s: %w", ref.path, ierr)
 			}
@@ -162,6 +167,24 @@ func run(ctx context.Context, refs []inputRef, opts mtree.Options, outputPath st
 			}
 			inputs = append(inputs, mtree.Input{
 				Kind:          mtree.ErofsInput,
+				ReaderAt:      sparse,
+				Digester:      mtree.HashContent,
+				RangeDigester: sparse.RefDigestInRange,
+			})
+		case ext4Kind:
+			image, imageCloser, ierr := filesystemImage(f)
+			if ierr != nil {
+				return fmt.Errorf("reading ext4 layer %s: %w", ref.path, ierr)
+			}
+			closers = append(closers, imageCloser)
+			inputs = append(inputs, mtree.Input{Kind: mtree.Ext4Input, ReaderAt: image, Digester: mtree.HashContent})
+		case ext4CstreamKind:
+			sparse, serr := compactstream.NewSparseReaderAt(f)
+			if serr != nil {
+				return fmt.Errorf("reading compact stream %s: %w", ref.path, serr)
+			}
+			inputs = append(inputs, mtree.Input{
+				Kind:          mtree.Ext4Input,
 				ReaderAt:      sparse,
 				Digester:      mtree.HashContent,
 				RangeDigester: sparse.RefDigestInRange,
@@ -226,12 +249,13 @@ type closerFunc func() error
 
 func (c closerFunc) Close() error { return c() }
 
-// erofsImage returns random access to an EROFS layer blob, which walking a
-// filesystem image requires (the tar path streams because a tar can only be read
-// in order anyway). An uncompressed blob is addressed in place. A compressed one
-// is decompressed into a temporary file rather than into memory, so the cost
-// does not grow with the layer; the returned closer removes it.
-func erofsImage(f *os.File) (io.ReaderAt, io.Closer, error) {
+// filesystemImage returns random access to a filesystem image layer blob (EROFS
+// or ext4), which walking a filesystem image requires (the tar path streams
+// because a tar can only be read in order anyway). An uncompressed blob is
+// addressed in place. A compressed one is decompressed into a temporary file
+// rather than into memory, so the cost does not grow with the layer; the
+// returned closer removes it.
+func filesystemImage(f *os.File) (io.ReaderAt, io.Closer, error) {
 	var magic [4]byte
 	n, err := f.ReadAt(magic[:], 0)
 	if err != nil && err != io.EOF {
@@ -247,7 +271,7 @@ func erofsImage(f *os.File) (io.ReaderAt, io.Closer, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	tmp, err := os.CreateTemp("", "erofs-layer-*")
+	tmp, err := os.CreateTemp("", "fs-image-layer-*")
 	if err != nil {
 		return nil, nil, err
 	}
