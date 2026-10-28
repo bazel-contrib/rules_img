@@ -3,7 +3,7 @@ package compress
 import (
 	"io"
 
-	"github.com/containers/storage/pkg/chunked/compressor"
+	"go.podman.io/storage/pkg/chunked/compressor"
 	"github.com/klauspost/compress/zstd"
 )
 

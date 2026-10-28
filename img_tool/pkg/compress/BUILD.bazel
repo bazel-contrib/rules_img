@@ -15,7 +15,7 @@ go_library(
         "//pkg/api",
         "@com_github_containerd_stargz_snapshotter_estargz//:estargz",
         "@com_github_containerd_stargz_snapshotter_estargz//zstdchunked",
-        "@com_github_containers_storage//pkg/chunked/compressor",
+        "@io_podman_go_storage//pkg/chunked/compressor",
         "@com_github_klauspost_compress//zstd",
         "@com_github_klauspost_pgzip//:pgzip",
         "@com_github_opencontainers_go_digest//:go-digest",
