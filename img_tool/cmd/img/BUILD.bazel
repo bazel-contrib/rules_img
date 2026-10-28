@@ -19,6 +19,8 @@ go_library(
         "//cmd/downloadblob",
         "//cmd/downloadmanifest",
         "//cmd/expandtemplate",
+        "//cmd/flattenimage",
+        "//cmd/fromarchive",
         "//cmd/hash",
         "//cmd/imagesizetest",
         "//cmd/index",
@@ -86,8 +88,5 @@ go_test(
     name = "img_test",
     srcs = ["img_test.go"],
     embed = [":img_lib"],
-    deps = [
-        "//pkg/auth/protohelper",
-        "//pkg/registryopts",
-    ],
+    deps = ["//pkg/registryopts"],
 )

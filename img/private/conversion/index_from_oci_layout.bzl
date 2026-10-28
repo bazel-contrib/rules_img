@@ -202,6 +202,9 @@ def _image_index_from_oci_layout(ctx):
 
 image_index_from_oci_layout = rule(
     implementation = _image_index_from_oci_layout,
+    doc = """Converts an OCI layout directory to an image index when you know the layer media types.
+
+For multi-platform tar archives, use `image_index_from_archive`. If you do not know the layer count, use `image_flatten`.""",
     attrs = dict(
         IMAGE_MTREE_ATTRS,
         src = attr.label(

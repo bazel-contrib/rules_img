@@ -20,6 +20,8 @@ import (
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/downloadblob"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/downloadmanifest"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/expandtemplate"
+	"github.com/bazel-contrib/rules_img/img_tool/cmd/flattenimage"
+	"github.com/bazel-contrib/rules_img/img_tool/cmd/fromarchive"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/hash"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/imagesizetest"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/index"
@@ -58,11 +60,14 @@ Commands:
   download-blob            downloads a single blob from a registry
   download-manifest        downloads a manifest by digest or tag from a registry
   expand-template          expands Go templates in push request JSON
+  flatten-image            squashes image layers into a single layer
   hash                     computes file hashes and layer metadata (supports persistent worker mode)
   index                    creates a multi-platform image index
+  index-from-archive       converts a multi-platform OCI layout or Docker save tar archive to an image index
   index-from-oci-layout    converts an OCI layout to an image index
   layer                    creates a layer from files
   manifest                 creates an image manifest and config from layers
+  manifest-from-archive    converts a Docker save or OCI layout tar archive to an image manifest
   manifest-from-oci-layout converts an OCI layout to an image manifest
   mtree                    writes an mtree spec of a layer's metadata and merges mtree files
   oci-layout               assembles an OCI layout directory from manifest and layers
@@ -118,8 +123,12 @@ func Run(ctx context.Context, args []string) {
 		layer.LayerProcess(ctx, args[2:])
 	case "manifest":
 		manifest.ManifestProcess(ctx, args[2:])
+	case "manifest-from-archive":
+		fromarchive.ManifestProcess(ctx, args[2:])
 	case "manifest-from-oci-layout":
 		manifestfromocilayout.ManifestFromOCILayoutProcess(ctx, args[2:])
+	case "flatten-image":
+		flattenimage.FlattenImageProcess(ctx, args[2:])
 	case "mtree":
 		mtreecmd.MtreeProcess(ctx, args[2:])
 	case "oci-layout-metadata":
@@ -130,6 +139,8 @@ func Run(ctx context.Context, args []string) {
 		imagesizetest.Process(ctx, args[2:])
 	case "index":
 		index.IndexProcess(ctx, args[2:])
+	case "index-from-archive":
+		fromarchive.IndexProcess(ctx, args[2:])
 	case "index-from-oci-layout":
 		indexfromocilayout.IndexFromOCILayoutProcess(ctx, args[2:])
 	case "soci-index":

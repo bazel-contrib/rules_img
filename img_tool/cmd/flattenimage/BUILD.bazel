@@ -1,0 +1,33 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "flattenimage",
+    srcs = ["flattenimage.go"],
+    importpath = "github.com/bazel-contrib/rules_img/img_tool/cmd/flattenimage",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/api",
+        "//pkg/imagearchive",
+        "@com_github_google_go_containerregistry//pkg/v1/mutate",
+        "@com_github_opencontainers_go_digest//:go-digest",
+        "@com_github_opencontainers_image_spec//specs-go/v1:specs-go",
+    ],
+)
+
+go_test(
+    name = "flattenimage_test",
+    size = "small",
+    srcs = ["flatten_test.go"],
+    embed = [":flattenimage"],
+    deps = [
+        "//pkg/api",
+        "//pkg/fileopener",
+        "//pkg/imagearchive",
+        "//pkg/imagearchive/archivetest",
+        "@com_github_google_go_containerregistry//pkg/name",
+        "@com_github_google_go_containerregistry//pkg/v1:pkg",
+        "@com_github_google_go_containerregistry//pkg/v1/tarball",
+        "@com_github_google_go_containerregistry//pkg/v1/types",
+        "@com_github_opencontainers_image_spec//specs-go/v1:specs-go",
+    ],
+)
