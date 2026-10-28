@@ -47,6 +47,7 @@ func TestHelperGet(t *testing.T) {
 			`{"authorizationData":[{"authorizationToken":"` + token + `","expiresAt":1.7e9,"proxyEndpoint":"https://x"}]}`))}, nil
 	})}
 	h := NewHelper(nil)
+	h.external = nil // do not depend on a helper installed on the test machine
 	h.load = func(context.Context) (*aws.Config, error) {
 		return &aws.Config{HTTPClient: client, Credentials: aws.StaticProvider(aws.Credentials{AccessKeyID: "AK", SecretAccessKey: "SK"})}, nil
 	}
@@ -56,5 +57,36 @@ func TestHelperGet(t *testing.T) {
 	}
 	if _, _, err := h.Get("ghcr.io"); !credentials.IsErrCredentialsNotFound(err) {
 		t.Fatalf("ghcr.io: got %v, want not found", err)
+	}
+}
+
+func TestHelperPrefersExternal(t *testing.T) {
+	h := NewHelper(nil)
+	h.external = func(_ context.Context, serverURL string) (string, string, bool) {
+		return "AWS", "from-external", true
+	}
+	h.load = func(context.Context) (*aws.Config, error) {
+		t.Error("built-in implementation used despite external helper")
+		return nil, context.Canceled
+	}
+	if _, pass, err := h.Get("123456789012.dkr.ecr.us-west-2.amazonaws.com"); err != nil || pass != "from-external" {
+		t.Fatalf("got %q, %v", pass, err)
+	}
+	// Non-ECR hosts never reach the external helper.
+	h.external = func(context.Context, string) (string, string, bool) {
+		t.Error("external helper run for a non-ECR host")
+		return "", "", false
+	}
+	if _, _, err := h.Get("ghcr.io"); !credentials.IsErrCredentialsNotFound(err) {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestHelperFallsBackWhenExternalFails(t *testing.T) {
+	h := NewHelper(nil)
+	h.external = func(context.Context, string) (string, string, bool) { return "", "", false }
+	h.load = func(context.Context) (*aws.Config, error) { return nil, context.Canceled }
+	if _, _, err := h.Get("123456789012.dkr.ecr.us-west-2.amazonaws.com"); !credentials.IsErrCredentialsNotFound(err) {
+		t.Fatalf("got %v", err)
 	}
 }

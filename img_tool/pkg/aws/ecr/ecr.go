@@ -12,6 +12,8 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
+	"os/exec"
 	"regexp"
 	"strings"
 	"sync"
@@ -67,11 +69,17 @@ func apiSuffix(registrySuffix string) string {
 	return registrySuffix
 }
 
-// Helper is a Docker credential helper (read-only) for Amazon ECR. The AWS
-// configuration is loaded once and its credentials are shared by all lookups.
+// Helper is a Docker credential helper (read-only) for Amazon ECR. If
+// docker-credential-ecr-login is on the PATH it is run, which gives the full
+// feature set of the upstream helper. Otherwise (or if it fails) credentials
+// are fetched in process. The AWS configuration for the in-process path is
+// loaded once and its credentials are shared by all lookups.
 type Helper struct {
 	load   func(context.Context) (*aws.Config, error)
 	logger io.Writer
+	// external runs the docker-credential-ecr-login binary if one is on the
+	// PATH. It returns ok=false if there is none or it failed.
+	external func(ctx context.Context, serverURL string) (user, password string, ok bool)
 
 	once sync.Once
 	cfg  *aws.Config
@@ -84,10 +92,38 @@ func NewHelper(logger io.Writer) *Helper {
 	if logger == nil {
 		logger = io.Discard
 	}
-	return &Helper{
+	h := &Helper{
 		load:   func(ctx context.Context) (*aws.Config, error) { return aws.LoadDefaultConfig(ctx) },
 		logger: logger,
 	}
+	h.external = h.runExternal
+	return h
+}
+
+const externalHelper = "docker-credential-ecr-login"
+
+// runExternal runs `docker-credential-ecr-login get` per the Docker credential
+// helper protocol: the server URL on stdin, JSON on stdout.
+func (h *Helper) runExternal(ctx context.Context, serverURL string) (string, string, bool) {
+	path, err := exec.LookPath(externalHelper)
+	if err != nil {
+		return "", "", false
+	}
+	cmd := exec.CommandContext(ctx, path, "get")
+	cmd.Stdin = strings.NewReader(serverURL)
+	cmd.Env = os.Environ()
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+	if err := cmd.Run(); err != nil {
+		fmt.Fprintf(h.logger, "ecr: %s failed, using built-in implementation: %v\n", externalHelper, err)
+		return "", "", false
+	}
+	var out struct{ Username, Secret string }
+	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil || out.Secret == "" {
+		fmt.Fprintf(h.logger, "ecr: %s returned unusable output, using built-in implementation\n", externalHelper)
+		return "", "", false
+	}
+	return out.Username, out.Secret, true
 }
 
 func (h *Helper) config(ctx context.Context) (*aws.Config, error) {
@@ -106,6 +142,11 @@ func (h *Helper) Get(serverURL string) (string, string, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
+	if h.external != nil {
+		if user, password, ok := h.external(ctx, serverURL); ok {
+			return user, password, nil
+		}
+	}
 	cfg, err := h.config(ctx)
 	if err != nil {
 		fmt.Fprintf(h.logger, "ecr: load AWS configuration: %v\n", err)
