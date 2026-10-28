@@ -1,0 +1,17 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "s3",
+    srcs = ["s3.go"],
+    importpath = "github.com/bazel-contrib/rules_img/img_tool/pkg/aws/s3",
+    visibility = ["//visibility:public"],
+    deps = ["//pkg/aws"],
+)
+
+go_test(
+    name = "s3_test",
+    size = "small",
+    srcs = ["s3_test.go"],
+    embed = [":s3"],
+    deps = ["//pkg/aws"],
+)

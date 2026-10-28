@@ -12,7 +12,7 @@ go_library(
     deps = [
         "//pkg/auth/credcache",
         "//pkg/auth/credential",
-        "@com_github_awslabs_amazon_ecr_credential_helper_ecr_login//:ecr-login",
+        "//pkg/aws/ecr",
         "@com_github_docker_cli//cli/config",
         "@com_github_docker_cli//cli/config/configfile",
         "@com_github_docker_cli//cli/config/types",
@@ -20,7 +20,6 @@ go_library(
         "@com_github_google_go_containerregistry//pkg/name",
         "@com_github_google_go_containerregistry//pkg/v1/google",
         "@com_github_google_go_containerregistry//pkg/v1/remote",
-        "@com_github_sirupsen_logrus//:logrus",
     ],
 )
 

@@ -1,0 +1,26 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "ecr",
+    srcs = [
+        "ecr.go",
+        "util.go",
+    ],
+    importpath = "github.com/bazel-contrib/rules_img/img_tool/pkg/aws/ecr",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/aws",
+        "@com_github_docker_docker_credential_helpers//credentials",
+    ],
+)
+
+go_test(
+    name = "ecr_test",
+    size = "small",
+    srcs = ["ecr_test.go"],
+    embed = [":ecr"],
+    deps = [
+        "//pkg/aws",
+        "@com_github_docker_docker_credential_helpers//credentials",
+    ],
+)

@@ -10,17 +10,16 @@ import (
 	"sync"
 	"time"
 
-	ecr "github.com/awslabs/amazon-ecr-credential-helper/ecr-login"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/auth/credential"
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/aws/ecr"
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/v1/google"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
-	"github.com/sirupsen/logrus"
 )
 
 // amazonKeychain authenticates to Amazon ECR registries using the
-// amazon-ecr-credential-helper, resolving credentials from the ambient AWS
+// in-process ECR helper (see [ecr.Helper]), resolving credentials from the ambient AWS
 // configuration (environment, shared config files, or instance/role metadata).
 //
 // Lookups are memoized per registry (see [cachingHelper]). Each call into the
@@ -37,14 +36,8 @@ var amazonKeychain = sync.OnceValue(func() authn.Keychain {
 	var debugLog io.Writer
 	if authDebug() {
 		logger, debugLog = authDebugLog, authDebugLog
-		// The helper's API client and token cache log through the logrus
-		// standard logger, mostly at debug level ("Using cached token",
-		// "Got error fetching authorization token. Falling back to cached
-		// token.").
-		logrus.SetOutput(authDebugLog)
-		logrus.SetLevel(logrus.DebugLevel)
 	}
-	helper := ecr.NewECRHelper(ecr.WithLogger(logger))
+	helper := ecr.NewHelper(logger)
 	return authn.NewKeychainFromHelper(newCachingHelper("amazon ecr", helper, ecrHelperCacheTTL, debugLog))
 })
 

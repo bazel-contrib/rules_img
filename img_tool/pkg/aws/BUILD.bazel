@@ -1,0 +1,32 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "aws",
+    srcs = [
+        "config.go",
+        "credentials.go",
+        "doc.go",
+        "endpoints.go",
+        "http.go",
+        "metadata.go",
+        "process.go",
+        "sharedconfig.go",
+        "sigv4.go",
+        "sso.go",
+        "sts.go",
+        "util.go",
+    ],
+    importpath = "github.com/bazel-contrib/rules_img/img_tool/pkg/aws",
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "aws_test",
+    size = "small",
+    srcs = [
+        "config_test.go",
+        "sharedconfig_test.go",
+        "sigv4_test.go",
+    ],
+    embed = [":aws"],
+)

@@ -8,9 +8,8 @@ import (
 	"sync"
 	"time"
 
-	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
-	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/aws"
+	awss3 "github.com/bazel-contrib/rules_img/img_tool/pkg/aws/s3"
 	registry "github.com/bazel-contrib/rules_img/img_tool/pkg/registry"
 	registryv1 "github.com/google/go-containerregistry/pkg/v1"
 )
@@ -18,8 +17,7 @@ import (
 type S3BlobHandler struct {
 	expires     time.Duration
 	minLifetime time.Duration
-	signer      *s3.PresignClient
-	s3Client    *s3.Client
+	s3Client    *awss3.Client
 	objectName  func(repo string, hash registryv1.Hash) (bucket string, key string, err error)
 	cache       map[string]cacheEntry
 	mux         sync.RWMutex
@@ -30,20 +28,17 @@ func New(
 	expires time.Duration,
 	minLifetime time.Duration,
 	objectName func(repo string, hash registryv1.Hash) (bucket string, key string, err error),
-	optFns ...func(*config.LoadOptions) error,
+	optFns ...aws.LoadOption,
 ) (*S3BlobHandler, error) {
-	awsConfig, err := config.LoadDefaultConfig(ctx, optFns...)
+	awsConfig, err := aws.LoadDefaultConfig(ctx, optFns...)
 	if err != nil {
 		return nil, err
 	}
-	s3Client := s3.NewFromConfig(awsConfig)
-	presignClient := s3.NewPresignClient(s3Client)
 
 	return &S3BlobHandler{
 		expires:     expires,
 		minLifetime: minLifetime,
-		signer:      presignClient,
-		s3Client:    s3Client,
+		s3Client:    awss3.New(awsConfig),
 		objectName:  objectName,
 		cache:       make(map[string]cacheEntry),
 	}, nil
@@ -103,28 +98,16 @@ func (h *S3BlobHandler) ensureCached(ctx context.Context, bucket, key string) (c
 		return *cached, nil // Return cached entry if it exists.
 	}
 
-	input := &s3.HeadObjectInput{
-		Bucket: &bucket,
-		Key:    &key,
-	}
-	output, err := h.s3Client.HeadObject(ctx, input)
+	size, err := h.s3Client.HeadObject(ctx, bucket, key)
 	if err != nil {
-		var responseError *awshttp.ResponseError
-		if errors.As(err, &responseError) && responseError.ResponseError.HTTPStatusCode() == http.StatusNotFound {
+		if errors.Is(err, awss3.ErrNotFound) {
 			return cacheEntry{}, registry.ErrNotFound
 		}
 		return cacheEntry{}, err
 	}
-	if output.ContentLength == nil {
-		return cacheEntry{}, errors.New("ContentLength is nil")
-	}
 
 	// positive results can be cached
-	presigned, err := h.signer.PresignGetObject(
-		ctx,
-		&s3.GetObjectInput{Bucket: &bucket, Key: &key},
-		s3.WithPresignExpires(h.expires),
-	)
+	presigned, err := h.s3Client.PresignGetObject(ctx, bucket, key, h.expires)
 	if err != nil {
 		return cacheEntry{}, err
 	}
@@ -133,8 +116,8 @@ func (h *S3BlobHandler) ensureCached(ctx context.Context, bucket, key string) (c
 	defer h.mux.Unlock()
 	cacheKey := bucket + "/" + key
 	h.cache[cacheKey] = cacheEntry{
-		blobSize:     *output.ContentLength,
-		presignedURL: presigned.URL,
+		blobSize:     size,
+		presignedURL: presigned,
 		expires:      time.Now().Add(h.expires),
 	}
 	return h.cache[cacheKey], nil // Return the newly cached entry.

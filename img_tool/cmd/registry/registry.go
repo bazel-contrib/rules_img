@@ -10,13 +10,13 @@ import (
 	"os"
 	"time"
 
-	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/registry"
 	registryv1 "github.com/google/go-containerregistry/pkg/v1"
 	"google.golang.org/grpc"
 
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/auth/credential"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/auth/protohelper"
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/aws"
 	blobcache_proto "github.com/bazel-contrib/rules_img/img_tool/pkg/proto/blobcache"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/serve/blobcache"
 	combined "github.com/bazel-contrib/rules_img/img_tool/pkg/serve/registry"
@@ -132,18 +132,15 @@ func Run(ctx context.Context, args []string) {
 		}
 	}
 
-	var s3Opts []func(*awsconfig.LoadOptions) error
+	var s3Opts []aws.LoadOption
 	if s3endpoint != "" {
-		s3Opts = append(s3Opts, func(o *awsconfig.LoadOptions) error {
-			o.BaseEndpoint = s3endpoint
-			return nil
-		})
+		s3Opts = append(s3Opts, aws.WithBaseEndpoint(s3endpoint))
 	}
 	if s3Region != "" {
-		s3Opts = append(s3Opts, awsconfig.WithRegion(s3Region))
+		s3Opts = append(s3Opts, aws.WithRegion(s3Region))
 	}
 	if s3profile != "" {
-		s3Opts = append(s3Opts, awsconfig.WithSharedConfigProfile(s3profile))
+		s3Opts = append(s3Opts, aws.WithProfile(s3profile))
 	}
 
 	blobSizeCache := combined.NewBlobSizeCache()
