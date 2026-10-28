@@ -11,7 +11,8 @@ load("@rules_img//img:layer.bzl", "image_layer")
 
 image_layer(<a href="#image_layer-name">name</a>, <a href="#image_layer-srcs">srcs</a>, <a href="#image_layer-annotations">annotations</a>, <a href="#image_layer-annotations_file">annotations_file</a>, <a href="#image_layer-compress">compress</a>, <a href="#image_layer-create_parent_directories">create_parent_directories</a>,
             <a href="#image_layer-default_metadata">default_metadata</a>, <a href="#image_layer-estargz">estargz</a>, <a href="#image_layer-extra_default_outputs">extra_default_outputs</a>, <a href="#image_layer-file_metadata">file_metadata</a>, <a href="#image_layer-format">format</a>, <a href="#image_layer-history">history</a>,
-            <a href="#image_layer-include_runfiles">include_runfiles</a>, <a href="#image_layer-media_type">media_type</a>, <a href="#image_layer-multi_file_layout">multi_file_layout</a>, <a href="#image_layer-soci">soci</a>, <a href="#image_layer-symlinks">symlinks</a>, <a href="#image_layer-tree_artifact_handling">tree_artifact_handling</a>)
+            <a href="#image_layer-include_runfiles">include_runfiles</a>, <a href="#image_layer-media_type">media_type</a>, <a href="#image_layer-multi_file_layout">multi_file_layout</a>, <a href="#image_layer-soci">soci</a>, <a href="#image_layer-symlinks">symlinks</a>, <a href="#image_layer-tree_artifact_handling">tree_artifact_handling</a>,
+            <a href="#image_layer-zstd_chunked">zstd_chunked</a>)
 </pre>
 
 Creates a container image layer from files, executables, and directories.
@@ -93,6 +94,7 @@ image_layer(
 | <a id="image_layer-soci"></a>soci |  Whether to emit a SOCI ztoc (table of contents) for this layer. If set to 'auto', uses the global default //img/settings:soci setting. When enabled and the layer is gzip-compressed, a ztoc is produced in the layer action and recorded on the SingleLayerInfo provider, so images that build a SOCI Index Manifest v2 can reuse it instead of regenerating it. Non-gzip layers never emit a ztoc.   | String | optional |  `"auto"`  |
 | <a id="image_layer-symlinks"></a>symlinks |  Symlinks to create in the layer. Keys are symlink paths in the image, values are the targets they point to.   | <a href="https://bazel.build/rules/lib/core/dict">Dictionary: String -> String</a> | optional |  `{}`  |
 | <a id="image_layer-tree_artifact_handling"></a>tree_artifact_handling |  How to handle duplicate tree artifacts (directories) in the layer. If set to 'full', each tree artifact is stored at its intended path (no deduplication). If set to 'deduplicate_symlink', duplicate tree artifacts are replaced with symlinks to the first occurrence. If set to 'auto', uses the global default from --@rules_img//img/settings:layer_tree_artifact_handling. When file metadata is configured, trees are stored in full so path-specific metadata is preserved. Regular files with identical contents and metadata still deduplicate.   | String | optional |  `"auto"`  |
+| <a id="image_layer-zstd_chunked"></a>zstd_chunked |  Whether to use the zstd:chunked format. If set to 'auto', uses the global default zstd_chunked setting. When enabled, the layer is written with content-defined chunks and a table of contents, so compatible runtimes (podman, CRI-O) can fetch and deduplicate individual chunks. Requires zstd compression and cannot be combined with estargz.   | String | optional |  `"auto"`  |
 
 
 <a id="layer_from_binary"></a>
@@ -105,7 +107,8 @@ load("@rules_img//img:layer.bzl", "layer_from_binary")
 layer_from_binary(<a href="#layer_from_binary-name">name</a>, <a href="#layer_from_binary-annotations">annotations</a>, <a href="#layer_from_binary-annotations_file">annotations_file</a>, <a href="#layer_from_binary-binary">binary</a>, <a href="#layer_from_binary-compress">compress</a>, <a href="#layer_from_binary-create_parent_directories">create_parent_directories</a>,
                   <a href="#layer_from_binary-default_metadata">default_metadata</a>, <a href="#layer_from_binary-estargz">estargz</a>, <a href="#layer_from_binary-extra_default_outputs">extra_default_outputs</a>, <a href="#layer_from_binary-format">format</a>, <a href="#layer_from_binary-include_runfiles">include_runfiles</a>,
                   <a href="#layer_from_binary-infer_working_dir">infer_working_dir</a>, <a href="#layer_from_binary-layer_budget">layer_budget</a>, <a href="#layer_from_binary-media_type">media_type</a>, <a href="#layer_from_binary-path">path</a>, <a href="#layer_from_binary-runfiles_path">runfiles_path</a>,
-                  <a href="#layer_from_binary-runfiles_shared_path">runfiles_shared_path</a>, <a href="#layer_from_binary-runfiles_sharing_mode">runfiles_sharing_mode</a>, <a href="#layer_from_binary-soci">soci</a>, <a href="#layer_from_binary-tree_artifact_handling">tree_artifact_handling</a>)
+                  <a href="#layer_from_binary-runfiles_shared_path">runfiles_shared_path</a>, <a href="#layer_from_binary-runfiles_sharing_mode">runfiles_sharing_mode</a>, <a href="#layer_from_binary-soci">soci</a>, <a href="#layer_from_binary-tree_artifact_handling">tree_artifact_handling</a>,
+                  <a href="#layer_from_binary-zstd_chunked">zstd_chunked</a>)
 </pre>
 
 Creates a container image layer from a *_binary target.
@@ -206,6 +209,7 @@ layer_from_binary(
 | <a id="layer_from_binary-runfiles_sharing_mode"></a>runfiles_sharing_mode |  How to process runfiles. Runfiles can either be placed next to the executable (in a directory with a .runfiles suffix, the runfiles_path attribute), or placed in a shared runfiles path. When sharing runfiles, there will be symlink added: {runfiles_path} -> {runfiles_shared_path}.<br><br>Possible settings:<br><br>* `"auto"`: Share runfiles based on the global default and based on the presence of `RunfilesGroupInfo`.     Globally, runfiles sharing can be set to `"shared"`, `"private"`, or `"auto"`, where auto shares runfiles if `RunfilesGroupInfo` is provided. * `"shared"`: Always share runfiles. * `"private"`: Never share runfiles   | String | optional |  `"auto"`  |
 | <a id="layer_from_binary-soci"></a>soci |  Whether to emit a SOCI ztoc (table of contents) for this layer. If set to 'auto', uses the global default //img/settings:soci setting. When enabled and the layer is gzip-compressed, a ztoc is produced in the layer action and recorded on the SingleLayerInfo provider, so images that build a SOCI Index Manifest v2 can reuse it instead of regenerating it. Non-gzip layers never emit a ztoc.   | String | optional |  `"auto"`  |
 | <a id="layer_from_binary-tree_artifact_handling"></a>tree_artifact_handling |  How to handle duplicate tree artifacts (directories) in the layer. If set to 'full', each tree artifact is stored at its intended path (no deduplication). If set to 'deduplicate_symlink', duplicate tree artifacts are replaced with symlinks to the first occurrence. If set to 'auto', uses the global default from --@rules_img//img/settings:layer_tree_artifact_handling. When file metadata is configured, trees are stored in full so path-specific metadata is preserved. Regular files with identical contents and metadata still deduplicate.   | String | optional |  `"auto"`  |
+| <a id="layer_from_binary-zstd_chunked"></a>zstd_chunked |  Whether to use the zstd:chunked format. If set to 'auto', uses the global default zstd_chunked setting. When enabled, the layer is written with content-defined chunks and a table of contents, so compatible runtimes (podman, CRI-O) can fetch and deduplicate individual chunks. Requires zstd compression and cannot be combined with estargz.   | String | optional |  `"auto"`  |
 
 
 <a id="layer_from_file"></a>
@@ -267,7 +271,8 @@ layer_from_file(
 <pre>
 load("@rules_img//img:layer.bzl", "layer_from_tar")
 
-layer_from_tar(<a href="#layer_from_tar-name">name</a>, <a href="#layer_from_tar-src">src</a>, <a href="#layer_from_tar-annotations">annotations</a>, <a href="#layer_from_tar-compress">compress</a>, <a href="#layer_from_tar-estargz">estargz</a>, <a href="#layer_from_tar-format">format</a>, <a href="#layer_from_tar-media_type">media_type</a>, <a href="#layer_from_tar-optimize">optimize</a>)
+layer_from_tar(<a href="#layer_from_tar-name">name</a>, <a href="#layer_from_tar-src">src</a>, <a href="#layer_from_tar-annotations">annotations</a>, <a href="#layer_from_tar-compress">compress</a>, <a href="#layer_from_tar-estargz">estargz</a>, <a href="#layer_from_tar-format">format</a>, <a href="#layer_from_tar-media_type">media_type</a>, <a href="#layer_from_tar-optimize">optimize</a>,
+               <a href="#layer_from_tar-zstd_chunked">zstd_chunked</a>)
 </pre>
 
 Creates a container image layer from an existing tar archive.
@@ -327,6 +332,7 @@ layer_from_tar(
 | <a id="layer_from_tar-format"></a>format |  Container format of the layer blob. If set to 'auto', uses the global default --@rules_img//img/settings:layer_format setting.<br><br>'erofs' converts the tar into a mountable EROFS filesystem image. That always rewrites the layer (a format change cannot preserve the source blob) and defaults to `compress = "none"`, since the resulting blob is mountable as it is. See docs/erofs-layers.md for what a filesystem image means for the layers below it.   | String | optional |  `"auto"`  |
 | <a id="layer_from_tar-media_type"></a>media_type |  Override layer media type. Use e.g. "application/vnd.cncf.helm.chart.content.v1.tar" for Helm charts.   | String | optional |  `""`  |
 | <a id="layer_from_tar-optimize"></a>optimize |  If set, rewrites the tar file to deduplicate it's contents. This is useful for reducing the size of the image, but will take extra time and space to store the optimized layer.   | Boolean | optional |  `False`  |
+| <a id="layer_from_tar-zstd_chunked"></a>zstd_chunked |  Whether to use the zstd:chunked format. If set to 'auto', uses the global default zstd_chunked setting. When enabled, the layer is written with content-defined chunks and a table of contents, so compatible runtimes (podman, CRI-O) can fetch and deduplicate individual chunks. Requires zstd compression and cannot be combined with estargz.   | String | optional |  `"auto"`  |
 
 
 <a id="file_metadata"></a>

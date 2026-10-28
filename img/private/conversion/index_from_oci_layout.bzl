@@ -106,6 +106,7 @@ def _image_index_from_oci_layout(ctx):
                 blob = layer_blobs[i],
                 generated_blob = None,
                 estargz = False,
+                zstd_chunked = False,
                 media_type = layer_media_types[i],
                 metadata = metadata_jsons[i],
                 compact_stream = None,

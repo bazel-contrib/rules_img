@@ -30,6 +30,7 @@ def _layer_from_file_impl(ctx):
         tar_file = ctx.file.src,
         metadata_file = metadata_file,
         estargz = False,
+        zstd_chunked = False,
         annotations = annotations,
         digest_modes = digest_modes,
     )

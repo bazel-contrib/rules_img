@@ -2,7 +2,7 @@
 
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("//img/private/common:build.bzl", "TOOLCHAINS")
-load("//img/private/common:layer_helper.bzl", "allow_tar_files", "build_layer_mtree", "calculate_layer_info", "extension_to_compression", "optimize_layer", "recompress_layer")
+load("//img/private/common:layer_helper.bzl", "allow_tar_files", "build_layer_mtree", "calculate_layer_info", "extension_to_compression", "optimize_layer", "recompress_layer", "resolve_tar_format")
 load("//img/private/common:media_types.bzl", "EROFS_LAYER", "EROFS_ZSTD_LAYER")
 load("//img/private/providers:layers_info.bzl", "LayersInfo")
 
@@ -13,11 +13,6 @@ def _layer_from_tar_impl(ctx):
     explicit_target_compression = compression != "auto"
     if compression == "auto":
         compression = ctx.attr._default_compression[BuildSettingInfo].value
-
-    estargz = ctx.attr.estargz
-    if estargz == "auto":
-        estargz = ctx.attr._default_estargz[BuildSettingInfo].value
-    estargz_enabled = estargz == "enabled"
 
     layer_format = ctx.attr.format
     if layer_format == "auto":
@@ -35,13 +30,14 @@ def _layer_from_tar_impl(ctx):
         if compression == "gzip":
             fail(("format = \"erofs\" cannot be gzip-compressed: there is no " +
                   "application/vnd.erofs.layer.v1+gzip media type. Set compress = \"none\" or compress = \"zstd\"."))
-        if estargz_enabled:
-            fail("estargz is a tar format and cannot be combined with format = \"erofs\".")
 
-    target_compression = compression if (explicit_target_compression or estargz_enabled or optimize or is_erofs) else source_compression
+    tar_format = resolve_tar_format(ctx, compression, erofs = is_erofs)
+    tar_format_enabled = tar_format.estargz or tar_format.zstd_chunked
+
+    target_compression = compression if (explicit_target_compression or tar_format_enabled or optimize or is_erofs) else source_compression
 
     needs_recompression = source_compression != target_compression
-    needs_rewrite = needs_recompression or optimize or is_erofs
+    needs_rewrite = needs_recompression or optimize or is_erofs or tar_format_enabled
 
     media_type = ctx.attr.media_type
     if media_type == "":
@@ -72,7 +68,7 @@ def _layer_from_tar_impl(ctx):
             media_type = media_type,
             tar_file = ctx.file.src,
             metadata_file = metadata_file,
-            estargz = estargz_enabled,
+            estargz = False,
             annotations = ctx.attr.annotations,
             mtree = build_layer_mtree(ctx, ctx.attr.name, tar_blob = ctx.file.src),
         )
@@ -86,7 +82,7 @@ def _layer_from_tar_impl(ctx):
             metadata_file = metadata_file,
             output = ctx.actions.declare_file(ctx.attr.name + output_name_extension),
             target_compression = target_compression,
-            estargz = estargz_enabled,
+            tar_format = tar_format,
             annotations = ctx.attr.annotations,
         )
     else:
@@ -100,7 +96,7 @@ def _layer_from_tar_impl(ctx):
             metadata_file = metadata_file,
             output = ctx.actions.declare_file(ctx.attr.name + output_name_extension),
             target_compression = target_compression,
-            estargz = estargz_enabled,
+            tar_format = tar_format,
             annotations = ctx.attr.annotations,
             layer_format = layer_format,
             erofs_block_size = ctx.attr._erofs_block_size[BuildSettingInfo].value,
@@ -187,6 +183,14 @@ This is useful for reducing the size of the image, but will take extra time and 
             doc = """Whether to use estargz format. If set to 'auto', uses the global default estargz setting.
 When enabled, the layer will be optimized for lazy pulling and will be compatible with the estargz format.""",
         ),
+        "zstd_chunked": attr.string(
+            default = "auto",
+            values = ["auto", "enabled", "disabled"],
+            doc = """Whether to use the zstd:chunked format. If set to 'auto', uses the global default zstd_chunked setting.
+When enabled, the layer is written with content-defined chunks and a table of contents, so
+compatible runtimes (podman, CRI-O) can fetch and deduplicate individual chunks.
+Requires zstd compression and cannot be combined with estargz.""",
+        ),
         "format": attr.string(
             default = "auto",
             values = ["auto", "tar", "erofs"],
@@ -212,6 +216,10 @@ filesystem image means for the layers below it.""",
         ),
         "_default_estargz": attr.label(
             default = Label("//img/settings:estargz"),
+            providers = [BuildSettingInfo],
+        ),
+        "_default_zstd_chunked": attr.label(
+            default = Label("//img/settings:zstd_chunked"),
             providers = [BuildSettingInfo],
         ),
         "_default_layer_format": attr.label(

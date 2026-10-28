@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/api"
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/compress"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/contentmanifest"
 )
 
@@ -37,7 +38,7 @@ func TestTreeMetadata(t *testing.T) {
 				t.Fatal(err)
 			}
 			var out bytes.Buffer
-			_, err = handleLayerState(api.TarFormat, erofsSettings{}, api.Uncompressed, false, addFiles{
+			_, err = handleLayerState(api.TarFormat, erofsSettings{}, api.Uncompressed, compress.TarFormatPlain, addFiles{
 				{PathInImage: "app/first", File: dir, FileType: api.Directory},
 				{PathInImage: "app/second", File: dir, FileType: api.Directory},
 			}, nil, nil, symlinks{{LinkName: "links/alias", Target: "../app/first/a"}}, nil, nil,

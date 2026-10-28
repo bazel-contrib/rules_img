@@ -3,7 +3,7 @@
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("//img/private:oci_layout_action.bzl", "run_oci_layout_action")
 load("//img/private/common:build.bzl", "TOOLCHAIN", "TOOLCHAINS")
-load("//img/private/common:layer_helper.bzl", "IMAGE_MTREE_ATTRS", "compression_tuning_args", "image_mtree_or_none")
+load("//img/private/common:layer_helper.bzl", "IMAGE_MTREE_ATTRS", "compression_tuning_args", "image_mtree_or_none", "resolve_tar_format", "tar_format_args")
 load("//img/private/common:layout_blob.bzl", "blob_for_layout")
 load("//img/private/providers:index_info.bzl", "ImageIndexInfo")
 load("//img/private/providers:manifest_info.bzl", "ImageManifestInfo")
@@ -33,17 +33,16 @@ def _resolved_settings(ctx):
     if compression == "auto":
         compression = ctx.attr._default_compression[BuildSettingInfo].value
 
-    estargz = ctx.attr.estargz
-    if estargz == "auto":
-        estargz = ctx.attr._default_estargz[BuildSettingInfo].value
-    estargz_enabled = estargz == "enabled"
+    tar_format = resolve_tar_format(ctx, compression)
 
-    if estargz_enabled and compression != "gzip":
+    if tar_format.estargz and compression != "gzip":
         fail("image_optimize with estargz enabled requires gzip compression, got '{}'".format(compression))
 
     return struct(
         compression = compression,
-        estargz = estargz_enabled,
+        tar_format = tar_format,
+        estargz = tar_format.estargz,
+        zstd_chunked = tar_format.zstd_chunked,
         media_type = _MEDIA_TYPES[compression],
         output_extension = _OUTPUT_EXTENSIONS[compression],
     )
@@ -75,10 +74,9 @@ def _optimize_layer(ctx, layer, settings, manifest_position, layer_position):
     args.add("compress")
     args.add("--source-metadata", layer.metadata.path)
     args.add("--format", settings.compression)
-    if settings.estargz:
-        args.add("--estargz")
+    args.add_all(tar_format_args(settings.tar_format))
     args.add("--metadata", metadata.path)
-    args.add_all(compression_tuning_args(ctx, settings.compression, settings.estargz))
+    args.add_all(compression_tuning_args(ctx, settings.compression, settings.tar_format))
     args.add(layer.blob.path)
     args.add(output.path)
 
@@ -97,6 +95,7 @@ def _optimize_layer(ctx, layer, settings, manifest_position, layer_position):
         metadata = metadata,
         media_type = settings.media_type,
         estargz = settings.estargz,
+        zstd_chunked = settings.zstd_chunked,
         compact_stream = None,
         layer_input_files = None,
         layer_input_files_cas = None,
@@ -339,12 +338,21 @@ image_optimize(
             values = ["auto", "enabled", "disabled"],
             doc = "Whether to rewrite layers using eStargz. If set to 'auto', uses the global default eStargz setting.",
         ),
+        zstd_chunked = attr.string(
+            default = "auto",
+            values = ["auto", "enabled", "disabled"],
+            doc = "Whether to rewrite layers using zstd:chunked. If set to 'auto', uses the global default zstd_chunked setting. Requires zstd compression and cannot be combined with estargz.",
+        ),
         _default_compression = attr.label(
             default = Label("//img/settings:compress"),
             providers = [BuildSettingInfo],
         ),
         _default_estargz = attr.label(
             default = Label("//img/settings:estargz"),
+            providers = [BuildSettingInfo],
+        ),
+        _default_zstd_chunked = attr.label(
+            default = Label("//img/settings:zstd_chunked"),
             providers = [BuildSettingInfo],
         ),
         _compression_jobs = attr.label(

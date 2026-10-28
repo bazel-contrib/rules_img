@@ -54,7 +54,7 @@ load("@rules_img//img:base_images.bzl", "base_image_layer")
 
 base_image_layer(<a href="#base_image_layer-name">name</a>, <a href="#base_image_layer-srcs">srcs</a>, <a href="#base_image_layer-annotations">annotations</a>, <a href="#base_image_layer-annotations_file">annotations_file</a>, <a href="#base_image_layer-compress">compress</a>, <a href="#base_image_layer-create_parent_directories">create_parent_directories</a>,
                  <a href="#base_image_layer-default_metadata">default_metadata</a>, <a href="#base_image_layer-estargz">estargz</a>, <a href="#base_image_layer-extra_default_outputs">extra_default_outputs</a>, <a href="#base_image_layer-file_metadata">file_metadata</a>, <a href="#base_image_layer-format">format</a>,
-                 <a href="#base_image_layer-include_runfiles">include_runfiles</a>, <a href="#base_image_layer-media_type">media_type</a>, <a href="#base_image_layer-soci">soci</a>, <a href="#base_image_layer-tree_artifact_handling">tree_artifact_handling</a>)
+                 <a href="#base_image_layer-include_runfiles">include_runfiles</a>, <a href="#base_image_layer-media_type">media_type</a>, <a href="#base_image_layer-soci">soci</a>, <a href="#base_image_layer-tree_artifact_handling">tree_artifact_handling</a>, <a href="#base_image_layer-zstd_chunked">zstd_chunked</a>)
 </pre>
 
 Builds a single flat container image layer from base image content descriptions.
@@ -138,6 +138,7 @@ image_manifest(
 | <a id="base_image_layer-media_type"></a>media_type |  Override the layer media type. By default, the media type is auto-detected from the compression algorithm.   | String | optional |  `""`  |
 | <a id="base_image_layer-soci"></a>soci |  Whether to emit a SOCI ztoc (table of contents) for this layer. If set to 'auto', uses the global default //img/settings:soci setting. When enabled and the layer is gzip-compressed, a ztoc is produced in the layer action and recorded on the SingleLayerInfo provider, so images that build a SOCI Index Manifest v2 can reuse it instead of regenerating it. Non-gzip layers never emit a ztoc.   | String | optional |  `"auto"`  |
 | <a id="base_image_layer-tree_artifact_handling"></a>tree_artifact_handling |  How to handle duplicate tree artifacts (directories) in the layer. If set to 'full', each tree artifact is stored at its intended path (no deduplication). If set to 'deduplicate_symlink', duplicate tree artifacts are replaced with symlinks to the first occurrence. If set to 'auto', uses the global default from --@rules_img//img/settings:layer_tree_artifact_handling. When file metadata is configured, trees are stored in full so path-specific metadata is preserved. Regular files with identical contents and metadata still deduplicate.   | String | optional |  `"auto"`  |
+| <a id="base_image_layer-zstd_chunked"></a>zstd_chunked |  Whether to use the zstd:chunked format. If set to 'auto', uses the global default zstd_chunked setting. When enabled, the layer is written with content-defined chunks and a table of contents, so compatible runtimes (podman, CRI-O) can fetch and deduplicate individual chunks. Requires zstd compression and cannot be combined with estargz.   | String | optional |  `"auto"`  |
 
 
 <a id="etc_environment"></a>

@@ -17,6 +17,7 @@ import (
 	"os"
 
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/compactstream"
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/compress"
 )
 
 func listProcess(_ context.Context, args []string) {
@@ -67,7 +68,7 @@ func writeListing(w io.Writer, name string, info *compactstream.Info, indexSize 
 	row(w, "Hash algorithm:", fmt.Sprintf("%s (%d-byte digests)", hashAlgoName(h.HashAlgo), h.HashSize))
 	row(w, "Stream compression:", streamCompressionName(h.StreamCompression))
 	row(w, "Layer compression:", describeOriginalCompression(h.OriginalCompression))
-	row(w, "Seekable (estargz):", yesNo(h.OriginalCompression.Seekable))
+	row(w, "Tar format:", tarFormatName(h.OriginalCompression.Format))
 	row(w, "End padding:", humanizeBytes(uint64(h.OriginalCompression.EndPadding)))
 	row(w, "Reference table:", fmt.Sprintf("%d entries at offset %d (%s)", h.RefCount(), h.RefTableOffset, humanizeBytes(h.RefTableSize)))
 	row(w, "Byte stream:", fmt.Sprintf("%s on disk, at offset %d", humanizeBytes(h.StreamSize), h.StreamOffset))
@@ -192,6 +193,19 @@ func originalCompressionName(c uint8) string {
 	}
 }
 
+func tarFormatName(f compress.TarFormat) string {
+	switch f {
+	case compress.TarFormatPlain:
+		return "plain"
+	case compress.TarFormatEstargz:
+		return "estargz"
+	case compress.TarFormatZstdChunked:
+		return "zstd:chunked"
+	default:
+		return fmt.Sprintf("unknown(%d)", f)
+	}
+}
+
 func describeOriginalCompression(o compactstream.OriginalCompressionInfo) string {
 	name := originalCompressionName(o.Compression)
 	if o.Compression == compactstream.OriginalCompressionNone {
@@ -223,11 +237,4 @@ func humanizeBytes(n uint64) string {
 		i++
 	}
 	return fmt.Sprintf("%d bytes (%.1f %s)", n, value, units[i])
-}
-
-func yesNo(b bool) string {
-	if b {
-		return "yes"
-	}
-	return "no"
 }

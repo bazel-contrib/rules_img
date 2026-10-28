@@ -39,7 +39,7 @@ func (m *memBlobStore) ReaderForBlob(_ context.Context, digest []byte, _ int64) 
 
 type tarSettings struct {
 	compression      string
-	estargz          bool
+	format           compress.TarFormat
 	compressionLevel int
 	compressorJobs   int
 }
@@ -69,7 +69,7 @@ func (s tarSettings) compressOpts() []compress.Option {
 func buildTarDirect(t *testing.T, entries []testEntry, settings tarSettings) []byte {
 	t.Helper()
 	var buf bytes.Buffer
-	appender, err := compress.TarAppenderFactory("sha256", settings.compression, settings.estargz, &buf, settings.compressOpts()...)
+	appender, err := compress.TarAppenderFactory("sha256", settings.compression, settings.format, &buf, settings.compressOpts()...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +106,7 @@ func buildIndexAndReconstruct(t *testing.T, entries []testEntry, settings tarSet
 	iw := compactstream.NewWriter(&indexBuf, compactstream.HashAlgoSHA256, 32, streamCompression,
 		compactstream.OriginalCompressionInfo{
 			Compression:      settings.originalCompression(),
-			Seekable:         settings.estargz,
+			Format:           settings.format,
 			CompressionLevel: int8(settings.compressionLevel),
 			CompressorJobs:   uint8(settings.compressorJobs),
 		}, inlineThreshold)
@@ -385,14 +385,14 @@ func randomTarSettings(rng *rand.Rand) tarSettings {
 
 	var level int
 	var jobs int
-	estargz := false
+	format := compress.TarFormatPlain
 
 	switch algo {
 	case "gzip":
 		level = 1 + rng.Intn(9) // 1-9
 		jobs = 1 + rng.Intn(4)  // 1-4
-		estargz = rng.Intn(2) == 0
-		if estargz {
+		if rng.Intn(2) == 0 {
+			format = compress.TarFormatEstargz
 			// estargz gzip is not parallelized; keep jobs deterministic so the
 			// recorded/replayed value cannot perturb the comparison.
 			jobs = 1
@@ -400,7 +400,7 @@ func randomTarSettings(rng *rand.Rand) tarSettings {
 	case "zstd":
 		level = 1 + rng.Intn(4) // 1-4 (keep fast for tests)
 		jobs = 1
-		estargz = rng.Intn(2) == 0
+		format = compress.TarFormat(rng.Intn(3))
 	default:
 		level = -1
 		jobs = 1
@@ -408,7 +408,7 @@ func randomTarSettings(rng *rand.Rand) tarSettings {
 
 	return tarSettings{
 		compression:      algo,
-		estargz:          estargz,
+		format:           format,
 		compressionLevel: level,
 		compressorJobs:   jobs,
 	}
@@ -517,9 +517,9 @@ func TestReconstructRandomized(t *testing.T) {
 			threshold := randomInlineThreshold(rng)
 			entries := randomEntries(rng)
 
-			t.Logf("tar=%s level=%d jobs=%d estargz=%v | stream_comp=%d inline=%d | entries=%d",
+			t.Logf("tar=%s level=%d jobs=%d format=%d | stream_comp=%d inline=%d | entries=%d",
 				settings.compression, settings.compressionLevel, settings.compressorJobs,
-				settings.estargz, streamComp, threshold, len(entries))
+				settings.format, streamComp, threshold, len(entries))
 
 			direct := buildTarDirect(t, entries, settings)
 			reconstructed := buildIndexAndReconstruct(t, entries, settings, streamComp, threshold)
