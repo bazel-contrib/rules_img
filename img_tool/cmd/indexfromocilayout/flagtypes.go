@@ -2,6 +2,7 @@ package indexfromocilayout
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -111,4 +112,17 @@ func (f *doubleIndexedStringFlag) GetLayerCount(manifestIdx int) int {
 		return len(inner)
 	}
 	return 0
+}
+
+// sortedIndices returns the indices of an indexed flag in ascending order.
+// The flags are collected in a map, so anything whose result depends on their
+// order has to sort them first: the position a manifest ends up at in the
+// index it is written into is part of the output.
+func sortedIndices(values map[int]string) []int {
+	indices := make([]int, 0, len(values))
+	for idx := range values {
+		indices = append(indices, idx)
+	}
+	sort.Ints(indices)
+	return indices
 }

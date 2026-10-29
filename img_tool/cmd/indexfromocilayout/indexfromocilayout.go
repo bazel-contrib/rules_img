@@ -187,11 +187,11 @@ func processOCILayoutIndex() error {
 		}
 	}
 
-	// Get the list of manifest indices we need to process
-	manifestIndices := make([]int, 0)
-	for idx := range manifestPaths.values {
-		manifestIndices = append(manifestIndices, idx)
-	}
+	// The manifest indices to process, in index order. Iterating the flag map
+	// alone hands them over in Go's randomized map order, and the descriptors
+	// are written back by position below, so that permutes the manifests of the
+	// index from one run to the next.
+	manifestIndices := sortedIndices(manifestPaths.values)
 
 	// Process each manifest
 	newManifestDescriptors := make([]specv1.Descriptor, len(manifestIndices))
