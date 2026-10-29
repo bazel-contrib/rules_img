@@ -12,6 +12,7 @@ and using them, and the byte-level specification of the on-disk format:
 - **Using compact layers:** [Enabling in a Bazel build](#enabling-in-a-bazel-build) ·
   [What this means in practice](#what-this-means-in-practice) ·
   [Usage (CLI)](#usage) ·
+  [Non-tar payloads](#compact-streams-of-non-tar-files) ·
   [Materializing the blob on demand](#materializing-the-blob-on-demand) ·
   [Reconstructing a layer](#reconstructing-a-layer-from-a-compact-stream) ·
   [Inspecting a compact stream](#inspecting-a-compact-stream-without-reconstruction) ·
@@ -212,6 +213,7 @@ fields are absent (zero) and must be ignored.
 | 0     | unknown (not declared)                       |
 | 1     | tar changeset                                |
 | 2     | [EROFS filesystem image](erofs-layers.md)    |
+| 3     | [ext4 filesystem image](#compact-streams-of-ext4-images) |
 
 `ContentFormat` identifies the filetype of the payload. Reconstruction itself
 does not need it, but a tool that interprets the content rather than just
@@ -384,6 +386,12 @@ emitted). This eliminates CAS lookups during reconstruction for small files.
 
 The byte stream is zstd-compressed by default. The original compression
 metadata is automatically derived from the layer's compression settings.
+
+## Compact streams of non-tar files
+
+The format is not specific to tar layers: any uncompressed byte stream whose
+bulk content is available as separate blobs can be represented this way.
+This includes (but is not limited to) EROFS and ext4 filesystem images.
 
 ## Materializing the blob on demand
 

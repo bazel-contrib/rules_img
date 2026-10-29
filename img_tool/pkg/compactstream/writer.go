@@ -45,6 +45,7 @@ const (
 	ContentFormatUnknown uint8 = 0
 	ContentFormatTar     uint8 = 1
 	ContentFormatErofs   uint8 = 2
+	ContentFormatExt4    uint8 = 3
 )
 
 type OriginalCompressionInfo struct {
@@ -80,6 +81,11 @@ type Writer struct {
 	compressedStreamSize    uint64
 	hasCompressedStreamInfo bool
 	err                     error
+
+	// enc and encoded are set by CompressIncrementally: the byte stream is then
+	// compressed as it is written, so only its compressed form is held in memory.
+	enc     *zstd.Encoder
+	encoded bytes.Buffer
 }
 
 func NewWriter(w io.Writer, hashAlgo uint16, hashSize uint16,
@@ -137,11 +143,59 @@ func (w *Writer) SetCompressedStreamInfo(digest []byte, size uint64) error {
 	return nil
 }
 
+// CompressIncrementally makes the writer compress the byte stream while it is
+// written instead of when the writer is closed. By default the raw byte stream
+// is buffered until Close, which for a stream with large inline regions (for
+// example runs of zeros) costs as much memory as the stream is long; with this
+// option only the compressed stream is held.
+//
+// It only has an effect with StreamCompressionZstd and must be called before
+// the first byte is written. The resulting file is a valid compact stream, but
+// its compressed bytes are not guaranteed to equal those of a writer that
+// compresses at Close. The incremental compressor runs goroutines until the
+// writer is closed, so a caller that gives up before Close has to call
+// [Writer.Abort].
+func (w *Writer) CompressIncrementally() error {
+	if w.err != nil {
+		return w.err
+	}
+	if w.streamCompression != StreamCompressionZstd || w.enc != nil {
+		return nil
+	}
+	if w.streamBuf.Len() > 0 {
+		return fmt.Errorf("compact stream: CompressIncrementally called after writing stream bytes")
+	}
+	enc, err := zstd.NewWriter(&w.encoded)
+	if err != nil {
+		w.err = fmt.Errorf("creating zstd encoder for stream: %w", err)
+		return w.err
+	}
+	w.enc = enc
+	return nil
+}
+
+// Abort releases what the writer holds without finishing the stream: the
+// goroutines of the incremental compressor (see
+// [Writer.CompressIncrementally]), which only stop once its encoder is closed.
+// It is meant to be deferred by a caller whose error paths return without
+// calling Close, and does nothing once the writer is closed.
+func (w *Writer) Abort() {
+	if w.enc == nil {
+		return
+	}
+	w.enc.Close()
+	w.enc = nil
+}
+
 func (w *Writer) WriteStreamBytes(data []byte) error {
 	if w.err != nil {
 		return w.err
 	}
-	if _, err := w.streamBuf.Write(data); err != nil {
+	var sink io.Writer = &w.streamBuf
+	if w.enc != nil {
+		sink = w.enc
+	}
+	if _, err := sink.Write(data); err != nil {
 		w.err = err
 		return err
 	}
@@ -180,8 +234,16 @@ func (w *Writer) Close() error {
 	streamOffset := refTableOffset + refTableSize
 
 	var compressedStream bytes.Buffer
-	switch w.streamCompression {
-	case StreamCompressionZstd:
+	switch {
+	case w.enc != nil:
+		err := w.enc.Close()
+		w.enc = nil
+		if err != nil {
+			w.err = err
+			return err
+		}
+		compressedStream = w.encoded
+	case w.streamCompression == StreamCompressionZstd:
 		enc, err := zstd.NewWriter(&compressedStream)
 		if err != nil {
 			w.err = fmt.Errorf("creating zstd encoder for stream: %w", err)

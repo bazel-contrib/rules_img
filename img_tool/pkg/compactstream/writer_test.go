@@ -419,6 +419,7 @@ func TestContentFormatValues(t *testing.T) {
 		{"unknown", ContentFormatUnknown, 0},
 		{"tar", ContentFormatTar, 1},
 		{"erofs", ContentFormatErofs, 2},
+		{"ext4", ContentFormatExt4, 3},
 	} {
 		if tc.got != tc.want {
 			t.Errorf("ContentFormat %s = %d, want %d", tc.name, tc.got, tc.want)
@@ -442,7 +443,7 @@ func TestWriterContentFormatDefaultsToUnknown(t *testing.T) {
 // TestWriterRecordsContentFormat checks the declared format reaches the header
 // byte the format spec assigns it, and survives a round trip through Inspect.
 func TestWriterRecordsContentFormat(t *testing.T) {
-	for _, format := range []uint8{ContentFormatTar, ContentFormatErofs} {
+	for _, format := range []uint8{ContentFormatTar, ContentFormatErofs, ContentFormatExt4} {
 		var buf bytes.Buffer
 		iw := NewWriter(&buf, HashAlgoSHA256, 32, StreamCompressionNone, OriginalCompressionInfo{}, 0)
 		iw.SetContentFormat(format)
