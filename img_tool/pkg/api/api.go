@@ -14,8 +14,8 @@ type (
 	HashAlgorithm        string
 	LayerFormat          string
 	// ContainerFormat selects the shape of a layer blob: a tar changeset, an
-	// EROFS filesystem image, an ext4 filesystem image, or a cpio archive. It is orthogonal to
-	// the compression algorithm.
+	// EROFS filesystem image, an ext4 or FAT32 filesystem image, or a cpio
+	// archive. It is orthogonal to the compression algorithm.
 	ContainerFormat string
 )
 
@@ -33,6 +33,7 @@ const (
 	ErofsFormat ContainerFormat = "erofs"
 	Ext4Format  ContainerFormat = "ext4"
 	CpioFormat  ContainerFormat = "cpio"
+	Fat32Format ContainerFormat = "fat32"
 
 	// Layer formats
 	TarLayer     = "application/vnd.oci.image.layer.v1.tar"
@@ -44,12 +45,14 @@ const (
 	ErofsLayer     = "application/vnd.erofs.layer.v1"
 	ErofsZstdLayer = "application/vnd.erofs.layer.v1+zstd"
 
-	// Ext4Layer and CpioLayer are the media types recorded for ext4 filesystem
-	// image layers and for cpio archives (initramfs). They are not OCI layer
+	// Ext4Layer, Fat32Layer and CpioLayer are the media types recorded for ext4
+	// and FAT32 filesystem image layers and for cpio archives (initramfs). They
+	// are not OCI layer
 	// media types: such a layer is meant to be used on its own, not as part of
 	// an image.
-	Ext4Layer = "application/x-ext4"
-	CpioLayer = "application/x-cpio"
+	Ext4Layer  = "application/x-ext4"
+	Fat32Layer = "application/x-fat32"
+	CpioLayer  = "application/x-cpio"
 
 	// CpioGzipLayer and CpioZstdLayer are the media types of a compressed cpio
 	// archive.
@@ -82,11 +85,11 @@ const (
 )
 
 // IsImageFormat reports whether a container format is a filesystem image or
-// a cpio archive that is written directly by the layer command, with the ext4
-// and cpio writers (as opposed to a tar changeset, or an EROFS image built from
+// a cpio archive that is written directly by the layer command, with the ext4,
+// FAT32 and cpio writers (as opposed to a tar changeset, or an EROFS image built from
 // the tar pipeline).
 func (c ContainerFormat) IsImageFormat() bool {
-	return c == Ext4Format || c == CpioFormat
+	return c == Ext4Format || c == Fat32Format || c == CpioFormat
 }
 
 // IsErofsLayer reports whether a layer media type belongs to the EROFS family.
