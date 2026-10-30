@@ -53,6 +53,8 @@ common --@rules_img//img/settings:compression_jobs=auto
 # gzip: 0-9, where 0=no compression, 1=fast compression, 9=best compression
 # zstd: 1-4, where 1=fast compression, 4=best compressions
 # "auto" uses compilation mode defaults (-1 for default, 1 for fastbuild, 9 for opt)
+# A level outside a codec's range (for example 6 for zstd) is ignored for that
+# codec, which keeps its compilation mode default.
 common --@rules_img//img/settings:compression_level=auto
 
 # Support for seekable eStargz layers
