@@ -22,6 +22,20 @@ Ext4ConfigInfo = provider(
     fields = EXT4_FIELDS,
 )
 
+CPIO_DOC = """\
+Options of a cpio archive layer, produced by the `cpio_config` rule and selected
+per target through the `format_config` attribute of the layer rules.
+"""
+
+CPIO_FIELDS = dict(
+    deduplicate = "string: \"auto\", \"enabled\" or \"disabled\"; whether identical files are stored once.",
+)
+
+CpioConfigInfo = provider(
+    doc = CPIO_DOC,
+    fields = CPIO_FIELDS,
+)
+
 EROFS_DOC = """\
 Options of an EROFS filesystem image layer, produced by the `erofs_config` rule
 and selected per target through the `format_config` attribute of the layer

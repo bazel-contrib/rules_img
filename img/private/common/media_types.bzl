@@ -22,6 +22,18 @@ EROFS_LAYER_TYPES = [
 # an image, so it is not one of the LAYER_TYPES.
 EXT4_LAYER = "application/x-ext4"
 
+# The media types recorded for a cpio archive (an initramfs), by compression.
+# Like an ext4 layer, a cpio layer is not an OCI layer and not a LAYER_TYPE.
+CPIO_LAYER = "application/x-cpio"
+CPIO_GZIP_LAYER = "application/x-cpio+gzip"
+CPIO_ZSTD_LAYER = "application/x-cpio+zstd"
+
+CPIO_LAYER_TYPES = [
+    CPIO_LAYER,
+    CPIO_GZIP_LAYER,
+    CPIO_ZSTD_LAYER,
+]
+
 LAYER_TYPES = [
     UNCOMPRESSED_LAYER,
     GZIP_LAYER,
@@ -38,6 +50,17 @@ def media_type_is_ext4(media_type):
         True if the media type is the ext4 layer media type.
     """
     return media_type == EXT4_LAYER
+
+def media_type_is_cpio(media_type):
+    """Whether a layer blob with this media type is a cpio archive.
+
+    Args:
+        media_type: Layer media type string, or None.
+
+    Returns:
+        True if the media type belongs to the cpio layer family.
+    """
+    return media_type != None and media_type in CPIO_LAYER_TYPES
 
 def media_type_is_erofs(media_type):
     """Whether a layer blob with this media type is an EROFS filesystem image.

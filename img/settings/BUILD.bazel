@@ -16,8 +16,9 @@ string_flag(
 # Layer container format, orthogonal to :compress. "tar" writes an OCI tar
 # changeset; "erofs" writes a mountable EROFS filesystem image (see
 # docs/erofs-layers.md), which accepts only compress=none or zstd; "ext4"
-# writes an ext4 filesystem image, which is for using a layer on its own (it is
-# not an OCI layer) and ignores the options that only apply to tar layers.
+# writes an ext4 filesystem image, and "cpio" a cpio archive (an initramfs, which
+# can be compressed). These are for using a layer on its own (they are not OCI
+# layers) and ignore the options that only apply to tar layers.
 string_flag(
     name = "layer_format",
     build_setting_default = "tar",
@@ -25,6 +26,20 @@ string_flag(
         "tar",
         "erofs",
         "ext4",
+        "cpio",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+# Whether a cpio layer stores regular files with the same content and metadata
+# once, as hard links of each other (like tar layers do). Turning it off spares
+# reading file content only to find duplicates, at the cost of larger archives.
+string_flag(
+    name = "cpio_deduplicate",
+    build_setting_default = "enabled",
+    values = [
+        "enabled",
+        "disabled",
     ],
     visibility = ["//visibility:public"],
 )
