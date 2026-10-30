@@ -194,6 +194,9 @@ def compression_tuning_args(ctx, compression, tar_format):
     and takes a configured job count as-is. estargz and zstd:chunked layers
     are never parallelized, so they get no job count.
 
+    A compression_level outside the target codec's range is ignored for that
+    codec, which keeps its mode default.
+
     Args:
         ctx: Rule context used to read `COMPILATION_MODE`.
         compression: String name of the target compression algorithm
@@ -230,7 +233,13 @@ def compression_tuning_args(ctx, compression, tar_format):
             jobs_explicit = True
     if hasattr(ctx.attr, "_compression_level") and ctx.attr._compression_level != None:
         lvl = ctx.attr._compression_level[BuildSettingInfo].value
-        if lvl and lvl != "auto":
+
+        # compression_level is shared by gzip and zstd, which accept different
+        # ranges. A level outside this codec's range (for example gzip's 6 on a
+        # zstd layer) keeps the mode default, so one setting can be tuned for
+        # gzip without breaking zstd layers.
+        out_of_range = compression in valid_levels and lvl not in valid_levels[compression] + ["fastest", "best"]
+        if lvl and lvl != "auto" and not out_of_range:
             level = lvl
 
     if level == "fastest":
