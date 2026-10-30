@@ -116,6 +116,8 @@ const (
 	ErofsInput
 	// Ext4Input reads the ReaderAt as an ext4 filesystem image.
 	Ext4Input
+	// CpioInput reads the ReaderAt as a cpio archive in the newc format.
+	CpioInput
 )
 
 // Input is one ordered source of entries.
@@ -123,15 +125,15 @@ type Input struct {
 	Kind InputKind
 	// Reader is an uncompressed tar (TarInput) or an mtree spec (MtreeInput).
 	Reader io.Reader
-	// ReaderAt is an EROFS or ext4 filesystem image (ErofsInput, Ext4Input). It may read the
+	// ReaderAt is an EROFS or ext4 filesystem image, or a cpio archive (ErofsInput, Ext4Input, CpioInput). It may read the
 	// payload ranges as zeros, in which case the Digester has to supply the
 	// content digests.
 	ReaderAt io.ReaderAt
-	// Digester supplies content digests for TarInput, ErofsInput and Ext4Input regular
+	// Digester supplies content digests for TarInput, ErofsInput, Ext4Input and CpioInput regular
 	// files. Ignored for MtreeInput.
 	Digester ContentDigester
 	// RangeDigester optionally reports a digest already recorded for a byte
-	// range of an ErofsInput's or Ext4Input's image, which lets a file whose payload is absent
+	// range of an ErofsInput's, Ext4Input's or CpioInput's image, which lets a file whose payload is absent
 	// (a compact stream read as a sparse image) still get a sha256digest.
 	// Ranges it does not know (found == false) fall back to Digester; an error
 	// means the range cannot be digested from the image at all. Ignored for
@@ -191,6 +193,12 @@ func WriteMulti(w io.Writer, opts Options, inputs []Input) error {
 			collected = append(collected, es...)
 		case Ext4Input:
 			es, err := collectExt4(in.ReaderAt, in.Digester, in.RangeDigester, idx)
+			if err != nil {
+				return err
+			}
+			collected = append(collected, es...)
+		case CpioInput:
+			es, err := collectCpio(in.ReaderAt, in.Digester, in.RangeDigester, idx)
 			if err != nil {
 				return err
 			}

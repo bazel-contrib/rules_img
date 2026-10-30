@@ -14,7 +14,7 @@ type (
 	HashAlgorithm        string
 	LayerFormat          string
 	// ContainerFormat selects the shape of a layer blob: a tar changeset, an
-	// EROFS filesystem image, or an ext4 filesystem image. It is orthogonal to
+	// EROFS filesystem image, an ext4 filesystem image, or a cpio archive. It is orthogonal to
 	// the compression algorithm.
 	ContainerFormat string
 )
@@ -32,6 +32,7 @@ const (
 	TarFormat   ContainerFormat = "tar"
 	ErofsFormat ContainerFormat = "erofs"
 	Ext4Format  ContainerFormat = "ext4"
+	CpioFormat  ContainerFormat = "cpio"
 
 	// Layer formats
 	TarLayer     = "application/vnd.oci.image.layer.v1.tar"
@@ -43,10 +44,17 @@ const (
 	ErofsLayer     = "application/vnd.erofs.layer.v1"
 	ErofsZstdLayer = "application/vnd.erofs.layer.v1+zstd"
 
-	// Ext4Layer is the media type recorded for an ext4 filesystem image layer.
-	// It is not an OCI layer media type: such a layer is meant to be used on
-	// its own, not as part of an image.
+	// Ext4Layer and CpioLayer are the media types recorded for ext4 filesystem
+	// image layers and for cpio archives (initramfs). They are not OCI layer
+	// media types: such a layer is meant to be used on its own, not as part of
+	// an image.
 	Ext4Layer = "application/x-ext4"
+	CpioLayer = "application/x-cpio"
+
+	// CpioGzipLayer and CpioZstdLayer are the media types of a compressed cpio
+	// archive.
+	CpioGzipLayer = "application/x-cpio+gzip"
+	CpioZstdLayer = "application/x-cpio+zstd"
 
 	// Config media types
 	MediaTypeEmptyJSON = "application/vnd.oci.empty.v1+json"
@@ -73,11 +81,12 @@ const (
 	ErofsOSFeature = "erofs"
 )
 
-// IsImageFormat reports whether a container format is a filesystem image that
-// is written directly by the layer command, with the ext4 writer (as opposed
-// to a tar changeset, or an EROFS image built from the tar pipeline).
+// IsImageFormat reports whether a container format is a filesystem image or
+// a cpio archive that is written directly by the layer command, with the ext4
+// and cpio writers (as opposed to a tar changeset, or an EROFS image built from
+// the tar pipeline).
 func (c ContainerFormat) IsImageFormat() bool {
-	return c == Ext4Format
+	return c == Ext4Format || c == CpioFormat
 }
 
 // IsErofsLayer reports whether a layer media type belongs to the EROFS family.
