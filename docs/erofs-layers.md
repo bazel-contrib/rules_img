@@ -127,10 +127,33 @@ dm-verity is part of the layer format but not yet supported by rules_img.
 
 ## Tuning
 
+The options of the image come from an `erofs_config` target, passed to the
+layer's `format_config` attribute:
+
+```python
+load("@rules_img//img:layer.bzl", "erofs_config", "image_layer")
+
+erofs_config(
+    name = "layer_config",
+    # Filesystem block size. 4096 matches the common page size, so the image
+    # mounts without kernel support for block sizes below the page size.
+    block_size = 4096,
+)
+
+image_layer(
+    name = "layer",
+    srcs = {"/etc/hostname": ":hostname"},
+    format = "erofs",
+    format_config = ":layer_config",
+)
 ```
-# Filesystem block size. 4096 matches the common page size, so the image mounts
-# without kernel support for block sizes below the page size.
-common --@rules_img//img/settings:erofs_block_size=4096
+
+The remaining two options also have a global default, for setting them across a
+build:
+
+```
+common --@rules_img//img/settings:erofs_inline_threshold=0
+common --@rules_img//img/settings:erofs_synthetic_directories=inherit
 ```
 
 ## Reproducibility

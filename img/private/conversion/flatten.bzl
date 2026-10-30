@@ -34,7 +34,7 @@ def _check_layer_is_tar(ctx, layer, manifest_position, layer_position):
         location = "manifest[{}].{}".format(manifest_position, location)
     fail("""image_flatten can only merge tar layers, but {} in {} has media type "{}".
 
-Layers that are not tar changesets (for example EROFS layers built with "--@rules_img//img/settings:layer_format=erofs") cannot be extracted and would silently flatten into an empty filesystem.""".format(location, ctx.attr.image.label, layer.media_type))
+Layers that are not tar changesets (for example a filesystem image built with "--@rules_img//img/settings:layer_format=erofs" or "=ext4") cannot be extracted and would silently flatten into an empty filesystem.""".format(location, ctx.attr.image.label, layer.media_type))
 
 def _has_platform(m):
     # Attestation and unknown-platform manifests (os/architecture "unknown") carry no runnable filesystem.

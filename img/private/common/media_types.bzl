@@ -17,11 +17,27 @@ EROFS_LAYER_TYPES = [
     EROFS_ZSTD_LAYER,
 ]
 
+# The media type recorded for an ext4 filesystem image layer. It is not an OCI
+# layer media type: such a layer is meant to be used on its own, not as part of
+# an image, so it is not one of the LAYER_TYPES.
+EXT4_LAYER = "application/x-ext4"
+
 LAYER_TYPES = [
     UNCOMPRESSED_LAYER,
     GZIP_LAYER,
     ZSTD_LAYER,
 ] + EROFS_LAYER_TYPES
+
+def media_type_is_ext4(media_type):
+    """Whether a layer blob with this media type is an ext4 filesystem image.
+
+    Args:
+        media_type: Layer media type string, or None.
+
+    Returns:
+        True if the media type is the ext4 layer media type.
+    """
+    return media_type == EXT4_LAYER
 
 def media_type_is_erofs(media_type):
     """Whether a layer blob with this media type is an EROFS filesystem image.
