@@ -216,6 +216,7 @@ fields are absent (zero) and must be ignored.
 | 2     | [EROFS filesystem image](erofs-layers.md)    |
 | 3     | [ext4 filesystem image](#compact-streams-of-ext4-images) |
 | 4     | [cpio archive](filesystems.md#cpio) (newc)   |
+| 5     | [FAT32 filesystem image](filesystems.md#fat32) |
 
 `ContentFormat` identifies the filetype of the payload. Reconstruction itself
 does not need it, but a tool that interprets the content rather than just
@@ -393,7 +394,7 @@ metadata is automatically derived from the layer's compression settings.
 
 The format is not specific to tar layers: any uncompressed byte stream whose
 bulk content is available as separate blobs can be represented this way.
-This includes (but is not limited to) EROFS and ext4 filesystem images, and
+This includes (but is not limited to) EROFS, ext4 and FAT32 filesystem images, and
 [cpio archives](filesystems.md#cpio) (initramfs).
 
 The content of a regular file is contiguous in all of them, so each file of at
