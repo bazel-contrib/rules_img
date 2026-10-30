@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/casdirlayout"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/compactstream"
 )
 
@@ -85,14 +86,13 @@ func reconstructProcess(ctx context.Context, args []string) {
 }
 
 // dirStore is a compactstream.BlobStore backed by a content-addressed directory, where
-// each blob is stored at sha256/<hex of content>.
+// each blob is stored at sha256/<first two hex digits>/<hex of content>.
 type dirStore struct {
 	shaDir string
 }
 
 func (s *dirStore) ReaderForBlob(_ context.Context, digest []byte, size int64) (io.ReadCloser, error) {
-	path := filepath.Join(s.shaDir, hex.EncodeToString(digest))
-	f, err := os.Open(path)
+	f, err := casdirlayout.Open(s.shaDir, hex.EncodeToString(digest))
 	if err != nil {
 		return nil, fmt.Errorf("blob sha256:%s (size %d) not found in content-addressed directory: %w", hex.EncodeToString(digest), size, err)
 	}

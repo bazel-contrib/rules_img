@@ -12,6 +12,7 @@ import (
 
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/api"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/cas"
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/casdirlayout"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/compactstream"
 )
 
@@ -232,7 +233,7 @@ func (b *Builder) layerFromCompactStream(compactStreamPath, casDirPath string, d
 
 // casDirStore is a compactstream.BlobStore that resolves CAS references (addressed by
 // the sha256 of their content) from multiple sources, in order:
-//  1. a content-addressed input directory laid out as sha256/<hex> (shipped with
+//  1. a content-addressed input directory laid out as sha256/<xx>/<hex> (shipped with
 //     eager strategies);
 //  2. the Bazel disk cache;
 //  3. the remote CAS (used by lazy strategies, where the input directory is
@@ -249,7 +250,7 @@ func (s *casDirStore) ReaderForBlob(ctx context.Context, digest []byte, size int
 	// 1. Content-addressed input directory (eager). Files are addressed by their
 	// content digest, so they are trusted without an extra size check.
 	if s.shaDir != "" {
-		if f, err := os.Open(filepath.Join(s.shaDir, hexDigest)); err == nil {
+		if f, err := casdirlayout.Open(s.shaDir, hexDigest); err == nil {
 			return f, nil
 		}
 	}
@@ -356,7 +357,7 @@ func (s *casDirStore) planRuns(requests []compactstream.BlobRequest) []blobRun {
 func (s *casDirStore) hasLocally(digest []byte, size int64) bool {
 	hexDigest := hex.EncodeToString(digest)
 	if s.shaDir != "" {
-		if _, err := os.Stat(filepath.Join(s.shaDir, hexDigest)); err == nil {
+		if _, err := casdirlayout.Stat(s.shaDir, hexDigest); err == nil {
 			return true
 		}
 	}

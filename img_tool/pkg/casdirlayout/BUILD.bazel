@@ -1,0 +1,15 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "casdirlayout",
+    srcs = ["casdirlayout.go"],
+    importpath = "github.com/bazel-contrib/rules_img/img_tool/pkg/casdirlayout",
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "casdirlayout_test",
+    size = "small",
+    srcs = ["casdirlayout_test.go"],
+    embed = [":casdirlayout"],
+)
