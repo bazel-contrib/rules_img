@@ -1,4 +1,4 @@
-"""Analysis tests for the compression_level fallback."""
+"""Analysis tests for the compression_level fallback and zstd_window_log."""
 
 load("@bazel_skylib//lib:unittest.bzl", "analysistest", "asserts")
 load("@bazel_skylib//rules:write_file.bzl", "write_file")
@@ -9,6 +9,9 @@ _COMPRESS_SETTING = "@@//img/settings:compress"
 
 # buildifier: disable=canonical-repository
 _LEVEL_SETTING = "@@//img/settings:compression_level"
+
+# buildifier: disable=canonical-repository
+_WINDOW_SETTING = "@@//img/settings:zstd_window_log"
 
 def _flag_value(env, flag):
     for action in analysistest.target_actions(env):
@@ -49,6 +52,36 @@ _gzip_level_kept_test = analysistest.make(
     },
 )
 
+def _zstd_window_log_test_impl(ctx):
+    env = analysistest.begin(ctx)
+    asserts.equals(env, "27", _flag_value(env, "--zstd-window-log"))
+    asserts.equals(env, "4", _flag_value(env, "--compression-level"))
+    return analysistest.end(env)
+
+_zstd_window_log_test = analysistest.make(
+    _zstd_window_log_test_impl,
+    config_settings = {
+        _COMPRESS_SETTING: "zstd",
+        _LEVEL_SETTING: "4",
+        _WINDOW_SETTING: "27",
+    },
+)
+
+def _gzip_ignores_window_log_test_impl(ctx):
+    env = analysistest.begin(ctx)
+    asserts.equals(env, None, _flag_value(env, "--zstd-window-log"))
+    asserts.equals(env, "6", _flag_value(env, "--compression-level"))
+    return analysistest.end(env)
+
+_gzip_ignores_window_log_test = analysistest.make(
+    _gzip_ignores_window_log_test_impl,
+    config_settings = {
+        _COMPRESS_SETTING: "gzip",
+        _LEVEL_SETTING: "6",
+        _WINDOW_SETTING: "27",
+    },
+)
+
 def compression_tuning_test_suite(name):
     """Declare analysis tests for compression_tuning_args.
 
@@ -73,6 +106,8 @@ def compression_tuning_test_suite(name):
     tests = {
         "gzip_level_on_zstd": _gzip_level_on_zstd_test,
         "gzip_level_kept": _gzip_level_kept_test,
+        "zstd_window_log": _zstd_window_log_test,
+        "gzip_ignores_window_log": _gzip_ignores_window_log_test,
     }
     for test_name, test_rule in tests.items():
         test_rule(

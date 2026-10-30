@@ -42,6 +42,7 @@ type tarSettings struct {
 	format           compress.TarFormat
 	compressionLevel int
 	compressorJobs   int
+	zstdWindowLog    int
 }
 
 func (s tarSettings) originalCompression() uint8 {
@@ -62,6 +63,9 @@ func (s tarSettings) compressOpts() []compress.Option {
 	}
 	if s.compressorJobs > 0 {
 		opts = append(opts, compress.CompressorJobs(s.compressorJobs))
+	}
+	if s.zstdWindowLog > 0 {
+		opts = append(opts, compress.ZstdWindowLog(s.zstdWindowLog))
 	}
 	return opts
 }
@@ -109,6 +113,7 @@ func buildIndexAndReconstruct(t *testing.T, entries []testEntry, settings tarSet
 			Format:           settings.format,
 			CompressionLevel: int8(settings.compressionLevel),
 			CompressorJobs:   uint8(settings.compressorJobs),
+			ZstdWindowLog:    uint8(settings.zstdWindowLog),
 		}, inlineThreshold)
 
 	obs := newCompactStreamObserver[SHA256Helper](iw)
@@ -528,5 +533,26 @@ func TestReconstructRandomized(t *testing.T) {
 				t.Fatalf("mismatch: direct=%d bytes, reconstructed=%d bytes", len(direct), len(reconstructed))
 			}
 		})
+	}
+}
+
+// TestReconstructZstdWindowLog checks that a zstd window size recorded in the
+// header is used again when recompressing, so the blob is reproduced exactly.
+func TestReconstructZstdWindowLog(t *testing.T) {
+	settings := tarSettings{compression: "zstd", compressionLevel: 4, compressorJobs: 1, zstdWindowLog: 20}
+	// A random block repeated once, farther apart than the 1 MiB window but
+	// within the default one, so the window changes the compressed output.
+	block := make([]byte, 3<<19)
+	rand.New(rand.NewSource(1)).Read(block)
+	content := append(block, block...)
+	entries := []testEntry{
+		{hdr: &tar.Header{Typeflag: tar.TypeReg, Name: "file.bin", Size: int64(len(content)), Mode: 0o644}, content: content},
+	}
+
+	direct := buildTarDirect(t, entries, settings)
+	reconstructed := buildIndexAndReconstruct(t, entries, settings, compactstream.StreamCompressionZstd, 0)
+
+	if !bytes.Equal(direct, reconstructed) {
+		t.Fatalf("zstd window mismatch: direct=%d bytes, reconstructed=%d bytes", len(direct), len(reconstructed))
 	}
 }

@@ -73,6 +73,7 @@ func ManifestProcess(_ context.Context, args []string) {
 	fs.Var(&layerMetadataJSON, "layer_metadata_json", "Output path for layer metadata JSON in format index=path")
 	fs.StringVar(&opts.Compression.Jobs, "compressor-jobs", "", "Number of concurrent compression jobs ('nproc' or integer)")
 	fs.IntVar(&opts.Compression.Level, "compression-level", -1, "Compression level (-1 uses algorithm default)")
+	fs.IntVar(&opts.Compression.ZstdWindowLog, "zstd-window-log", 0, `zstd window size as a power of two (10-29), like the zstd CLI's --long=n. Only applies to plain zstd layers. If unset, the compression level picks the window.`)
 
 	if err := fs.Parse(args); err != nil {
 		fs.Usage()
@@ -174,6 +175,7 @@ func IndexProcess(_ context.Context, args []string) {
 	fs.Var(&layerMetadataJSON, "layer_metadata_json", "Output path for layer metadata JSON in format manifest_idx,layer_idx=path")
 	fs.StringVar(&opts.Compression.Jobs, "compressor-jobs", "", "Number of concurrent compression jobs ('nproc' or integer)")
 	fs.IntVar(&opts.Compression.Level, "compression-level", -1, "Compression level (-1 uses algorithm default)")
+	fs.IntVar(&opts.Compression.ZstdWindowLog, "zstd-window-log", 0, `zstd window size as a power of two (10-29), like the zstd CLI's --long=n. Only applies to plain zstd layers. If unset, the compression level picks the window.`)
 
 	if err := fs.Parse(args); err != nil {
 		fs.Usage()

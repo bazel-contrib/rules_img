@@ -24,6 +24,8 @@ const dockerTarZstdLayer = "application/vnd.docker.image.rootfs.diff.tar.zstd"
 type CompressionOptions struct {
 	Jobs  string
 	Level int
+	// ZstdWindowLog sets the zstd window to 2^n bytes; 0 leaves it to the level.
+	ZstdWindowLog int
 }
 
 // LayerOutputSpec specifies the desired media type and output paths for a single layer index.
@@ -247,6 +249,9 @@ func CompressStreamToLayerBlob(
 		} else {
 			return "", "", 0, fmt.Errorf("invalid --compressor-jobs value %q: %w", compOpts.Jobs, err)
 		}
+	}
+	if compOpts.ZstdWindowLog > 0 {
+		opts = append(opts, compress.ZstdWindowLog(compOpts.ZstdWindowLog))
 	}
 
 	blobFile, err := os.Create(layerBlobPath)

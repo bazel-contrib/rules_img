@@ -57,6 +57,12 @@ common --@rules_img//img/settings:compression_jobs=auto
 # codec, which keeps its compilation mode default.
 common --@rules_img//img/settings:compression_level=auto
 
+# zstd window size as a power of two (10-29), like the zstd CLI's --long=n
+# "auto" lets the compression level pick the window (at most 8 MiB).
+# A larger window makes large layers smaller at compression level 4, at the
+# cost of memory and parallelism. Plain zstd layers only.
+common --@rules_img//img/settings:zstd_window_log=auto
+
 # Support for seekable eStargz layers
 # with the containerd stargz-snapshotter
 common --@rules_img//img/settings:estargz=enabled

@@ -54,6 +54,7 @@ type OriginalCompressionInfo struct {
 	Format           compress.TarFormat
 	CompressionLevel int8
 	CompressorJobs   uint8
+	ZstdWindowLog    uint8
 	EndPadding       uint32
 }
 
@@ -277,7 +278,8 @@ func (w *Writer) Close() error {
 	header[15] = byte(w.originalCompression.CompressionLevel)
 	header[16] = w.originalCompression.CompressorJobs
 	header[17] = w.contentFormat
-	// bytes 18-19: reserved
+	header[18] = w.originalCompression.ZstdWindowLog
+	// byte 19: reserved
 	binary.BigEndian.PutUint32(header[20:24], w.originalCompression.EndPadding)
 	binary.BigEndian.PutUint64(header[24:32], refTableOffset)
 	binary.BigEndian.PutUint64(header[32:40], refTableSize)
