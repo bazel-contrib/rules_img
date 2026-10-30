@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"math"
 	"os"
 	"path"
 	"strings"
@@ -558,11 +559,12 @@ func kindOf(t byte) (kind, error) {
 }
 
 func (b *Builder) fill(n *node, hdr *tar.Header, src source) error {
-	if hdr.Uid < 0 || hdr.Gid < 0 || int64(uint32(hdr.Uid)) != int64(hdr.Uid) || int64(uint32(hdr.Gid)) != int64(hdr.Gid) {
+	uid, gid := int64(hdr.Uid), int64(hdr.Gid)
+	if uid < 0 || uid > math.MaxUint32 || gid < 0 || gid > math.MaxUint32 {
 		return fmt.Errorf("owner %d:%d does not fit in 32 bits", hdr.Uid, hdr.Gid)
 	}
-	n.mode = uint32(hdr.Mode) & 0o7777
-	n.uid, n.gid = uint32(hdr.Uid), uint32(hdr.Gid)
+	n.mode = uint32(hdr.Mode & 0o7777)
+	n.uid, n.gid = uint32(uid), uint32(gid)
 	n.mtime, n.atime, n.ctime = hdr.ModTime, hdr.AccessTime, hdr.ChangeTime
 	// Absent timestamps take the modification time, then the default.
 	if n.atime.IsZero() {
