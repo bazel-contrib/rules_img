@@ -143,6 +143,7 @@ func parseHeader(raw [headerSize]byte) (Header, error) {
 			Format:           compress.TarFormat(raw[14]),
 			CompressionLevel: int8(raw[15]),
 			CompressorJobs:   raw[16],
+			ZstdWindowLog:    raw[18],
 			EndPadding:       binary.BigEndian.Uint32(raw[20:24]),
 		},
 		ContentFormat:  raw[17],

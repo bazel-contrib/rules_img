@@ -162,7 +162,8 @@ Offset  Size  Type       Field                  Description
 15      1     int8       CompressionLevel       Original compression level (-1 = default)
 16      1     uint8      CompressorJobs         Number of parallel compression workers (0 = default)
 17      1     uint8      ContentFormat          Identifier for the file type of the payload (see below)
-18      2     -          Reserved1              Must be zero
+18      1     uint8      ZstdWindowLog          zstd window size as a power of two (0 = default)
+19      1     -          Reserved1              Must be zero
 20      4     uint32 BE  EndPadding             Trailing zero bytes in the original stream
 24      8     uint64 BE  RefTableOffset         Byte offset from file start to CAS ref table
 32      8     uint64 BE  RefTableSize           Size in bytes of the CAS reference table

@@ -62,6 +62,10 @@ CONVERSION_PRIVATE_ATTRS = dict(
         default = Label("//img/settings:compression_level"),
         providers = [BuildSettingInfo],
     ),
+    _zstd_window_log = attr.label(
+        default = Label("//img/settings:zstd_window_log"),
+        providers = [BuildSettingInfo],
+    ),
     _oci_layout_settings = attr.label(
         default = Label("//img/private/settings:oci_layout"),
         providers = [OCILayoutSettingsInfo],

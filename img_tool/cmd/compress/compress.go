@@ -32,6 +32,7 @@ func CompressProcess(ctx context.Context, args []string) {
 	annotations := make(annotationsFlag)
 	var compressorJobsFlag string
 	var compressionLevelFlag int
+	var zstdWindowLogFlag int
 	flagSet := flag.NewFlagSet("compress", flag.ExitOnError)
 	flagSet.Usage = func() {
 		fmt.Fprintf(flagSet.Output(), "(Re-)compresses a layer to the chosen format.\n\n")
@@ -54,6 +55,7 @@ func CompressProcess(ctx context.Context, args []string) {
 	flagSet.BoolVar(&zstdChunkedFlag, "zstd-chunked", false, `Use zstd:chunked format for compression. Requires --format zstd. Files are split into content-defined chunks that can be fetched and deduplicated individually.`)
 	flagSet.StringVar(&compressorJobsFlag, "compressor-jobs", "", `Number of compressor jobs. For gzip, 1 uses single-threaded stdlib gzip and n>1 uses pgzip. For zstd, it is the number of parallel encoder goroutines, which is always at least 2. "nproc" uses the available cores. If unset, gzip is single-threaded and zstd uses 2 jobs.`)
 	flagSet.IntVar(&compressionLevelFlag, "compression-level", -1, `Compression level. For gzip: 0-9. If unset, use library default.`)
+	flagSet.IntVar(&zstdWindowLogFlag, "zstd-window-log", 0, `zstd window size as a power of two (10-29), like the zstd CLI's --long=n. Only applies to plain zstd layers. If unset, the compression level picks the window.`)
 	flagSet.Var(&annotations, "annotation", `Add an annotation as key=value. Can be specified multiple times.`)
 	flagSet.StringVar(&metadataOutputFile, "metadata", "", `Write the metadata to the specified file. The metadata is a JSON file containing info needed to use the layer as part of an OCI image.`)
 	flagSet.StringVar(&sourceMetadataFile, "source-metadata", "", `Read existing layer metadata and preserve its annotations and history in the output metadata.`)
@@ -125,7 +127,7 @@ func CompressProcess(ctx context.Context, args []string) {
 		os.Exit(1)
 	}
 
-	compressorState, mediaType, err := recompress(reader, outputHandle, outputFormat, tarFormat, compressorJobsFlag, compressionLevelFlag)
+	compressorState, mediaType, err := recompress(reader, outputHandle, outputFormat, tarFormat, compressorJobsFlag, compressionLevelFlag, zstdWindowLogFlag)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Recompressing layer: %v\n", err)
 		os.Exit(1)
@@ -155,7 +157,7 @@ func CompressProcess(ctx context.Context, args []string) {
 	}
 }
 
-func recompress(input io.Reader, output io.Writer, format api.LayerFormat, tarFormat compress.TarFormat, compressorJobsFlag string, compressionLevelFlag int) (compressorState api.AppenderState, mediaType string, err error) {
+func recompress(input io.Reader, output io.Writer, format api.LayerFormat, tarFormat compress.TarFormat, compressorJobsFlag string, compressionLevelFlag int, zstdWindowLog int) (compressorState api.AppenderState, mediaType string, err error) {
 	var CompressionAlgorithm api.CompressionAlgorithm
 	switch format {
 	case api.TarLayer:
@@ -178,6 +180,9 @@ func recompress(input io.Reader, output io.Writer, format api.LayerFormat, tarFo
 		} else if n, err := strconv.Atoi(compressorJobsFlag); err == nil {
 			opts = append(opts, compress.CompressorJobs(n))
 		}
+	}
+	if zstdWindowLog > 0 {
+		opts = append(opts, compress.ZstdWindowLog(zstdWindowLog))
 	}
 	compressor, err := compress.TarAppenderFactory(string(api.SHA256), string(CompressionAlgorithm), tarFormat, output, append(opts, compress.ContentType("tar"))...)
 	if err != nil {

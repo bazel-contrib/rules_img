@@ -62,6 +62,7 @@ func FlattenImageProcess(_ context.Context, args []string) {
 	fs.StringVar(&opts.History, "history", "rules_img flatten", "History created_by entry recorded for the flattened layer ('--history=' omits history)")
 	fs.StringVar(&opts.Compression.Jobs, "compressor-jobs", "", "Number of concurrent compression jobs ('nproc' or integer)")
 	fs.IntVar(&opts.Compression.Level, "compression-level", -1, "Compression level (-1 uses algorithm default)")
+	fs.IntVar(&opts.Compression.ZstdWindowLog, "zstd-window-log", 0, `zstd window size as a power of two (10-29), like the zstd CLI's --long=n. Only applies to plain zstd layers. If unset, the compression level picks the window.`)
 	fs.StringVar(&opts.ManifestOutput, "manifest", "", "Output path for the flattened image manifest (required)")
 	fs.StringVar(&opts.ConfigOutput, "config", "", "Output path for the flattened image config (required)")
 	fs.StringVar(&opts.DescriptorOutput, "descriptor", "", "Output path for the flattened image descriptor (required)")

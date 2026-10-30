@@ -73,6 +73,9 @@ func Reconstruct(ctx context.Context, index io.Reader, store BlobStore, output i
 		if origComp.CompressorJobs > 0 {
 			compressOpts = append(compressOpts, compress.CompressorJobs(int(origComp.CompressorJobs)))
 		}
+		if origComp.ZstdWindowLog > 0 {
+			compressOpts = append(compressOpts, compress.ZstdWindowLog(int(origComp.ZstdWindowLog)))
+		}
 
 		appender, err := compress.TarAppenderFactory("sha256", compressionAlgorithm, origComp.Format, out, compressOpts...)
 		if err != nil {

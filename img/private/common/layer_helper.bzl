@@ -201,7 +201,8 @@ def compression_tuning_args(ctx, compression, tar_format):
     are never parallelized, so they get no job count.
 
     A compression_level outside the target codec's range is ignored for that
-    codec, which keeps its mode default.
+    codec, which keeps its mode default. Plain zstd layers also get the
+    zstd_window_log setting.
 
     Args:
         ctx: Rule context used to read `COMPILATION_MODE`.
@@ -270,6 +271,12 @@ def compression_tuning_args(ctx, compression, tar_format):
         if level not in valid_levels[compression]:
             fail("Invalid compression level {} for {}".format(level, compression))
         tuned_args.extend(["--compression-level", level])
+    if compression == "zstd" and not single_stream and hasattr(ctx.attr, "_zstd_window_log") and ctx.attr._zstd_window_log != None:
+        window_log = ctx.attr._zstd_window_log[BuildSettingInfo].value
+        if window_log and window_log != "auto":
+            if not window_log.isdigit() or int(window_log) < 10 or int(window_log) > 29:
+                fail("Invalid zstd_window_log {}: must be 'auto' or an integer from 10 to 29".format(window_log))
+            tuned_args.extend(["--zstd-window-log", window_log])
     return tuned_args
 
 def build_layer_mtree(ctx, name, *, tar_blob = None, compact_stream = None, erofs_blob = None, erofs_compact_stream = None, ext4_blob = None, ext4_compact_stream = None):

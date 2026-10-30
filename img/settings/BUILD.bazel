@@ -324,6 +324,19 @@ string_flag(
     visibility = ["//visibility:public"],
 )
 
+# zstd window size as a power of two, like the zstd CLI's --long=n: "auto"
+# (the compression level picks the window) or an integer from 10 to 29. A large
+# window lets matches reach further back, which makes large layers noticeably
+# smaller at the best level, but the parallel encoder's jobs are four windows
+# long, so it also means fewer jobs to spread across cores. Applies to plain
+# zstd layers only. Compact streams record the window so the layer can be
+# reconstructed byte for byte.
+string_flag(
+    name = "zstd_window_log",
+    build_setting_default = "auto",
+    visibility = ["//visibility:public"],
+)
+
 string_flag(
     name = "create_parent_directories",
     build_setting_default = "disabled",

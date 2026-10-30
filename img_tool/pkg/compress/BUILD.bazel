@@ -29,6 +29,7 @@ go_test(
         "cpu_dependent_output_test.go",
         "estargz_test.go",
         "zstd_concurrency_test.go",
+        "zstd_window_test.go",
         "zstdchunked_test.go",
     ],
     data = glob(["testdata/**"]),

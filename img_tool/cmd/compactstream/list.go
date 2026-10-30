@@ -227,6 +227,9 @@ func describeOriginalCompression(o compactstream.OriginalCompressionInfo) string
 	if o.CompressorJobs > 0 {
 		jobs = fmt.Sprintf("%d", o.CompressorJobs)
 	}
+	if o.ZstdWindowLog > 0 {
+		return fmt.Sprintf("%s (level %s, jobs %s, window log %d)", name, level, jobs, o.ZstdWindowLog)
+	}
 	return fmt.Sprintf("%s (level %s, jobs %s)", name, level, jobs)
 }
 

@@ -43,7 +43,7 @@ func TestTreeMetadata(t *testing.T) {
 				{PathInImage: "app/second", File: dir, FileType: api.Directory},
 			}, nil, nil, symlinks{{LinkName: "links/alias", Target: "../app/first/a"}}, nil, nil,
 				contentmanifest.NewMultiImporter(nil, api.SHA256), contentmanifest.NopExporter(), &out, metadata,
-				"1", -1, true, handling, "", 0)
+				"1", -1, 0, true, handling, "", 0)
 			if err != nil {
 				t.Fatal(err)
 			}

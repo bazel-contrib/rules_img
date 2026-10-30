@@ -127,6 +127,13 @@ func zstdEncoderOptions(opts options) []zstd.EOption {
 	if opts.compressionLevel != nil {
 		encoderOptions = append(encoderOptions, zstd.WithEncoderLevel(zstd.EncoderLevel(*opts.compressionLevel)))
 	}
+	// A window larger than the level's default lets matches reach further
+	// back, which is what the zstd CLI's --long buys on large layers. The
+	// parallel encoder's job size is a multiple of the window, so a large
+	// window also means fewer jobs to spread across workers.
+	if opts.zstdWindowLog != nil {
+		encoderOptions = append(encoderOptions, zstd.WithWindowSize(1<<*opts.zstdWindowLog))
+	}
 	return encoderOptions
 }
 

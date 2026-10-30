@@ -35,6 +35,7 @@ type cpioSettings struct {
 	compression      api.CompressionAlgorithm
 	compressorJobs   string
 	compressionLevel int
+	zstdWindowLog    int
 }
 
 // mediaType is the media type recorded for the layer file.
@@ -91,7 +92,7 @@ func writeCpioLayer(
 	if out != nil {
 		layerFile = out
 	}
-	appender, err := compress.AppenderFactory("sha256", string(settings.compression), layerFile, compressOptions(settings.compressionLevel, settings.compressorJobs)...)
+	appender, err := compress.AppenderFactory("sha256", string(settings.compression), layerFile, compressOptions(settings.compressionLevel, settings.compressorJobs, settings.zstdWindowLog)...)
 	if err != nil {
 		return layer, fmt.Errorf("creating compressor: %w", err)
 	}
@@ -139,6 +140,7 @@ func writeCpioLayer(
 		original.Compression = compactstream.OriginalCompressionGzip
 	case api.Zstd:
 		original.Compression = compactstream.OriginalCompressionZstd
+		original.ZstdWindowLog = uint8(settings.zstdWindowLog)
 	}
 	if original.Compression != compactstream.OriginalCompressionNone {
 		original.CompressionLevel = csLevel

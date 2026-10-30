@@ -68,6 +68,7 @@ func LayerProcess(ctx context.Context, args []string) {
 	var defaultMetadataFlag string
 	var compressorJobsFlag string
 	var compressionLevelFlag int
+	var zstdWindowLogFlag int
 	var createParentDirectoriesFlag bool
 	var treeArtifactHandlingFlag string
 	var compactStreamOutputFlag string
@@ -131,6 +132,7 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 	flagSet.StringVar(&mediaTypeFlag, "media-type", "", `Override the layer media type in the metadata output. If empty, auto-detected from the compression format.`)
 	flagSet.StringVar(&compressorJobsFlag, "compressor-jobs", "", `Number of compressor jobs. For gzip, 1 uses single-threaded stdlib gzip and n>1 uses pgzip. For zstd, it is the number of parallel encoder goroutines, which is always at least 2. "nproc" uses the available cores. If unset, gzip is single-threaded and zstd uses 2 jobs.`)
 	flagSet.IntVar(&compressionLevelFlag, "compression-level", -1, `Compression level. For gzip: 0-9. If unset, use library default.`)
+	flagSet.IntVar(&zstdWindowLogFlag, "zstd-window-log", 0, `zstd window size as a power of two (10-29), like the zstd CLI's --long=n. Only applies to plain zstd layers. If unset, the compression level picks the window.`)
 	flagSet.Var(&annotations, "annotation", `Add an annotation as key=value. Can be specified multiple times.`)
 	flagSet.StringVar(&annotationsFile, "annotations-file", "", `File containing annotations, as JSON ({"key":"value"}, {"key":["v1","v2"]}, or ["key=value"]) or newline-delimited KEY=VALUE text. Annotations from the file are merged with those specified via --annotation, which take precedence.`)
 	flagSet.StringVar(&metadataOutputFlag, "metadata", "", `Write the metadata to the specified file. The metadata is a JSON file containing info needed to use the layer as part of an OCI image.`)
@@ -474,6 +476,7 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 			compression:      compressionAlgorithm,
 			compressorJobs:   compressorJobsFlag,
 			compressionLevel: compressionLevelFlag,
+			zstdWindowLog:    zstdWindowLogFlag,
 		}
 		if err := handleImageLayer(
 			containerFormat, ext4Settings, cpioSettings, outputOSFile, addFiles, importTarFlags, executableFlags, symlinkFlags, emptyFilePaths, baseMetadataPaths,
@@ -503,7 +506,7 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 		compressionAlgorithm, tarFormat, addFiles, importTarFlags, executableFlags, symlinkFlags, emptyFilePaths,
 		baseMetadataPaths,
 		casImporter, casExporter, outputFile, layerMetadata,
-		compressorJobsFlag, compressionLevelFlag, createParentDirectoriesFlag,
+		compressorJobsFlag, compressionLevelFlag, zstdWindowLogFlag, createParentDirectoriesFlag,
 		treeArtifactHandlingFlag,
 		compactStreamOutputFlag, compactStreamInlineThresholdFlag,
 	)
@@ -618,9 +621,9 @@ type finalizer interface {
 	Finalize() (api.AppenderState, error)
 }
 
-// compressOptions turns the --compression-level and --compressor-jobs flags
-// into compressor options.
-func compressOptions(compressionLevelFlag int, compressorJobsFlag string) []compress.Option {
+// compressOptions turns the --compression-level, --compressor-jobs and
+// --zstd-window-log flags into compressor options.
+func compressOptions(compressionLevelFlag int, compressorJobsFlag string, zstdWindowLog int) []compress.Option {
 	var opts []compress.Option
 	// compression level
 	if compressionLevelFlag >= 0 {
@@ -635,6 +638,9 @@ func compressOptions(compressionLevelFlag int, compressorJobsFlag string) []comp
 			opts = append(opts, compress.CompressorJobs(n))
 		}
 	}
+	if zstdWindowLog > 0 {
+		opts = append(opts, compress.ZstdWindowLog(zstdWindowLog))
+	}
 	return opts
 }
 
@@ -643,7 +649,7 @@ func handleLayerState(
 	compressionAlgorithm api.CompressionAlgorithm, tarFormat compress.TarFormat, addFiles addFiles, importTars importTars, addExecutables executables, addSymlinks symlinks, emptyFiles []string,
 	baseMetadataPaths []string,
 	casImporter api.CASStateSupplier, casExporter api.CASStateExporter, outputFile io.Writer, layerMetadata *LayerMetadata,
-	compressorJobsFlag string, compressionLevelFlag int, createParentDirectories bool,
+	compressorJobsFlag string, compressionLevelFlag int, zstdWindowLog int, createParentDirectories bool,
 	treeArtifactHandling string,
 	compactStreamPath string, compactStreamInlineThreshold uint64,
 ) (compressorState api.AppenderState, err error) {
@@ -654,7 +660,7 @@ func handleLayerState(
 
 	// Start precaching files in the background
 	startPrecaching(precacher, addFiles, addExecutables)
-	opts := compressOptions(compressionLevelFlag, compressorJobsFlag)
+	opts := compressOptions(compressionLevelFlag, compressorJobsFlag, zstdWindowLog)
 
 	var csFile *os.File
 	var csWriter *compactstream.Writer
@@ -681,6 +687,13 @@ func handleLayerState(
 			origComp = compactstream.OriginalCompressionNone
 		}
 
+		// Reconstruction must use the same window to reproduce the blob. The
+		// window only applies to zstd, so other codecs record the default.
+		var recordedWindowLog uint8
+		if compressionAlgorithm == api.Zstd {
+			recordedWindowLog = uint8(zstdWindowLog)
+		}
+
 		// An EROFS layer decides what is carried inline while it plans its
 		// layout -- a tail-packed payload lands in the metadata area -- so the
 		// compact stream itself makes no inlining decisions. That decision also
@@ -702,6 +715,7 @@ func handleLayerState(
 				Format:           tarFormat,
 				CompressionLevel: csLevel,
 				CompressorJobs:   recordedCompressorJobs(compressorJobsFlag),
+				ZstdWindowLog:    recordedWindowLog,
 			},
 			inlineThreshold,
 		)

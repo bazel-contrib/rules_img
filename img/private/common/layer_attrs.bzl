@@ -222,6 +222,10 @@ Override the layer media type. By default, the media type is auto-detected from 
         default = Label("//img/settings:compression_level"),
         providers = [BuildSettingInfo],
     ),
+    _zstd_window_log = attr.label(
+        default = Label("//img/settings:zstd_window_log"),
+        providers = [BuildSettingInfo],
+    ),
     _experimental_compact_layers = attr.label(
         default = Label("//img/settings:experimental_compact_layers"),
         providers = [BuildSettingInfo],
