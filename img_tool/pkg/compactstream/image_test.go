@@ -73,6 +73,17 @@ func TestWriteImageErrors(t *testing.T) {
 	}
 	w = NewWriter(&bytes.Buffer{}, HashAlgoSHA256, 32, StreamCompressionNone, OriginalCompressionInfo{Compression: OriginalCompressionGzip}, 0)
 	if err := WriteImage(w, bytes.NewReader(image), 100, nil, 1); err == nil {
-		t.Error("compressed original accepted")
+		t.Error("compressed original accepted without the info of the compressed file")
+	}
+	// With the digest and size of the compressed file, a compressed original
+	// is fine, and WriteImage leaves them alone.
+	if err := w.SetCompressedStreamInfo(digest, 1234); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteImage(w, bytes.NewReader(image), 100, nil, 1); err != nil {
+		t.Errorf("compressed original with stream info: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
 	}
 }

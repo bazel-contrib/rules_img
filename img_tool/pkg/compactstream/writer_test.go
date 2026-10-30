@@ -420,6 +420,7 @@ func TestContentFormatValues(t *testing.T) {
 		{"tar", ContentFormatTar, 1},
 		{"erofs", ContentFormatErofs, 2},
 		{"ext4", ContentFormatExt4, 3},
+		{"cpio", ContentFormatCpio, 4},
 	} {
 		if tc.got != tc.want {
 			t.Errorf("ContentFormat %s = %d, want %d", tc.name, tc.got, tc.want)

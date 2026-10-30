@@ -24,33 +24,42 @@ type Range struct {
 // sorted by offset, must not overlap and must lie within the image; ranges of
 // size zero are ignored.
 //
-// The SHA-256 digest and size of the whole image are recorded as the
-// compressed-stream info, so reconstruction verifies it. That is only correct
-// for a writer whose original compression is none, which is what WriteImage
-// expects. The caller closes w. For large images, call
-// [Writer.CompressIncrementally] first.
+// For a writer whose original compression is none, the SHA-256 digest and size
+// of the whole image are recorded as the compressed-stream info, so
+// reconstruction verifies it. For a writer of a compressed original (the image
+// is what gets compressed), the caller has to call
+// [Writer.SetCompressedStreamInfo] with the digest and size of the compressed
+// file first, because only the caller knows them. The caller closes w. For
+// large images, call [Writer.CompressIncrementally] first.
 func WriteImage(w *Writer, image io.Reader, size int64, ranges []Range, minSize int64) error {
 	return WriteImageKnownDigest(w, image, size, ranges, minSize, nil)
 }
 
 // WriteImageKnownDigest is like [WriteImage] for an image whose SHA-256 digest
-// the caller already knows. The digest is trusted. The bytes of ranges that
+// the caller already knows. The digest is trusted. (For a compressed original it
+// is the digest of the uncompressed image, and is only used to skip reading.) The bytes of ranges that
 // become references are then not needed at all: if image is also an
 // [io.Seeker] (like an [io.SectionReader]), they are skipped without reading.
 func WriteImageKnownDigest(w *Writer, image io.Reader, size int64, ranges []Range, minSize int64, digest []byte) error {
 	if w.hashAlgo != HashAlgoSHA256 || w.hashSize != sha256.Size {
 		return fmt.Errorf("compact stream: WriteImage needs a SHA-256 writer")
 	}
-	if w.originalCompression.Compression != OriginalCompressionNone {
-		return fmt.Errorf("compact stream: WriteImage needs a writer for an uncompressed original")
+	compressed := w.originalCompression.Compression != OriginalCompressionNone
+	if compressed && !w.hasCompressedStreamInfo {
+		return fmt.Errorf("compact stream: WriteImage for a compressed original needs SetCompressedStreamInfo first")
 	}
 
 	var whole hash.Hash
 	seeker, _ := image.(io.Seeker)
 	if digest == nil {
 		seeker = nil
-		whole = sha256.New()
-		image = io.TeeReader(io.LimitReader(image, size), whole)
+		image = io.LimitReader(image, size)
+		// The digest of a compressed original is not recorded, so nothing
+		// needs the whole image hashed.
+		if !compressed {
+			whole = sha256.New()
+			image = io.TeeReader(image, whole)
+		}
 	} else if len(digest) != sha256.Size {
 		return fmt.Errorf("compact stream: image digest has %d bytes, want %d", len(digest), sha256.Size)
 	}
@@ -108,6 +117,9 @@ func WriteImageKnownDigest(w *Writer, image io.Reader, size int64, ranges []Rang
 	}
 	if err := copyInline(size - pos); err != nil {
 		return err
+	}
+	if compressed {
+		return nil
 	}
 	if whole != nil {
 		digest = whole.Sum(nil)
