@@ -76,6 +76,7 @@ Define validation checks to run after command execution. Multiple assertions can
 - `file_valid_gzip = path`: File is valid gzip format
 - `file_valid_tar = path`: File is valid tar format
 - `file_valid_ext4 = path`: File is an ext4 image with a valid superblock (magic, checksum, size)
+- `file_valid_cpio = path`: File is a cpio archive in the newc format, made of well-formed records that end with the trailer
 
 **Output Assertions:**
 - `stdout_contains = "text"`: Stdout contains text

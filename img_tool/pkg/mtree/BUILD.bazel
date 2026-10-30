@@ -3,6 +3,7 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "mtree",
     srcs = [
+        "cpio.go",
         "erofs.go",
         "ext4.go",
         "mtree.go",
@@ -11,6 +12,7 @@ go_library(
     importpath = "github.com/bazel-contrib/rules_img/img_tool/pkg/mtree",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/fs/cpio",
         "//pkg/fs/ext4",
         "//pkg/go-erofs",
         "//pkg/overlayfs",
@@ -23,6 +25,7 @@ go_library(
 go_test(
     name = "mtree_test",
     srcs = [
+        "cpio_test.go",
         "erofs_test.go",
         "ext4_test.go",
         "mtree_test.go",
@@ -34,6 +37,8 @@ go_test(
         "//pkg/compress",
         "//pkg/digestfs",
         "//pkg/erofscas",
+        "//pkg/fs/cpio",
+        "//pkg/fs/cpio/cpiocstream",
         "//pkg/fs/ext4",
         "//pkg/fs/ext4/ext4cstream",
         "//pkg/tarcas",

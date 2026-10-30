@@ -300,7 +300,7 @@ func parseAssertion(line string) *AssertionSpec {
 			assertion.Path = strings.TrimSpace(parts[0])
 			assertion.Content = strings.Trim(strings.TrimSpace(parts[1]), `"`)
 		}
-	case "file_valid_json", "file_valid_gzip", "file_valid_tar", "file_valid_ext4":
+	case "file_valid_json", "file_valid_gzip", "file_valid_tar", "file_valid_ext4", "file_valid_cpio":
 		assertion.Path = value
 	case "json_field_equals", "json_field_exists":
 		parts := strings.SplitN(value, ",", 3)
@@ -692,6 +692,15 @@ func (tf *TestFramework) checkAssertion(assertion AssertionSpec, result *Command
 		}
 		if err := validateExt4(image); err != nil {
 			return fmt.Errorf("file %s is not a valid ext4 image: %w", assertion.Path, err)
+		}
+	case "file_valid_cpio":
+		fullPath := filepath.Join(tf.tempDir, assertion.Path)
+		archive, err := os.ReadFile(fullPath)
+		if err != nil {
+			return fmt.Errorf("failed to read file %s: %w", assertion.Path, err)
+		}
+		if err := validateCpio(archive); err != nil {
+			return fmt.Errorf("file %s is not a valid cpio archive: %w", assertion.Path, err)
 		}
 	case "json_field_equals":
 		fullPath := filepath.Join(tf.tempDir, assertion.Path)
@@ -1335,4 +1344,42 @@ func validateExt4(image []byte) error {
 		return fmt.Errorf("filesystem is not marked clean")
 	}
 	return nil
+}
+
+// validateCpio checks that an archive is made of well-formed newc records
+// (magic number, hexadecimal fields, NUL-terminated names, four byte
+// alignment) and ends with the trailer.
+func validateCpio(archive []byte) error {
+	const headerSize = 110
+	align := func(n int) int { return (n + 3) &^ 3 }
+	for off := 0; ; {
+		if off+headerSize > len(archive) {
+			return fmt.Errorf("archive ends at %d without a trailer", off)
+		}
+		if magic := string(archive[off : off+6]); magic != "070701" {
+			return fmt.Errorf("bad magic number %q at %d", magic, off)
+		}
+		var fields [13]uint64
+		for i := range fields {
+			v, err := strconv.ParseUint(string(archive[off+6+i*8:off+14+i*8]), 16, 32)
+			if err != nil {
+				return fmt.Errorf("bad header field %d at %d: %w", i, off, err)
+			}
+			fields[i] = v
+		}
+		nameStart := off + headerSize
+		nameSize := int(fields[11])
+		dataStart := align(nameStart + nameSize)
+		dataEnd := dataStart + int(fields[6])
+		if nameSize == 0 || dataEnd > len(archive) {
+			return fmt.Errorf("record at %d is truncated", off)
+		}
+		if archive[nameStart+nameSize-1] != 0 {
+			return fmt.Errorf("name of the record at %d is not NUL-terminated", off)
+		}
+		if string(archive[nameStart:nameStart+nameSize-1]) == "TRAILER!!!" {
+			return nil
+		}
+		off = align(dataEnd)
+	}
 }
