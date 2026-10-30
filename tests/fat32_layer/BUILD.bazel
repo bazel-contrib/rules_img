@@ -1,0 +1,170 @@
+load("@bazel_skylib//rules:build_test.bzl", "build_test")
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@rules_img//img:layer.bzl", "fat32_config", "file_metadata", "image_layer", "layer_from_tar")
+load("@rules_pkg//pkg:tar.bzl", "pkg_tar")
+load("//tests/mtree:defs.bzl", "mtree_golden_test")
+
+# gazelle:exclude_from_release
+
+genrule(
+    name = "hello",
+    outs = ["hello.txt"],
+    cmd = "echo 'hello from a FAT32 layer' > $@",
+)
+
+# Options that only apply to tar layers are ignored for FAT32 layers -- even
+# estargz and zstd_chunked together, which a tar layer rejects as exclusive.
+image_layer(
+    name = "fat32_layer",
+    srcs = {
+        "/etc/hello.txt": ":hello",
+    },
+    compress = "zstd",
+    estargz = "enabled",
+    format = "fat32",
+    zstd_chunked = "enabled",
+)
+
+# Fails the build unless the layer is a FAT32 image holding the file.
+genrule(
+    name = "check_fat32_layer",
+    srcs = [":fat32_layer"],
+    outs = ["fat32_layer_ok"],
+    cmd = """
+layer="$(location :fat32_layer)"
+case "$$layer" in *.fat32) ;; *) echo "expected a .fat32 layer, got $$layer" >&2; exit 1;; esac
+# The file system type is at offset 82 of the boot sector, the signature at 510.
+[ "$$(dd if="$$layer" bs=1 skip=82 count=8 2>/dev/null)" = "FAT32   " ] || { echo "not a FAT32 image" >&2; exit 1; }
+sig="$$(od -An -tx1 -j510 -N2 "$$layer" | tr -d ' \\n')"
+[ "$$sig" = "55aa" ] || { echo "no boot signature: $$sig" >&2; exit 1; }
+grep -q "hello from a FAT32 layer" "$$layer" || { echo "file content not found in the image" >&2; exit 1; }
+touch $@
+""",
+)
+
+build_test(
+    name = "fat32_layer_test",
+    targets = [":check_fat32_layer"],
+)
+
+# Files for the mtree tests. config_dup.txt has the same content as config.txt;
+# FAT cannot share content, so both are stored. big.txt is large enough to become
+# a content-addressed reference in the compact stream; its digest then has to
+# come from the reference table.
+write_file(
+    name = "config_txt",
+    out = "config.txt",
+    content = ["server.port=8080\n"],
+    newline = "unix",
+)
+
+write_file(
+    name = "config_dup_txt",
+    out = "config_dup.txt",
+    content = ["server.port=8080\n"],
+    newline = "unix",
+)
+
+write_file(
+    name = "tool_sh",
+    out = "tool.sh",
+    content = ["#!/bin/sh\necho hi\n"],
+    newline = "unix",
+)
+
+write_file(
+    name = "big_txt",
+    out = "big.txt",
+    content = ["payload line %d\n" % i for i in range(1000)],
+    newline = "unix",
+)
+
+image_layer(
+    name = "mtree_layer",
+    srcs = {
+        "/etc/app/config.txt": ":config_txt",
+        "/etc/app/config_dup.txt": ":config_dup_txt",
+        "/usr/local/bin/tool": ":tool_sh",
+        "/var/lib/data/big.txt": ":big_txt",
+    },
+    default_metadata = file_metadata(
+        mode = "0644",
+        mtime = "2023-01-01T00:00:00Z",
+    ),
+    format = "fat32",
+)
+
+# The layer's mtree is identical whether the image was materialized (rendered
+# with `img mtree --fat32`) or only described by a compact stream (rendered with
+# `img mtree --fat32-cstream`, which reads the image without the file payloads).
+mtree_golden_test(
+    name = "layer_mtree_test",
+    golden = "expected.mtree",
+    layer = ":mtree_layer",
+)
+
+# Converting an existing tar layer rewrites it entry by entry into an image.
+pkg_tar(
+    name = "source_tar",
+    srcs = [
+        ":config_txt",
+        ":tool_sh",
+    ],
+    package_dir = "/etc/app",
+)
+
+# The tar-only options are ignored when converting, exactly as for a built layer.
+layer_from_tar(
+    name = "converted_layer",
+    src = ":source_tar",
+    compress = "zstd",
+    estargz = "enabled",
+    format = "fat32",
+    zstd_chunked = "enabled",
+)
+
+mtree_golden_test(
+    name = "converted_mtree_test",
+    golden = "converted_expected.mtree",
+    layer = ":converted_layer",
+)
+
+# The sector size is configurable through format_config: the file system of a
+# partition on a disk with 4096 byte sectors has to use that sector size.
+fat32_config(
+    name = "configured",
+    sector_size = 4096,
+)
+
+image_layer(
+    name = "configured_layer",
+    srcs = {
+        "/etc/hello.txt": ":hello",
+    },
+    format = "fat32",
+    format_config = ":configured",
+)
+
+# Fails the build unless the option reached the image.
+genrule(
+    name = "check_configured_layer",
+    srcs = [":configured_layer"],
+    outs = ["configured_layer_ok"],
+    cmd = """
+layer="$(location :configured_layer)"
+# Bytes per sector (little endian) at offset 11 of the boot sector.
+[ "$$(od -An -tx1 -j11 -N2 "$$layer" | tr -d ' \\n')" = "0010" ] || { echo "not a 4096 byte sector file system" >&2; exit 1; }
+touch $@
+""",
+)
+
+build_test(
+    name = "configured_layer_test",
+    targets = [":check_configured_layer"],
+)
+
+filegroup(
+    name = "all_files",
+    srcs = glob(["**"]),
+    visibility = ["//img/private/release:__subpackages__"],
+)

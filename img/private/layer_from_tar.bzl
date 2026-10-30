@@ -3,8 +3,8 @@
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("//img/private/common:build.bzl", "TOOLCHAINS")
 load("//img/private/common:layer_helper.bzl", "allow_tar_files", "build_layer_mtree", "calculate_layer_info", "extension_to_compression", "format_config_args", "optimize_layer", "recompress_layer", "resolve_format_config", "resolve_tar_format")
-load("//img/private/common:media_types.bzl", "CPIO_GZIP_LAYER", "CPIO_LAYER", "CPIO_ZSTD_LAYER", "EROFS_LAYER", "EROFS_ZSTD_LAYER", "EXT4_LAYER")
-load("//img/private/providers:format_config_info.bzl", "CpioConfigInfo", "ErofsConfigInfo", "Ext4ConfigInfo")
+load("//img/private/common:media_types.bzl", "CPIO_GZIP_LAYER", "CPIO_LAYER", "CPIO_ZSTD_LAYER", "EROFS_LAYER", "EROFS_ZSTD_LAYER", "EXT4_LAYER", "FAT32_LAYER")
+load("//img/private/providers:format_config_info.bzl", "CpioConfigInfo", "ErofsConfigInfo", "Ext4ConfigInfo", "Fat32ConfigInfo")
 load("//img/private/providers:layers_info.bzl", "LayersInfo")
 
 def _layer_from_tar_impl(ctx):
@@ -20,10 +20,11 @@ def _layer_from_tar_impl(ctx):
         layer_format = ctx.attr._default_layer_format[BuildSettingInfo].value
     is_erofs = layer_format == "erofs"
     is_ext4 = layer_format == "ext4"
+    is_fat32 = layer_format == "fat32"
     is_cpio = layer_format == "cpio"
 
-    if is_ext4:
-        # Like an EROFS layer, an ext4 layer is rebuilt from the tar entry by
+    if is_ext4 or is_fat32:
+        # Like an EROFS layer, an ext4 or FAT32 layer is rebuilt from the tar entry by
         # entry. It is never compressed, and the options that only apply to tar
         # layers are ignored rather than rejected, as for a built ext4 layer.
         compression = "none"
@@ -47,18 +48,20 @@ def _layer_from_tar_impl(ctx):
             fail(("format = \"erofs\" cannot be gzip-compressed: there is no " +
                   "application/vnd.erofs.layer.v1+gzip media type. Set compress = \"none\" or compress = \"zstd\"."))
 
-    tar_format = resolve_tar_format(ctx, compression, erofs = is_erofs, ext4 = is_ext4, cpio = is_cpio)
+    tar_format = resolve_tar_format(ctx, compression, erofs = is_erofs, ext4 = is_ext4, fat32 = is_fat32, cpio = is_cpio)
     tar_format_enabled = tar_format.estargz or tar_format.zstd_chunked
 
-    target_compression = compression if (explicit_target_compression or tar_format_enabled or optimize or is_erofs or is_ext4 or is_cpio) else source_compression
+    target_compression = compression if (explicit_target_compression or tar_format_enabled or optimize or is_erofs or is_ext4 or is_fat32 or is_cpio) else source_compression
 
     needs_recompression = source_compression != target_compression
-    needs_rewrite = needs_recompression or optimize or is_erofs or is_ext4 or is_cpio or tar_format_enabled
+    needs_rewrite = needs_recompression or optimize or is_erofs or is_ext4 or is_fat32 or is_cpio or tar_format_enabled
 
     media_type = ctx.attr.media_type
     if media_type == "":
         if is_ext4:
             media_type = EXT4_LAYER
+        elif is_fat32:
+            media_type = FAT32_LAYER
         elif is_cpio:
             media_type = {"gzip": CPIO_GZIP_LAYER, "zstd": CPIO_ZSTD_LAYER}.get(target_compression, CPIO_LAYER)
         elif is_erofs:
@@ -71,6 +74,8 @@ def _layer_from_tar_impl(ctx):
     metadata_file = ctx.actions.declare_file("{}_metadata.json".format(ctx.attr.name))
     if is_ext4:
         output_name_extension = ".ext4"
+    elif is_fat32:
+        output_name_extension = ".fat32"
     elif is_cpio:
         output_name_extension = {"gzip": ".cpio.gz", "zstd": ".cpio.zst"}.get(target_compression, ".cpio")
     elif is_erofs:
@@ -96,7 +101,7 @@ def _layer_from_tar_impl(ctx):
             annotations = ctx.attr.annotations,
             mtree = build_layer_mtree(ctx, ctx.attr.name, tar_blob = ctx.file.src),
         )
-    elif not optimize and not is_erofs and not is_ext4 and not is_cpio:
+    elif not optimize and not is_erofs and not is_ext4 and not is_fat32 and not is_cpio:
         # here, we recompress the tar file and calculate the layer info
         # (recompress_layer builds the mtree from the recompressed blob).
         layer_info = recompress_layer(
@@ -111,7 +116,7 @@ def _layer_from_tar_impl(ctx):
         )
     else:
         # here, we rewrite the tar entry by entry -- deduplicating it, converting
-        # it to a filesystem image (EROFS or ext4) or a cpio archive, or both -- and calculate the
+        # it to a filesystem image (EROFS, ext4 or FAT32) or a cpio archive, or both -- and calculate the
         # layer info (optimize_layer builds the mtree from the rewritten blob).
         layer_info = optimize_layer(
             ctx = ctx,
@@ -215,7 +220,7 @@ Requires zstd compression and cannot be combined with estargz.""",
         ),
         "format": attr.string(
             default = "auto",
-            values = ["auto", "tar", "erofs", "ext4", "cpio"],
+            values = ["auto", "tar", "erofs", "ext4", "fat32", "cpio"],
             doc = """Container format of the layer blob. If set to 'auto', uses the global default
 --@rules_img//img/settings:layer_format setting.
 
@@ -228,14 +233,18 @@ filesystem image means for the layers below it.
 compressed). Like every ext4 layer, it is not a valid OCI layer: use it on its own. The options
 that only apply to tar layers (`compress`, `estargz`, `zstd_chunked`) are ignored. See docs/filesystems.md.
 
+'fat32' converts the tar into a FAT32 filesystem image the same way (always rewritten, never
+compressed). It is not a valid OCI layer either. FAT cannot store symbolic links, device nodes and
+FIFOs, so a tar with such entries fails. The options that only apply to tar layers are ignored.
+
 'cpio' converts the tar into a cpio archive in the newc format (an initramfs) the same way. It is
 left uncompressed unless `compress` asks for `gzip` or `zstd`, which the kernel unpacks as it is.
 Like an ext4 layer, it is not a valid OCI layer, and `estargz` and `zstd_chunked` are ignored.""",
         ),
         "format_config": attr.label(
-            providers = [[Ext4ConfigInfo], [CpioConfigInfo], [ErofsConfigInfo]],
+            providers = [[Ext4ConfigInfo], [Fat32ConfigInfo], [CpioConfigInfo], [ErofsConfigInfo]],
             doc = """Options of the filesystem image the layer is written as: an `ext4_config` target
-for `format = "ext4"`, a `cpio_config` target for `format = "cpio"`, or an `erofs_config` target
+for `format = "ext4"`, a `fat32_config` target for `format = "fat32"`, a `cpio_config` target for `format = "cpio"`, or an `erofs_config` target
 for `format = "erofs"`.
 
 Without it, every option of the format is left at its default. A config for a format other
