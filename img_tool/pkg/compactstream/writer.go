@@ -47,6 +47,7 @@ const (
 	ContentFormatErofs   uint8 = 2
 	ContentFormatExt4    uint8 = 3
 	ContentFormatCpio    uint8 = 4
+	ContentFormatFat32   uint8 = 5
 )
 
 type OriginalCompressionInfo struct {
