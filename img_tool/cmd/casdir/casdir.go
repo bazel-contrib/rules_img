@@ -1,6 +1,6 @@
 // Command cas-dir builds a content-addressed directory from a set of input
 // files. For every regular file (following symlinks; directories are walked)
-// it writes the file's content to <output>/sha256/<sha256 hex of content>,
+// it writes the file's content to <output>/sha256/<first two hex digits>/<sha256 hex of content>,
 // deduplicating identical content. Symlinks and unreadable entries are skipped —
 // they carry no content blob.
 //
@@ -9,7 +9,7 @@
 //
 // The resulting directory is used to reconstruct a layer tar from its CAS stream
 // index: each CAS reference (addressed by the sha256 of its content) is resolved
-// by opening <dir>/sha256/<hex>.
+// by opening <dir>/sha256/<first two hex digits>/<hex>.
 package casdir
 
 import (
@@ -23,6 +23,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/casdirlayout"
 )
 
 type stringSliceFlag []string
@@ -41,7 +43,7 @@ func CASDirProcess(_ context.Context, args []string) {
 
 	flagSet := flag.NewFlagSet("cas-dir", flag.ExitOnError)
 	flagSet.Usage = func() {
-		fmt.Fprintf(flagSet.Output(), "Builds a content-addressed directory (sha256/<hex>) from input files.\n\n")
+		fmt.Fprintf(flagSet.Output(), "Builds a content-addressed directory (sha256/<xx>/<hex>) from input files.\n\n")
 		fmt.Fprintf(flagSet.Output(), "Usage: img cas-dir --output <dir> [--from-file <paramfile>...] [file...]\n")
 		flagSet.PrintDefaults()
 	}
@@ -142,10 +144,14 @@ func (w *casWriter) linkFile(filePath string) error {
 		return fmt.Errorf("hashing %s: %w", filePath, err)
 	}
 
-	dest := filepath.Join(w.shaDir, hex.EncodeToString(h.Sum(nil)))
+	hexDigest := hex.EncodeToString(h.Sum(nil))
+	dest := casdirlayout.Path(w.shaDir, hexDigest)
 	if _, err := os.Lstat(dest); err == nil {
 		// Already stored (deduplicated).
 		return nil
+	}
+	if err := os.MkdirAll(casdirlayout.ShardDir(w.shaDir, hexDigest), 0o755); err != nil {
+		return fmt.Errorf("creating shard directory for %s: %w", dest, err)
 	}
 	target, err := relativeTarget(filePath, dest)
 	if err != nil {
@@ -192,10 +198,15 @@ func (w *casWriter) copyFile(filePath string) error {
 		return fmt.Errorf("closing temp file: %w", err)
 	}
 
-	dest := filepath.Join(w.shaDir, hex.EncodeToString(h.Sum(nil)))
+	hexDigest := hex.EncodeToString(h.Sum(nil))
+	dest := casdirlayout.Path(w.shaDir, hexDigest)
 	if _, err := os.Stat(dest); err == nil {
 		// Already stored (deduplicated).
 		return os.Remove(tmpName)
+	}
+	if err := os.MkdirAll(casdirlayout.ShardDir(w.shaDir, hexDigest), 0o755); err != nil {
+		os.Remove(tmpName)
+		return fmt.Errorf("creating shard directory for %s: %w", dest, err)
 	}
 	if err := os.Rename(tmpName, dest); err != nil {
 		os.Remove(tmpName)

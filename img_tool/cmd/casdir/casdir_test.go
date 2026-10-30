@@ -3,9 +3,12 @@ package casdir
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/casdirlayout"
 )
 
 func hexOf(content string) string {
@@ -44,7 +47,7 @@ func TestCASDirCopies(t *testing.T) {
 		t.Fatalf("addPath: %v", err)
 	}
 
-	dest := filepath.Join(w.shaDir, hexOf("content"))
+	dest := casdirlayout.Path(w.shaDir, hexOf("content"))
 	info, err := os.Lstat(dest)
 	if err != nil {
 		t.Fatalf("stat %s: %v", dest, err)
@@ -70,7 +73,7 @@ func TestCASDirSymlinksAreRelative(t *testing.T) {
 		t.Fatalf("addPath: %v", err)
 	}
 
-	dest := filepath.Join(w.shaDir, hexOf("content"))
+	dest := casdirlayout.Path(w.shaDir, hexOf("content"))
 	target, err := os.Readlink(dest)
 	if err != nil {
 		t.Fatalf("reading symlink %s: %v", dest, err)
@@ -105,24 +108,52 @@ func TestCASDirSymlinkDirectoryAndDedup(t *testing.T) {
 		t.Fatalf("addPath: %v", err)
 	}
 
-	entries, err := os.ReadDir(w.shaDir)
+	var blobs []string
+	err := filepath.WalkDir(w.shaDir, func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if !d.IsDir() {
+			blobs = append(blobs, path)
+		}
+		return nil
+	})
 	if err != nil {
 		t.Fatalf("reading store: %v", err)
 	}
-	if len(entries) != 2 {
-		names := make([]string, 0, len(entries))
-		for _, e := range entries {
-			names = append(names, e.Name())
-		}
-		t.Fatalf("store entries: got %v, want the 2 distinct contents", names)
+	if len(blobs) != 2 {
+		t.Fatalf("store entries: got %v, want the 2 distinct contents", blobs)
 	}
 	for _, content := range []string{"shared", "other"} {
-		got, err := os.ReadFile(filepath.Join(w.shaDir, hexOf(content)))
+		got, err := os.ReadFile(casdirlayout.Path(w.shaDir, hexOf(content)))
 		if err != nil {
 			t.Fatalf("reading entry for %q: %v", content, err)
 		}
 		if string(got) != content {
 			t.Errorf("entry for %q: got %q", content, got)
+		}
+	}
+}
+
+// Blobs must be sharded by the first two hex digits of their digest, so that no
+// single directory in the tree grows with the number of input files.
+func TestCASDirShardsByDigestPrefix(t *testing.T) {
+	for _, useSymlinks := range []bool{false, true} {
+		dir := t.TempDir()
+		w := newWriter(t, dir, useSymlinks)
+		src := writeFile(t, filepath.Join(dir, "src", "file"), "content")
+
+		if err := w.addPath(src); err != nil {
+			t.Fatalf("addPath (symlinks=%v): %v", useSymlinks, err)
+		}
+
+		entries, err := os.ReadDir(w.shaDir)
+		if err != nil {
+			t.Fatalf("reading store: %v", err)
+		}
+		want := hexOf("content")[:2]
+		if len(entries) != 1 || !entries[0].IsDir() || entries[0].Name() != want {
+			t.Errorf("symlinks=%v: top-level entries %v, want only the shard directory %q", useSymlinks, entries, want)
 		}
 	}
 }

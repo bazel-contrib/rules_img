@@ -454,7 +454,7 @@ with different flag values in separate `bazel build` invocations.
 
 CAS references are addressed by the sha256 of their content, so reconstruction
 only needs a content-addressed store of the referenced blobs. The `cas-dir`
-command builds such a store (a directory laid out as `sha256/<hex>`) from the
+command builds such a store (a directory laid out as `sha256/<xx>/<hex>`, where `<xx>` is the first two hex digits of the digest) from the
 files that went into the layer:
 
 ```bash

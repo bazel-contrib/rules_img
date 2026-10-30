@@ -13,6 +13,7 @@ go_library(
     deps = [
         "//pkg/api",
         "//pkg/cas",
+        "//pkg/casdirlayout",
         "//pkg/compactstream",
         "//pkg/prefetch",
         "//pkg/registryopts",
