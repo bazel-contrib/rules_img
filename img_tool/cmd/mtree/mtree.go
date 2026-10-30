@@ -2,7 +2,7 @@
 // specification describing the metadata of one or more layers.
 //
 // Inputs are given by repeatable --tar, --cstream, --erofs, --erofs-cstream,
-// --ext4, --ext4-cstream, --cpio, --cpio-cstream and --mtree flags and are processed in the order they appear on the command line
+// --ext4, --ext4-cstream, --fat32, --fat32-cstream, --cpio, --cpio-cstream and --mtree flags and are processed in the order they appear on the command line
 // (they may be interleaved). A tar blob (--tar) may be gzip/zstd-compressed; a
 // compact stream (--cstream) is reconstructed with zero-filled bodies and its
 // content digests come from the CAS reference table / inlined bytes; an EROFS
@@ -10,7 +10,8 @@
 // stream (--erofs-cstream) is walked as a sparse image whose payloads read as
 // zeros, with the content digests again coming from the reference table; an
 // ext4 layer (--ext4) and its compact stream (--ext4-cstream) are handled the
-// same way, and so is a cpio layer (--cpio, which may be gzip/zstd-compressed)
+// same way, and so are a FAT32 layer (--fat32) and its compact stream
+// (--fat32-cstream), and so is a cpio layer (--cpio, which may be gzip/zstd-compressed)
 // and its compact stream (--cpio-cstream); an mtree spec (--mtree) is folded in with its keywords filtered to the requested
 // field set and its paths re-normalized. The path layout, field set, and layer
 // layout are controlled by --path-prefix, --options, and --layout.
@@ -46,6 +47,8 @@ const (
 	erofsCstreamKind
 	ext4Kind
 	ext4CstreamKind
+	fat32Kind
+	fat32CstreamKind
 	cpioKind
 	cpioCstreamKind
 	mtreeKind
@@ -77,7 +80,7 @@ func MtreeProcess(ctx context.Context, args []string) {
 	flagSet := flag.NewFlagSet("mtree", flag.ExitOnError)
 	flagSet.Usage = func() {
 		fmt.Fprintf(flagSet.Output(), "Writes an mtree specification of one or more layers' metadata.\n\n")
-		fmt.Fprintf(flagSet.Output(), "Usage: img mtree (--tar <tar> | --cstream <cstream> | --erofs <blob> | --erofs-cstream <cstream> | --ext4 <image> | --ext4-cstream <cstream> | --cpio <archive> | --cpio-cstream <cstream> | --mtree <mtree>)... --output <mtree|->\n")
+		fmt.Fprintf(flagSet.Output(), "Usage: img mtree (--tar <tar> | --cstream <cstream> | --erofs <blob> | --erofs-cstream <cstream> | --ext4 <image> | --ext4-cstream <cstream> | --fat32 <image> | --fat32-cstream <cstream> | --cpio <archive> | --cpio-cstream <cstream> | --mtree <mtree>)... --output <mtree|->\n")
 		flagSet.PrintDefaults()
 		fmt.Fprintf(flagSet.Output(), "\nInputs are processed in command-line order and may be interleaved.\n")
 	}
@@ -87,6 +90,8 @@ func MtreeProcess(ctx context.Context, args []string) {
 	flagSet.Var(orderedInput{erofsCstreamKind, &inputs}, "erofs-cstream", "Add the compact stream of an EROFS layer, read as a sparse image whose file payloads are absent. Repeatable.")
 	flagSet.Var(orderedInput{ext4Kind, &inputs}, "ext4", "Add an ext4 layer image input. Repeatable.")
 	flagSet.Var(orderedInput{ext4CstreamKind, &inputs}, "ext4-cstream", "Add the compact stream of an ext4 layer, read as a sparse image whose file payloads are absent. Repeatable.")
+	flagSet.Var(orderedInput{fat32Kind, &inputs}, "fat32", "Add a FAT32 layer image input. Repeatable.")
+	flagSet.Var(orderedInput{fat32CstreamKind, &inputs}, "fat32-cstream", "Add the compact stream of a FAT32 layer, read as a sparse image whose file payloads are absent. Repeatable.")
 	flagSet.Var(orderedInput{cpioKind, &inputs}, "cpio", "Add a cpio layer input (may be gzip/zstd-compressed). Repeatable.")
 	flagSet.Var(orderedInput{cpioCstreamKind, &inputs}, "cpio-cstream", "Add the compact stream of a cpio layer, read as an archive whose file payloads are absent. Repeatable.")
 	flagSet.Var(orderedInput{mtreeKind, &inputs}, "mtree", "Add an existing mtree spec input. Repeatable.")
@@ -101,7 +106,7 @@ func MtreeProcess(ctx context.Context, args []string) {
 	}
 
 	if len(inputs) == 0 {
-		fmt.Fprintf(os.Stderr, "Error: at least one of --tar, --cstream, --erofs, --erofs-cstream, --ext4, --ext4-cstream, --cpio, --cpio-cstream, or --mtree is required\n")
+		fmt.Fprintf(os.Stderr, "Error: at least one of --tar, --cstream, --erofs, --erofs-cstream, --ext4, --ext4-cstream, --fat32, --fat32-cstream, --cpio, --cpio-cstream, or --mtree is required\n")
 		flagSet.Usage()
 		os.Exit(1)
 	}
@@ -194,6 +199,24 @@ func run(ctx context.Context, refs []inputRef, opts mtree.Options, outputPath st
 				Digester:      mtree.HashContent,
 				RangeDigester: sparse.RefDigestInRange,
 			})
+		case fat32Kind:
+			image, imageCloser, ierr := filesystemImage(f)
+			if ierr != nil {
+				return fmt.Errorf("reading FAT32 layer %s: %w", ref.path, ierr)
+			}
+			closers = append(closers, imageCloser)
+			inputs = append(inputs, mtree.Input{Kind: mtree.Fat32Input, ReaderAt: image, Digester: mtree.HashContent})
+		case fat32CstreamKind:
+			sparse, serr := compactstream.NewSparseReaderAt(f)
+			if serr != nil {
+				return fmt.Errorf("reading compact stream %s: %w", ref.path, serr)
+			}
+			inputs = append(inputs, mtree.Input{
+				Kind:          mtree.Fat32Input,
+				ReaderAt:      sparse,
+				Digester:      mtree.HashContent,
+				RangeDigester: sparse.RefDigestInRange,
+			})
 		case cpioKind:
 			archive, archiveCloser, ierr := filesystemImage(f)
 			if ierr != nil {
@@ -273,7 +296,7 @@ type closerFunc func() error
 func (c closerFunc) Close() error { return c() }
 
 // filesystemImage returns random access to a filesystem image layer blob (EROFS
-// or ext4) or a cpio layer, which walking a filesystem image requires (the tar path streams
+// ext4 or FAT32) or a cpio layer, which walking a filesystem image requires (the tar path streams
 // because a tar can only be read in order anyway). An uncompressed blob is
 // addressed in place. A compressed one is decompressed into a temporary file
 // rather than into memory, so the cost does not grow with the layer; the
