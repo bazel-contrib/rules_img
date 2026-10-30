@@ -1,0 +1,262 @@
+load("@bazel_skylib//rules:build_test.bzl", "build_test")
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@rules_img//img:layer.bzl", "cpio_config", "file_metadata", "image_layer", "layer_from_tar")
+load("@rules_pkg//pkg:tar.bzl", "pkg_tar")
+load("//tests/mtree:defs.bzl", "mtree_golden_test")
+
+# gazelle:exclude_from_release
+
+genrule(
+    name = "init",
+    outs = ["init.sh"],
+    cmd = "echo 'hello from an initramfs' > $@",
+)
+
+# Options that only apply to tar layers are ignored for cpio layers -- even
+# estargz and zstd_chunked together, which a tar layer rejects as exclusive.
+# An initramfs is uncompressed unless asked otherwise.
+image_layer(
+    name = "cpio_layer",
+    srcs = {
+        "/init": ":init",
+    },
+    estargz = "enabled",
+    format = "cpio",
+    symlinks = {
+        "/sbin/init": "/init",
+    },
+    zstd_chunked = "enabled",
+)
+
+image_layer(
+    name = "cpio_layer_gzip",
+    srcs = {
+        "/init": ":init",
+    },
+    compress = "gzip",
+    format = "cpio",
+)
+
+image_layer(
+    name = "cpio_layer_zstd",
+    srcs = {
+        "/init": ":init",
+    },
+    compress = "zstd",
+    format = "cpio",
+)
+
+# Fails the build unless the layer is a newc cpio archive holding the file.
+genrule(
+    name = "check_cpio_layer",
+    srcs = [":cpio_layer"],
+    outs = ["cpio_layer_ok"],
+    cmd = """
+layer="$(location :cpio_layer)"
+case "$$layer" in *.cpio) ;; *) echo "expected a .cpio layer, got $$layer" >&2; exit 1;; esac
+[ "$$(dd if="$$layer" bs=1 count=6 2>/dev/null)" = "070701" ] || { echo "not a newc cpio archive" >&2; exit 1; }
+grep -q "TRAILER!!!" "$$layer" || { echo "no trailer" >&2; exit 1; }
+grep -q "hello from an initramfs" "$$layer" || { echo "file content not found in the archive" >&2; exit 1; }
+touch $@
+""",
+)
+
+# Fails the build unless the compressed layers have the right extension and
+# compression format.
+genrule(
+    name = "check_compressed_cpio_layers",
+    srcs = [
+        ":cpio_layer_gzip",
+        ":cpio_layer_zstd",
+    ],
+    outs = ["compressed_cpio_layers_ok"],
+    cmd = """
+gz="$(location :cpio_layer_gzip)"
+zst="$(location :cpio_layer_zstd)"
+case "$$gz" in *.cpio.gz) ;; *) echo "expected .cpio.gz, got $$gz" >&2; exit 1;; esac
+case "$$zst" in *.cpio.zst) ;; *) echo "expected .cpio.zst, got $$zst" >&2; exit 1;; esac
+gzip -dc "$$gz" | grep -q "hello from an initramfs" || { echo "gzip layer: content not found" >&2; exit 1; }
+[ "$$(gzip -dc "$$gz" | dd bs=1 count=6 2>/dev/null)" = "070701" ] || { echo "gzip layer: not a newc cpio archive" >&2; exit 1; }
+# The zstd frame magic number.
+[ "$$(od -An -tx1 -N4 "$$zst" | tr -d ' \\n')" = "28b52ffd" ] || { echo "zstd layer: not a zstd frame" >&2; exit 1; }
+touch $@
+""",
+)
+
+build_test(
+    name = "cpio_layer_test",
+    targets = [
+        ":check_cpio_layer",
+        ":check_compressed_cpio_layers",
+    ],
+)
+
+# Files for the mtree tests. config_dup.txt has the same content as config.txt, so
+# the layer stores it once, as a hard link. big.txt is large enough to become a
+# content-addressed reference in the compact stream; its digest then has to come
+# from the reference table.
+write_file(
+    name = "config_txt",
+    out = "config.txt",
+    content = ["server.port=8080\n"],
+    newline = "unix",
+)
+
+write_file(
+    name = "config_dup_txt",
+    out = "config_dup.txt",
+    content = ["server.port=8080\n"],
+    newline = "unix",
+)
+
+write_file(
+    name = "tool_sh",
+    out = "tool.sh",
+    content = ["#!/bin/sh\necho hi\n"],
+    newline = "unix",
+)
+
+write_file(
+    name = "big_txt",
+    out = "big.txt",
+    content = ["payload line %d\n" % i for i in range(1000)],
+    newline = "unix",
+)
+
+image_layer(
+    name = "mtree_layer",
+    srcs = {
+        "/etc/app/config.txt": ":config_txt",
+        "/etc/app/config_dup.txt": ":config_dup_txt",
+        "/usr/local/bin/tool": ":tool_sh",
+        "/var/lib/data/big.txt": ":big_txt",
+    },
+    default_metadata = file_metadata(
+        gid = 1000,
+        gname = "devs",
+        mode = "0644",
+        mtime = "2023-01-01T00:00:00Z",
+        uid = 1000,
+        uname = "alice",
+    ),
+    format = "cpio",
+    symlinks = {"/etc/app/current.txt": "/etc/app/config.txt"},
+)
+
+# The layer's mtree is identical whether the archive was materialized (rendered
+# with `img mtree --cpio`) or only described by a compact stream (rendered with
+# `img mtree --cpio-cstream`, which reads the archive without the file payloads).
+# It is the one a tar or EROFS layer of the same content produces.
+mtree_golden_test(
+    name = "layer_mtree_test",
+    golden = "expected.mtree",
+    layer = ":mtree_layer",
+)
+
+# The same holds for a compressed archive: the compact stream describes the
+# uncompressed one.
+image_layer(
+    name = "mtree_layer_zstd",
+    srcs = {
+        "/etc/app/config.txt": ":config_txt",
+        "/etc/app/config_dup.txt": ":config_dup_txt",
+        "/usr/local/bin/tool": ":tool_sh",
+        "/var/lib/data/big.txt": ":big_txt",
+    },
+    compress = "zstd",
+    default_metadata = file_metadata(
+        gid = 1000,
+        gname = "devs",
+        mode = "0644",
+        mtime = "2023-01-01T00:00:00Z",
+        uid = 1000,
+        uname = "alice",
+    ),
+    format = "cpio",
+    symlinks = {"/etc/app/current.txt": "/etc/app/config.txt"},
+)
+
+mtree_golden_test(
+    name = "layer_mtree_zstd_test",
+    golden = "expected.mtree",
+    layer = ":mtree_layer_zstd",
+)
+
+# Converting an existing tar layer rewrites it entry by entry into an archive.
+pkg_tar(
+    name = "source_tar",
+    srcs = [
+        ":config_txt",
+        ":tool_sh",
+    ],
+    package_dir = "/etc/app",
+)
+
+# The tar-only options are ignored when converting, exactly as for a built layer.
+layer_from_tar(
+    name = "converted_layer",
+    src = ":source_tar",
+    estargz = "enabled",
+    format = "cpio",
+    zstd_chunked = "enabled",
+)
+
+mtree_golden_test(
+    name = "converted_mtree_test",
+    golden = "converted_expected.mtree",
+    layer = ":converted_layer",
+)
+
+# Identical files can be stored separately, through format_config.
+cpio_config(
+    name = "no_dedup",
+    deduplicate = "disabled",
+)
+
+image_layer(
+    name = "no_dedup_layer",
+    srcs = {
+        "/etc/app/config.txt": ":config_txt",
+        "/etc/app/config_dup.txt": ":config_dup_txt",
+    },
+    format = "cpio",
+    format_config = ":no_dedup",
+)
+
+image_layer(
+    name = "dedup_layer",
+    srcs = {
+        "/etc/app/config.txt": ":config_txt",
+        "/etc/app/config_dup.txt": ":config_dup_txt",
+    },
+    format = "cpio",
+)
+
+# Fails the build unless the option reached the archive: the content is stored
+# twice without deduplication, and once with it.
+genrule(
+    name = "check_deduplication",
+    srcs = [
+        ":dedup_layer",
+        ":no_dedup_layer",
+    ],
+    outs = ["deduplication_ok"],
+    cmd = """
+dedup="$(location :dedup_layer)"
+nodedup="$(location :no_dedup_layer)"
+[ "$$(grep -c "server.port=8080" "$$dedup")" = "1" ] || { echo "deduplicated layer must store the content once" >&2; exit 1; }
+[ "$$(grep -c "server.port=8080" "$$nodedup")" = "2" ] || { echo "layer without deduplication must store the content twice" >&2; exit 1; }
+touch $@
+""",
+)
+
+build_test(
+    name = "format_config_test",
+    targets = [":check_deduplication"],
+)
+
+filegroup(
+    name = "all_files",
+    srcs = glob(["**"]),
+    visibility = ["//img/private/release:__subpackages__"],
+)

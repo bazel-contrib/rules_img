@@ -1,6 +1,60 @@
 """Rules that configure the filesystem image a layer is written as."""
 
-load("//img/private/providers:format_config_info.bzl", "ErofsConfigInfo", "Ext4ConfigInfo")
+load("//img/private/providers:format_config_info.bzl", "CpioConfigInfo", "ErofsConfigInfo", "Ext4ConfigInfo")
+
+def _cpio_config_impl(ctx):
+    return [CpioConfigInfo(
+        deduplicate = ctx.attr.deduplicate,
+    )]
+
+cpio_config = rule(
+    implementation = _cpio_config_impl,
+    doc = """\
+Options for layers written as a cpio archive.
+
+Pass the target to the `format_config` attribute of a layer rule that uses
+`format = "cpio"`. Options that are left at their default are decided by the
+`img` tool or by the matching global setting. How the archive is compressed is
+not an option of the format: it is the `compress` attribute of the layer.
+
+Example:
+
+```python
+load("@rules_img//img:layer.bzl", "cpio_config", "image_layer")
+
+cpio_config(
+    name = "initramfs_config",
+    # Store every file, even if two have the same content.
+    deduplicate = "disabled",
+)
+
+image_layer(
+    name = "initramfs",
+    srcs = {"/init": ":init"},
+    compress = "zstd",
+    format = "cpio",
+    format_config = ":initramfs_config",
+)
+```
+
+See [docs/filesystems.md](filesystems.md) for the format itself.
+""",
+    attrs = {
+        "deduplicate": attr.string(
+            default = "auto",
+            values = ["auto", "enabled", "disabled"],
+            doc = """\
+Whether regular files with the same content and metadata are stored once, as hard
+links of each other (what tar layers do). If set to 'auto', uses the global default
+`--@rules_img//img/settings:cpio_deduplicate` setting.
+
+Turning it off spares reading file content only to find duplicates, at the cost of
+a larger archive.
+""",
+        ),
+    },
+    provides = [CpioConfigInfo],
+)
 
 def _ext4_config_impl(ctx):
     if ctx.attr.block_size != 0 and (ctx.attr.block_size < 1024 or ctx.attr.block_size > 65536 or ctx.attr.block_size & (ctx.attr.block_size - 1) != 0):

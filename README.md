@@ -23,7 +23,7 @@ Supports both **Bzlmod** and **WORKSPACE** setups. For WORKSPACE setup instructi
 - ♻️ **Deduplicated transfers** - A blob several images share is downloaded from Bazel's remote cache once, and uploaded to a registry once (see [deduplicated push](docs/push-strategies.md#deduplicated-push), on registries that support blob mounting)
 - 🎯 **Shallow Base Images** - Avoid downloading layers from huge base images like CUDA
 - 🧱 **Bespoke Base Images** - Build your own base from scratch: directory skeleton, users, CA trust stores and shared libraries (see [base images](docs/base-images.md))
-- 💽 **Filesystem layers** - Ship a layer as a mountable filesystem instead of a tar changeset: [EROFS](docs/erofs-layers.md) or [ext4](docs/filesystems.md)
+- 💽 **Filesystem layers** - Ship a layer as a mountable filesystem instead of a tar changeset: [EROFS](docs/erofs-layers.md), [ext4 or cpio](docs/filesystems.md)
 - 🏢 **Enterprise Ready** - Remote Build Execution and Content Addressable Storage integration
 - ☁️ **Push at Build Time** - Upload layers in parallel straight from the remote execution cluster to the registry; bytes never touch the machine running Bazel
 
@@ -674,7 +674,7 @@ linux/arm64).
 - [Authenticating Build Actions](docs/authenticating-build-actions.md) - Registry credentials for build-time pull/push, and the OCI distribution gateway
 - [Insecure (Plain-HTTP) Registries](docs/insecure-registries.md) - Push to a local development registry that speaks HTTP or has an untrusted certificate
 - [EROFS Layers](docs/erofs-layers.md) - Support for creating layers as EROFS filesystems, instead of tar changesets
-- [Other Filesystem Formats](docs/filesystems.md) - Other filesystem formats supported by rules_img, including ext4 and EROFS
+- [Other Filesystem Formats](docs/filesystems.md) - Other filesystem formats supported by rules_img, including ext4, cpio and EROFS
 - [Compact Stream Representation](docs/compact-stream.md) - On-disk format behind the experimental cache-efficient layers (`experimental_compact_layers`)
 - [Pre-release Versions](docs/pre-releases.md) - Depend on a commit of rules_img before it is released, from the pre-release registry
 - [Migration Guide from rules_oci](docs/migration-from-rules_oci.md)

@@ -1,7 +1,7 @@
 """Common attributes shared by layer rules."""
 
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
-load("//img/private/providers:format_config_info.bzl", "ErofsConfigInfo", "Ext4ConfigInfo")
+load("//img/private/providers:format_config_info.bzl", "CpioConfigInfo", "ErofsConfigInfo", "Ext4ConfigInfo")
 
 _common_attrs = dict(
     compress = attr.string(
@@ -12,16 +12,19 @@ Compression algorithm to use. If set to 'auto', uses the global default compress
 
 'none' leaves the layer uncompressed, which is the useful choice for an EROFS layer
 (the blob is then mountable as it is). EROFS layers cannot be gzip-compressed.
+
+A `cpio` layer (an initramfs) is also left uncompressed by default. It can be compressed with
+`gzip` or `zstd`, which the kernel unpacks as it is. The `ext4` format ignores this attribute.
 """,
     ),
     format = attr.string(
         default = "auto",
-        values = ["auto", "tar", "erofs", "ext4"],
+        values = ["auto", "tar", "erofs", "ext4", "cpio"],
         doc = """\
 Container format of the layer blob, orthogonal to `compress`.
 
 'tar' writes an OCI tar changeset. 'erofs' writes a mountable EROFS filesystem image. 'ext4' writes an
-ext4 filesystem image. If set to 'auto', uses the global default
+ext4 filesystem image, 'cpio' a cpio archive in the newc format (an initramfs). If set to 'auto', uses the global default
 --@rules_img//img/settings:layer_format setting.
 
 An EROFS layer is a filesystem, not a changeset. See docs/erofs-layers.md before using it.
@@ -30,10 +33,11 @@ See docs/filesystems.md for how the formats compare.
 """,
     ),
     format_config = attr.label(
-        providers = [[Ext4ConfigInfo], [ErofsConfigInfo]],
+        providers = [[Ext4ConfigInfo], [CpioConfigInfo], [ErofsConfigInfo]],
         doc = """\
 Options of the filesystem image the layer is written as: an `ext4_config` target
-for `format = "ext4"`, or an `erofs_config` target for `format = "erofs"`.
+for `format = "ext4"`, a `cpio_config` target for `format = "cpio"`, or an `erofs_config`
+target for `format = "erofs"`.
 
 Without it, every option of the format is left at its default. A config for a
 format other than the layer's own is a configuration error, since it would
@@ -176,6 +180,10 @@ Override the layer media type. By default, the media type is auto-detected from 
     ),
     _erofs_synthetic_directories = attr.label(
         default = Label("//img/settings:erofs_synthetic_directories"),
+        providers = [BuildSettingInfo],
+    ),
+    _cpio_deduplicate = attr.label(
+        default = Label("//img/settings:cpio_deduplicate"),
         providers = [BuildSettingInfo],
     ),
     _ext4_deduplicate = attr.label(
