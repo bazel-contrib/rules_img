@@ -214,6 +214,7 @@ fields are absent (zero) and must be ignored.
 | 1     | tar changeset                                |
 | 2     | [EROFS filesystem image](erofs-layers.md)    |
 | 3     | [ext4 filesystem image](#compact-streams-of-ext4-images) |
+| 4     | [cpio archive](filesystems.md#cpio) (newc)   |
 
 `ContentFormat` identifies the filetype of the payload. Reconstruction itself
 does not need it, but a tool that interprets the content rather than just
@@ -391,7 +392,18 @@ metadata is automatically derived from the layer's compression settings.
 
 The format is not specific to tar layers: any uncompressed byte stream whose
 bulk content is available as separate blobs can be represented this way.
-This includes (but is not limited to) EROFS and ext4 filesystem images.
+This includes (but is not limited to) EROFS and ext4 filesystem images, and
+[cpio archives](filesystems.md#cpio) (initramfs).
+
+The content of a regular file is contiguous in all of them, so each file of at
+least the inline threshold becomes a CAS reference, while the metadata, small
+files and padding stay inline. A cpio archive is usually compressed: its compact
+stream then describes the uncompressed archive, records the compression like the
+compact stream of a tar layer does, and the digest and size of the compressed
+layer file as the
+[compressed-stream info](#compressed-stream-digest-and-size-optional).
+Reconstruction compresses the archive again and verifies that it got the layer
+file back.
 
 ## Materializing the blob on demand
 

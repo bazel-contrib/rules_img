@@ -152,6 +152,8 @@ func contentFormatName(f uint8) string {
 		return "erofs"
 	case compactstream.ContentFormatExt4:
 		return "ext4"
+	case compactstream.ContentFormatCpio:
+		return "cpio"
 	default:
 		return fmt.Sprintf("unknown(%d)", f)
 	}
@@ -168,6 +170,8 @@ func contentFormatNoun(f uint8) string {
 		return "erofs"
 	case compactstream.ContentFormatExt4:
 		return "ext4"
+	case compactstream.ContentFormatCpio:
+		return "cpio"
 	default:
 		return "content"
 	}

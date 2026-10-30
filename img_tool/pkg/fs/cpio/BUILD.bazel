@@ -1,0 +1,24 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "cpio",
+    srcs = [
+        "build.go",
+        "builder.go",
+        "cpio.go",
+        "dedup.go",
+        "reader.go",
+        "tarsource.go",
+    ],
+    importpath = "github.com/bazel-contrib/rules_img/img_tool/pkg/fs/cpio",
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "cpio_test",
+    srcs = [
+        "cpio_test.go",
+        "streaming_test.go",
+    ],
+    embed = [":cpio"],
+)
