@@ -4,7 +4,7 @@ load("@bazel_skylib//lib:paths.bzl", "paths")
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("//img/private/common:build.bzl", "TOOLCHAIN")
 load("//img/private/common:layer_helper.bzl", "build_layer_mtree", "compression_tuning_args", "format_config_args", "layer_history_args", "resolve_format_config", "resolve_tar_format", "tar_format_args")
-load("//img/private/common:media_types.bzl", "CPIO_GZIP_LAYER", "CPIO_LAYER", "CPIO_ZSTD_LAYER", "EROFS_LAYER", "EROFS_ZSTD_LAYER", "EXT4_LAYER", "GZIP_LAYER", "UNCOMPRESSED_LAYER", "ZSTD_LAYER")
+load("//img/private/common:media_types.bzl", "CPIO_GZIP_LAYER", "CPIO_LAYER", "CPIO_ZSTD_LAYER", "EROFS_LAYER", "EROFS_ZSTD_LAYER", "EXT4_LAYER", "FAT32_LAYER", "GZIP_LAYER", "UNCOMPRESSED_LAYER", "ZSTD_LAYER")
 load("//img/private/providers:layers_info.bzl", "LayersInfo")
 load("//img/private/providers:single_layer_info.bzl", "SingleLayerInfo")
 
@@ -223,7 +223,7 @@ def resolve_layer_settings(ctx):
     settings. Computes derived values (media type and output file extension) and
     rejects combinations the layer formats do not support.
 
-    With layer_format "ext4" or "cpio", the options that only apply to tar layers
+    With layer_format "ext4", "fat32" or "cpio", the options that only apply to tar layers
     (estargz, soci) are ignored and resolve to their disabled values. So is the
     compression, except for "cpio" (an initramfs is uncompressed unless asked
     otherwise). Compact layers apply as for every other format.
@@ -241,6 +241,7 @@ def resolve_layer_settings(ctx):
         layer_format = ctx.attr._default_layer_format[BuildSettingInfo].value
     is_erofs = layer_format == "erofs"
     is_ext4 = layer_format == "ext4"
+    is_fat32 = layer_format == "fat32"
     is_cpio = layer_format == "cpio"
 
     compression = ctx.attr.compress
@@ -252,20 +253,20 @@ def resolve_layer_settings(ctx):
             compression = "none"
         else:
             compression = ctx.attr._default_compression[BuildSettingInfo].value
-    if is_ext4:
-        # An ext4 layer is a filesystem image the layer command writes directly,
+    if is_ext4 or is_fat32:
+        # An ext4 or FAT32 layer is a filesystem image the layer command writes directly,
         # so the options that only apply to tar layers resolve to their disabled
         # values instead of being rejected -- an explicit compress, estargz,
         # zstd_chunked or soci on such a layer is ignored, not an error. A cpio
         # layer does the same, except that its compression applies.
         compression = "none"
 
-    tar_format = resolve_tar_format(ctx, compression, erofs = is_erofs, ext4 = is_ext4, cpio = is_cpio)
+    tar_format = resolve_tar_format(ctx, compression, erofs = is_erofs, ext4 = is_ext4, fat32 = is_fat32, cpio = is_cpio)
 
     soci = ctx.attr.soci
     if soci == "auto":
         soci = "disabled" if is_erofs or is_cpio else ctx.attr._default_soci[BuildSettingInfo].value
-    soci_enabled = soci == "enabled" and not is_ext4 and not is_cpio
+    soci_enabled = soci == "enabled" and not is_ext4 and not is_fat32 and not is_cpio
     soci_span_size = ctx.attr._default_soci_span_size[BuildSettingInfo].value
 
     create_parent_directories = ctx.attr.create_parent_directories
@@ -281,6 +282,9 @@ def resolve_layer_settings(ctx):
     if is_ext4:
         out_ext = ".ext4"
         media_type = EXT4_LAYER
+    elif is_fat32:
+        out_ext = ".fat32"
+        media_type = FAT32_LAYER
     elif is_cpio:
         if compression == "gzip":
             out_ext = ".cpio.gz"
@@ -352,8 +356,8 @@ def create_single_layer(ctx, settings, name, extra_args = [], extra_inputs = [])
     assemble providers from multiple layers.
 
     The layer's container format comes from `settings.layer_format`: a tar
-    changeset, an EROFS filesystem image, an ext4 filesystem image or a cpio
-    archive. Everything else here -- the compact
+    changeset, an EROFS filesystem image, an ext4 or FAT32 filesystem image or a
+    cpio archive. Everything else here -- the compact
     stream, the cas-dir of input files, the mtree, provider assembly -- is
     format-agnostic.
 
@@ -370,6 +374,7 @@ def create_single_layer(ctx, settings, name, extra_args = [], extra_inputs = [])
     """
     is_erofs = settings.layer_format == "erofs"
     is_ext4 = settings.layer_format == "ext4"
+    is_fat32 = settings.layer_format == "fat32"
     is_cpio = settings.layer_format == "cpio"
     metadata_out = ctx.actions.declare_file(name + "_metadata.json")
     out = None
@@ -433,7 +438,7 @@ def create_single_layer(ctx, settings, name, extra_args = [], extra_inputs = [])
         inputs = depset(transitive = inputs),
         executable = img_toolchain_info.tool_exe,
         arguments = args,
-        mnemonic = "LayerErofs" if is_erofs else ("LayerExt4" if is_ext4 else ("LayerCpio" if is_cpio else "LayerTar")),
+        mnemonic = "LayerErofs" if is_erofs else ("LayerExt4" if is_ext4 else ("LayerFat32" if is_fat32 else ("LayerCpio" if is_cpio else "LayerTar"))),
     )
 
     layer_input_files = depset(transitive = extra_inputs) if settings.compact_layers else None
@@ -448,7 +453,7 @@ def create_single_layer(ctx, settings, name, extra_args = [], extra_inputs = [])
     # For a tar layer the mtree comes from the headers alone, so the
     # compact-stream case needs no content; for an EROFS layer the metadata is
     # likewise carried inline, so the sparse image is enough. The same holds for
-    # an ext4 layer and a cpio layer.
+    # an ext4, a FAT32 and a cpio layer.
     if is_cpio:
         if out:
             mtree_out = build_layer_mtree(ctx, name, cpio_blob = out)
@@ -459,6 +464,11 @@ def create_single_layer(ctx, settings, name, extra_args = [], extra_inputs = [])
             mtree_out = build_layer_mtree(ctx, name, ext4_blob = out)
         else:
             mtree_out = build_layer_mtree(ctx, name, ext4_compact_stream = compact_stream_out)
+    elif is_fat32:
+        if out:
+            mtree_out = build_layer_mtree(ctx, name, fat32_blob = out)
+        else:
+            mtree_out = build_layer_mtree(ctx, name, fat32_compact_stream = compact_stream_out)
     elif is_erofs:
         if out:
             mtree_out = build_layer_mtree(ctx, name, erofs_blob = out)

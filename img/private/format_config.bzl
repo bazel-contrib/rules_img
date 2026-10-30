@@ -1,6 +1,6 @@
 """Rules that configure the filesystem image a layer is written as."""
 
-load("//img/private/providers:format_config_info.bzl", "CpioConfigInfo", "ErofsConfigInfo", "Ext4ConfigInfo")
+load("//img/private/providers:format_config_info.bzl", "CpioConfigInfo", "ErofsConfigInfo", "Ext4ConfigInfo", "Fat32ConfigInfo")
 
 def _cpio_config_impl(ctx):
     return [CpioConfigInfo(
@@ -183,6 +183,58 @@ a larger image.
         ),
     },
     provides = [Ext4ConfigInfo],
+)
+
+def _fat32_config_impl(ctx):
+    if ctx.attr.sector_size not in [0, 512, 1024, 2048, 4096]:
+        fail("sector_size must be 512, 1024, 2048 or 4096, got {}".format(ctx.attr.sector_size))
+    return [Fat32ConfigInfo(
+        sector_size = ctx.attr.sector_size,
+    )]
+
+fat32_config = rule(
+    implementation = _fat32_config_impl,
+    doc = """\
+Options for layers written as a FAT32 filesystem image.
+
+Pass the target to the `format_config` attribute of a layer rule that uses
+`format = "fat32"`. Options that are left at their default are decided by the
+`img` tool.
+
+Example:
+
+```python
+load("@rules_img//img:layer.bzl", "fat32_config", "image_layer")
+
+fat32_config(
+    name = "esp_config",
+    # The sector size of the disk the file system ends up in.
+    sector_size = 4096,
+)
+
+image_layer(
+    name = "esp",
+    srcs = {"/EFI/BOOT/BOOTAA64.EFI": ":bootloader"},
+    format = "fat32",
+    format_config = ":esp_config",
+)
+```
+
+See [docs/filesystems.md](filesystems.md) for the format itself.
+""",
+    attrs = {
+        "sector_size": attr.int(
+            default = 0,
+            doc = """\
+Logical sector size of the file system in bytes: 512, 1024, 2048 or 4096. 0 uses 512.
+
+A FAT32 file system in a partition of a disk with 4096 byte sectors has to use the
+sector size of the disk. A larger sector size makes the smallest possible volume
+larger, because FAT32 needs at least 65525 clusters.
+""",
+        ),
+    },
+    provides = [Fat32ConfigInfo],
 )
 
 def _erofs_config_impl(ctx):
