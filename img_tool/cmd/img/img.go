@@ -14,6 +14,7 @@ import (
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/compress"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/copyfiles"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/cst"
+	ddcmd "github.com/bazel-contrib/rules_img/img_tool/cmd/dd"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/deploy"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/deploymetadata"
 	diskimagecmd "github.com/bazel-contrib/rules_img/img_tool/cmd/diskimage"
@@ -81,6 +82,7 @@ Commands:
   ztoc                     generates a ztoc (SOCI table of contents) for a gzip-compressed layer
   compact-stream           inspects or reconstructs a compact stream (subcommands: reconstruct, list)
   extent-stream            (experimental) inspects or reconstructs an extent stream (subcommands: reconstruct, list)
+  dd                       writes the bytes of a disk image (raw, extent stream or compact stream) to stdout, a file or a block device, like dd(1)
   disk-image               assembles a disk image with a GPT or MBR partition table from file system images
   cas-dir                  builds a content-addressed directory (sha256/<hex>) from input files
   copy-files               copies files, preferring hardlinks and reflinks over real copies
@@ -185,6 +187,8 @@ func Run(ctx context.Context, args []string) {
 		compactstreamcmd.CompactStreamProcess(ctx, args[2:])
 	case "extent-stream":
 		extentstreamcmd.ExtentStreamProcess(ctx, args[2:])
+	case "dd":
+		ddcmd.DDProcess(ctx, args[2:])
 	case "disk-image":
 		diskimagecmd.DiskImageProcess(ctx, args[2:])
 	case "cas-dir":

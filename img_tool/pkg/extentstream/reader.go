@@ -125,20 +125,34 @@ func (z zeroWriter) WriteHole(n int64) error {
 // Reconstruct writes the content of the stream to out. Blobs and the streams it
 // references are read from the store. If out is a HoleWriter, holes are skipped.
 func Reconstruct(ctx context.Context, index io.Reader, store compactstream.BlobStore, out io.Writer) error {
+	return ReconstructRange(ctx, index, store, out, 0, -1)
+}
+
+// ReconstructRange writes n bytes of the content, starting at off (n < 0 means
+// up to the end). Only the parts of the stream and of the referenced streams that
+// overlap the range are read. The digest of the whole content, if the stream has
+// one, is only checked when the range is the whole content.
+func ReconstructRange(ctx context.Context, index io.Reader, store compactstream.BlobStore, out io.Writer, off, n int64) error {
 	s, err := readStream(index)
 	if err != nil {
 		return err
+	}
+	if off < 0 || off > int64(s.Header.Size) {
+		return fmt.Errorf("offset %d is beyond the %d bytes of the stream", off, s.Header.Size)
+	}
+	if n < 0 || off+n > int64(s.Header.Size) {
+		n = int64(s.Header.Size) - off
 	}
 	hw, ok := out.(HoleWriter)
 	if !ok {
 		hw = zeroWriter{out}
 	}
 	var sum hash.Hash
-	if s.Header.HasContentDigest {
+	if s.Header.HasContentDigest && off == 0 && n == int64(s.Header.Size) {
 		sum = sha256.New()
 		hw = &hashingWriter{HoleWriter: hw, h: sum}
 	}
-	if err := s.writeRange(ctx, store, hw, 0, int64(s.Header.Size), 0); err != nil {
+	if err := s.writeRange(ctx, store, hw, off, n, 0); err != nil {
 		return err
 	}
 	if sum != nil && !bytes.Equal(sum.Sum(nil), s.Header.ContentDigest[:]) {

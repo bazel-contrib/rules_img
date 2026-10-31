@@ -13,6 +13,7 @@ go_library(
         "//cmd/compress",
         "//cmd/copyfiles",
         "//cmd/cst",
+        "//cmd/dd",
         "//cmd/deploy",
         "//cmd/deploymetadata",
         "//cmd/diskimage",

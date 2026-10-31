@@ -1,0 +1,33 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "dd",
+    srcs = [
+        "dd.go",
+        "progress.go",
+        "run.go",
+        "sink.go",
+        "source.go",
+    ],
+    importpath = "github.com/bazel-contrib/rules_img/img_tool/cmd/dd",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//cmd/deploy",
+        "//pkg/bytesize",
+        "//pkg/compactstream",
+        "//pkg/deployvfs",
+        "//pkg/extentstream",
+    ],
+)
+
+go_test(
+    name = "dd_test",
+    size = "small",
+    srcs = ["dd_test.go"],
+    embed = [":dd"],
+    deps = [
+        "//pkg/casdirlayout",
+        "//pkg/compactstream",
+        "//pkg/extentstream",
+    ],
+)

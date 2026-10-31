@@ -240,8 +240,35 @@ func (b *Builder) layerFromCompactStream(compactStreamPath, casDirPath string, d
 //     omitted on purpose).
 type casDirStore struct {
 	shaDir        string // <inputfilecas>/sha256, or "" if no input directory was shipped
+	extraShaDirs  []string
 	diskCachePath string
 	casReader     CASReader
+}
+
+// NewBlobStore returns a store for the blobs and the compact streams (and other
+// streams) that something references by digest. It reads from, in order, the
+// content-addressed directories (sha256/<xx>/<hex>), the Bazel disk cache
+// (diskCachePath, may be empty) and the remote CAS (remote, may be nil). With
+// only the last two, nothing needs to be shipped with the build: the blobs are
+// fetched when they are needed (the lazy strategies).
+func NewBlobStore(casDirs []string, diskCachePath string, remote CASReader) compactstream.MultiBlobStore {
+	s := &casDirStore{diskCachePath: diskCachePath, casReader: remote}
+	for _, d := range casDirs {
+		if s.shaDir == "" {
+			s.shaDir = filepath.Join(d, "sha256")
+		} else {
+			s.extraShaDirs = append(s.extraShaDirs, filepath.Join(d, "sha256"))
+		}
+	}
+	return s
+}
+
+// localDirs are the content-addressed directories of the store.
+func (s *casDirStore) localDirs() []string {
+	if s.shaDir == "" {
+		return s.extraShaDirs
+	}
+	return append([]string{s.shaDir}, s.extraShaDirs...)
 }
 
 func (s *casDirStore) ReaderForBlob(ctx context.Context, digest []byte, size int64) (io.ReadCloser, error) {
@@ -249,8 +276,8 @@ func (s *casDirStore) ReaderForBlob(ctx context.Context, digest []byte, size int
 
 	// 1. Content-addressed input directory (eager). Files are addressed by their
 	// content digest, so they are trusted without an extra size check.
-	if s.shaDir != "" {
-		if f, err := casdirlayout.Open(s.shaDir, hexDigest); err == nil {
+	for _, dir := range s.localDirs() {
+		if f, err := casdirlayout.Open(dir, hexDigest); err == nil {
 			return f, nil
 		}
 	}
@@ -337,7 +364,7 @@ func (s *casDirStore) planRuns(requests []compactstream.BlobRequest) []blobRun {
 	if s.casReader == nil {
 		return []blobRun{{from: 0, to: len(requests)}}
 	}
-	if s.shaDir == "" && s.diskCachePath == "" {
+	if len(s.localDirs()) == 0 && s.diskCachePath == "" {
 		return []blobRun{{from: 0, to: len(requests), remote: true}}
 	}
 	var runs []blobRun
@@ -356,8 +383,8 @@ func (s *casDirStore) planRuns(requests []compactstream.BlobRequest) []blobRun {
 // mirrors the first two steps of ReaderForBlob.
 func (s *casDirStore) hasLocally(digest []byte, size int64) bool {
 	hexDigest := hex.EncodeToString(digest)
-	if s.shaDir != "" {
-		if _, err := casdirlayout.Stat(s.shaDir, hexDigest); err == nil {
+	for _, dir := range s.localDirs() {
+		if _, err := casdirlayout.Stat(dir, hexDigest); err == nil {
 			return true
 		}
 	}
