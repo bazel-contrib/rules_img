@@ -19,6 +19,12 @@ bzl_library(
 )
 
 bzl_library(
+    name = "disk_image_info",
+    srcs = ["disk_image_info.bzl"],
+    visibility = ["//img:__subpackages__"],
+)
+
+bzl_library(
     name = "deploy_tool_info",
     srcs = ["deploy_tool_info.bzl"],
     visibility = ["//img:__subpackages__"],
@@ -87,6 +93,12 @@ bzl_library(
 bzl_library(
     name = "oci_layout_settings_info",
     srcs = ["oci_layout_settings_info.bzl"],
+    visibility = ["//img:__subpackages__"],
+)
+
+bzl_library(
+    name = "partition_info",
+    srcs = ["partition_info.bzl"],
     visibility = ["//img:__subpackages__"],
 )
 

@@ -1,0 +1,261 @@
+load("@bazel_skylib//rules:build_test.bzl", "build_test")
+load("@bazel_skylib//rules:diff_test.bzl", "diff_test")
+load("@rules_img//img:disk_image.bzl", "disk_image", "disk_partition")
+load("@rules_img//img:layer.bzl", "image_layer")
+load(":defs.bzl", "with_compact_layers")
+
+# gazelle:exclude_from_release
+
+genrule(
+    name = "bootloader",
+    outs = ["BOOTX64.EFI"],
+    cmd = "head -c 150000 /dev/zero | tr '\\0' 'b' > $@",
+)
+
+genrule(
+    name = "loader_conf",
+    outs = ["loader.conf"],
+    cmd = "echo 'default linux' > $@",
+)
+
+genrule(
+    name = "payload",
+    outs = ["payload.bin"],
+    cmd = "head -c 3000000 /dev/zero | tr '\\0' 'r' > $@",
+)
+
+genrule(
+    name = "os_release",
+    outs = ["os-release"],
+    cmd = "echo 'NAME=disk-image-test' > $@",
+)
+
+image_layer(
+    name = "esp_layer",
+    srcs = {
+        "/EFI/BOOT/BOOTX64.EFI": ":bootloader",
+        "/loader/loader.conf": ":loader_conf",
+    },
+    format = "fat32",
+)
+
+image_layer(
+    name = "root_ext4",
+    srcs = {
+        "/etc/os-release": ":os_release",
+        "/usr/lib/payload": ":payload",
+    },
+    format = "ext4",
+)
+
+image_layer(
+    name = "root_erofs",
+    srcs = {
+        "/etc/os-release": ":os_release",
+        "/usr/lib/payload": ":payload",
+    },
+    compress = "none",
+    format = "erofs",
+)
+
+disk_partition(
+    name = "esp",
+    image = ":esp_layer",
+    label = "ESP",
+    type = "esp",
+)
+
+disk_partition(
+    name = "scratch",
+    label = "scratch",
+    partition_size = "8MiB",
+)
+
+disk_partition(
+    name = "root",
+    attributes = ["required"],
+    image = ":root_ext4",
+    label = "root",
+    partition_size = "16MiB",
+    type = "root-x86-64",
+)
+
+disk_partition(
+    name = "root_erofs_partition",
+    image = ":root_erofs",
+    label = "root",
+    type = "root-x86-64",
+)
+
+disk_image(
+    name = "disk_gpt",
+    partitions = [
+        ":esp",
+        ":scratch",
+        ":root",
+    ],
+)
+
+disk_image(
+    name = "disk_gpt_larger",
+    min_size = "128MiB",
+    partitions = [
+        ":esp",
+        ":root",
+    ],
+)
+
+disk_partition(
+    name = "esp_active",
+    active = True,
+    image = ":esp_layer",
+    label = "ESP",
+    type = "esp",
+)
+
+disk_partition(
+    name = "root_mbr",
+    image = ":root_ext4",
+    label = "root",
+)
+
+disk_image(
+    name = "disk_mbr",
+    partition_table = "mbr",
+    partitions = [
+        ":esp_active",
+        ":root_mbr",
+    ],
+)
+
+# The same disk as an extent stream, with the layer built as a compact stream
+# too (which the erofs layer supports), so that the extent stream of the disk
+# references the compact stream of the layer.
+disk_image(
+    name = "disk_erofs",
+    extent_stream = "enabled",
+    partitions = [
+        ":esp",
+        ":root_erofs_partition",
+    ],
+)
+
+with_compact_layers(
+    name = "disk_erofs_compact_layers",
+    dep = ":disk_erofs",
+)
+
+# The same disk, built as an image, to compare with.
+disk_image(
+    name = "disk_erofs_raw",
+    extent_stream = "disabled",
+    partitions = [
+        ":esp",
+        ":root_erofs_partition",
+    ],
+)
+
+filegroup(
+    name = "disk_erofs_xstream",
+    srcs = [":disk_erofs_compact_layers"],
+    output_group = "extent_stream",
+)
+
+filegroup(
+    name = "disk_erofs_cas",
+    srcs = [":disk_erofs_compact_layers"],
+    output_group = "cas",
+)
+
+filegroup(
+    name = "disk_erofs_lazy_image",
+    srcs = [":disk_erofs_compact_layers"],
+    output_group = "image",
+)
+
+genrule(
+    name = "disk_erofs_reconstructed",
+    srcs = [
+        ":disk_erofs_cas",
+        ":disk_erofs_xstream",
+    ],
+    outs = ["disk_erofs_reconstructed.img"],
+    cmd = """
+dirs=""
+for d in $(locations :disk_erofs_cas); do dirs="$$dirs --cas-dir $$d"; done
+$(location @rules_img_tool//cmd/img) extent-stream reconstruct --extent-stream $(location :disk_erofs_xstream) $$dirs --output $@
+""",
+    tools = ["@rules_img_tool//cmd/img"],
+)
+
+# The extent stream reconstructs to the disk image.
+diff_test(
+    name = "extent_stream_reconstructs_to_the_disk_test",
+    file1 = ":disk_erofs_lazy_image",
+    file2 = ":disk_erofs_reconstructed",
+)
+
+# The extent stream of the disk is small: the partitions are references.
+genrule(
+    name = "check_extent_stream_is_small",
+    srcs = [":disk_erofs_xstream"],
+    outs = ["extent_stream_is_small"],
+    cmd = """
+size=$$(wc -c < $(location :disk_erofs_xstream))
+[ "$$size" -lt 4096 ] || { echo "the extent stream is $$size bytes" >&2; exit 1; }
+touch $@
+""",
+)
+
+# Fails the build unless the disks have the structure they should have.
+genrule(
+    name = "check_disks",
+    srcs = [
+        ":disk_gpt",
+        ":disk_gpt_larger",
+        ":disk_mbr",
+    ],
+    outs = ["disks_ok"],
+    cmd = """
+gpt="$(location :disk_gpt)"
+larger="$(location :disk_gpt_larger)"
+mbr="$(location :disk_mbr)"
+sig() { dd if="$$1" bs=1 skip="$$2" count="$$3" 2>/dev/null; }
+hex() { od -An -tx1 -j"$$2" -N"$$3" "$$1" | tr -d ' \\n'; }
+fail() { echo "$$1" >&2; exit 1; }
+
+[ "$$(sig $$gpt 512 8)" = "EFI PART" ] || fail "no GPT header in the second sector"
+[ "$$(hex $$gpt 510 2)" = "55aa" ] || fail "no protective MBR signature"
+[ "$$(hex $$gpt 450 1)" = "ee" ] || fail "no protective MBR partition"
+size=$$(wc -c < $$gpt)
+[ "$$(sig $$gpt $$((size - 512)) 8)" = "EFI PART" ] || fail "no backup GPT header in the last sector"
+# the ESP starts at 1 MiB with its hidden sectors set to that sector
+[ "$$(sig $$gpt $$((1048576 + 82)) 8)" = "FAT32   " ] || fail "no FAT32 file system in the first partition"
+[ "$$(od -An -tu4 -j$$((1048576 + 28)) -N4 $$gpt | tr -d ' ')" = "2048" ] || fail "wrong hidden sectors in the ESP"
+
+[ "$$(wc -c < $$larger)" -eq 134217728 ] || fail "the disk with a minimum size is $$(wc -c < $$larger) bytes"
+[ "$$(sig $$larger 512 8)" = "EFI PART" ] || fail "no GPT header"
+[ "$$(sig $$larger $$((134217728 - 512)) 8)" = "EFI PART" ] || fail "the backup header is not at the end of the larger disk"
+
+[ "$$(hex $$mbr 510 2)" = "55aa" ] || fail "no MBR signature"
+[ "$$(hex $$mbr 446 1)" = "80" ] || fail "the ESP is not active"
+[ "$$(hex $$mbr 450 1)" = "ef" ] || fail "the ESP does not have the ESP type"
+[ "$$(hex $$mbr 466 1)" = "83" ] || fail "the second partition does not have the Linux type"
+[ "$$(sig $$mbr 512 8)" != "EFI PART" ] || fail "an MBR disk has a GPT header"
+touch $@
+""",
+)
+
+build_test(
+    name = "disk_image_test",
+    targets = [
+        ":check_extent_stream_is_small",
+        ":check_disks",
+    ],
+)
+
+filegroup(
+    name = "all_files",
+    srcs = glob(["**"]),
+    visibility = ["//img/private/release:__subpackages__"],
+)
