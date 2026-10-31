@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -882,6 +883,29 @@ func casSourcesFromEnv(ctx context.Context, jobs int) (*casSources, error) {
 	}
 	return &casSources{pool: pool, cache: blobCache}, nil
 }
+
+// OpenCASFromEnv opens the remote CAS named by the environment (IMG_REAPI_ENDPOINT
+// and the related variables, as `image_push` and `image_load` set them), with the
+// local blob cache in front of it, for tools other than deploy that read blobs by
+// digest. The reader is nil when no remote cache is configured. The caller closes
+// the returned closer.
+func OpenCASFromEnv(ctx context.Context, jobs int) (deployvfs.CASReader, io.Closer, error) {
+	sources, err := casSourcesFromEnv(ctx, jobs)
+	if err != nil {
+		return nil, nil, err
+	}
+	if sources == nil {
+		return nil, nopCloser{}, nil
+	}
+	return sources.reader(), sources, nil
+}
+
+type nopCloser struct{}
+
+func (nopCloser) Close() error { return nil }
+
+// DiskCachePathFromEnv is the Bazel disk cache (IMG_DISK_CACHE), or "".
+func DiskCachePathFromEnv() string { return os.Getenv("IMG_DISK_CACHE") }
 
 // casSources is what the remote cache configuration produced: the pool of
 // connections to it, and the local blob cache in front of them (nil when

@@ -1,5 +1,6 @@
 load("@bazel_skylib//rules:build_test.bzl", "build_test")
 load("@bazel_skylib//rules:diff_test.bzl", "diff_test")
+load("@rules_img//img:dd.bzl", "image_dd")
 load("@rules_img//img:disk_image.bzl", "disk_image", "disk_partition")
 load("@rules_img//img:layer.bzl", "image_layer")
 load(":defs.bzl", "with_compact_layers")
@@ -207,6 +208,201 @@ touch $@
 """,
 )
 
+# Runnable targets that write a disk image, or a layer, like dd. The extent stream and the
+# content-addressed directories are its runfiles (eager), or only the extent
+# stream (lazy: the rest has to be fetched from a cache).
+image_dd(
+    name = "disk_erofs_dd",
+    image = ":disk_erofs_compact_layers",
+    strategy = "eager",
+)
+
+image_dd(
+    name = "disk_erofs_dd_lazy",
+    image = ":disk_erofs_compact_layers",
+    strategy = "lazy",
+)
+
+# It also writes a raw disk image, and layers: a file system image, and an erofs
+# layer built as a compact stream (which references the files it was made of).
+with_compact_layers(
+    name = "root_erofs_compact",
+    dep = ":root_erofs",
+)
+
+image_dd(
+    name = "root_ext4_dd",
+    image = ":root_ext4",
+)
+
+image_dd(
+    name = "root_erofs_dd",
+    image = ":root_erofs_compact",
+    strategy = "eager",
+)
+
+image_dd(
+    name = "root_erofs_dd_lazy",
+    image = ":root_erofs_compact",
+    strategy = "lazy",
+)
+
+image_dd(
+    name = "disk_gpt_dd",
+    image = ":disk_gpt",
+)
+
+# Lazily, a file is not in the runfiles, only its digest and size.
+image_dd(
+    name = "disk_gpt_dd_lazy",
+    image = ":disk_gpt",
+    strategy = "lazy",
+)
+
+image_dd(
+    name = "root_ext4_dd_lazy",
+    image = ":root_ext4",
+    strategy = "lazy",
+)
+
+genrule(
+    name = "disk_erofs_written",
+    outs = ["disk_erofs_written.img"],
+    cmd = "$(location :disk_erofs_dd) of=$@ bs=64K status=none",
+    tools = [":disk_erofs_dd"],
+)
+
+# The disk written by the target is the disk image.
+diff_test(
+    name = "dd_writes_the_disk_test",
+    file1 = ":disk_erofs_lazy_image",
+    file2 = ":disk_erofs_written",
+)
+
+# With compact = "enabled", the disk is built as an extent stream with compact layers without
+# the command line asking for it, and the bytes written are the same.
+disk_image(
+    name = "disk_erofs_default",
+    partitions = [
+        ":esp",
+        ":root_erofs_partition",
+    ],
+)
+
+image_dd(
+    name = "disk_erofs_dd_compact",
+    compact = "enabled",
+    image = ":disk_erofs_default",
+    strategy = "eager",
+)
+
+genrule(
+    name = "disk_erofs_compact_written",
+    outs = ["disk_erofs_compact_written.img"],
+    cmd = "$(location :disk_erofs_dd_compact) of=$@ bs=64K status=none",
+    tools = [":disk_erofs_dd_compact"],
+)
+
+diff_test(
+    name = "dd_compact_writes_the_disk_test",
+    file1 = ":disk_erofs_written",
+    file2 = ":disk_erofs_compact_written",
+)
+
+genrule(
+    name = "root_ext4_written",
+    outs = ["root_ext4_written.ext4"],
+    cmd = "$(location :root_ext4_dd) of=$@ status=none",
+    tools = [":root_ext4_dd"],
+)
+
+diff_test(
+    name = "dd_writes_a_layer_test",
+    file1 = ":root_ext4",
+    file2 = ":root_ext4_written",
+)
+
+genrule(
+    name = "root_erofs_written",
+    outs = ["root_erofs_written.erofs"],
+    cmd = "$(location :root_erofs_dd) of=$@ status=none",
+    tools = [":root_erofs_dd"],
+)
+
+# The compact stream of the layer is reconstructed to the layer file.
+diff_test(
+    name = "dd_writes_a_compact_layer_test",
+    file1 = ":root_erofs",
+    file2 = ":root_erofs_written",
+)
+
+genrule(
+    name = "disk_gpt_written",
+    outs = ["disk_gpt_written.img"],
+    cmd = "$(location :disk_gpt_dd) of=$@ status=none",
+    tools = [":disk_gpt_dd"],
+)
+
+diff_test(
+    name = "dd_writes_a_raw_disk_test",
+    file1 = ":disk_gpt",
+    file2 = ":disk_gpt_written",
+)
+
+# Stdout, skip and count: the bytes are those of the disk image.
+genrule(
+    name = "check_dd_stdout_skip_count",
+    srcs = [":disk_erofs_lazy_image"],
+    outs = ["dd_stdout_skip_count_ok"],
+    cmd = """
+disk="$(location :disk_erofs_lazy_image)"
+dd="$(location :disk_erofs_dd)"
+work="$(RULEDIR)/dd_stdout_skip_count.tmp"
+mkdir -p "$$work"
+trap 'rm -rf "$$work"' EXIT
+$$dd status=none | cmp - "$$disk" || { echo "stdout differs from the disk image" >&2; exit 1; }
+# The same range through dd(1), which is what `img dd` imitates. No `tail | head`:
+# head exits early, and the SIGPIPE it sends fails the pipeline under pipefail.
+dd if="$$disk" bs=4096 skip=3 count=5 of="$$work/want.bin" 2>/dev/null
+$$dd bs=4096 skip=3 count=5 status=none > "$$work/got.bin"
+cmp "$$work/got.bin" "$$work/want.bin" || { echo "skip and count differ" >&2; exit 1; }
+# The target already passes the image, so a second if= has to be an error
+# instead of silently writing something else.
+$$dd if=also-an-image 2>"$$work/err" && { echo "a second if= was not rejected" >&2; exit 1; }
+grep -q "more than once" "$$work/err" || { cat "$$work/err" >&2; exit 1; }
+touch $@
+""",
+    tools = [":disk_erofs_dd"],
+)
+
+# Without the files the extent stream references, the lazy target needs a cache
+# and says so. The caches are unset explicitly: a developer or a CI machine that
+# has one configured in the environment would otherwise find the blobs.
+genrule(
+    name = "check_dd_lazy_needs_a_cache",
+    outs = ["dd_lazy_needs_a_cache_ok"],
+    cmd = """
+work="$(RULEDIR)/dd_lazy_needs_a_cache.tmp"
+mkdir -p "$$work"
+trap 'rm -rf "$$work"' EXIT
+unset IMG_REAPI_ENDPOINT IMG_DISK_CACHE IMG_CAS_CACHE_DIR
+for target in $(location :disk_erofs_dd_lazy) $(location :root_erofs_dd_lazy) $(location :disk_gpt_dd_lazy) $(location :root_ext4_dd_lazy); do
+    if $$target of=/dev/null status=none 2>"$$work/err"; then
+        echo "the lazy target $$target worked without a cache" >&2
+        exit 1
+    fi
+    grep -q IMG_REAPI_ENDPOINT "$$work/err" || { cat "$$work/err" >&2; exit 1; }
+done
+touch $@
+""",
+    tools = [
+        ":disk_erofs_dd_lazy",
+        ":disk_gpt_dd_lazy",
+        ":root_erofs_dd_lazy",
+        ":root_ext4_dd_lazy",
+    ],
+)
+
 # Fails the build unless the disks have the structure they should have.
 genrule(
     name = "check_disks",
@@ -249,6 +445,8 @@ touch $@
 build_test(
     name = "disk_image_test",
     targets = [
+        ":check_dd_lazy_needs_a_cache",
+        ":check_dd_stdout_skip_count",
         ":check_extent_stream_is_small",
         ":check_disks",
     ],

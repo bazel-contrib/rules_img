@@ -403,7 +403,7 @@ def create_single_layer(ctx, settings, name, extra_args = [], extra_inputs = [])
     args.extend(["--layer-tree-artifact-handling", settings.tree_artifact_handling])
     for key, value in ctx.attr.annotations.items():
         args.extend(["--annotation", "{}={}".format(key, value)])
-    if ctx.attr.annotations_file != None:
+    if ctx.file.annotations_file != None:
         args.extend(["--annotations-file", ctx.file.annotations_file.path])
     if compact_stream_out:
         args.extend(["--compact-stream", compact_stream_out.path])
@@ -420,7 +420,7 @@ def create_single_layer(ctx, settings, name, extra_args = [], extra_inputs = [])
         args.append(out.path)
 
     inputs = []
-    if ctx.attr.annotations_file != None:
+    if ctx.file.annotations_file != None:
         inputs.append(depset([ctx.file.annotations_file]))
     inputs.extend(extra_inputs)
 

@@ -276,3 +276,39 @@ func hexString(b []byte) string {
 	}
 	return string(out)
 }
+
+func TestReconstructRange(t *testing.T) {
+	store := memStore{}
+	blob := []byte("0123456789abcdefghij")
+	digest, size := store.add(blob)
+	inner := build(t, func(w *Writer) {
+		w.AddData([]byte("inner-"))
+		w.AddHole(3)
+		w.AddRef(KindCAS, digest, size, 10, 5)
+	})
+	innerDigest, innerSize := store.add(inner)
+	stream := build(t, func(w *Writer) {
+		w.AddData([]byte("start|"))
+		w.AddHole(4)
+		w.AddRef(KindCAS, digest, size, 2, 6)
+		w.AddRef(KindExtentStream, innerDigest, innerSize, 0, 14)
+		w.AddData([]byte("|end"))
+	})
+	full := reconstruct(t, stream, store)
+	for _, r := range [][2]int64{{0, 0}, {0, 3}, {3, 9}, {6, 4}, {5, 20}, {16, 7}, {20, 5}, {int64(len(full)) - 2, 2}, {0, int64(len(full))}, {int64(len(full)), 0}} {
+		var out bytes.Buffer
+		if err := ReconstructRange(context.Background(), bytes.NewReader(stream), store, &out, r[0], r[1]); err != nil {
+			t.Fatalf("range %v: %v", r, err)
+		}
+		if want := full[r[0] : r[0]+r[1]]; !bytes.Equal(out.Bytes(), want) {
+			t.Errorf("range %v: got %q, want %q", r, out.Bytes(), want)
+		}
+	}
+	var out bytes.Buffer
+	if err := ReconstructRange(context.Background(), bytes.NewReader(stream), store, &out, 10, -1); err != nil || !bytes.Equal(out.Bytes(), full[10:]) {
+		t.Errorf("open-ended range: %q, %v", out.Bytes(), err)
+	}
+	if err := ReconstructRange(context.Background(), bytes.NewReader(stream), store, io.Discard, int64(len(full))+1, 1); err == nil {
+		t.Error("an offset beyond the end was accepted")
+	}
+}

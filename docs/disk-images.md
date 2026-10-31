@@ -164,6 +164,71 @@ computing it would need the content of all the files the stream references.
 Every blob and stream it references is addressed by its digest, so only the
 embedded bytes are not checked.
 
+## Writing a disk image or a layer: `image_dd`
+
+`image_dd` ([dd.md](dd.md)) is a runnable target that writes the bytes of a
+`disk_image` **or of a layer** (a filesystem image or an initramfs from `image_layer`),
+a bit like `dd`: to stdout, to a file or to a block device. Like `image_push` and
+`image_load`, it is something you `bazel run`:
+
+```python
+load("@rules_img//img:dd.bzl", "image_dd")
+load("@rules_img//img:disk_image.bzl", "disk_image")
+
+disk_image(name = "disk", partitions = [":esp", ":root"], extent_stream = "enabled")
+
+image_dd(name = "write_disk", image = ":disk")
+
+# A layer works the same way, for example a FAT32 image for an SD card partition.
+image_dd(name = "write_boot", image = ":esp_layer", args = ["bs=4M"])
+```
+
+```
+bazel run //:write_disk -- of=/dev/sdX bs=4M status=progress conv=fsync
+bazel run //:write_disk -- of=disk.img            # a sparse file
+bazel run //:write_disk -- bs=4096 skip=1 count=2 | xxd   # a range, to stdout
+```
+
+It takes the operands of `dd(1)` as `name=value` or as `--name=value`: `of`, `bs`,
+`skip`, `seek`, `count`, `status=none|noxfer|progress`, `conv=sparse|nosparse|notrunc|fsync`
+and `iflag=skip_bytes,count_bytes` / `oflag=seek_bytes` (`skip`, `count` and `seek`
+are in blocks of `bs`, unless a flag makes them bytes). Operands that should always
+be passed go into the `args` attribute. Without `of=`, the bytes go to stdout.
+Writing to a device is destructive, and the target does not ask.
+
+**Holes.** The free space of a disk is a hole in its extent stream, and so are blocks
+of zeros in a raw image. They are not written, the output is seeked over instead,
+where that is correct: for an output file that is created or truncated (which leaves
+the file sparse), or with `conv=sparse`. An existing device may contain anything,
+so by default it gets the zeros; if you know it is erased, `conv=sparse` skips them,
+which makes writing a mostly empty disk fast. `conv=nosparse` always writes zeros.
+
+**Lazy reconstruction.** What an extent stream references (compact streams of the
+partitions, files, other extent streams) is addressed by digest, and so is what the
+compact stream of a layer references (the files in it), so none of it has to be on the
+machine before it is needed:
+
+| `strategy`           | Runfiles | The referenced files come from |
+|----------------------|----------|---------------------------------|
+| `eager`              | the extent stream (or compact stream) and the content-addressed directories of the disk or layer; the file itself for a raw disk image or a layer that is a file (a layer with a layer file uses the file) | the runfiles; Bazel downloads them before the target runs |
+| `lazy`               | only the extent stream (or the compact stream of the layer); for a raw disk image or a layer that is a file, a small description of the file with its digest and size | the Bazel disk cache (`IMG_DISK_CACHE`), then the remote cache (`IMG_REAPI_ENDPOINT`, credential helpers and the `--@rules_img//img/settings:remote_cache` settings as for `image_load`), when they are read |
+| `auto` (the default) | follows `--@rules_img//img/settings:load_strategy` | |
+
+With `lazy`, only the parts of the referenced files that are written are read: `skip=`
+and `count=` select a range without fetching the rest of the disk. A raw `disk_image`
+and a layer that is only a file work the same way: the file itself is not in the runfiles,
+only its digest and size, and the bytes are read from the disk cache or the remote cache
+by digest (`img dd blob-descriptor=...`). The file has to be in that cache, which it is
+when it was built with a remote cache.
+
+The command behind it can also be used directly, on an extent stream, a compact
+stream or a raw image:
+
+```
+img dd if=disk.xstream of=disk.img --cas-dir disk.cas --cas-dir layer.inputfilecas
+IMG_REAPI_ENDPOINT=grpcs://cache.example.com img dd if=disk.xstream of=/dev/sdX conv=sparse
+```
+
 ## `img disk-image`
 
 The command behind the rules. Each `--partition` starts a partition, and the

@@ -107,6 +107,18 @@ type HoleWriter interface {
 	WriteHole(n int64) error
 }
 
+// IsZero reports whether all of b is zero.
+func IsZero(b []byte) bool {
+	for len(b) > 0 {
+		c := min(len(b), len(zeros))
+		if !bytes.Equal(b[:c], zeros[:c]) {
+			return false
+		}
+		b = b[c:]
+	}
+	return true
+}
+
 type zeroWriter struct{ io.Writer }
 
 var zeros = make([]byte, 1<<20)
@@ -125,20 +137,34 @@ func (z zeroWriter) WriteHole(n int64) error {
 // Reconstruct writes the content of the stream to out. Blobs and the streams it
 // references are read from the store. If out is a HoleWriter, holes are skipped.
 func Reconstruct(ctx context.Context, index io.Reader, store compactstream.BlobStore, out io.Writer) error {
+	return ReconstructRange(ctx, index, store, out, 0, -1)
+}
+
+// ReconstructRange writes n bytes of the content, starting at off (n < 0 means
+// up to the end). Only the parts of the stream and of the referenced streams that
+// overlap the range are read. The digest of the whole content, if the stream has
+// one, is only checked when the range is the whole content.
+func ReconstructRange(ctx context.Context, index io.Reader, store compactstream.BlobStore, out io.Writer, off, n int64) error {
 	s, err := readStream(index)
 	if err != nil {
 		return err
+	}
+	if off < 0 || off > int64(s.Header.Size) {
+		return fmt.Errorf("offset %d is beyond the %d bytes of the stream", off, s.Header.Size)
+	}
+	if n < 0 || off+n > int64(s.Header.Size) {
+		n = int64(s.Header.Size) - off
 	}
 	hw, ok := out.(HoleWriter)
 	if !ok {
 		hw = zeroWriter{out}
 	}
 	var sum hash.Hash
-	if s.Header.HasContentDigest {
+	if s.Header.HasContentDigest && off == 0 && n == int64(s.Header.Size) {
 		sum = sha256.New()
 		hw = &hashingWriter{HoleWriter: hw, h: sum}
 	}
-	if err := s.writeRange(ctx, store, hw, 0, int64(s.Header.Size), 0); err != nil {
+	if err := s.writeRange(ctx, store, hw, off, n, 0, streamCache{}); err != nil {
 		return err
 	}
 	if sum != nil && !bytes.Equal(sum.Sum(nil), s.Header.ContentDigest[:]) {
@@ -165,7 +191,7 @@ func (w *hashingWriter) WriteHole(n int64) error {
 }
 
 // writeRange writes the content bytes [off, off+n) of the stream.
-func (s *reader) writeRange(ctx context.Context, store compactstream.BlobStore, out HoleWriter, off, n int64, depth int) error {
+func (s *reader) writeRange(ctx context.Context, store compactstream.BlobStore, out HoleWriter, off, n int64, depth int, cache streamCache) error {
 	if depth > maxDepth {
 		return fmt.Errorf("streams are nested more than %d deep", maxDepth)
 	}
@@ -223,11 +249,11 @@ func (s *reader) writeRange(ctx context.Context, store compactstream.BlobStore, 
 				return err
 			}
 		case KindCompactStream:
-			if err := copyCompactStream(ctx, store, out, e, int64(e.SrcOffset)+skip, length); err != nil {
+			if err := copyCompactStream(ctx, store, cache, out, e, int64(e.SrcOffset)+skip, length); err != nil {
 				return err
 			}
 		case KindExtentStream:
-			raw, err := fetchStream(ctx, store, e)
+			raw, err := fetchStream(ctx, store, cache, e)
 			if err != nil {
 				return err
 			}
@@ -235,7 +261,7 @@ func (s *reader) writeRange(ctx context.Context, store compactstream.BlobStore, 
 			if err != nil {
 				return fmt.Errorf("stream sha256:%x: %w", e.Digest, err)
 			}
-			if err := child.writeRange(ctx, store, out, int64(e.SrcOffset)+skip, length, depth+1); err != nil {
+			if err := child.writeRange(ctx, store, out, int64(e.SrcOffset)+skip, length, depth+1, cache); err != nil {
 				return fmt.Errorf("stream sha256:%x: %w", e.Digest, err)
 			}
 		}
@@ -278,8 +304,16 @@ func skipBytes(r io.Reader, n int64) error {
 	return err
 }
 
+// streamCache holds the files of the streams that were fetched during one
+// reconstruction, by digest. A stream that is split into several extents (by
+// patches, or by a range that is read piecewise) is fetched and checked once.
+type streamCache map[[32]byte][]byte
+
 // fetchStream reads the file of a referenced stream and checks its digest.
-func fetchStream(ctx context.Context, store compactstream.BlobStore, e Extent) ([]byte, error) {
+func fetchStream(ctx context.Context, store compactstream.BlobStore, cache streamCache, e Extent) ([]byte, error) {
+	if raw, ok := cache[e.Digest]; ok {
+		return raw, nil
+	}
 	if e.BlobSize > maxChildSize {
 		return nil, fmt.Errorf("stream sha256:%x is %d bytes, more than the limit of %d", e.Digest, e.BlobSize, int64(maxChildSize))
 	}
@@ -295,11 +329,12 @@ func fetchStream(ctx context.Context, store compactstream.BlobStore, e Extent) (
 	if sum := sha256.Sum256(raw); sum != e.Digest || uint64(len(raw)) != e.BlobSize {
 		return nil, fmt.Errorf("stream sha256:%x has the digest sha256:%x and %d bytes, expected %d bytes", e.Digest, sum, len(raw), e.BlobSize)
 	}
+	cache[e.Digest] = raw
 	return raw, nil
 }
 
-func copyCompactStream(ctx context.Context, store compactstream.BlobStore, out io.Writer, e Extent, offset, length int64) error {
-	raw, err := fetchStream(ctx, store, e)
+func copyCompactStream(ctx context.Context, store compactstream.BlobStore, cache streamCache, out io.Writer, e Extent, offset, length int64) error {
+	raw, err := fetchStream(ctx, store, cache, e)
 	if err != nil {
 		return err
 	}

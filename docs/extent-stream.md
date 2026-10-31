@@ -54,7 +54,10 @@ img extent-stream reconstruct --extent-stream disk.xstream \
 ```
 
 `--cas-dir` can be repeated; a blob or stream is taken from the first directory
-that has it. The directories use the layout of `img cas-dir`
+that has it. `img dd` (see [disk images](disk-images.md#writing-a-disk-image-or-a-layer-image_dd))
+also reads from the Bazel disk cache and the remote cache, so a stream can be
+reconstructed without the files it references being downloaded first, and it
+writes a range with `skip` and `count`. The directories use the layout of `img cas-dir`
 (`sha256/<first two hex digits>/<hex>`; the flat `sha256/<hex>` layout is read as well).
 
 The `disk_image` rule produces an extent stream with `extent_stream = "enabled"`;

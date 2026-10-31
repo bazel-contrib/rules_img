@@ -18,6 +18,7 @@ load(
     "symlinks_arg",
     "to_short_path_pair",
 )
+load("//img/private/common:transitions.bzl", "reset_compact_image_transition")
 load("//img/private/providers:layers_info.bzl", "LayersInfo")
 
 def _symlink_tuple_to_arg(pair):
@@ -26,6 +27,10 @@ def _symlink_tuple_to_arg(pair):
     if source.startswith("/"):
         source = source[1:]
     return "{}\0{}".format(source, dest)
+
+def _unwrap(target):
+    """The target of an attribute with a transition, which Bazel passes as a list of one."""
+    return target[0] if type(target) == "list" else target
 
 def _image_layer_impl(ctx):
     settings = resolve_layer_settings(ctx)
@@ -44,6 +49,7 @@ def _image_layer_impl(ctx):
     files_args.use_param_file("--add-from-file=%s", use_always = True)
 
     for (path_in_image, files) in ctx.attr.srcs.items():
+        files = _unwrap(files)
         path_in_image = path_in_image.removeprefix("/")  # the "/" is not included in the tar file.
         default_info = files[DefaultInfo]
         files_to_run = default_info.files_to_run
@@ -178,6 +184,7 @@ treated as a directory and the outputs are placed inside it according to `multi_
 key that ends with "/" is always treated as a directory, even when the target produces exactly one
 output.""",
             allow_files = True,
+            cfg = reset_compact_image_transition,
         ),
         "symlinks": attr.string_dict(
             doc = """Symlinks to create in the layer. Keys are symlink paths in the image,
