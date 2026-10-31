@@ -1,5 +1,7 @@
 """Helpers for the tests of disk images."""
 
+load("@rules_img//img:providers.bzl", "DiskImageInfo", "LayersInfo")
+
 def _compact_layers_impl(_settings, _attr):
     return {
         str(Label("//img/settings:experimental_compact_layers")): "enabled",
@@ -15,14 +17,15 @@ def _with_compact_layers_impl(ctx):
     dep = ctx.attr.dep
     if type(dep) == "list":
         dep = dep[0]
-    return [
-        DefaultInfo(files = dep[DefaultInfo].files),
-        dep[OutputGroupInfo],
-    ]
+    providers = [DefaultInfo(files = dep[DefaultInfo].files)]
+    for provider in [OutputGroupInfo, DiskImageInfo, LayersInfo]:
+        if provider in dep:
+            providers.append(dep[provider])
+    return providers
 
 with_compact_layers = rule(
     implementation = _with_compact_layers_impl,
-    doc = "Builds a target with experimental_compact_layers enabled and forwards its files and output groups.",
+    doc = "Builds a target with experimental_compact_layers enabled and forwards its files, output groups, DiskImageInfo and LayersInfo.",
     attrs = {
         "dep": attr.label(mandatory = True, cfg = _compact_layers),
         "_allowlist_function_transition": attr.label(

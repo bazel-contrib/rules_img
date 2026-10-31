@@ -228,6 +228,21 @@ bzl_library(
 )
 
 bzl_library(
+    name = "dd_binary",
+    srcs = ["dd_binary.bzl"],
+    visibility = ["//img:__subpackages__"],
+    deps = [
+        "//img/private/common:build",
+        "//img/private/common:default_deploy_tool",
+        "//img/private/providers:deploy_tool_info",
+        "//img/private/providers:disk_image_info",
+        "//img/private/providers:layers_info",
+        "//img/private/providers:load_settings_info",
+        "@hermetic_launcher//launcher:lib_bzl",
+    ],
+)
+
+bzl_library(
     name = "optimize",
     srcs = ["optimize.bzl"],
     visibility = ["//img:__subpackages__"],
