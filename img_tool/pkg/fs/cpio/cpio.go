@@ -151,9 +151,10 @@ func (c *countWriter) Write(p []byte) (int, error) {
 
 func pad4(n int64) int64 { return (4 - n%4) % 4 }
 
-func checkRange(what string, v int64) error {
+// toUint32 converts v, failing if it does not fit in 32 bits.
+func toUint32(what string, v int64) (uint32, error) {
 	if v < 0 || v > 1<<32-1 {
-		return fmt.Errorf("%s %d does not fit in 32 bits", what, v)
+		return 0, fmt.Errorf("%s %d does not fit in 32 bits", what, v)
 	}
-	return nil
+	return uint32(v), nil
 }
