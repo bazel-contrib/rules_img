@@ -19,6 +19,7 @@ go_library(
         "//cmd/downloadblob",
         "//cmd/downloadmanifest",
         "//cmd/expandtemplate",
+        "//cmd/extentstream",
         "//cmd/flattenimage",
         "//cmd/fromarchive",
         "//cmd/hash",
