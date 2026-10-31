@@ -15,6 +15,7 @@ go_library(
         "//cmd/cst",
         "//cmd/deploy",
         "//cmd/deploymetadata",
+        "//cmd/diskimage",
         "//cmd/dockersave",
         "//cmd/downloadblob",
         "//cmd/downloadmanifest",

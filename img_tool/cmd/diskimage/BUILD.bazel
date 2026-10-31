@@ -1,0 +1,32 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "diskimage",
+    srcs = [
+        "assemble.go",
+        "diskimage.go",
+        "sniff.go",
+    ],
+    importpath = "github.com/bazel-contrib/rules_img/img_tool/cmd/diskimage",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/compactstream",
+        "//pkg/disk",
+        "//pkg/extentstream",
+    ],
+)
+
+go_test(
+    name = "diskimage_test",
+    srcs = ["diskimage_test.go"],
+    embed = [":diskimage"],
+    deps = [
+        "//pkg/compactstream",
+        "//pkg/disk",
+        "//pkg/extentstream",
+        "//pkg/fs/ext4",
+        "//pkg/fs/ext4/ext4cstream",
+        "//pkg/fs/fat32",
+        "//pkg/fs/fat32/fat32cstream",
+    ],
+)
