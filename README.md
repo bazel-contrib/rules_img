@@ -791,6 +791,40 @@ This is particularly powerful in development workflows where you're iterating on
 
 **Future Docker Support**: Docker is planning to expose its contentstore API in version 29.0.0, which will enable native incremental loading ([moby/moby#44369](https://github.com/moby/moby/issues/44369)). Once this ships, rules_img will adopt it to provide incremental loading performance even when the containerd socket isn't directly accesible by users. This will bring the same efficiency benefits to all Docker users, regardless of their platform or configuration.
 
+## Users
+
+- [Aalyria Spacetime](https://github.com/aalyria/api)
+- [Aurora](https://aurora.tech)
+- [Booking.com](https://github.com/bookingcom/rules_containers_util)
+- [Boston Dynamics](https://bostondynamics.com)
+- [Buildbarn](https://github.com/buildbarn/bb-storage)
+- [BuildBuddy](https://github.com/buildbuddy-io/buildbuddy)
+- [Cognite](https://www.cognite.com)
+- [DoorDash](https://doordash.com)
+- [Glean](https://www.glean.com)
+- [Google Cloud Robotics Core](https://github.com/googlecloudrobotics/core)
+- [gVisor](https://github.com/google/gvisor)
+- [Krabka](https://github.com/krabka-io)
+- [KubeVirt](https://github.com/kubevirt/kubevirt)
+- [Meroton](https://github.com/meroton/buildbar)
+- [Nebius](https://nebius.com)
+- [OpenAI](https://openai.com)
+- [Physical Intelligence](https://github.com/Physical-Intelligence/rules_layer_optimizer)
+- [Pinely](https://pinely.com)
+- [Pulumi](https://www.pulumi.com)
+- [quarkus-bazel-rules](https://github.com/quarkusio/quarkus-bazel-rules)
+- [rules_dotnet](https://github.com/bazel-contrib/rules_dotnet)
+- [rules_gitops](https://github.com/adobe/rules_gitops) (Adobe) and [fasterci/rules_gitops](https://github.com/fasterci/rules_gitops)
+- [rules_helm](https://github.com/periareon/rules_helm)
+- [Scuffle](https://github.com/ScuffleCloud/scuffle)
+- [Scythe Robotics](https://www.scytherobotics.com)
+- [Sentio](https://github.com/sentioxyz/sentio-core)
+- [SoundCloud](https://soundcloud.com)
+- [SpaceX](https://www.spacex.com)
+- [Spotify](https://www.spotify.com)
+- [stackb/jvm_image](https://github.com/stackb/jvm_image)
+- [Teapot](https://github.com/teapotovh/teapot)
+
 ## Hacking & Contributing
 
 We invite external contributions and are eager to work together with the build systems community. Please refer to the [CONTRIBUTING](/CONTRIBUTING.md) guide to learn more. If you want to check out the code and run a development version, follow the [HACKING](/HACKING.md) guide to get started.
