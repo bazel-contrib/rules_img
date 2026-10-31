@@ -22,6 +22,21 @@ Ext4ConfigInfo = provider(
     fields = EXT4_FIELDS,
 )
 
+FAT32_DOC = """\
+Options of a FAT32 filesystem image layer, produced by the `fat32_config` rule
+and selected per target through the `format_config` attribute of the layer
+rules.
+"""
+
+FAT32_FIELDS = dict(
+    sector_size = "int: logical sector size in bytes (512, 1024, 2048 or 4096), or 0 for the default (512).",
+)
+
+Fat32ConfigInfo = provider(
+    doc = FAT32_DOC,
+    fields = FAT32_FIELDS,
+)
+
 CPIO_DOC = """\
 Options of a cpio archive layer, produced by the `cpio_config` rule and selected
 per target through the `format_config` attribute of the layer rules.

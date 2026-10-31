@@ -10,6 +10,7 @@ takes a `format` attribute, and the global default comes from
 | `tar`    | OCI tar changeset                         | yes                               | `.tar`, `.tgz`, `.tar.zst`       |
 | `erofs`  | [EROFS](erofs-layers.md) filesystem image | proposed, supported by containerd | `.erofs`, `.erofs.zst`           |
 | `ext4`   | ext4 filesystem image                     | **no**                            | `.ext4`                          |
+| `fat32`  | FAT32 filesystem image                    | **no**                            | `.fat32`                         |
 | `cpio`   | cpio archive (initramfs)                  | **no**                            | `.cpio`, `.cpio.gz`, `.cpio.zst` |
 
 `tar` is the default, and it is the only format currently specified in the
@@ -17,8 +18,8 @@ takes a `format` attribute, and the global default comes from
 Every registry and runtime understands it, so unless you have a specific reason
 to pick something else, pick tar. [EROFS](erofs-layers.md) is emerging as an
 alternative on the wire. Containerd can mount such a layer directly instead of
-unpacking it. `ext4` and `cpio` are not valid OCI layer formats:
-nothing in the ecosystem expects an ext4 blob or a cpio archive in an image manifest.
+unpacking it. `ext4`, `fat32` and `cpio` are not valid OCI layer formats:
+nothing in the ecosystem expects an ext4 or FAT32 blob or a cpio archive in an image manifest.
 Support for them in rules_img exists to build filesystem images and initramfs archives for other purposes.
 
 ## ext4
@@ -105,6 +106,77 @@ Some ext4 features are not yet supported:
 | whiteouts (`.wh.`)              | not translated: an ext4 image is a filesystem, so a `.wh.` entry is an ordinary file |
 | 64-bit block numbers            | images are limited to 2<sup>32</sup> blocks                                          |
 | per-file compression, dm-verity | not supported                                                                        |
+
+## fat32
+
+A FAT32 layer is a FAT32 filesystem image, the filesystem of an EFI system partition (ESP) and of removable
+media. Like the other formats, it is written by a pure-Go implementation in the `img` tool, so building one
+doesn't require `mkfs.fat`, `mtools` or root privileges and works on every platform rules_img supports
+(including Windows).
+
+```python
+load("@rules_img//img:layer.bzl", "image_layer")
+
+image_layer(
+    name = "esp",
+    srcs = {
+        "/EFI/BOOT/BOOTAA64.EFI": ":bootloader",
+        "/loader/loader.conf": ":loader_conf",
+    },
+    format = "fat32",
+)
+```
+
+The image is the layer target's `DefaultInfo` (or, with compact layers enabled, its compact stream). Everything
+that is not tar-specific works as usual, including compact layers (`experimental_compact_layers`) and the
+`mtree` output group. The options that only apply to tar layers, including `compress`, are ignored. The
+file extension is `.fat32`.
+
+The file system is laid out completely before the first byte is written. The root directory and all other
+directories come first, followed by the data of every regular file in the order the files were added, each in
+a contiguous run of clusters that starts at a multiple of the cluster size. A file can therefore be located
+from its offset and size alone, which is what makes compact streams of FAT32 images efficient: every file
+of at least the inline threshold becomes a reference to the content-addressed store. All-zero sectors are never
+written, and file contents are not held in memory while the image is built: they are read from where they
+are when the image is written.
+
+FAT32 volumes need at least 65525 clusters to be recognized as FAT32, so the smallest image is about
+33 MiB with the smallest clusters. Unless a larger size is asked for, the file system has no more
+clusters than that or than the content needs. Names are stored as long file names (UTF-16) with generated
+short names. The volume ID is derived from the metadata of the content, and timestamps default to the
+Unix epoch (clamped to 1 January 1980), so the layout is a pure function of the inputs.
+
+The sector size comes from a `fat32_config` target, passed to the layer's `format_config` attribute. A FAT32
+file system in a partition of a disk with 4096 byte sectors has to use the sector size of the disk:
+
+```python
+load("@rules_img//img:layer.bzl", "fat32_config", "image_layer")
+
+fat32_config(
+    name = "esp_config",
+    sector_size = 4096,
+)
+
+image_layer(
+    name = "esp",
+    srcs = {"/EFI/BOOT/BOOTAA64.EFI": ":bootloader"},
+    format = "fat32",
+    format_config = ":esp_config",
+)
+```
+
+FAT cannot store everything a tar layer can:
+
+| Feature                       | Status                                                                                            |
+|-------------------------------|---------------------------------------------------------------------------------------------------|
+| symbolic links                | an error: FAT has none                                                                            |
+| device nodes, FIFOs           | an error                                                                                          |
+| hard links                    | become copies, and identical files are never merged                                               |
+| ownership, permissions, xattrs| dropped, except for the read-only flag, which is set for files without the owner write bit         |
+| timestamps                    | 2 second resolution between 1980 and 2107, stored as UTC (values outside are clamped); the access time only has a date |
+| names                         | case insensitive: two names that differ only in case are an error, as are `" * / : < > ? \ \|` and control characters |
+| size limits                   | files are limited to 4 GiB minus a byte, directories to 65536 entries                             |
+| whiteouts (`.wh.`)            | not translated: a FAT32 image is a filesystem, so a `.wh.` entry is an ordinary file             |
 
 ## cpio
 
