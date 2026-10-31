@@ -589,16 +589,14 @@ func kindOf(t byte) (kind, error) {
 }
 
 func fill(n *node, hdr *tar.Header, src source) error {
-	for _, v := range []struct {
-		what string
-		v    int64
-	}{{"uid", int64(hdr.Uid)}, {"gid", int64(hdr.Gid)}} {
-		if err := checkRange(v.what, v.v); err != nil {
-			return err
-		}
+	var err error
+	if n.uid, err = toUint32("uid", int64(hdr.Uid)); err != nil {
+		return err
 	}
-	n.mode = uint32(hdr.Mode) & 0o7777
-	n.uid, n.gid = uint32(hdr.Uid), uint32(hdr.Gid)
+	if n.gid, err = toUint32("gid", int64(hdr.Gid)); err != nil {
+		return err
+	}
+	n.mode = uint32(hdr.Mode & 0o7777)
 	// Absent timestamps are the epoch, which keeps archives reproducible.
 	if !hdr.ModTime.IsZero() {
 		// The format has 32 bits for the timestamp: clamp instead of failing
@@ -616,15 +614,12 @@ func fill(n *node, hdr *tar.Header, src source) error {
 			return fmt.Errorf("symbolic link target is longer than %d bytes", maxNameBytes)
 		}
 	case kindChar, kindBlock:
-		for _, v := range []struct {
-			what string
-			v    int64
-		}{{"device major", hdr.Devmajor}, {"device minor", hdr.Devminor}} {
-			if err := checkRange(v.what, v.v); err != nil {
-				return err
-			}
+		if n.major, err = toUint32("device major", hdr.Devmajor); err != nil {
+			return err
 		}
-		n.major, n.minor = uint32(hdr.Devmajor), uint32(hdr.Devminor)
+		if n.minor, err = toUint32("device minor", hdr.Devminor); err != nil {
+			return err
+		}
 	}
 	return nil
 }
