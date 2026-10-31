@@ -1,0 +1,12 @@
+[Unit]
+Description=Greeting of the rules_img disk image
+After=basic.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/hello
+StandardOutput=journal+console
+StandardError=journal+console
+
+[Install]
+WantedBy=multi-user.target

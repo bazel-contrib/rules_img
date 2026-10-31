@@ -595,8 +595,10 @@ def create_tar_layer(ctx, settings, extra_args = [], extra_inputs = []):
         metadata = depset([metadata_out]),
         mtree = depset([mtree_out]),
     )
-    if out:
-        output_groups["layer"] = depset([out])
+    if layer_info.blob:
+        # Either the layer itself or, with compact layers and materialize_blob,
+        # the lazily reconstructed blob.
+        output_groups["layer"] = depset([layer_info.blob])
     if compact_stream_out:
         output_groups["experimental_compact_stream"] = depset([compact_stream_out])
     if ztoc_out:

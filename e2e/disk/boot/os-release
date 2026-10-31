@@ -1,0 +1,4 @@
+NAME="rules_img disk e2e"
+ID=rules_img_disk
+PRETTY_NAME="rules_img disk e2e (Debian bookworm userspace)"
+VERSION_ID=1

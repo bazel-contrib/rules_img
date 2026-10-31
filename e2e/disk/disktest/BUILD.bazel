@@ -1,0 +1,32 @@
+load("@rules_go//go:def.bzl", "go_test")
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
+
+filegroup(
+    name = "disk_img",
+    srcs = ["//:disk"],
+    output_group = "image",
+)
+
+go_test(
+    name = "disktest_test",
+    size = "medium",
+    srcs = ["disk_test.go"],
+    data = [":disk_img"],
+    env = {"DISK_IMAGE": "$(rlocationpath :disk_img)"},
+    deps = ["@rules_go//go/runfiles"],
+)
+
+# Boots the image under QEMU. Needs qemu-system-x86_64 and OVMF on the host.
+sh_test(
+    name = "boot_test",
+    size = "large",
+    srcs = ["boot_test.sh"],
+    args = ["$(rlocationpath :disk_img)"],
+    data = [":disk_img"],
+    tags = [
+        "manual",
+        "no-sandbox",
+    ],
+    target_compatible_with = ["@platforms//os:linux"],
+    deps = ["@bazel_tools//tools/bash/runfiles"],
+)

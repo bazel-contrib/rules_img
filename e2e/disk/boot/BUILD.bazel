@@ -1,0 +1,42 @@
+load("@rules_distroless//distroless:defs.bzl", "flatten")
+load("@rules_img//img:disk_image.bzl", "disk_partition")
+load("@rules_img//img:layer.bzl", "image_layer")
+load(":uki.bzl", "uki")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["os-release"])
+
+# ---- unified kernel image ----
+
+flatten(
+    name = "uki_stub_tar",
+    compress = "",
+    tars = ["@disk_debian//systemd-boot-efi/amd64:data"],
+)
+
+uki(
+    name = "uki",
+    # root= is resolved by systemd in the initrd, through the udev symlinks of the GPT.
+    cmdline = "root=PARTLABEL=root rootfstype=erofs ro console=tty0 console=ttyS0,115200 systemd.show_status=1 systemd.journald.forward_to_console=1",
+    initrd = "//initrd",
+    kernel = "@disk_kernel//:kernel",
+    osrel = "os-release",
+    stub_path = "/usr/lib/systemd/boot/efi/linuxx64.efi.stub",
+    stub_tar = ":uki_stub_tar",
+)
+
+# ---- EFI system partition ----
+
+image_layer(
+    name = "esp_layer",
+    srcs = {"/EFI/BOOT/BOOTX64.EFI": ":uki"},
+    format = "fat32",
+)
+
+disk_partition(
+    name = "esp",
+    image = ":esp_layer",
+    label = "ESP",
+    type = "esp",
+)

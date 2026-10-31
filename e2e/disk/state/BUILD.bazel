@@ -1,0 +1,49 @@
+load("@rules_img//img:disk_image.bzl", "disk_partition")
+load("@rules_img//img:layer.bzl", "ext4_config", "image_layer")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["README.txt"])
+
+# Writable partitions. An ext4 layer is only as large as its content and cannot be grown
+# online, so min_size leaves the free space the system writes into.
+ext4_config(
+    name = "writable_config",
+    min_size = "128MiB",
+)
+
+# /var needs the directories that Debian's packages expect.
+image_layer(
+    name = "var_layer",
+    srcs = {
+        "/cache/README": "README.txt",
+        "/lib/README": "README.txt",
+        "/lib/systemd/README": "README.txt",  # systemd-random-seed keeps its seed here
+        "/log/README": "README.txt",
+        "/spool/README": "README.txt",
+        "/tmp/README": "README.txt",
+    },
+    format = "ext4",
+    format_config = ":writable_config",
+)
+
+image_layer(
+    name = "home_layer",
+    srcs = {"/README": "README.txt"},
+    format = "ext4",
+    format_config = ":writable_config",
+)
+
+disk_partition(
+    name = "var",
+    image = ":var_layer",
+    label = "var",
+    type = "var",
+)
+
+disk_partition(
+    name = "home",
+    image = ":home_layer",
+    label = "home",
+    type = "home",
+)

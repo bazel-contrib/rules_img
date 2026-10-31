@@ -1,0 +1,48 @@
+load("@rules_distroless//distroless:defs.bzl", "group", "passwd")
+load("@rules_img//img:dd.bzl", "dd_binary")
+load("@rules_img//img:disk_image.bzl", "disk_image")
+
+package(default_visibility = ["//visibility:public"])
+
+# The target platform of everything in this workspace.
+platform(
+    name = "linux_x86_64",
+    parents = ["@llvm//platforms:linux_x86_64"],
+)
+
+group(
+    name = "groups",
+    entries = [dict(
+        name = "root",
+        gid = 0,
+        users = ["root"],
+    )],
+)
+
+passwd(
+    name = "passwd",
+    entries = [dict(
+        gecos = ["root"],
+        gid = 0,
+        home = "/root",
+        shell = "/bin/sh",
+        uid = 0,
+        username = "root",
+    )],
+)
+
+disk_image(
+    name = "disk",
+    partitions = [
+        "//boot:esp",
+        "//rootfs:root",
+        "//state:var",
+        "//state:home",
+    ],
+)
+
+# bazel run //:write_disk -- of=/dev/sdX bs=4M status=progress
+dd_binary(
+    name = "write_disk",
+    image = ":disk",
+)
