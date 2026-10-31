@@ -24,6 +24,7 @@ Supports both **Bzlmod** and **WORKSPACE** setups. For WORKSPACE setup instructi
 - 🎯 **Shallow Base Images** - Avoid downloading layers from huge base images like CUDA
 - 🧱 **Bespoke Base Images** - Build your own base from scratch: directory skeleton, users, CA trust stores and shared libraries (see [base images](docs/base-images.md))
 - 💽 **Filesystem layers** - Ship a layer as a mountable filesystem instead of a tar changeset: [EROFS](docs/erofs-layers.md), [ext4, FAT32 or cpio](docs/filesystems.md)
+- 🖴 **Disk images** - Assemble filesystem layers into a bootable GPT or MBR disk image, with a UEFI system partition, and optionally as an experimental extent stream (see [disk images](docs/disk-images.md))
 - 🏢 **Enterprise Ready** - Remote Build Execution and Content Addressable Storage integration
 - ☁️ **Push at Build Time** - Upload layers in parallel straight from the remote execution cluster to the registry; bytes never touch the machine running Bazel
 
