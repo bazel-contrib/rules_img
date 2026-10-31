@@ -1,0 +1,45 @@
+load("@rules_distroless//distroless:defs.bzl", "flatten")
+load("@rules_img//img:layer.bzl", "image_layer", "layer_from_tar")
+
+package(default_visibility = ["//visibility:public"])
+
+# systemd from Debian, which finds the root partition and switches to it.
+
+image_layer(
+    name = "initrd_overlay",
+    srcs = {
+        "/etc/initrd-release": "//boot:os-release",
+    },
+    compress = "none",
+    format = "tar",
+    symlinks = {
+        "/init": "/lib/systemd/systemd",
+    },
+)
+
+# flatten needs a real tar, also when layers are compact streams (--config=compact).
+filegroup(
+    name = "initrd_overlay_tar",
+    srcs = [":initrd_overlay"],
+    output_group = "layer",
+)
+
+flatten(
+    name = "initrd_tar",
+    compress = "",
+    tars = [
+        "@disk_debian//base-files/amd64",
+        "@disk_debian//systemd/amd64",
+        "@disk_debian//udev/amd64",
+        "//:groups",
+        "//:passwd",
+        ":initrd_overlay_tar",
+    ],
+)
+
+layer_from_tar(
+    name = "initrd",
+    src = ":initrd_tar",
+    compress = "gzip",
+    format = "cpio",
+)

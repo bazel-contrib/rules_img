@@ -1,0 +1,59 @@
+module(name = "disk_e2e")
+
+# BEGIN BAZEL_DEP
+bazel_dep(name = "rules_img")
+local_path_override(
+    module_name = "rules_img",
+    path = "../..",
+)
+
+bazel_dep(name = "rules_img_tool")
+local_path_override(
+    module_name = "rules_img_tool",
+    path = "../../img_tool",
+)
+
+register_toolchains("@rules_img_tool//toolchain:all")
+# END BAZEL_DEP
+
+bazel_dep(name = "bazel_skylib", version = "1.9.0")
+bazel_dep(name = "linux.bzl", version = "0.0.5")
+bazel_dep(name = "llvm", version = "0.8.14")
+bazel_dep(name = "platforms", version = "1.1.0")
+bazel_dep(name = "rules_cc", version = "0.2.17")
+bazel_dep(name = "rules_go", version = "0.64.2")
+bazel_dep(name = "rules_shell", version = "0.8.0")
+bazel_dep(name = "rules_distroless", version = "0.8.0")
+bazel_dep(name = "tar.bzl", version = "0.10.5")
+
+# Tests run on the host, not on the target platform (see //:test_toolchain).
+register_toolchains("//:test_toolchain")
+
+# Hermetic C/C++ toolchain: builds the Linux kernel.
+register_toolchains("@llvm//toolchain:all")
+
+linux_source_repository = use_repo_rule("@linux.bzl//:linux.bzl", "linux_source_repository")
+
+linux_source_repository(
+    name = "linux_6_18_39",
+    version = "6.18.39",
+)
+
+linux_images = use_extension("@linux.bzl//:extensions.bzl", "linux_images")
+linux_images.image(
+    name = "disk_kernel",
+    config = "//kernel:kernel.config",
+    platform = "//:linux_x86_64",
+    source = "@linux_6_18_39//:Kconfig",
+)
+use_repo(linux_images, "disk_kernel")
+
+# Debian packages (systemd, glibc, udev, the UEFI stub of the unified kernel image).
+# Regenerate the lockfile with: bazel run @disk_debian//:lock
+apt = use_extension("@rules_distroless//apt:extensions.bzl", "apt")
+apt.install(
+    name = "disk_debian",
+    lock = "//debian:apt.lock.json",
+    manifest = "//debian:apt.yaml",
+)
+use_repo(apt, "disk_debian")

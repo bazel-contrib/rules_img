@@ -1,0 +1,4 @@
+# The root file system (erofs, read-only) is mounted by the initrd (root= on the kernel
+# command line). These partitions can be written to.
+PARTLABEL=var   /var   ext4  defaults,nofail  0  2
+PARTLABEL=home  /home  ext4  defaults,nofail  0  2

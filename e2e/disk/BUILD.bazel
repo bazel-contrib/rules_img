@@ -1,0 +1,69 @@
+load("@rules_distroless//distroless:defs.bzl", "group", "passwd")
+load("@rules_img//img:dd.bzl", "image_dd")
+load("@rules_img//img:disk_image.bzl", "disk_image")
+
+package(default_visibility = ["//visibility:public"])
+
+# The target platform of everything in this workspace.
+platform(
+    name = "linux_x86_64",
+    parents = ["@llvm//platforms:linux_x86_64"],
+)
+
+# Where actions run under --config=actiond: the arm64 Linux VM of actiond.
+platform(
+    name = "linux_arm64",
+    parents = ["@llvm//platforms:linux_arm64"],
+)
+
+# Bazel 9 runs a test only on an execution platform that satisfies every
+# constraint of the target platform. The platform above adds the libc and C++
+# standard library constraints of the LLVM toolchain, which the host platform
+# does not have, so nothing matches and every test fails to build with "No
+# matching toolchain found for type
+# @bazel_tools//tools/test:default_test_toolchain_type". This toolchain has no
+# constraints, so the tests run on the host, as they did before Bazel 9: they
+# are Linux x86-64 programs, and the kernel needs a Linux x86-64 host anyway.
+toolchain(
+    name = "test_toolchain",
+    toolchain = "@bazel_tools//tools/test:empty_toolchain",
+    toolchain_type = "@bazel_tools//tools/test:default_test_toolchain_type",
+)
+
+group(
+    name = "groups",
+    entries = [dict(
+        name = "root",
+        gid = 0,
+        users = ["root"],
+    )],
+)
+
+passwd(
+    name = "passwd",
+    entries = [dict(
+        gecos = ["root"],
+        gid = 0,
+        home = "/root",
+        shell = "/bin/sh",
+        uid = 0,
+        username = "root",
+    )],
+)
+
+disk_image(
+    name = "disk",
+    partitions = [
+        "//boot:esp",
+        "//rootfs:root",
+        "//state:var",
+        "//state:home",
+    ],
+)
+
+# bazel run //:write_disk -- of=/dev/sdX bs=4M status=progress
+image_dd(
+    name = "write_disk",
+    compact = "enabled",
+    image = ":disk",
+)
