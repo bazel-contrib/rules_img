@@ -116,14 +116,25 @@ def _image_dd_impl(ctx):
         embedded_args = embedded_args,
         transformed_args = transformed_args,
     )
-    for cas_dir in cas_dirs:
+    runfiles_files = [deploy_tool_info.img_deploy_exe, source] + cas_dirs
+
+    # The content-addressed directories are passed in a file, not as a --cas-dir
+    # flag each: a launcher embeds only a handful of arguments, and a disk image
+    # has a directory per partition. The tool resolves the runfiles paths in it.
+    if len(cas_dirs) > 0:
+        cas_dir_manifest = ctx.actions.declare_file(ctx.label.name + ".cas_dirs.txt")
+        ctx.actions.write(
+            output = cas_dir_manifest,
+            content = "".join([launcher.to_rlocation_path(cas_dir) + "\n" for cas_dir in cas_dirs]),
+        )
+        runfiles_files.append(cas_dir_manifest)
         embedded_args, transformed_args = launcher.append_embedded_arg(
-            arg = "--cas-dir",
+            arg = "--cas-dir-manifest",
             embedded_args = embedded_args,
             transformed_args = transformed_args,
         )
         embedded_args, transformed_args = launcher.append_runfile(
-            file = cas_dir,
+            file = cas_dir_manifest,
             embedded_args = embedded_args,
             transformed_args = transformed_args,
         )
@@ -158,7 +169,7 @@ def _image_dd_impl(ctx):
         DefaultInfo(
             files = depset([writer]),
             executable = writer,
-            runfiles = ctx.runfiles(files = [deploy_tool_info.img_deploy_exe, source] + cas_dirs),
+            runfiles = ctx.runfiles(files = runfiles_files),
         ),
         RunEnvironmentInfo(
             environment = environment,

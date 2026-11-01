@@ -24,6 +24,7 @@ import (
 var operands = map[string]bool{
 	"if": true, "of": true, "bs": true, "skip": true, "seek": true, "count": true,
 	"status": true, "conv": true, "iflag": true, "oflag": true, "cas-dir": true, "blob-descriptor": true,
+	"cas-dir-manifest": true,
 }
 
 // normalizeArgs turns dd-style operands (bs=4M) into flags (--bs=4M).
@@ -82,6 +83,11 @@ Operands:
   oflag=FLAGS      seek_bytes: seek= is in bytes
   cas-dir=DIR      content-addressed directory (sha256/<hex>) with referenced blobs and
                    streams (can be repeated)
+  cas-dir-manifest=FILE
+                   a file with one runfiles path of such a directory per line, added to
+                   the cas-dir directories. A target built by image_dd uses it: a
+                   launcher embeds only a few arguments, however many directories the
+                   image needs
 
 Numbers can have a suffix: c=1, w=2, b=512, kB/KB=1000, K/KiB=1024, MB, M/MiB, GB, G/GiB, ...`
 
@@ -100,6 +106,9 @@ type options struct {
 	countBytes bool
 	seekBytes  bool
 	casDirs    []string
+	// casDirManifest is a file with one runfiles path of a content-addressed
+	// directory per line, resolved when the run starts.
+	casDirManifest string
 }
 
 // DDProcess runs `img dd`.
@@ -137,6 +146,7 @@ func parseArgs(args []string) (*options, error) {
 	flagSet.StringVar(&iflag, "iflag", "", "")
 	flagSet.StringVar(&oflag, "oflag", "", "")
 	flagSet.Var(&casDirs, "cas-dir", "")
+	flagSet.StringVar(&o.casDirManifest, "cas-dir-manifest", "", "")
 	if err := flagSet.Parse(normalizeArgs(args)); err != nil {
 		return nil, err
 	}
