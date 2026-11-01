@@ -59,6 +59,33 @@ func TestParseArgs(t *testing.T) {
 	if o, err = parseArgs([]string{"if=a", "of=x", "of=y"}); err != nil || o.out != "y" {
 		t.Errorf("repeated of=: %+v, %v", o, err)
 	}
+	if o, err = parseArgs([]string{"if=a", "cas-dir-manifest=m"}); err != nil || o.casDirManifest != "m" {
+		t.Errorf("cas-dir-manifest: %+v, %v", o, err)
+	}
+}
+
+func TestCASDirsFromManifest(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "cas_dirs.txt")
+	if err := os.WriteFile(path, []byte("_main/a.cas\r\n\n_main/b.cas\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	resolve := func(p string) (string, error) { return "/runfiles/" + p, nil }
+	got, err := casDirsFromManifest(path, resolve)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"/runfiles/_main/a.cas", "/runfiles/_main/b.cas"}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Errorf("casDirsFromManifest = %q; want %q", got, want)
+	}
+	// A directory that is not in the runfiles is an error, not a blob that is
+	// silently missing later.
+	if _, err := casDirsFromManifest(path, func(string) (string, error) { return "", fmt.Errorf("not found") }); err == nil {
+		t.Error("an unresolvable runfiles path was accepted")
+	}
+	if _, err := casDirsFromManifest(filepath.Join(t.TempDir(), "gone.txt"), resolve); err == nil {
+		t.Error("a missing manifest was accepted")
+	}
 }
 
 // fixture is a disk-like image: data, a large hole, a CAS blob, more data.

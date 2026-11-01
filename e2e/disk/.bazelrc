@@ -1,0 +1,36 @@
+common --enable_platform_specific_config
+
+common --platforms=//:linux_x86_64
+
+# Do not let Bazel pick up a host C++ toolchain: everything is built by the
+# hermetic LLVM toolchain registered in MODULE.bazel.
+common --repo_env=BAZEL_DO_NOT_DETECT_CPP_TOOLCHAIN=1
+common --repo_env=BAZEL_NO_APPLE_CPP_TOOLCHAIN=1
+
+# enable pathmapping for supported platforms
+common:macos --experimental_output_paths=strip
+common:linux --experimental_output_paths=strip
+
+import %workspace%/.bazelrc.common
+
+try-import %workspace%/.bazelrc.user
+
+# Keep the build outputs small: layers are compact streams that reference their files,
+# and the disk image is an extent stream that references the partitions' streams, so the
+# bytes of the partitions and the disk are not materialized (`bazel run //:write_disk`
+# reconstructs them). Use it with e.g. `bazel build --config=compact //:disk`.
+common:compact --@rules_img//img/settings:experimental_compact_layers=enabled
+common:compact --@rules_img//img/settings:disk_image_extent_stream=enabled
+common:compact --@rules_img//img/settings:load_strategy=lazy
+# The tar overlays are inputs of `flatten`, which needs real tars: reconstruct those lazily.
+common:compact --@rules_img//img/settings:experimental_compact_layers_materialize_blob=enabled
+
+build:actiond --remote_executor=grpc://127.0.0.1:8980
+build:actiond --remote_cache=grpc://127.0.0.1:8980
+build:actiond --spawn_strategy=remote
+build:actiond --genrule_strategy=remote
+build:actiond --remote_local_fallback=false
+build:actiond --remote_upload_local_results=false
+build:actiond --noremote_cache_compression
+build:actiond --remote_default_exec_properties=requires-bash=
+build:actiond --extra_execution_platforms=//:linux_arm64

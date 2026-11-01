@@ -1,0 +1,68 @@
+load("@rules_distroless//distroless:defs.bzl", "flatten")
+load("@rules_img//img:disk_image.bzl", "disk_partition")
+load("@rules_img//img:layer.bzl", "image_layer", "layer_from_tar")
+
+package(default_visibility = ["//visibility:public"])
+
+genrule(
+    name = "empty_machine_id",
+    outs = ["machine-id"],
+    # An empty /etc/machine-id makes systemd generate a transient ID at every boot,
+    # since the root file system is read-only.
+    cmd = "true > $@",
+)
+
+# ---- root file system: Debian systemd, read-only (erofs) ----
+
+image_layer(
+    name = "root_overlay",
+    srcs = {
+        "/etc/fstab": "fstab",
+        "/etc/hostname": "hostname",
+        "/etc/machine-id": ":empty_machine_id",
+        "/etc/systemd/system/hello.service": "hello.service",
+        "/usr/local/bin/hello": "//hello",
+    },
+    compress = "none",
+    format = "tar",
+    symlinks = {
+        "/etc/systemd/system/multi-user.target.wants/hello.service": "/etc/systemd/system/hello.service",
+    },
+)
+
+# flatten needs a real tar, also when layers are compact streams (--config=compact).
+filegroup(
+    name = "root_overlay_tar",
+    srcs = [":root_overlay"],
+    output_group = "layer",
+)
+
+flatten(
+    name = "root_tar",
+    compress = "",
+    tars = [
+        "@disk_debian//base-files/amd64",
+        "@disk_debian//systemd/amd64",
+        "@disk_debian//systemd-sysv/amd64",
+        "@disk_debian//udev/amd64",
+        "@disk_debian//util-linux/amd64",
+        "@disk_debian//mount/amd64",
+        "//:groups",
+        "//:passwd",
+        ":root_overlay_tar",
+    ],
+)
+
+layer_from_tar(
+    name = "root_layer",
+    src = ":root_tar",
+    compress = "none",
+    format = "erofs",
+)
+
+disk_partition(
+    name = "root",
+    image = ":root_layer",
+    label = "root",
+    type = "root-x86-64",
+)

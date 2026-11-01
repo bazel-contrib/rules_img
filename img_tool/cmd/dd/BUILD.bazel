@@ -17,6 +17,7 @@ go_library(
         "//pkg/compactstream",
         "//pkg/deployvfs",
         "//pkg/extentstream",
+        "@rules_go//go/runfiles",
     ],
 )
 

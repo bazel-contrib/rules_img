@@ -1,0 +1,23 @@
+version: 1
+
+sources:
+  - channel: bookworm main
+    url: https://snapshot.debian.org/archive/debian/20261031T202858Z
+  - channel: bookworm-updates main
+    url: https://snapshot.debian.org/archive/debian/20261031T202858Z
+  - channel: bookworm-security main
+    url: https://snapshot.debian.org/archive/debian-security/20261031T222717Z
+
+archs:
+  - "amd64"
+
+packages:
+  - base-files
+  - libc6
+  - systemd
+  - systemd-sysv
+  - udev
+  - util-linux
+  - mount
+  # Provides linuxx64.efi.stub, the stub of the unified kernel image.
+  - systemd-boot-efi

@@ -156,6 +156,80 @@ disk_image(
     ],
 )
 
+# A disk with four partitions, which an image_dd target needs five
+# content-addressed directories for: one per partition, and one for the disk
+# itself. The launcher of the target embeds at most ten arguments, so they are
+# passed in a file instead of a --cas-dir flag each.
+image_layer(
+    name = "var_erofs",
+    srcs = {"/var/lib/payload": ":payload"},
+    compress = "none",
+    format = "erofs",
+)
+
+image_layer(
+    name = "home_erofs",
+    srcs = {"/home/user/os-release": ":os_release"},
+    compress = "none",
+    format = "erofs",
+)
+
+disk_partition(
+    name = "var_partition",
+    image = ":var_erofs",
+    label = "var",
+    type = "var",
+)
+
+disk_partition(
+    name = "home_partition",
+    image = ":home_erofs",
+    label = "home",
+    type = "home",
+)
+
+disk_image(
+    name = "disk_four",
+    extent_stream = "enabled",
+    partitions = [
+        ":esp",
+        ":root_erofs_partition",
+        ":var_partition",
+        ":home_partition",
+    ],
+)
+
+with_compact_layers(
+    name = "disk_four_compact_layers",
+    dep = ":disk_four",
+)
+
+image_dd(
+    name = "disk_four_dd",
+    image = ":disk_four_compact_layers",
+    strategy = "eager",
+)
+
+filegroup(
+    name = "disk_four_image",
+    srcs = [":disk_four_compact_layers"],
+    output_group = "image",
+)
+
+genrule(
+    name = "disk_four_written",
+    outs = ["disk_four_written.img"],
+    cmd = "$(location :disk_four_dd) of=$@ bs=64K status=none",
+    tools = [":disk_four_dd"],
+)
+
+# The bytes written are the disk image: the target found every directory.
+diff_test(
+    name = "dd_writes_a_disk_with_four_partitions_test",
+    file1 = ":disk_four_image",
+    file2 = ":disk_four_written",
+)
+
 filegroup(
     name = "disk_erofs_xstream",
     srcs = [":disk_erofs_compact_layers"],

@@ -5,7 +5,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
+
+	"github.com/bazelbuild/rules_go/go/runfiles"
 
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/deploy"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/bytesize"
@@ -20,6 +23,30 @@ type stats struct {
 	elapsed                 time.Duration
 }
 
+// casDirsFromManifest reads the content-addressed directories of a manifest
+// file: one runfiles path per line, resolved with resolve. A target built by
+// image_dd passes the directories this way because the launcher it is built
+// with embeds only a few arguments, however many directories the image needs.
+func casDirsFromManifest(path string, resolve func(string) (string, error)) ([]string, error) {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("reading cas-dir-manifest: %w", err)
+	}
+	var dirs []string
+	for _, line := range strings.Split(string(content), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		dir, err := resolve(line)
+		if err != nil {
+			return nil, fmt.Errorf("cas-dir-manifest %s: finding %q in the runfiles: %w", path, line, err)
+		}
+		dirs = append(dirs, dir)
+	}
+	return dirs, nil
+}
+
 func run(ctx context.Context, o *options, stdout *os.File, stderr io.Writer) error {
 	var closers []io.Closer
 	defer func() {
@@ -27,6 +54,13 @@ func run(ctx context.Context, o *options, stdout *os.File, stderr io.Writer) err
 			c.Close()
 		}
 	}()
+	if o.casDirManifest != "" {
+		dirs, err := casDirsFromManifest(o.casDirManifest, runfiles.Rlocation)
+		if err != nil {
+			return err
+		}
+		o.casDirs = append(o.casDirs, dirs...)
+	}
 	// The remote cache is only opened for a stream: a raw image has nothing to
 	// fetch.
 	store := func() (compactstream.BlobStore, error) {
