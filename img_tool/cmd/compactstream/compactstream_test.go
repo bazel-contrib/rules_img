@@ -26,7 +26,7 @@ func TestDirStoreResolvesByDigest(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	store := &dirStore{shaDir: shaDir}
+	store := compactstream.NewDirStore(dir)
 
 	rc, err := store.ReaderForBlob(context.Background(), sum[:], int64(len(content)))
 	if err != nil {

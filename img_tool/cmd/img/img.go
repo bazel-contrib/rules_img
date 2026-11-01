@@ -20,6 +20,7 @@ import (
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/downloadblob"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/downloadmanifest"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/expandtemplate"
+	extentstreamcmd "github.com/bazel-contrib/rules_img/img_tool/cmd/extentstream"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/flattenimage"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/fromarchive"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/hash"
@@ -78,6 +79,7 @@ Commands:
   soci-index               creates a SOCI Index Manifest v2 from per-layer ztoc blobs
   ztoc                     generates a ztoc (SOCI table of contents) for a gzip-compressed layer
   compact-stream           inspects or reconstructs a compact stream (subcommands: reconstruct, list)
+  extent-stream            (experimental) inspects or reconstructs an extent stream (subcommands: reconstruct, list)
   cas-dir                  builds a content-addressed directory (sha256/<hex>) from input files
   copy-files               copies files, preferring hardlinks and reflinks over real copies
   sync-oci-ref-graph       syncs OCI reference graph by downloading manifests in parallel
@@ -179,6 +181,8 @@ func Run(ctx context.Context, args []string) {
 		sparseocilayout.SparseOCILayoutProcess(ctx, args[2:])
 	case "compact-stream":
 		compactstreamcmd.CompactStreamProcess(ctx, args[2:])
+	case "extent-stream":
+		extentstreamcmd.ExtentStreamProcess(ctx, args[2:])
 	case "cas-dir":
 		casdir.CASDirProcess(ctx, args[2:])
 	case "copy-files":
