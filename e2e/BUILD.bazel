@@ -84,7 +84,7 @@ img_integration_tests(
     bazel_versions = [
         "8.8.2",
         "9.3.1",
-        "10.0.0rc1",
+        "10.0.0rc2",
     ],
     tags = TAGS,
     target_compatible_with = select({
@@ -115,7 +115,7 @@ img_integration_tests(
     bazel_versions = [
         "8.8.2",
         "9.3.1",
-        "10.0.0rc1",
+        "10.0.0rc2",
     ],
     tags = TAGS,
     target_compatible_with = select({
@@ -152,7 +152,7 @@ img_integration_tests(
     name = "workspace",
     # bazel 9 drops WORKSPACE support.
     bazel_versions = [
-        "7.7.1",
+        "7.7.2",
     ],
     tags = TAGS,
     test_runner = "@rules_img_internal_tools//integration_test_runner",
@@ -182,14 +182,14 @@ test_suite(
         [
             "8.8.2",
             "9.3.1",
-            "10.0.0rc1",
+            "10.0.0rc2",
         ],
     ) + integration_test_utils.bazel_integration_test_names(
         "python",
         [
             "8.8.2",
             "9.3.1",
-            "10.0.0rc1",
+            "10.0.0rc2",
         ],
     ) + integration_test_utils.bazel_integration_test_names(
         "sbom",
@@ -199,7 +199,7 @@ test_suite(
     ) + integration_test_utils.bazel_integration_test_names(
         "workspace",
         [
-            "7.7.1",
+            "7.7.2",
         ],
     ),
     visibility = ["//:__subpackages__"],
