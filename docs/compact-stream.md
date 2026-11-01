@@ -407,6 +407,14 @@ layer file as the
 Reconstruction compresses the archive again and verifies that it got the layer
 file back.
 
+A byte sequence that is made of several filesystems at once, such as a disk image
+with a partition table, is not a good fit for a single compact stream. The
+experimental [extent stream](extent-stream.md) describes such nested sequences: it
+references compact streams (and other extent streams) by digest.
+
+`compact-stream reconstruct` takes `--cas-dir` several times: a blob is taken from
+the first directory that has it.
+
 ## Materializing the blob on demand
 
 Compact layers alone are incompatible with any consumer that needs a real

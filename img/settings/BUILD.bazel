@@ -13,6 +13,19 @@ string_flag(
     visibility = ["//visibility:public"],
 )
 
+# Whether a disk_image produces an (experimental) extent stream of the disk
+# image (see docs/extent-stream.md and docs/disk-images.md) instead of the disk
+# image itself, which can be huge. Per-target: the extent_stream attribute.
+string_flag(
+    name = "disk_image_extent_stream",
+    build_setting_default = "disabled",
+    values = [
+        "enabled",
+        "disabled",
+    ],
+    visibility = ["//visibility:public"],
+)
+
 # Layer container format, orthogonal to :compress. "tar" writes an OCI tar
 # changeset; "erofs" writes a mountable EROFS filesystem image (see
 # docs/erofs-layers.md), which accepts only compress=none or zstd; "ext4"

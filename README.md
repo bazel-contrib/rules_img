@@ -24,6 +24,7 @@ Supports both **Bzlmod** and **WORKSPACE** setups. For WORKSPACE setup instructi
 - 🎯 **Shallow Base Images** - Avoid downloading layers from huge base images like CUDA
 - 🧱 **Bespoke Base Images** - Build your own base from scratch: directory skeleton, users, CA trust stores and shared libraries (see [base images](docs/base-images.md))
 - 💽 **Filesystem layers** - Ship a layer as a mountable filesystem instead of a tar changeset: [EROFS](docs/erofs-layers.md), [ext4, FAT32 or cpio](docs/filesystems.md)
+- 🖴 **Disk images** - Assemble filesystem layers into a bootable GPT or MBR disk image, with a UEFI system partition, and optionally as an experimental extent stream (see [disk images](docs/disk-images.md))
 - 🏢 **Enterprise Ready** - Remote Build Execution and Content Addressable Storage integration
 - ☁️ **Push at Build Time** - Upload layers in parallel straight from the remote execution cluster to the registry; bytes never touch the machine running Bazel
 
@@ -668,6 +669,9 @@ linux/arm64).
   - **Test Rules**
     - [`image_structure_test`](docs/test.md#image_structure_test) - Validate image structure (config + mtree) using container-structure-test configs
     - [`image_size_test`](docs/test.md#image_size_test) - Budget wasted and duplicated bytes across an image's layers (per-layer mtrees)
+  - **Disk Image Rules**
+    - [`disk_image`](docs/disk_image.md#disk_image) - Assemble partitions into a GPT or MBR disk image
+    - [`disk_partition`](docs/disk_image.md#disk_partition) - Describe one partition of a `disk_image`
   - **Special artifacts**
     - [`layer_from_file`](docs/layer.md#layer_from_file) - Create layers from custom blobs (not tar files)
     - [`oras_file_layer`](docs/oras.md#oras_file_layer) - Create oras artifact layers from individual files
@@ -682,6 +686,8 @@ linux/arm64).
 - [EROFS Layers](docs/erofs-layers.md) - Support for creating layers as EROFS filesystems, instead of tar changesets
 - [Other Filesystem Formats](docs/filesystems.md) - Other filesystem formats supported by rules_img, including ext4, FAT32, cpio and EROFS
 - [Compact Stream Representation](docs/compact-stream.md) - On-disk format behind the experimental cache-efficient layers (`experimental_compact_layers`)
+- [Disk Images](docs/disk-images.md) - Assemble filesystem layers into a bootable GPT or MBR disk image
+- [Extent Streams](docs/extent-stream.md) - Experimental format that describes a disk image as references to the streams of its partitions
 - [Pre-release Versions](docs/pre-releases.md) - Depend on a commit of rules_img before it is released, from the pre-release registry
 - [Migration Guide from rules_oci](docs/migration-from-rules_oci.md)
 
