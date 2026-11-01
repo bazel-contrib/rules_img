@@ -11,7 +11,7 @@ require (
 )
 
 require (
-	github.com/fxamacker/cbor/v2 v2.9.6 // indirect
+	github.com/fxamacker/cbor/v2 v2.10.0 // indirect
 	github.com/golang-jwt/jwt/v4 v4.5.2 // indirect
 	github.com/klauspost/compress v1.20.3 // indirect
 	github.com/veraison/go-cose v1.3.0 // indirect
