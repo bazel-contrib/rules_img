@@ -2,6 +2,7 @@
 
 load("//img/private/common:build.bzl", "TOOLCHAINS")
 load("//img/private/common:layer_helper.bzl", "calculate_layer_info")
+load("//img/private/common:transitions.bzl", "reset_compact_image_transition")
 load("//img/private/providers:layers_info.bzl", "LayersInfo")
 
 def _layer_from_file_impl(ctx):
@@ -79,6 +80,7 @@ layer_from_file(
         "src": attr.label(
             mandatory = True,
             allow_single_file = True,
+            cfg = reset_compact_image_transition,
             doc = """The file to use as a layer blob.""",
         ),
         "annotations": attr.string_dict(

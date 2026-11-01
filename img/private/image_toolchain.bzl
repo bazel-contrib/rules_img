@@ -2,6 +2,7 @@
 
 load("@bazel_features//:features.bzl", "bazel_features")
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
+load("//img/private/common:transitions.bzl", "reset_compact_image_transition")
 load("//img/private/providers:image_toolchain_info.bzl", "ImageToolchainInfo")
 
 DOC = """\
@@ -21,6 +22,7 @@ ATTRS = dict(
     tool_exe = attr.label(
         doc = "An image build tool executable.",
         allow_single_file = True,
+        cfg = reset_compact_image_transition,
     ),
     _treeartifact_symlinks = attr.label(
         default = Label("//img/settings:treeartifact_symlinks"),

@@ -1,6 +1,7 @@
 """Common attributes shared by layer rules."""
 
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
+load("//img/private/common:transitions.bzl", "reset_compact_image_transition")
 load("//img/private/providers:format_config_info.bzl", "CpioConfigInfo", "ErofsConfigInfo", "Ext4ConfigInfo", "Fat32ConfigInfo")
 
 _common_attrs = dict(
@@ -134,6 +135,7 @@ Annotations to add to the layer metadata as key-value pairs.
 """,
     ),
     annotations_file = attr.label(
+        cfg = reset_compact_image_transition,
         doc = """\
 File containing annotations for the layer, as JSON or newline-delimited text.
 

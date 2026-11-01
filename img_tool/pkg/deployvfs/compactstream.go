@@ -208,12 +208,12 @@ func (b *Builder) layerFromCompactStream(compactStreamPath, casDirPath string, d
 				return nil, fmt.Errorf("opening compact stream %s: %w", compactStreamPath, err)
 			}
 
-			shaDir := ""
+			var shaDirs []string
 			if casDirPath != "" {
-				shaDir = filepath.Join(casDirPath, "sha256")
+				shaDirs = []string{filepath.Join(casDirPath, "sha256")}
 			}
 			store := &casDirStore{
-				shaDir:        shaDir,
+				shaDirs:       shaDirs,
 				diskCachePath: builder.diskCachePath,
 				casReader:     builder.casReader,
 			}
@@ -239,9 +239,25 @@ func (b *Builder) layerFromCompactStream(compactStreamPath, casDirPath string, d
 //  3. the remote CAS (used by lazy strategies, where the input directory is
 //     omitted on purpose).
 type casDirStore struct {
-	shaDir        string // <inputfilecas>/sha256, or "" if no input directory was shipped
+	// shaDirs are the <inputfilecas>/sha256 directories that were shipped, in
+	// the order they are searched. Empty with the lazy strategies.
+	shaDirs       []string
 	diskCachePath string
 	casReader     CASReader
+}
+
+// NewBlobStore returns a store for the blobs and the compact streams (and other
+// streams) that something references by digest. It reads from, in order, the
+// content-addressed directories (sha256/<xx>/<hex>), the Bazel disk cache
+// (diskCachePath, may be empty) and the remote CAS (remote, may be nil). With
+// only the last two, nothing needs to be shipped with the build: the blobs are
+// fetched when they are needed (the lazy strategies).
+func NewBlobStore(casDirs []string, diskCachePath string, remote CASReader) compactstream.MultiBlobStore {
+	s := &casDirStore{diskCachePath: diskCachePath, casReader: remote}
+	for _, d := range casDirs {
+		s.shaDirs = append(s.shaDirs, filepath.Join(d, "sha256"))
+	}
+	return s
 }
 
 func (s *casDirStore) ReaderForBlob(ctx context.Context, digest []byte, size int64) (io.ReadCloser, error) {
@@ -249,8 +265,8 @@ func (s *casDirStore) ReaderForBlob(ctx context.Context, digest []byte, size int
 
 	// 1. Content-addressed input directory (eager). Files are addressed by their
 	// content digest, so they are trusted without an extra size check.
-	if s.shaDir != "" {
-		if f, err := casdirlayout.Open(s.shaDir, hexDigest); err == nil {
+	for _, dir := range s.shaDirs {
+		if f, err := casdirlayout.Open(dir, hexDigest); err == nil {
 			return f, nil
 		}
 	}
@@ -337,7 +353,7 @@ func (s *casDirStore) planRuns(requests []compactstream.BlobRequest) []blobRun {
 	if s.casReader == nil {
 		return []blobRun{{from: 0, to: len(requests)}}
 	}
-	if s.shaDir == "" && s.diskCachePath == "" {
+	if len(s.shaDirs) == 0 && s.diskCachePath == "" {
 		return []blobRun{{from: 0, to: len(requests), remote: true}}
 	}
 	var runs []blobRun
@@ -356,8 +372,8 @@ func (s *casDirStore) planRuns(requests []compactstream.BlobRequest) []blobRun {
 // mirrors the first two steps of ReaderForBlob.
 func (s *casDirStore) hasLocally(digest []byte, size int64) bool {
 	hexDigest := hex.EncodeToString(digest)
-	if s.shaDir != "" {
-		if _, err := casdirlayout.Stat(s.shaDir, hexDigest); err == nil {
+	for _, dir := range s.shaDirs {
+		if _, err := casdirlayout.Stat(dir, hexDigest); err == nil {
 			return true
 		}
 	}

@@ -18,6 +18,7 @@ load(
     "symlinks_arg",
     "to_short_path_pair",
 )
+load("//img/private/common:transitions.bzl", "reset_compact_image_transition")
 load("//img/private/providers:layer_config_info.bzl", "ImageLayerConfigInfo")
 load("//img/private/providers:layers_info.bzl", "LayersInfo")
 
@@ -81,6 +82,11 @@ _binary_run_info_extraction_aspect = aspect(
     attr_aspects = [],  # The aspect only inspect the target itself (not the deps)
     provides = [_BinaryRunInfo],
 )
+
+def _binary(ctx):
+    """The binary target. Bazel passes the target of an attribute with a transition as a list of one."""
+    binary = ctx.attr.binary
+    return binary[0] if type(binary) == "list" else binary
 
 def _normalize_path(path):
     """Strip leading slash from a path for use in tar entries."""
@@ -260,7 +266,7 @@ def _append_binary_args(ctx, exe, path_in_image, group_runfiles, runfiles_config
     if runfiles_config.shared:
         _append_shared_runfiles_symlink_args(ctx, runfiles_config, content_prefix, group_runfiles, extra_args)
 
-    repo_mapping_manifest = get_repo_mapping_manifest(ctx.attr.binary)
+    repo_mapping_manifest = get_repo_mapping_manifest(_binary(ctx))
     if repo_mapping_manifest != None:
         extra_inputs.append(depset([repo_mapping_manifest]))
         repo_mapping_args = ctx.actions.args()
@@ -288,7 +294,7 @@ def _create_grouped_layers(ctx, settings, exe, path_in_image, ordered_groups, ru
     all_compact_streams = []
     all_mtrees = []
     all_ztocs = []
-    default_info = ctx.attr.binary[DefaultInfo]
+    default_info = _binary(ctx)[DefaultInfo]
     content_prefix = _normalize_path(runfiles_config.runfiles_content_path)
 
     # Every group's contents as a runfiles object, resolved once and shared by the
@@ -387,7 +393,7 @@ def _create_grouped_layers(ctx, settings, exe, path_in_image, ordered_groups, ru
     ]
 
 def _layer_from_binary_impl(ctx):
-    run_info = ctx.attr.binary[_BinaryRunInfo]
+    run_info = _binary(ctx)[_BinaryRunInfo]
     exe = ctx.executable.binary
     path_in_image = ctx.attr.path
     if len(path_in_image) == 0:
@@ -407,7 +413,7 @@ def _layer_from_binary_impl(ctx):
     # hint transforms, and order by (rank, name). Returns None for a binary that does
     # not group its runfiles; the ungrouped path below then packages
     # DefaultInfo.default_runfiles as a single layer.
-    resolved = runfiles_groups.resolve(ctx, ctx.attr.binary, aspect_hints = run_info.aspect_hints)
+    resolved = runfiles_groups.resolve(ctx, _binary(ctx), aspect_hints = run_info.aspect_hints)
     ordered_groups = None
     if resolved != None:
         # With an executable group the binary and its supporting files are merged
@@ -463,7 +469,7 @@ def _layer_from_binary_impl(ctx):
         extra_args = _default_metadata_args(ctx)
         extra_inputs = []
 
-        default_info = ctx.attr.binary[DefaultInfo]
+        default_info = _binary(ctx)[DefaultInfo]
         extra_inputs.append(default_info.files)
 
         if ctx.attr.include_runfiles:
@@ -495,7 +501,7 @@ def _layer_from_binary_impl(ctx):
                     empty_args.add_all(runfiles.empty_filenames, map_each = empty_runfile_short_path, format_each = "{}/%s".format(content_prefix))
                     extra_args.append(empty_args)
 
-                repo_mapping_manifest = get_repo_mapping_manifest(ctx.attr.binary)
+                repo_mapping_manifest = get_repo_mapping_manifest(_binary(ctx))
                 if repo_mapping_manifest != None:
                     extra_inputs.append(depset([repo_mapping_manifest]))
                     repo_mapping_args = ctx.actions.args()
@@ -537,7 +543,7 @@ def _layer_from_binary_impl(ctx):
                 if runfiles_config.shared and runfiles:
                     _append_shared_runfiles_symlink_args(ctx, runfiles_config, content_prefix, [runfiles], extra_args)
 
-                repo_mapping_manifest = get_repo_mapping_manifest(ctx.attr.binary)
+                repo_mapping_manifest = get_repo_mapping_manifest(_binary(ctx))
                 if repo_mapping_manifest != None:
                     extra_inputs.append(depset([repo_mapping_manifest]))
                     repo_mapping_args = ctx.actions.args()
@@ -655,7 +661,7 @@ in args and env values.
 If the binary provides RunfilesGroupInfo, the runfiles are split into separate layers per group.""",
             executable = True,
             mandatory = True,
-            cfg = "target",
+            cfg = reset_compact_image_transition,
             aspects = [_binary_run_info_extraction_aspect],
         ),
         "path": attr.string(

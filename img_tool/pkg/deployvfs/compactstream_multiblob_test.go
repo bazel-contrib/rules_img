@@ -107,7 +107,7 @@ func TestCasDirStoreReadsAllLocalBlobsWithoutTheRemoteCache(t *testing.T) {
 		writeBlobFile(t, filepath.Join(shaDir, hash), content)
 	}
 	remote := &recordingCASReader{stubCASReader: stubCASReader{blobs: map[string][]byte{}}}
-	s := &casDirStore{shaDir: shaDir, casReader: remote}
+	s := &casDirStore{shaDirs: []string{shaDir}, casReader: remote}
 
 	if got := readBlobStream(t, s, blobs.requests); !bytes.Equal(got, blobs.all()) {
 		t.Fatalf("stream = %q, want %q", got, blobs.all())
@@ -134,7 +134,7 @@ func TestCasDirStoreGroupsRemoteRunsAroundLocalBlobs(t *testing.T) {
 		remoteBlobs[hash] = blobs.contents[i]
 	}
 	remote := &recordingCASReader{stubCASReader: stubCASReader{blobs: remoteBlobs}}
-	s := &casDirStore{shaDir: shaDir, casReader: remote}
+	s := &casDirStore{shaDirs: []string{shaDir}, casReader: remote}
 
 	if got := readBlobStream(t, s, blobs.requests); !bytes.Equal(got, blobs.all()) {
 		t.Fatalf("stream = %q, want %q", got, blobs.all())
@@ -177,7 +177,7 @@ func TestCasDirStoreReadsBlobsWithoutARemoteCache(t *testing.T) {
 	blobs := makeBlobs(2)
 	shaDir := filepath.Join(t.TempDir(), "sha256")
 	writeBlobFile(t, filepath.Join(shaDir, hexOf(blobs, 0)), blobs.contents[0])
-	s := &casDirStore{shaDir: shaDir}
+	s := &casDirStore{shaDirs: []string{shaDir}}
 
 	rc, err := s.ReaderForBlobs(context.Background(), blobs.requests)
 	if err != nil {

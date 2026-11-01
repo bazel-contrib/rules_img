@@ -72,6 +72,7 @@ bzl_library(
         "//img/private/common:layer_attrs",
         "//img/private/common:layer_helper",
         "//img/private/common:tar_layer",
+        "//img/private/common:transitions",
         "//img/private/providers:layers_info",
     ],
 )
@@ -84,6 +85,7 @@ bzl_library(
         "//img/private/common:build",
         "//img/private/common:layer_attrs",
         "//img/private/common:tar_layer",
+        "//img/private/common:transitions",
         "//img/private/providers:layer_config_info",
         "//img/private/providers:layers_info",
         "@rules_runfiles_group//runfiles_group:lib",
@@ -220,10 +222,27 @@ bzl_library(
     deps = [
         "//img/private/common:build",
         "//img/private/common:media_types",
+        "//img/private/common:transitions",
         "//img/private/providers:disk_image_info",
         "//img/private/providers:layers_info",
         "//img/private/providers:partition_info",
         "@bazel_skylib//rules:common_settings",
+    ],
+)
+
+bzl_library(
+    name = "dd",
+    srcs = ["dd.bzl"],
+    visibility = ["//img:__subpackages__"],
+    deps = [
+        "//img/private/common:build",
+        "//img/private/common:default_deploy_tool",
+        "//img/private/common:transitions",
+        "//img/private/providers:deploy_tool_info",
+        "//img/private/providers:disk_image_info",
+        "//img/private/providers:layers_info",
+        "//img/private/providers:load_settings_info",
+        "@hermetic_launcher//launcher:lib_bzl",
     ],
 )
 
@@ -249,6 +268,7 @@ bzl_library(
     srcs = ["image_toolchain.bzl"],
     visibility = ["//img:__subpackages__"],
     deps = [
+        "//img/private/common:transitions",
         "//img/private/providers:image_toolchain_info",
         "@bazel_features//:features",
         "@bazel_skylib//rules:common_settings",
@@ -269,6 +289,7 @@ bzl_library(
     deps = [
         "//img/private/common:build",
         "//img/private/common:layer_helper",
+        "//img/private/common:transitions",
         "//img/private/providers:layers_info",
     ],
 )
@@ -281,6 +302,7 @@ bzl_library(
         "//img/private/common:build",
         "//img/private/common:layer_helper",
         "//img/private/common:media_types",
+        "//img/private/common:transitions",
         "//img/private/providers:format_config_info",
         "//img/private/providers:layers_info",
         "@bazel_skylib//rules:common_settings",

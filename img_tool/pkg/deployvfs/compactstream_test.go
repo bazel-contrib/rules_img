@@ -82,7 +82,7 @@ func TestCasDirStoreInputDirHit(t *testing.T) {
 	shaDir := filepath.Join(t.TempDir(), "sha256")
 	writeBlobFile(t, filepath.Join(shaDir, hexd), content)
 
-	s := &casDirStore{shaDir: shaDir}
+	s := &casDirStore{shaDirs: []string{shaDir}}
 	rc, err := s.ReaderForBlob(context.Background(), d[:], int64(len(content)))
 	if err != nil {
 		t.Fatal(err)
@@ -104,7 +104,7 @@ func TestCasDirStoreInputDirWinsOverDiskCache(t *testing.T) {
 	// Different bytes (same length) in the disk cache, to prove the input dir wins.
 	writeBlobFile(t, diskCacheBlobPath(diskCache, "sha256:"+hexd), bytes.Repeat([]byte("x"), len(content)))
 
-	s := &casDirStore{shaDir: shaDir, diskCachePath: diskCache}
+	s := &casDirStore{shaDirs: []string{shaDir}, diskCachePath: diskCache}
 	rc, err := s.ReaderForBlob(context.Background(), d[:], int64(len(content)))
 	if err != nil {
 		t.Fatal(err)
@@ -543,5 +543,31 @@ func TestCloneCopiesCompactStreamLayers(t *testing.T) {
 	clone.WithCompactStreamLayer("sha256:def", "/q")
 	if _, leaked := b.compactStreamLayers["sha256:def"]; leaked {
 		t.Fatal("mutating clone leaked into the original compactStreamLayers")
+	}
+}
+
+func TestNewBlobStoreReadsSeveralDirectoriesThenTheRemoteCache(t *testing.T) {
+	a, b := t.TempDir(), t.TempDir()
+	inA, inB, remoteOnly := []byte("only in a"), []byte("only in b"), []byte("only in the remote cache")
+	hashOf := func(c []byte) string { d := sha256.Sum256(c); return hex.EncodeToString(d[:]) }
+	writeBlobFile(t, filepath.Join(a, "sha256", hashOf(inA)), inA)
+	writeBlobFile(t, filepath.Join(b, "sha256", hashOf(inB)), inB)
+	remote := &stubCASReader{blobs: map[string][]byte{hashOf(remoteOnly): remoteOnly}}
+
+	s := NewBlobStore([]string{a, b}, "", remote)
+	for _, c := range [][]byte{inA, inB, remoteOnly} {
+		d := sha256.Sum256(c)
+		rc, err := s.ReaderForBlob(context.Background(), d[:], int64(len(c)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := readAllClose(t, rc); !bytes.Equal(got, c) {
+			t.Errorf("got %q, want %q", got, c)
+		}
+	}
+	// Without any source, nothing is found.
+	d := sha256.Sum256(inA)
+	if _, err := NewBlobStore(nil, "", nil).ReaderForBlob(context.Background(), d[:], int64(len(inA))); err == nil {
+		t.Error("a blob was found without any source")
 	}
 }

@@ -672,6 +672,7 @@ linux/arm64).
   - **Disk Image Rules**
     - [`disk_image`](docs/disk_image.md#disk_image) - Assemble partitions into a GPT or MBR disk image
     - [`disk_partition`](docs/disk_image.md#disk_partition) - Describe one partition of a `disk_image`
+    - [`image_dd`](docs/dd.md#image_dd) - Write the bytes of a disk image or a layer to a file or a block device
   - **Special artifacts**
     - [`layer_from_file`](docs/layer.md#layer_from_file) - Create layers from custom blobs (not tar files)
     - [`oras_file_layer`](docs/oras.md#oras_file_layer) - Create oras artifact layers from individual files

@@ -55,6 +55,13 @@ bzl_library(
 )
 
 bzl_library(
+    name = "dd",
+    srcs = ["dd.bzl"],
+    visibility = ["//visibility:public"],
+    deps = ["//img/private:dd"],
+)
+
+bzl_library(
     name = "disk_image",
     srcs = ["disk_image.bzl"],
     visibility = ["//visibility:public"],

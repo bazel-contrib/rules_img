@@ -1,4 +1,5 @@
 load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
+load("@bazel_skylib//rules:common_settings.bzl", "string_setting")
 load(":load.bzl", "load_settings")
 load(":oci_layout.bzl", "oci_layout_settings")
 load(":push_at_build_time.bzl", "push_at_build_time_settings")
@@ -69,4 +70,13 @@ filegroup(
     name = "all_files",
     srcs = glob(["**"]),
     visibility = ["//img/private/release:__subpackages__"],
+)
+
+# The settings that image_dd(compact = ...) had before it set them, so that they
+# can be put back where the build leaves the image (see
+# //img/private/common:transitions.bzl). Empty if there is nothing to put back.
+string_setting(
+    name = "original_layer_settings",
+    build_setting_default = "",
+    visibility = ["//img:__subpackages__"],
 )

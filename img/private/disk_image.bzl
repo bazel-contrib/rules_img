@@ -3,6 +3,7 @@
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("//img/private/common:build.bzl", "TOOLCHAIN", "TOOLCHAINS")
 load("//img/private/common:media_types.bzl", "EROFS_LAYER", "EXT4_LAYER", "FAT32_LAYER")
+load("//img/private/common:transitions.bzl", "reset_compact_image_transition")
 load("//img/private/providers:disk_image_info.bzl", "DiskImageInfo")
 load("//img/private/providers:layers_info.bzl", "LayersInfo")
 load("//img/private/providers:partition_info.bzl", "PartitionInfo")
@@ -411,6 +412,7 @@ See [disk images](disk-images.md).
         ),
         "boot_code": attr.label(
             allow_single_file = True,
+            cfg = reset_compact_image_transition,
             doc = "File with up to 440 bytes of boot code for the first sector: the MBR, or the protective MBR of a GPT (for booting a GPT disk with a legacy BIOS).",
         ),
         "extent_stream": attr.string(

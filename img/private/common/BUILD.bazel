@@ -32,6 +32,7 @@ bzl_library(
     srcs = ["layer_attrs.bzl"],
     visibility = ["//img:__subpackages__"],
     deps = [
+        ":transitions",
         "//img/private/providers:format_config_info",
         "@bazel_skylib//rules:common_settings",
     ],

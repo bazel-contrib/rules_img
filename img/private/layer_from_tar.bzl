@@ -4,6 +4,7 @@ load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("//img/private/common:build.bzl", "TOOLCHAINS")
 load("//img/private/common:layer_helper.bzl", "allow_tar_files", "build_layer_mtree", "calculate_layer_info", "extension_to_compression", "format_config_args", "optimize_layer", "recompress_layer", "resolve_format_config", "resolve_tar_format")
 load("//img/private/common:media_types.bzl", "CPIO_GZIP_LAYER", "CPIO_LAYER", "CPIO_ZSTD_LAYER", "EROFS_LAYER", "EROFS_ZSTD_LAYER", "EXT4_LAYER", "FAT32_LAYER")
+load("//img/private/common:transitions.bzl", "reset_compact_image_transition")
 load("//img/private/providers:format_config_info.bzl", "CpioConfigInfo", "ErofsConfigInfo", "Ext4ConfigInfo", "Fat32ConfigInfo")
 load("//img/private/providers:layers_info.bzl", "LayersInfo")
 
@@ -193,6 +194,7 @@ layer_from_tar(
         "src": attr.label(
             mandatory = True,
             allow_single_file = allow_tar_files,
+            cfg = reset_compact_image_transition,
             doc = """The tar file to convert into a layer. Must be a valid tar file (optionally compressed).""",
         ),
         "compress": attr.string(
