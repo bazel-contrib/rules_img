@@ -36,6 +36,18 @@ jobs:
           import %workspace%/.github/workflows/.bazelrc.buildbuddy.generated
     - name: Run buildifier
       run: bazelisk run //util:buildifier.check
+    - name: Check --deleted_packages is up to date
+      # A new package under img_tool/ (or e2e/) that is missing from
+      # --deleted_packages stays a live package of the root module, so the
+      # glob in //:tool_source_files stops at its boundary and the
+      # rules_img_tool release archive silently ships without it.
+      shell: bash
+      run: |
+        bazelisk run @rules_bazel_integration_test//tools:update_deleted_packages
+        if ! git diff --exit-code .bazelrc; then
+          echo "::error::.bazelrc --deleted_packages is stale. Run 'bazel run @rules_bazel_integration_test//tools:update_deleted_packages' and commit the result."
+          exit 1
+        fi
   img_tool_go_build:
     # Strict check that img_tool/ stays buildable with a standard Go toolchain
     # (outside Bazel). The img tool is bootstrapped from source via `go build` in
