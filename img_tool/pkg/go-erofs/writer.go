@@ -36,6 +36,8 @@ type erofsWriter struct {
 	blockSize       int
 	chunkBits       uint8                        // log2(chunkSize / blockSize); chunkSize = blockSize << chunkBits
 	inlineThreshold int                          // see WithInlineThreshold
+	compression     CompressionAlgorithm         // of the compressed files, if any
+	clusterBlocks   int                          // most blocks in a compressed cluster
 	copyBuf         []byte                       // reusable buffer for io.CopyBuffer
 	zeroBuf         []byte                       // blockSize-length zero buffer for padding
 	inodeBuf        [disk.SizeInodeExtended]byte // scratch buffer for writeInode
@@ -182,6 +184,9 @@ func (w *erofsWriter) resolveSharedData() error {
 
 // extentKind classifies an entry's out-of-line payload.
 func extentKind(e *erofsEntry) ExtentKind {
+	if e.layout == disk.LayoutCompressedFull {
+		return ExtentCompressedFileData
+	}
 	switch e.mode & disk.StatTypeMask {
 	case disk.StatTypeDir:
 		return ExtentDirents
@@ -196,11 +201,37 @@ func extentKind(e *erofsEntry) ExtentKind {
 // (blocks before metadata): 1024-byte pad + superblock + device slots,
 // rounded up to block boundary.
 func (w *erofsWriter) sbAreaSize() int {
-	n := disk.SuperBlockOffset + disk.SizeSuperBlock
+	_, cfgs := w.comprCfgs()
+	n := disk.SuperBlockOffset + disk.SizeSuperBlock + len(cfgs)
 	if len(w.devices) > 0 {
 		n += len(w.devices) * disk.SizeDeviceSlot
 	}
 	return ((n + w.blockSize - 1) / w.blockSize) * w.blockSize
+}
+
+// comprCfgs returns the superblock's bitmap of available compression
+// algorithms and the compression configuration area that follows the superblock,
+// for an image whose algorithm or cluster size needs one: for each available
+// algorithm in ascending order, a 16-bit length and the configuration. Plain LZ4
+// with single-block clusters needs none, because the superblock field is then the
+// (default) maximum LZ4 distance.
+func (w *erofsWriter) comprCfgs() (algs uint16, cfgs []byte) {
+	switch {
+	case w.compression == CompressionLZ4 && w.clusterBlocks > 1:
+		// struct z_erofs_lz4_cfgs { le16 max_distance; le16 max_pclusterblks; u8 reserved[10]; }
+		cfg := make([]byte, 2+14)
+		cfg[0] = 14
+		binary.LittleEndian.PutUint16(cfg[4:], uint16(w.clusterBlocks))
+		return 1 << w.compression.algorithmType(), cfg
+	case w.compression == CompressionDeflate:
+		// struct z_erofs_deflate_cfgs { u8 windowbits; u8 reserved[5]; }
+		return 1 << w.compression.algorithmType(), []byte{6, 0, deflateWindowBits, 0, 0, 0, 0, 0}
+	case w.compression == CompressionZstd:
+		// struct z_erofs_zstd_cfgs { u8 format; u8 windowlog; u8 reserved[4]; }
+		windowLog := zstdWindowLog(maxExtent(w.clusterBlocks, w.blockSize))
+		return 1 << w.compression.algorithmType(), []byte{6, 0, 0, byte(windowLog - zstdWindowLogMin), 0, 0, 0, 0}
+	}
+	return 0, nil
 }
 
 // sbAreaBlocks returns the number of blocks occupied by the superblock area.
@@ -259,6 +290,18 @@ func (w *erofsWriter) writeBlock0(buf io.Writer) error {
 			break
 		}
 	}
+	comprAlgs, comprCfgs := w.comprCfgs()
+	if w.compression != CompressionNone {
+		// Compressed data is right-aligned in its cluster behind zero padding,
+		// whatever the algorithm.
+		featureIncompat |= disk.FeatureIncompatLZ4_0Padding
+	}
+	if comprAlgs != 0 {
+		// LZ4 with single-block clusters is the only configuration available
+		// without a compression-config area. The bit is also the one that
+		// allows clusters of several blocks.
+		featureIncompat |= disk.FeatureIncompatComprCfgs
+	}
 
 	sb := disk.SuperBlock{
 		MagicNumber:     disk.MagicNumber,
@@ -271,6 +314,7 @@ func (w *erofsWriter) writeBlock0(buf io.Writer) error {
 		MetaBlkAddr:     w.metaBlkAddr,
 		UUID:            w.uuid,
 		FeatureIncompat: featureIncompat,
+		ComprAlgs:       comprAlgs,
 		ExtraDevices:    extraDevices,
 		DevtSlotOff:     devtSlotOff,
 	}
@@ -280,6 +324,7 @@ func (w *erofsWriter) writeBlock0(buf io.Writer) error {
 		return fmt.Errorf("write superblock: %w", err)
 	}
 	copy(sbArea[disk.SuperBlockOffset:], sbBuf.Bytes())
+	copy(sbArea[disk.SuperBlockOffset+disk.SizeSuperBlock:], comprCfgs)
 
 	// Write device slots right after superblock.
 	for i, blocks := range w.devices {
@@ -346,6 +391,16 @@ func (w *erofsWriter) writeMetadataInodes(buf io.Writer) error {
 					return fmt.Errorf("write chunks for %s: %w", e.path, err)
 				}
 				metaStart += e.trailingSize
+			} else if e.layout == disk.LayoutCompressedFull {
+				coreSize := inodeCoreSize(e) + e.xattrSize
+				meta := e.z.appendMeta(make([]byte, 0, e.trailingSize), coreSize, e.dataBlkAddr)
+				if len(meta) != e.trailingSize {
+					return fmt.Errorf("compressed index for %s is %d bytes, planned %d", e.path, len(meta), e.trailingSize)
+				}
+				if _, err := buf.Write(meta); err != nil {
+					return err
+				}
+				metaStart += len(meta)
 			} else if e.layout == disk.LayoutFlatInline && e.size > 0 && e.data != nil {
 				n, err := io.CopyBuffer(onlyWriter{buf}, io.LimitReader(e.data, int64(e.size)), w.copyBuf)
 				if c, ok := e.data.(io.Closer); ok {
@@ -406,6 +461,8 @@ func (w *erofsWriter) writeInode(buf io.Writer, e *erofsEntry) error {
 	case disk.StatTypeReg:
 		if e.layout == disk.LayoutChunkBased {
 			inodeData = disk.LayoutChunkFormatIndexes | uint32(w.entryChunkBits(e))
+		} else if e.layout == disk.LayoutCompressedFull {
+			inodeData = uint32(e.z.Blocks) // i_compressed_blocks
 		} else if e.layout == disk.LayoutFlatPlain && e.size > 0 {
 			inodeData = e.dataBlkAddr
 		}
@@ -701,6 +758,9 @@ func (w *erofsWriter) writeDataBlocks(out io.Writer) error {
 
 // flatPlainDataSize returns the data size for a flat-plain entry, or 0.
 func (w *erofsWriter) flatPlainDataSize(e *erofsEntry) int {
+	if e.layout == disk.LayoutCompressedFull {
+		return e.z.Blocks * w.blockSize
+	}
 	if e.layout != disk.LayoutFlatPlain {
 		return 0
 	}

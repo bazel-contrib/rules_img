@@ -4,9 +4,12 @@ go_library(
     name = "go-erofs",
     srcs = [
         "block.go",
+        "deflate.go",
         "erofs.go",
+        "fit.go",
         "format.go",
         "layout.go",
+        "lz4.go",
         "mkfs.go",
         "mkfs_darwin.go",
         "mkfs_image.go",
@@ -15,12 +18,16 @@ go_library(
         "prepare.go",
         "writer.go",
         "xattr.go",
+        "zfile.go",
+        "zread.go",
+        "zstd.go",
     ],
     importpath = "github.com/bazel-contrib/rules_img/img_tool/pkg/go-erofs",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/go-erofs/internal/builder",
         "//pkg/go-erofs/internal/disk",
+        "@com_github_klauspost_compress//zstd",
     ],
 )
 
@@ -44,4 +51,12 @@ go_test(
         "//pkg/go-erofs/internal/disk",
         "//pkg/go-erofs/internal/erofstest",
     ],
+)
+
+# Tests of the internals of the compression code: the LZ4 encoder and the
+# compressed-index writer, which they check against reference decoders.
+go_test(
+    name = "go-erofs_internal_test",
+    srcs = ["zfile_test.go"],
+    embed = [":go-erofs"],
 )

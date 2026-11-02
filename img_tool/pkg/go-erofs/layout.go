@@ -63,6 +63,8 @@ func (w *erofsWriter) planLayout(root *erofsEntry) {
 		switch e.mode & disk.StatTypeMask {
 		case disk.StatTypeReg:
 			switch {
+			case e.z != nil:
+				e.layout = disk.LayoutCompressedFull
 			case e.shareSrc != nil:
 				// References another inode's extent; nothing of its own to
 				// store, and inlining would defeat the sharing.
@@ -190,6 +192,9 @@ func chunkIndexPad(e *erofsEntry) int {
 func (w *erofsWriter) calcTrailingSize(e *erofsEntry) int {
 	switch e.mode & disk.StatTypeMask {
 	case disk.StatTypeReg:
+		if e.layout == disk.LayoutCompressedFull {
+			return e.z.metaSize(inodeCoreSize(e) + e.xattrSize)
+		}
 		if e.layout == disk.LayoutChunkBased {
 			if e.size == 0 && len(e.chunks) == 0 {
 				return 0
