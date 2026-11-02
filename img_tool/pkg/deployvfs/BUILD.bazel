@@ -28,6 +28,7 @@ go_library(
 go_test(
     name = "deployvfs_test",
     srcs = [
+        "compactstream_erofs_test.go",
         "compactstream_multiblob_test.go",
         "compactstream_test.go",
         "crossmount_test.go",
@@ -38,6 +39,9 @@ go_test(
         "//pkg/api",
         "//pkg/cas",
         "//pkg/compactstream",
+        "//pkg/compress",
+        "//pkg/digestfs",
+        "//pkg/erofscas",
         "@com_github_google_go_containerregistry//pkg/v1:pkg",
         "@com_github_google_go_containerregistry//pkg/v1/remote",
     ],

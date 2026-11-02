@@ -5,7 +5,7 @@ This example builds a bootable UEFI disk image with `disk_image`:
 | Partition | Type | File system | Content |
 |-----------|------|-------------|---------|
 | `ESP`     | EFI system partition | FAT32 | `/EFI/BOOT/BOOTX64.EFI`: a unified kernel image |
-| `root`    | root, x86-64 | erofs (read-only) | Debian bookworm userspace with systemd as init |
+| `root`    | root, x86-64 | erofs (read-only, LZ4-compressed) | Debian bookworm userspace with systemd as init |
 | `var`     | `/var` | ext4 | state that systemd writes |
 | `home`    | `/home` | ext4 | writable user data |
 

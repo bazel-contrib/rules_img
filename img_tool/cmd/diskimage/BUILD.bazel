@@ -18,11 +18,17 @@ go_library(
 
 go_test(
     name = "diskimage_test",
-    srcs = ["diskimage_test.go"],
+    srcs = [
+        "diskimage_test.go",
+        "erofs_test.go",
+    ],
     embed = [":diskimage"],
     deps = [
         "//pkg/compactstream",
+        "//pkg/compress",
+        "//pkg/digestfs",
         "//pkg/disk",
+        "//pkg/erofscas",
         "//pkg/extentstream",
         "//pkg/fs/ext4",
         "//pkg/fs/ext4/ext4cstream",

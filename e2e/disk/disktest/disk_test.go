@@ -115,6 +115,11 @@ func TestDiskImage(t *testing.T) {
 	if got := binary.LittleEndian.Uint32(byName["root"][1024:]); got != 0xE0F5E1E2 {
 		t.Errorf("root is not erofs: magic %#x", got)
 	}
+	// feature_incompat: LZ4_0PADDING (0x1) says that some files are compressed,
+	// COMPR_CFGS/BIG_PCLUSTER (0x2) that their clusters may take several blocks.
+	if got := binary.LittleEndian.Uint32(byName["root"][1024+80:]); got&0x3 != 0x3 {
+		t.Errorf("root is not compressed erofs with big clusters: incompat features %#x", got)
+	}
 	for _, n := range []string{"var", "home"} {
 		if got := binary.LittleEndian.Uint16(byName[n][1024+56:]); got != 0xEF53 {
 			t.Errorf("%s is not ext4: magic %#x", n, got)
