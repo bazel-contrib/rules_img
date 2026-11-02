@@ -48,6 +48,8 @@ func LayerProcess(ctx context.Context, args []string) {
 	var formatFlag string
 	var layerFormatFlag string
 	var erofsBlockSizeFlag int
+	var erofsCompressionFlag string
+	var erofsClusterSizeFlag int
 	var erofsInlineThresholdFlag uint64
 	var erofsSyntheticDirectoriesFlag string
 	var erofsNoVerifyCASRefsFlag bool
@@ -127,6 +129,8 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 	flagSet.BoolVar(&ext4OmitLostAndFoundFlag, "ext4-omit-lost-and-found", false, `Leave out the lost+found directory of an ext4 layer, which fsck uses to reattach orphaned files. Without it, fsck reports the directory as missing. Only used with --layer-format ext4.`)
 	flagSet.IntVar(&erofsBlockSizeFlag, "erofs-block-size", 0, `Filesystem block size of an EROFS layer, in bytes. 0 uses 4096, which matches the common page size. Only used with --layer-format erofs.`)
 	flagSet.Uint64Var(&erofsInlineThresholdFlag, "erofs-inline-threshold", 0, `Maximum size (in bytes) of a file payload an EROFS layer may tail-pack into its inode. A file at least this large gets a data extent of its own, and therefore becomes a content-addressed reference in the compact stream rather than inline bytes. 0 packs whatever fits in the inode's block. Only used with --layer-format erofs.`)
+	flagSet.StringVar(&erofsCompressionFlag, "erofs-compression", "none", `Compression of the file data inside an EROFS layer: "none", "lz4", "deflate" (which needs Linux 6.6 to mount) or "zstd" (Linux 6.10). This is the filesystem's own per-file compression, which the kernel decompresses on read; it is independent of --format, which compresses the whole layer blob. Only used with --layer-format erofs.`)
+	flagSet.IntVar(&erofsClusterSizeFlag, "erofs-cluster-size", 0, `Largest compressed cluster of an EROFS layer's file data, in bytes: a multiple of the block size. 0 uses one block. Larger clusters compress better because more input is compressed together, but need Linux 5.13 or newer to mount, and make small reads decompress more. Only used with --erofs-compression.`)
 	flagSet.StringVar(&erofsSyntheticDirectoriesFlag, "erofs-synthetic-directories", "inherit", `Attributes for directories an EROFS layer has to invent because nothing describes them. "inherit" copies the nearest described ancestor's ownership (what mkfs.erofs does), "default" uses 0755 root:root, "strict" fails the layer instead of guessing. Only used with --layer-format erofs.`)
 	flagSet.BoolVar(&erofsNoVerifyCASRefsFlag, "erofs-no-verify-cas-refs", false, `Skip re-hashing each region an EROFS layer's compact stream replaces with a content-addressed reference. Verification is cheap and turns a wrong layout plan into a build failure, so only disable it to work around a bug.`)
 	flagSet.BoolVar(&estargzFlag, "estargz", false, `Use estargz format for compression. This creates seekable gzip streams optimized for lazy pulling.`)
@@ -319,6 +323,28 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 			fmt.Fprintf(os.Stderr, "Error: --compact-stream-inline-threshold is tar-specific and cannot be combined with --layer-format erofs; use --erofs-inline-threshold\n")
 			os.Exit(1)
 		}
+		switch erofsCompressionFlag {
+		case "", "none":
+			erofsSettings.compression = erofscas.NoFileCompression
+		case "lz4":
+			erofsSettings.compression = erofscas.LZ4FileCompression
+		case "zstd":
+			erofsSettings.compression = erofscas.ZstdFileCompression
+		case "deflate":
+			erofsSettings.compression = erofscas.DeflateFileCompression
+		default:
+			fmt.Fprintf(os.Stderr, "Unknown --erofs-compression value %s. Supported values are none, lz4, deflate and zstd.\n", erofsCompressionFlag)
+			os.Exit(1)
+		}
+		blockSize := erofsBlockSizeFlag
+		if blockSize == 0 {
+			blockSize = erofscas.DefaultBlockSize
+		}
+		if erofsClusterSizeFlag < 0 || erofsClusterSizeFlag%blockSize != 0 || erofsClusterSizeFlag > 1<<20 || erofsClusterSizeFlag/blockSize > 2047 {
+			fmt.Fprintf(os.Stderr, "Error: --erofs-cluster-size %d must be a multiple of the block size %d, at most 1 MiB and 2047 blocks\n", erofsClusterSizeFlag, blockSize)
+			os.Exit(1)
+		}
+		erofsSettings.clusterBlocks = max(erofsClusterSizeFlag/blockSize, 1)
 		switch erofsSyntheticDirectoriesFlag {
 		case "", "inherit":
 			erofsSettings.syntheticDirectories = erofscas.SyntheticDirectoriesInherit
@@ -617,6 +643,8 @@ type erofsSettings struct {
 	inlineThreshold      uint64
 	verifyCASRefs        bool
 	syntheticDirectories erofscas.SyntheticDirectories
+	compression          erofscas.FileCompression
+	clusterBlocks        int
 }
 
 // finalizer is the part of a compressor the layer action needs once every byte
@@ -740,6 +768,8 @@ func handleLayerState(
 			erofscas.WithSyntheticDirectories(erofs.syntheticDirectories),
 			erofscas.DeduplicateTreeArtifacts(treeArtifactHandling == "deduplicate_symlink"),
 			erofscas.InlineThreshold(erofs.inlineThreshold),
+			erofs.compression,
+			erofscas.ClusterBlocks(erofs.clusterBlocks),
 		}
 		if erofs.blockSize > 0 {
 			erofsOpts = append(erofsOpts, erofscas.BlockSize(erofs.blockSize))

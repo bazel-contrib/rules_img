@@ -19,6 +19,7 @@ import (
 	"io"
 	"io/fs"
 	"iter"
+	"math/bits"
 	"os"
 	"path"
 	"strings"
@@ -76,6 +77,9 @@ func New[HM hashHelper](appender io.Writer, digestFS *digestfs.FileSystem, opts 
 	}
 	if options.inlineThreshold != 0 {
 		createOpts = append(createOpts, erofs.WithInlineThreshold(int(options.inlineThreshold)))
+	}
+	if options.compression != erofs.CompressionNone {
+		createOpts = append(createOpts, erofs.WithCompression(options.compression), erofs.WithClusterBlocks(options.clusterBlocks))
 	}
 	if options.syntheticDirectories == SyntheticDirectoriesInherit {
 		createOpts = append(createOpts, erofs.WithSyntheticDirMetadata(inheritFromAncestor))
@@ -147,7 +151,7 @@ func (c *CAS[HM]) Close() error {
 	dst := c.appender
 	var splitter *compactstream.PlanSplitter
 	if c.compactStreamWriter != nil {
-		regions, err := regionsFromLayout(layout, c.compactStreamWriter.HashSize())
+		regions, err := regionsFromLayout(layout, c.compactStreamWriter.HashSize(), c.compression, c.clusterBlocks)
 		if err != nil {
 			return err
 		}
@@ -196,21 +200,36 @@ func plural(n int) string {
 // else -- the superblock, the metadata (inodes, xattrs, tail-packed small file
 // bodies, inline dirents), out-of-line dirent blocks, symlink targets and all
 // padding -- stays inline in the stream.
-func regionsFromLayout(layout *erofs.Layout, hashSize int) ([]compactstream.Region, error) {
+func regionsFromLayout(layout *erofs.Layout, hashSize int, compression erofs.CompressionAlgorithm, clusterBlocks int) ([]compactstream.Region, error) {
 	var regions []compactstream.Region
 	for _, e := range layout.Extents {
-		if e.Kind != erofs.ExtentFileData {
+		if e.Kind != erofs.ExtentFileData && e.Kind != erofs.ExtentCompressedFileData {
 			continue
 		}
 		digest, ok := e.Token.([]byte)
 		if !ok || len(digest) != hashSize {
 			return nil, fmt.Errorf("erofscas: no content digest recorded for %s (%d bytes at offset %d); every out-of-line payload needs one to become a CAS reference", e.Path, e.Size, e.Offset)
 		}
-		regions = append(regions, compactstream.Region{
+		region := compactstream.Region{
 			Offset: e.Offset,
 			Size:   e.Size,
 			Digest: digest,
-		})
+		}
+		if e.Kind == erofs.ExtentCompressedFileData {
+			// The payload is the encoding of the file, not the file: reconstruct
+			// it by encoding the referenced blob again.
+			kind, ok := compactstream.TransformKindFor(compression)
+			if !ok {
+				return nil, fmt.Errorf("erofscas: %s is stored compressed with %v, which compact streams cannot reproduce", e.Path, compression)
+			}
+			region.Transform = &compactstream.Transform{
+				Kind:          kind,
+				BlockBits:     uint8(bits.TrailingZeros(uint(layout.BlockSize))),
+				ClusterBlocks: uint16(max(clusterBlocks, 1)),
+				SourceSize:    uint64(e.LogicalSize),
+			}
+		}
+		regions = append(regions, region)
 	}
 	return regions, nil
 }

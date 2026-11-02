@@ -9,6 +9,7 @@ import (
 	"io"
 	"io/fs"
 	"iter"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1004,5 +1005,74 @@ func TestWhiteoutThroughStoreEntryPoints(t *testing.T) {
 	})
 	if st := l.stat(t, "etc/gone"); st.Mode&fs.ModeCharDevice == 0 {
 		t.Errorf("etc/gone mode %v, want a character device", st.Mode)
+	}
+}
+
+func TestCompressedLayerReconstructs(t *testing.T) {
+	text := strings.Repeat("a fairly compressible line of text\n", 3000)
+	noise := make([]byte, 20000)
+	rand.New(rand.NewSource(1)).Read(noise)
+	record := func(t *testing.T, c *CAS[SHA256Helper], store memBlobStore) {
+		for name, content := range map[string]string{
+			"usr/share/text": text,
+			"usr/share/rand": string(noise),
+			"etc/small":      "small\n",
+		} {
+			store.put([]byte(content))
+			if err := c.WriteRegular(regularHdr(name, int64(len(content))), strings.NewReader(content)); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+
+	for _, c := range []struct {
+		name string
+		alg  erofs.CompressionAlgorithm
+		kind uint8
+		cb   int
+	}{
+		{"lz4", erofs.CompressionLZ4, compactstream.TransformErofsLZ4, 1},
+		{"zstd", erofs.CompressionZstd, compactstream.TransformErofsZstd, 1},
+		{"deflate", erofs.CompressionDeflate, compactstream.TransformErofsDeflate, 1},
+		{"lz4-clusters", erofs.CompressionLZ4, compactstream.TransformErofsLZ4, 4},
+		{"zstd-clusters", erofs.CompressionZstd, compactstream.TransformErofsZstd, 4},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			const compression = "none"
+			plain := buildLayer(t, compression, record)
+			compressed := buildLayer(t, compression, record, FileCompression(c.alg), ClusterBlocks(c.cb))
+
+			checkReconstructs(t, compressed)
+			if len(compressed.image) >= len(plain.image)/2 {
+				t.Errorf("compressed image is %d bytes, uncompressed %d", len(compressed.image), len(plain.image))
+			}
+
+			info, err := compactstream.Inspect(bytes.NewReader(compressed.compactStrm))
+			if err != nil {
+				t.Fatal(err)
+			}
+			transformed := 0
+			for _, ref := range info.Refs {
+				if ref.Transform != nil {
+					transformed++
+					if ref.Transform.Kind != c.kind {
+						t.Errorf("transform kind %d, want %d", ref.Transform.Kind, c.kind)
+					}
+					if ref.BlobSize() != uint64(len(text)) {
+						t.Errorf("transformed ref reads a %d byte blob, want the %d byte text", ref.BlobSize(), len(text))
+					}
+				}
+			}
+			if transformed != 1 {
+				t.Errorf("%d transformed refs, want exactly the text file", transformed)
+			}
+			// The incompressible file stays a verbatim reference.
+			if len(info.Refs) != 2 {
+				t.Errorf("%d refs, want 2 (text transformed, noise verbatim)", len(info.Refs))
+			}
+			if plainInfo, err := compactstream.Inspect(bytes.NewReader(plain.compactStrm)); err != nil || plainInfo.Header.Version != compactstream.FormatVersion {
+				t.Errorf("an uncompressed layer must keep stream version %d (err %v)", compactstream.FormatVersion, err)
+			}
+		})
 	}
 }

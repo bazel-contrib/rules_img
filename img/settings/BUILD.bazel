@@ -101,6 +101,31 @@ string_flag(
     visibility = ["//visibility:public"],
 )
 
+# Compression of the file data inside EROFS layers: the filesystem's own per-file
+# compression, which the kernel undoes as files are read. It is independent of
+# :compress, which compresses the whole layer blob. "lz4" needs Linux 5.3 to
+# mount, "deflate" Linux 6.6 and "zstd" Linux 6.10.
+string_flag(
+    name = "erofs_compression",
+    build_setting_default = "none",
+    values = [
+        "none",
+        "lz4",
+        "deflate",
+        "zstd",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+# Largest compressed cluster, in bytes, of EROFS file compression: a multiple of
+# the block size, at most 1 MiB. 0 uses one block. Clusters of more than one block
+# need Linux 5.13 to mount.
+int_flag(
+    name = "erofs_cluster_size",
+    build_setting_default = 0,
+    visibility = ["//visibility:public"],
+)
+
 string_flag(
     name = "estargz",
     build_setting_default = "disabled",

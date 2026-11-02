@@ -240,12 +240,17 @@ larger, because FAT32 needs at least 65525 clusters.
 def _erofs_config_impl(ctx):
     if ctx.attr.block_size != 0 and (ctx.attr.block_size < 512 or ctx.attr.block_size & (ctx.attr.block_size - 1) != 0):
         fail("block_size must be a power of two of at least 512, got {}".format(ctx.attr.block_size))
+    block_size = ctx.attr.block_size or 4096
+    if ctx.attr.cluster_size < -1 or ctx.attr.cluster_size > 1048576 or (ctx.attr.cluster_size > 0 and ctx.attr.cluster_size % block_size != 0):
+        fail("cluster_size must be 0, -1 or a multiple of the block size ({}) of at most 1 MiB, got {}".format(block_size, ctx.attr.cluster_size))
     if ctx.attr.inline_threshold < -1:
         fail("inline_threshold must not be negative, got {}".format(ctx.attr.inline_threshold))
     return [ErofsConfigInfo(
         block_size = ctx.attr.block_size,
         inline_threshold = ctx.attr.inline_threshold,
         synthetic_directories = ctx.attr.synthetic_directories,
+        compression = ctx.attr.compression,
+        cluster_size = ctx.attr.cluster_size,
     )]
 
 erofs_config = rule(
@@ -294,6 +299,41 @@ A file at least this large gets a data extent of its own, and therefore becomes 
 content-addressed reference in the compact stream rather than inline bytes. 0 packs
 whatever fits in the inode's block. -1 uses the global default
 `--@rules_img//img/settings:erofs_inline_threshold` setting.
+""",
+        ),
+        "cluster_size": attr.int(
+            default = -1,
+            doc = """\
+Largest compressed cluster, in bytes, when `compression` is set: a multiple of the
+block size, at most 1 MiB. 0 uses one block. -1 uses the global default
+`--@rules_img//img/settings:erofs_cluster_size` setting.
+
+A cluster is what is compressed and decompressed as one unit. Larger clusters
+compress better, because more input is compressed together and the cluster's last
+block wastes less space, but reading a small part of a file decompresses more.
+Clusters of more than one block need Linux 5.13 or newer to mount. 16384 or 65536
+are reasonable choices.
+""",
+        ),
+        "compression": attr.string(
+            default = "auto",
+            values = ["auto", "none", "lz4", "deflate", "zstd"],
+            doc = """\
+Compression of the data of regular files inside the filesystem image. If set to
+'auto', uses the global default `--@rules_img//img/settings:erofs_compression`
+setting.
+
+This is EROFS's own per-file compression: the kernel decompresses a file as it is
+read, so a compressed layer is smaller on disk and in memory pressure terms without
+being unpacked first. It is independent of the layer's `compress` attribute, which
+compresses the whole blob; compressing data twice gains nothing, so use
+`compress = "none"` with this. Files that do not compress, and files no larger than
+one block, are stored as they are.
+
+'lz4' needs a kernel with compressed-EROFS support (Linux 5.3 or newer), 'deflate'
+Linux 6.6 or newer, and 'zstd' Linux 6.10 or newer and compresses best. Compact
+streams keep working: a compressed file is recorded as the digest of the input file
+plus the encoding that reproduces its stored form.
 """,
         ),
         "synthetic_directories": attr.string(

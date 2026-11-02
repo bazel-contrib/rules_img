@@ -10,6 +10,7 @@ import (
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/api"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/compactstream"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/digestfs"
+	erofs "github.com/bazel-contrib/rules_img/img_tool/pkg/go-erofs"
 )
 
 // DefaultBlockSize is the filesystem block size an EROFS layer uses when the
@@ -64,6 +65,8 @@ type options struct {
 	verifyCASRefs            bool
 	inlineThreshold          int64
 	blockSize                int
+	compression              erofs.CompressionAlgorithm
+	clusterBlocks            int
 	buildTime                uint64
 	syntheticDirectories     SyntheticDirectories
 	deduplicateTreeArtifacts bool
@@ -105,6 +108,36 @@ func (t InlineThreshold) apply(o *options) { o.inlineThreshold = int64(t) }
 type BlockSize int
 
 func (b BlockSize) apply(o *options) { o.blockSize = int(b) }
+
+// FileCompression stores regular files compressed with the given algorithm.
+//
+// A compressed file's payload is no longer a verbatim copy of the input, so a
+// compact stream records it as a transformed reference: the digest of the input
+// file plus the encoding that reproduces the stored bytes. Files that do not
+// compress stay verbatim.
+type FileCompression erofs.CompressionAlgorithm
+
+const (
+	// NoFileCompression stores files verbatim.
+	NoFileCompression = FileCompression(erofs.CompressionNone)
+	// LZ4FileCompression compresses files with LZ4.
+	LZ4FileCompression = FileCompression(erofs.CompressionLZ4)
+	// ZstdFileCompression compresses files with Zstandard, which needs Linux 6.10
+	// to mount.
+	ZstdFileCompression = FileCompression(erofs.CompressionZstd)
+	// DeflateFileCompression compresses files with DEFLATE, which needs Linux 6.6
+	// to mount.
+	DeflateFileCompression = FileCompression(erofs.CompressionDeflate)
+)
+
+func (c FileCompression) apply(o *options) { o.compression = erofs.CompressionAlgorithm(c) }
+
+// ClusterBlocks lets the compressed clusters of a file take up to n blocks
+// (see [FileCompression]), which compresses better because more input is
+// compressed together. It needs Linux 5.13 or newer to mount.
+type ClusterBlocks int
+
+func (c ClusterBlocks) apply(o *options) { o.clusterBlocks = int(c) }
 
 // BuildTime sets the image's build timestamp. It doubles as the reference mtime
 // that lets an inode use the compact 32-byte form, so the default of zero --

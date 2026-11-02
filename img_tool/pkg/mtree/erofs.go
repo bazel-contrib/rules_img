@@ -145,6 +145,22 @@ func erofsHeader(efs fs.FS, p string, info fs.FileInfo, st *erofs.Stat) (*tar.He
 // present; otherwise the payload is read out of the image and hashed.
 func erofsDigest(efs fs.FS, p string, hdr *tar.Header, info fs.FileInfo, digester ContentDigester, rangeDigester func(offset, size int64) ([]byte, bool, error)) ([]byte, error) {
 	if rangeDigester != nil {
+		// A compressed file's payload is the encoding of its content. A compact
+		// stream replaced that range with a transformed reference, whose digest
+		// is still the digest of the file's content.
+		if enc, ok := info.(interface {
+			EncodedRange() (erofs.DataRange, bool)
+		}); ok {
+			if r, ok := enc.EncodedRange(); ok {
+				digest, found, err := rangeDigester(r.Offset, r.Size)
+				if err != nil {
+					return nil, err
+				}
+				if found {
+					return digest, nil
+				}
+			}
+		}
 		if ranger, ok := info.(interface{ DataRange() []erofs.DataRange }); ok {
 			ranges := ranger.DataRange()
 			for _, r := range ranges {

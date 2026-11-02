@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -15,6 +16,7 @@ import (
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/compress"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/digestfs"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/erofscas"
+	erofs "github.com/bazel-contrib/rules_img/img_tool/pkg/go-erofs"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/tarcas"
 )
 
@@ -112,7 +114,7 @@ func buildTarLayer(t *testing.T, entries []layerEntry) []byte {
 
 // buildErofsLayer records the entries into an EROFS layer and returns the image
 // and its compact stream.
-func buildErofsLayer(t *testing.T, entries []layerEntry) (image []byte, cstream []byte) {
+func buildErofsLayer(t *testing.T, entries []layerEntry, extra ...erofscas.Option) (image []byte, cstream []byte) {
 	t.Helper()
 	var blob bytes.Buffer
 	appender, err := compress.AppenderFactory("sha256", "none", &blob)
@@ -124,9 +126,11 @@ func buildErofsLayer(t *testing.T, entries []layerEntry) (image []byte, cstream 
 		compactstream.StreamCompressionZstd,
 		compactstream.OriginalCompressionInfo{CompressionLevel: -1, CompressorJobs: 1}, 0)
 
-	sink := erofscas.NewSHA256CASWithDigestFS(appender, digestfs.New(erofscas.SHA256Helper{}),
+	opts := append([]erofscas.Option{
 		erofscas.WithCompactStreamWriter{Writer: csWriter},
-		erofscas.WithSyntheticDirectories(erofscas.SyntheticDirectoriesDefault))
+		erofscas.WithSyntheticDirectories(erofscas.SyntheticDirectoriesDefault),
+	}, extra...)
+	sink := erofscas.NewSHA256CASWithDigestFS(appender, digestfs.New(erofscas.SHA256Helper{}), opts...)
 	recordInto(t, sink, entries)
 
 	state, err := appender.Finalize()
@@ -239,6 +243,53 @@ func TestMtreeFromCompactStream(t *testing.T) {
 		t.Fatalf("rendering mtree from the compact stream: %v", err)
 	}
 
+	if out.String() != fromImage {
+		t.Errorf("mtree from the compact stream differs from the one from the image.\n--- image ---\n%s\n--- cstream ---\n%s", fromImage, out.String())
+	}
+}
+
+// TestMtreeCompressedLayer checks that a layer whose files are stored compressed
+// renders the same mtree as the tar layer, both from the image (which is
+// decompressed to hash the files) and from the compact stream alone (where the
+// transformed references carry the digests).
+func TestMtreeCompressedLayer(t *testing.T) {
+	for _, alg := range []erofs.CompressionAlgorithm{erofs.CompressionLZ4, erofs.CompressionDeflate, erofs.CompressionZstd} {
+		for _, cb := range []int{1, 4} {
+			t.Run(fmt.Sprintf("%v-%d", alg, cb), func(t *testing.T) { testMtreeCompressedLayer(t, alg, cb) })
+		}
+	}
+}
+
+func testMtreeCompressedLayer(t *testing.T, alg erofs.CompressionAlgorithm, clusterBlocks int) {
+	entries := equivalenceEntries(t)
+	opts := DefaultOptions()
+	opts.Layout = LayoutOCIChangeset
+
+	image, cstream := buildErofsLayer(t, entries, erofscas.FileCompression(alg), erofscas.ClusterBlocks(clusterBlocks))
+	plainImage, _ := buildErofsLayer(t, entries)
+	if len(image) >= len(plainImage) {
+		t.Fatalf("compressed image (%d bytes) is not smaller than the plain one (%d bytes)", len(image), len(plainImage))
+	}
+
+	tarSpec := renderTar(t, buildTarLayer(t, entries), opts)
+	fromImage := renderErofs(t, image, opts)
+	if got, want := dropDirNlink(fromImage), dropDirNlink(tarSpec); got != want {
+		t.Errorf("compressed EROFS and tar layers render different mtrees.\n--- tar ---\n%s\n--- erofs ---\n%s", want, got)
+	}
+
+	sparse, err := compactstream.NewSparseReaderAt(bytes.NewReader(cstream))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if err := WriteMulti(&out, opts, []Input{{
+		Kind:          ErofsInput,
+		ReaderAt:      sparse,
+		Digester:      HashContent,
+		RangeDigester: sparse.RefDigestInRange,
+	}}); err != nil {
+		t.Fatalf("rendering mtree from the compact stream: %v", err)
+	}
 	if out.String() != fromImage {
 		t.Errorf("mtree from the compact stream differs from the one from the image.\n--- image ---\n%s\n--- cstream ---\n%s", fromImage, out.String())
 	}

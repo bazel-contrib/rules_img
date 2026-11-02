@@ -61,6 +61,8 @@ EROFS_FIELDS = dict(
     block_size = "int: filesystem block size in bytes, or 0 for the default (4096).",
     inline_threshold = "int: cap on tail-packing file payloads into inodes, or -1 for the global default.",
     synthetic_directories = "string: \"auto\", \"inherit\", \"default\" or \"strict\"; what to do about directories nothing describes.",
+    cluster_size = "int: largest compressed cluster in bytes, or 0 for one block.",
+    compression = "string: \"none\", \"lz4\", \"deflate\" or \"zstd\"; how the data of regular files is compressed inside the filesystem.",
 )
 
 ErofsConfigInfo = provider(
