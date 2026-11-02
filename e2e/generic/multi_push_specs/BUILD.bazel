@@ -29,12 +29,17 @@ image_manifest(
         ":spec_a",
         ":spec_b",
     ],
+    # The specs pin a registry, so the global destination_registry fallback
+    # cannot redirect them to the integration test's local registry; keep them
+    # out of the aggregate deploy.
+    tags = ["no-multi-deploy"],
 )
 
 image_manifest(
     name = "one_spec",
     layers = [":layer"],
     push_specs = [":spec_a"],
+    tags = ["no-multi-deploy"],
 )
 
 multi_deploy(
