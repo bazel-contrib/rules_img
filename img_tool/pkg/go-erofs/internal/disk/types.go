@@ -5,11 +5,12 @@ const (
 	SuperBlockOffset = 1024
 
 	FeatureIncompatLZ4_0Padding         = 0x1
+	FeatureIncompatComprCfgs            = 0x2
 	FeatureIncompatChunkedFile          = 0x4
 	FeatureIncompatDeviceTable          = 0x8
 	FeatureIncompatFragments            = 0x20
 	FeatureIncompatXattrPrefixes        = 0x40
-	FeatureIncompatAll           uint32 = FeatureIncompatLZ4_0Padding |
+	FeatureIncompatAll           uint32 = FeatureIncompatLZ4_0Padding | FeatureIncompatComprCfgs |
 		FeatureIncompatChunkedFile | FeatureIncompatDeviceTable |
 		FeatureIncompatFragments | FeatureIncompatXattrPrefixes
 

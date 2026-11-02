@@ -215,6 +215,9 @@ func (fsys *Writer) copyFromImage(img *image) error {
 		}
 		fe.fileClosed = true
 		if fsys.copyMetadataOnly {
+			if typ == disk.StatTypeReg && size > 0 && (layout == disk.LayoutCompressedFull || layout == disk.LayoutCompressedCompact) {
+				return fmt.Errorf("%s is stored compressed, which a metadata-only copy cannot reference", cur.path)
+			}
 			fe.metadataOnly = true
 		}
 

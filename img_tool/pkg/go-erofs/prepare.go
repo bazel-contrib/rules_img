@@ -15,6 +15,10 @@ const (
 	ExtentDirents
 	// ExtentSymlink is an out-of-line symlink target.
 	ExtentSymlink
+	// ExtentCompressedFileData is a regular file's payload in encoded form: the
+	// physical clusters of a compressed file, not its bytes. Size is the encoded
+	// length and LogicalSize the length of the file.
+	ExtentCompressedFileData
 )
 
 func (k ExtentKind) String() string {
@@ -25,6 +29,8 @@ func (k ExtentKind) String() string {
 		return "dirents"
 	case ExtentSymlink:
 		return "symlink"
+	case ExtentCompressedFileData:
+		return "compressed-file-data"
 	default:
 		return fmt.Sprintf("ExtentKind(%d)", int(k))
 	}
@@ -44,6 +50,9 @@ type Extent struct {
 	Offset int64
 	// Size is the payload length in bytes, excluding trailing padding.
 	Size int64
+	// LogicalSize is the length of the file an ExtentCompressedFileData extent
+	// encodes, and 0 for other kinds.
+	LogicalSize int64
 	// Pad is the number of zero bytes following the payload, up to the next
 	// block boundary.
 	Pad int64
@@ -138,6 +147,7 @@ func (fsys *Writer) WriteTo(w io.Writer) (int64, error) {
 	if fsys.spool != nil {
 		defer func() { _ = fsys.spool.Close() }()
 	}
+	defer fsys.closeZSpool()
 
 	ew := fsys.ew
 	ew.copyBuf = make([]byte, 256*1024)
@@ -190,14 +200,18 @@ func (w *erofsWriter) buildExtents() []Extent {
 		if r := ds % w.blockSize; r != 0 {
 			pad = int64(w.blockSize - r)
 		}
-		extents = append(extents, Extent{
+		x := Extent{
 			Path:   e.path,
 			Kind:   extentKind(e),
 			Offset: int64(e.dataBlkAddr) * int64(w.blockSize),
 			Size:   int64(ds),
 			Pad:    pad,
 			Token:  e.token,
-		})
+		}
+		if x.Kind == ExtentCompressedFileData {
+			x.LogicalSize = int64(e.size)
+		}
+		extents = append(extents, x)
 	}
 	return extents
 }

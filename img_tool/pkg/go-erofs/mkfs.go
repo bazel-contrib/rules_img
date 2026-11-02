@@ -45,19 +45,24 @@ type Writer struct {
 	copyDeviceID     uint16 // device ID assigned to current MetadataOnly CopyFrom
 
 	inlineThreshold  int                                                             // from WithInlineThreshold
+	compression      CompressionAlgorithm                                            // from WithCompression
+	clusterBlocks    int                                                             // from WithClusterBlocks, at least 1
 	syntheticDirMeta func(string, SyntheticDirMetadata) (SyntheticDirMetadata, bool) // from WithSyntheticDirMetadata
 
 	// Set by Prepare; WriteTo emits exactly this layout.
 	layout *Layout
 	ew     *erofsWriter
 
-	dataFile *os.File // external data file (nil = spool mode)
-	dataOff  int64    // current byte offset in data file
-	spool    *os.File // temp spool (created lazily)
-	spoolOff int64    // current byte offset in spool
-	tempDir  string   // from WithTempDir
-	cpBuf    []byte   // shared buffer for io.Copy into File
-	padBuf   []byte   // shared zero buffer for padding (block-sized, lazy)
+	dataFile   *os.File // external data file (nil = spool mode)
+	dataOff    int64    // current byte offset in data file
+	zspool     *os.File // temp file holding compressed file data (created lazily)
+	zoff       int64    // current byte offset in zspool
+	compressed bool     // some file is stored compressed
+	spool      *os.File // temp spool (created lazily)
+	spoolOff   int64    // current byte offset in spool
+	tempDir    string   // from WithTempDir
+	cpBuf      []byte   // shared buffer for io.Copy into File
+	padBuf     []byte   // shared zero buffer for padding (block-sized, lazy)
 }
 
 // File is a writable regular file returned by Writer.Create.
@@ -123,6 +128,8 @@ func newWriter(opts ...CreateOpt) *Writer {
 		root:             root,
 		byPath:           map[string]*fsEntry{"/": root},
 		inlineThreshold:  o.inlineThreshold,
+		compression:      o.compression,
+		clusterBlocks:    max(o.clusterBlocks, 1),
 		syntheticDirMeta: o.syntheticDirMeta,
 		dataFile:         o.dataFile,
 		tempDir:          o.tempDir,
@@ -221,6 +228,38 @@ func WithUUID(uuid [16]byte) CreateOpt {
 func WithInlineThreshold(n int) CreateOpt {
 	return func(o *createOptions) {
 		o.inlineThreshold = n
+	}
+}
+
+// WithCompression compresses regular file data with alg.
+//
+// Compression is per file: each file is split into independently decodable
+// physical clusters, so the encoded data of one file does not depend on any
+// other. Files that are not larger than a block, that cannot be compressed, and
+// anything that is not a plain regular file (hard-linked sources of
+// [Writer.ShareData], metadata-only entries) are stored verbatim. A file whose
+// every cluster is incompressible is also stored verbatim, as an ordinary
+// uncompressed inode, so incompressible data costs no index space.
+//
+// Compression happens while the layout is planned (Prepare, or Close), because
+// the size of the metadata and of the data area depend on it. The compressed
+// data is held in a temporary file until the image is written.
+//
+// The superblock gets the LZ4 zero-padding feature bit; the image needs a kernel
+// with compressed-EROFS support to be mounted.
+func WithCompression(alg CompressionAlgorithm) CreateOpt {
+	return func(o *createOptions) {
+		o.compression = alg
+	}
+}
+
+// WithClusterBlocks lets a compressed file's physical clusters take up to n
+// blocks, which compresses better than one block per cluster because more input
+// is compressed together. The default is 1. It needs a kernel with big-cluster
+// support (Linux 5.13) and has no effect without [WithCompression].
+func WithClusterBlocks(n int) CreateOpt {
+	return func(o *createOptions) {
+		o.clusterBlocks = n
 	}
 }
 
@@ -959,6 +998,7 @@ func (fsys *Writer) Close() error {
 	if fsys.spool != nil {
 		defer func() { _ = fsys.spool.Close() }()
 	}
+	defer fsys.closeZSpool()
 
 	ew, err := fsys.finalizeTree()
 	if err != nil {
@@ -1004,6 +1044,13 @@ func (fsys *Writer) finalizeTree() (*erofsWriter, error) {
 		chunkBits++
 	}
 
+	if err := fsys.compressTree(root); err != nil {
+		return nil, err
+	}
+
+	if fsys.compressed && len(fsys.devices) > 0 {
+		return nil, fmt.Errorf("mkfs: compressed files cannot be combined with a device table")
+	}
 	ew := &erofsWriter{
 		buildTime:       buildTime,
 		buildTimeNs:     fsys.buildTimeNs,
@@ -1012,6 +1059,8 @@ func (fsys *Writer) finalizeTree() (*erofsWriter, error) {
 		blockSize:       fsys.blockSize,
 		chunkBits:       chunkBits,
 		inlineThreshold: fsys.inlineThreshold,
+		compression:     fsys.compressionUsed(),
+		clusterBlocks:   fsys.clusterBlocks,
 		zeroBuf:         make([]byte, fsys.blockSize),
 	}
 
@@ -1198,6 +1247,8 @@ type createOptions struct {
 	dataFile         *os.File // external data file for metadata-only mode
 	tempDir          string   // temp directory for spool file
 	inlineThreshold  int      // see WithInlineThreshold
+	compression      CompressionAlgorithm
+	clusterBlocks    int
 	syntheticDirMeta func(string, SyntheticDirMetadata) (SyntheticDirMetadata, bool)
 }
 
@@ -1281,6 +1332,10 @@ type erofsEntry struct {
 	isShareSrc bool
 	// token is the caller value from Writer.SetToken.
 	token any
+
+	// z is set for a file stored compressed: its data is the encoded
+	// physical clusters and the inode carries z's lcluster index.
+	z *EncodedFile
 
 	// EROFS layout (assigned during planning)
 	nid           uint64
@@ -1533,6 +1588,10 @@ func (fsys *Writer) add(p string, info fs.FileInfo) error {
 	}
 
 	if fsys.copyMetadataOnly {
+		if st, ok := info.Sys().(*Stat); ok && typ == disk.StatTypeReg && size > 0 &&
+			(st.InodeLayout == disk.LayoutCompressedFull || st.InodeLayout == disk.LayoutCompressedCompact) {
+			return fmt.Errorf("%s is stored compressed, which a metadata-only copy cannot reference", p)
+		}
 		fe.metadataOnly = true
 		// Remap chunk DeviceIDs from source-relative to absolute.
 		// For single-device sources, all chunks use DeviceID=1

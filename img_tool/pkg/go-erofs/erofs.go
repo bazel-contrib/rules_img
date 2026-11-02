@@ -220,9 +220,15 @@ func Open(r io.ReaderAt, opts ...OpenOpt) (fs.FS, error) {
 		}
 	}
 
-	// Error out filesystems with unsupported compressed inodes
-	if i.sb.FeatureIncompat&disk.FeatureIncompatLZ4_0Padding != 0 ||
-		i.sb.ComprAlgs != 0 {
+	// Error out filesystems with compression features beyond what the writer
+	// produces: LZ4 with the zero-padding layout, or Zstandard. With a
+	// compression-config area the superblock field is a bitmap of the available
+	// algorithms; without one it is the LZ4 window and must be zero here.
+	if i.sb.FeatureIncompat&disk.FeatureIncompatComprCfgs != 0 {
+		if i.sb.ComprAlgs&^(1<<CompressionLZ4.algorithmType()|1<<CompressionDeflate.algorithmType()|1<<CompressionZstd.algorithmType()) != 0 {
+			return nil, fmt.Errorf("unsupported compression algorithms (ComprAlgs=0x%x): %w", i.sb.ComprAlgs, ErrNotImplemented)
+		}
+	} else if i.sb.ComprAlgs != 0 {
 		return nil, fmt.Errorf("unsupported compressed filesystem (FeatureIncompat=0x%x, ComprAlgs=0x%x): %w",
 			i.sb.FeatureIncompat, i.sb.ComprAlgs, ErrNotImplemented)
 	}
@@ -267,6 +273,8 @@ type image struct {
 	devices      []deviceInfo // parsed device table entries
 	deviceIDMask uint16
 	blkPool      sync.Pool
+	zmu          sync.Mutex
+	zcache       zCache
 	longPrefixes []string // cached long xattr prefixes
 	prefixesOnce sync.Once
 	prefixesErr  error
@@ -696,7 +704,9 @@ func (img *image) loadBlock(fi *inode, pos int64) (*block, error) {
 		b.offset = int32(blockOffset)
 		b.end = int32(blockEnd)
 		return b, nil
-	case disk.LayoutCompressedFull, disk.LayoutCompressedCompact:
+	case disk.LayoutCompressedFull:
+		return img.loadCompressedBlock(fi, pos)
+	case disk.LayoutCompressedCompact:
 		return nil, fmt.Errorf("inode layout (%d) for %d: %w", fi.inodeLayout, fi.nid, ErrNotImplemented)
 	default:
 		return nil, fmt.Errorf("inode layout (%d) for %d: %w", fi.inodeLayout, fi.nid, ErrInvalid)
@@ -1101,6 +1111,11 @@ func (b *file) statInfo() (*fileInfo, error) {
 				f := &file{img: img}
 				return f.buildChunkDataRanges(&inoCopy)
 			}
+		} else if ino.inodeLayout == disk.LayoutCompressedFull {
+			inoCopy := *ino
+			inoCopy.cached = nil
+			img := b.img
+			fi.encodedLoader = func() (DataRange, bool) { return img.encodedRange(&inoCopy) }
 		} else {
 			fi.dataRanges = b.buildDataRanges(ino)
 		}
@@ -1642,6 +1657,9 @@ type fileInfo struct {
 	// are computed eagerly at stat time since they require no I/O.
 	rangesOnce   sync.Once
 	rangesLoader func() []DataRange
+
+	// encodedLoader locates the physical clusters of a compressed file.
+	encodedLoader func() (DataRange, bool)
 }
 
 func (fi *fileInfo) Name() string       { return fi.name }
@@ -1666,6 +1684,20 @@ func (fi *fileInfo) DataRange() []DataRange {
 		})
 	}
 	return fi.dataRanges
+}
+
+// EncodedRange returns the physical location of a compressed file's encoded
+// data: the run of physical clusters that EncodeFile produces for it. It reports
+// false for files that are not compressed and for compressed files whose
+// clusters are not one contiguous run.
+//
+// The range is what a consumer that has the file's content from elsewhere (a
+// compact stream) needs to recognize the file's payload in the image.
+func (fi *fileInfo) EncodedRange() (DataRange, bool) {
+	if fi.encodedLoader == nil {
+		return DataRange{}, false
+	}
+	return fi.encodedLoader()
 }
 
 // GetAllXattr returns all extended attributes.
