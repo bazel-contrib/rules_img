@@ -1,6 +1,6 @@
 load("@rules_distroless//distroless:defs.bzl", "flatten")
 load("@rules_img//img:disk_image.bzl", "disk_partition")
-load("@rules_img//img:layer.bzl", "image_layer", "layer_from_tar")
+load("@rules_img//img:layer.bzl", "erofs_config", "image_layer", "layer_from_tar")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -53,11 +53,21 @@ flatten(
     ],
 )
 
+# The kernel decompresses the files of the root file system as they are read, so
+# the partition is a fraction of the size of the userspace it holds. 16 KiB
+# clusters compress better than the default of one block and need Linux 5.13.
+erofs_config(
+    name = "root_config",
+    cluster_size = 16384,
+    compression = "lz4",
+)
+
 layer_from_tar(
     name = "root_layer",
     src = ":root_tar",
     compress = "none",
     format = "erofs",
+    format_config = ":root_config",
 )
 
 disk_partition(

@@ -22,7 +22,7 @@ common --@rules_img//img/settings:layer_format=erofs
 common --@rules_img//img/settings:compress=none
 ```
 
-## Compression
+## Layer compression
 
 | `compress` | Media type                            |
 |------------|---------------------------------------|
@@ -30,6 +30,55 @@ common --@rules_img//img/settings:compress=none
 | `zstd`     | `application/vnd.erofs.layer.v1+zstd` |
 
 `gzip` compression is rejected since containerd doesn't support `application/vnd.erofs.layer.v1+gzip`.
+
+## File compression
+
+An EROFS layer can store the data of its files compressed, which the kernel
+undoes as they are read. That makes a layer smaller on disk and in the page cache
+without unpacking it first, which the outer `+zstd` compression cannot do: that
+one has to be undone before the filesystem can be mounted.
+
+```python
+load("@rules_img//img:layer.bzl", "erofs_config", "image_layer")
+
+erofs_config(
+    name = "lz4",
+    compression = "lz4",
+)
+
+image_layer(
+    name = "app_layer",
+    srcs = {"/usr/bin/server": "//cmd/server"},
+    compress = "none",
+    format = "erofs",
+    format_config = ":lz4",
+)
+```
+
+Compression is per file, in one-block physical clusters, with LZ4 (`"lz4"`),
+DEFLATE (`"deflate"`) or Zstandard (`"zstd"`, which compresses best and is the
+slowest to build). A file that is
+no larger than a block, or in which nothing compresses, is stored as it is, so
+incompressible data costs no index space. The mounted layer needs a kernel with
+compressed-EROFS support: Linux 5.3 or newer for LZ4, Linux 6.6 or newer for
+DEFLATE and Linux 6.10 or newer for Zstandard (with `CONFIG_EROFS_FS_ZIP_DEFLATE`
+or `CONFIG_EROFS_FS_ZIP_ZSTD`). Both are read back by erofs-utils
+(`fsck.erofs`, `dump.erofs`). `compress = "none"` is the right outer compression
+for such a layer: compressing the blob again gains little.
+
+By default every compressed cluster is one block. `cluster_size` lets a cluster
+take up to that many bytes (16384 or 65536 are reasonable), which compresses
+noticeably better because more input is compressed together, at the cost of
+decompressing more to read a small part of a file. Clusters of more than one
+block need Linux 5.13 or newer.
+
+The mtree of a compressed layer is the one of the uncompressed layer, because file
+digests are digests of content.
+
+File compression and [compact streams](#compact-streams) are exclusive. A
+compressed file is not a verbatim copy of its input, so a compact stream cannot
+reference it. With `experimental_compact_layers` enabled, a layer with compressed
+files is built in full as a blob instead.
 
 ## Layers are filesystems, not changesets
 
@@ -90,7 +139,9 @@ offset 0                                                            blob end
 ```
 
 Every file payload is a contiguous, block-aligned, verbatim copy of the input
-file, so it can be replaced by exactly one content-addressed reference.
+file, so it can be replaced by exactly one content-addressed reference. A layer
+with [file compression](#file-compression) has no such payloads and is not
+written as a compact stream.
 
 ## mtree
 
@@ -120,7 +171,8 @@ from an image index if it supports mounting EROFS layers.
 | eStargz                                   | tar-specific                                                                 |
 | SOCI / ztoc                               | gzip-tar-specific                                                            |
 | omitting intermediate directories         | a filesystem needs a complete directory tree                                  |
-| per-file EROFS compression (`-z`)         | it would destroy the "payload = verbatim file bytes" property the compact stream and per-file content addressing rely on; outer `+zstd` covers wire size |
+| LZMA file compression                     | only LZ4, DEFLATE and Zstandard are implemented; see [File compression](#file-compression) |
+| compacted indexes, fragments, deduplication, tail packing of compressed data | not used: compressed files use full indexes. The result is valid EROFS, but larger than `mkfs.erofs -zlz4hc` can make it |
 | cross-layer hardlinks                     | a hardlink is a second dirent for an inode in the same image |
 
 dm-verity is part of the layer format but not yet supported by rules_img.
@@ -148,12 +200,14 @@ image_layer(
 )
 ```
 
-The remaining two options also have a global default, for setting them across a
+These options also have a global default, for setting them across a
 build:
 
 ```
 common --@rules_img//img/settings:erofs_inline_threshold=0
 common --@rules_img//img/settings:erofs_synthetic_directories=inherit
+common --@rules_img//img/settings:erofs_compression=zstd
+common --@rules_img//img/settings:erofs_cluster_size=16384
 ```
 
 ## Reproducibility

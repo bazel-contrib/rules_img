@@ -244,6 +244,8 @@ The image is written by the `img dd` command.
 - **`enabled`**: layers are built as compact streams (`experimental_compact_layers`, without materializing the layer blob) and a `disk_image` as an extent stream (`disk_image_extent_stream`). The image then only references the files it is made of, which are fetched by digest when the target runs (see `strategy`), instead of being built in full.
 - **`disabled`**: layers and disk images are built in full.
 
+A layer with EROFS file compression cannot be a compact stream and is built in full.
+
 This changes the configuration of `image` and everything it depends on, so it is built separately from the same targets built with another value.""",
             default = "auto",
             values = ["auto", "enabled", "disabled"],

@@ -46,6 +46,7 @@ go_test(
         "//pkg/fs/ext4/ext4cstream",
         "//pkg/fs/fat32",
         "//pkg/fs/fat32/fat32cstream",
+        "//pkg/go-erofs",
         "//pkg/tarcas",
         "@com_github_klauspost_compress//zstd",
     ],

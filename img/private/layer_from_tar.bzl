@@ -292,6 +292,14 @@ than the layer's own is a configuration error, since it would silently have no e
             default = Label("//img/settings:erofs_synthetic_directories"),
             providers = [BuildSettingInfo],
         ),
+        "_erofs_compression": attr.label(
+            default = Label("//img/settings:erofs_compression"),
+            providers = [BuildSettingInfo],
+        ),
+        "_erofs_cluster_size": attr.label(
+            default = Label("//img/settings:erofs_cluster_size"),
+            providers = [BuildSettingInfo],
+        ),
         "_compression_jobs": attr.label(
             default = Label("//img/settings:compression_jobs"),
             providers = [BuildSettingInfo],

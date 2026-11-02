@@ -160,6 +160,147 @@ mtree_golden_test(
     layer = ":erofs_layer_zstd",
 )
 
+# The same layer with the file data compressed inside the filesystem (LZ4). Only
+# big.txt is large enough to be stored compressed. Its mtree digest is still the
+# digest of the file's content, so the layer's mtree must be exactly the one of
+# the uncompressed layer. Such a layer is always built in full, never as a compact
+# stream.
+erofs_config(
+    name = "lz4_config",
+    compression = "lz4",
+)
+
+image_layer(
+    name = "erofs_layer_lz4",
+    srcs = {
+        "/etc/app/config.txt": ":config_txt",
+        "/etc/app/config_dup.txt": ":config_dup_txt",
+        "/usr/local/bin/tool": ":tool_sh",
+        "/var/lib/data/big.txt": ":big_txt",
+    },
+    compress = "none",
+    default_metadata = file_metadata(
+        gid = 1000,
+        gname = "devs",
+        mode = "0644",
+        mtime = "2023-01-01T00:00:00Z",
+        uid = 1000,
+        uname = "alice",
+    ),
+    format = "erofs",
+    format_config = ":lz4_config",
+    symlinks = {"/etc/app/current.txt": "/etc/app/config.txt"},
+)
+
+mtree_golden_test(
+    name = "layer_lz4_mtree_test",
+    golden = "expected.mtree",
+    layer = ":erofs_layer_lz4",
+)
+
+# Larger compressed clusters.
+erofs_config(
+    name = "lz4_clusters_config",
+    cluster_size = 16384,
+    compression = "lz4",
+)
+
+image_layer(
+    name = "erofs_layer_lz4_clusters",
+    srcs = {
+        "/etc/app/config.txt": ":config_txt",
+        "/etc/app/config_dup.txt": ":config_dup_txt",
+        "/usr/local/bin/tool": ":tool_sh",
+        "/var/lib/data/big.txt": ":big_txt",
+    },
+    compress = "none",
+    default_metadata = file_metadata(
+        gid = 1000,
+        gname = "devs",
+        mode = "0644",
+        mtime = "2023-01-01T00:00:00Z",
+        uid = 1000,
+        uname = "alice",
+    ),
+    format = "erofs",
+    format_config = ":lz4_clusters_config",
+    symlinks = {"/etc/app/current.txt": "/etc/app/config.txt"},
+)
+
+mtree_golden_test(
+    name = "layer_lz4_clusters_mtree_test",
+    golden = "expected.mtree",
+    layer = ":erofs_layer_lz4_clusters",
+)
+
+# And with DEFLATE.
+erofs_config(
+    name = "deflate_config",
+    compression = "deflate",
+)
+
+image_layer(
+    name = "erofs_layer_deflate",
+    srcs = {
+        "/etc/app/config.txt": ":config_txt",
+        "/etc/app/config_dup.txt": ":config_dup_txt",
+        "/usr/local/bin/tool": ":tool_sh",
+        "/var/lib/data/big.txt": ":big_txt",
+    },
+    compress = "none",
+    default_metadata = file_metadata(
+        gid = 1000,
+        gname = "devs",
+        mode = "0644",
+        mtime = "2023-01-01T00:00:00Z",
+        uid = 1000,
+        uname = "alice",
+    ),
+    format = "erofs",
+    format_config = ":deflate_config",
+    symlinks = {"/etc/app/current.txt": "/etc/app/config.txt"},
+)
+
+mtree_golden_test(
+    name = "layer_deflate_mtree_test",
+    golden = "expected.mtree",
+    layer = ":erofs_layer_deflate",
+)
+
+# And with Zstandard.
+erofs_config(
+    name = "zstd_config",
+    compression = "zstd",
+)
+
+image_layer(
+    name = "erofs_layer_zstd_files",
+    srcs = {
+        "/etc/app/config.txt": ":config_txt",
+        "/etc/app/config_dup.txt": ":config_dup_txt",
+        "/usr/local/bin/tool": ":tool_sh",
+        "/var/lib/data/big.txt": ":big_txt",
+    },
+    compress = "none",
+    default_metadata = file_metadata(
+        gid = 1000,
+        gname = "devs",
+        mode = "0644",
+        mtime = "2023-01-01T00:00:00Z",
+        uid = 1000,
+        uname = "alice",
+    ),
+    format = "erofs",
+    format_config = ":zstd_config",
+    symlinks = {"/etc/app/current.txt": "/etc/app/config.txt"},
+)
+
+mtree_golden_test(
+    name = "layer_zstd_files_mtree_test",
+    golden = "expected.mtree",
+    layer = ":erofs_layer_zstd_files",
+)
+
 # Converting an existing tar layer: a format change can never reuse the source
 # blob, so this always rewrites the tar entry by entry into a filesystem image.
 # The tar carries AUFS whiteout markers, which must come out as overlayfs

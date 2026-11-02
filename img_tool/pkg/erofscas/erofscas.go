@@ -77,6 +77,9 @@ func New[HM hashHelper](appender io.Writer, digestFS *digestfs.FileSystem, opts 
 	if options.inlineThreshold != 0 {
 		createOpts = append(createOpts, erofs.WithInlineThreshold(int(options.inlineThreshold)))
 	}
+	if options.compression != erofs.CompressionNone {
+		createOpts = append(createOpts, erofs.WithCompression(options.compression), erofs.WithClusterBlocks(options.clusterBlocks))
+	}
 	if options.syntheticDirectories == SyntheticDirectoriesInherit {
 		createOpts = append(createOpts, erofs.WithSyntheticDirMetadata(inheritFromAncestor))
 	}
@@ -135,6 +138,10 @@ func (c *CAS[HM]) Close() error {
 		return nil
 	}
 	c.closed = true
+
+	if c.compactStreamWriter != nil && c.compression != erofs.CompressionNone {
+		return errors.New("erofscas: a layer with compressed files cannot be written as a compact stream; the stored bytes are not a copy of the referenced content")
+	}
 
 	layout, err := c.w.Prepare()
 	if err != nil {

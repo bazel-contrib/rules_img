@@ -734,7 +734,8 @@ def resolve_format_config(ctx, layer_format):
 
     Args:
         ctx: Rule context with a `format_config` attribute and the
-            `_erofs_inline_threshold`, `_erofs_synthetic_directories` and
+            `_erofs_inline_threshold`, `_erofs_synthetic_directories`, `_erofs_compression`,
+            `_erofs_cluster_size` and
             `_ext4_deduplicate` and `_cpio_deduplicate` settings.
         layer_format: Resolved container format name ("tar", "erofs", "ext4", "fat32", "cpio").
 
@@ -769,6 +770,16 @@ def resolve_format_config(ctx, layer_format):
     if synthetic_directories == "auto":
         synthetic_directories = ctx.attr._erofs_synthetic_directories[BuildSettingInfo].value
 
+    compression = erofs.compression if erofs != None else "auto"
+    if compression == "auto":
+        compression = ctx.attr._erofs_compression[BuildSettingInfo].value
+    cluster_size = erofs.cluster_size if erofs != None else -1
+    if cluster_size < 0:
+        cluster_size = ctx.attr._erofs_cluster_size[BuildSettingInfo].value
+    block_size = (erofs.block_size if erofs != None else 0) or 4096
+    if cluster_size < 0 or cluster_size > 1048576 or cluster_size % block_size != 0:
+        fail("The EROFS cluster size must be a multiple of the block size ({}) of at most 1 MiB, got {}.".format(block_size, cluster_size))
+
     return struct(
         ext4 = struct(
             block_size = ext4.block_size if ext4 != None else 0,
@@ -790,6 +801,8 @@ def resolve_format_config(ctx, layer_format):
             block_size = erofs.block_size if erofs != None else 0,
             inline_threshold = inline_threshold,
             synthetic_directories = synthetic_directories,
+            compression = compression,
+            cluster_size = cluster_size,
         ),
     )
 
@@ -847,6 +860,10 @@ def format_config_args(layer_format, format_config):
             str(erofs.inline_threshold),
             "--erofs-synthetic-directories",
             erofs.synthetic_directories,
+            "--erofs-compression",
+            erofs.compression,
+            "--erofs-cluster-size",
+            str(erofs.cluster_size),
         ]
     return []
 

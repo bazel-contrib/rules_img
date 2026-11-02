@@ -9,6 +9,7 @@ import (
 	"io"
 	"io/fs"
 	"iter"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1004,5 +1005,97 @@ func TestWhiteoutThroughStoreEntryPoints(t *testing.T) {
 	})
 	if st := l.stat(t, "etc/gone"); st.Mode&fs.ModeCharDevice == 0 {
 		t.Errorf("etc/gone mode %v, want a character device", st.Mode)
+	}
+}
+
+// buildPlainLayer records a layer without a compact stream and returns its image.
+func buildPlainLayer(t *testing.T, record func(*testing.T, *CAS[SHA256Helper], memBlobStore), opts ...Option) layer {
+	t.Helper()
+	var blob bytes.Buffer
+	appender, err := compress.AppenderFactory("sha256", "none", &blob)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := NewSHA256CASWithDigestFS(appender, digestfs.New(SHA256Helper{}), opts...)
+	store := memBlobStore{}
+	record(t, c, store)
+	if err := c.Close(); err != nil {
+		t.Fatalf("closing layer: %v", err)
+	}
+	if _, err := appender.Finalize(); err != nil {
+		t.Fatal(err)
+	}
+	return layer{image: blob.Bytes(), store: store}
+}
+
+func compressionTestFiles() (text string, record func(*testing.T, *CAS[SHA256Helper], memBlobStore)) {
+	text = strings.Repeat("a fairly compressible line of text\n", 3000)
+	noise := make([]byte, 20000)
+	rand.New(rand.NewSource(1)).Read(noise)
+	return text, func(t *testing.T, c *CAS[SHA256Helper], store memBlobStore) {
+		for name, content := range map[string]string{
+			"usr/share/text": text,
+			"usr/share/rand": string(noise),
+			"etc/small":      "small\n",
+		} {
+			store.put([]byte(content))
+			if err := c.WriteRegular(regularHdr(name, int64(len(content))), strings.NewReader(content)); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+}
+
+func TestCompressedLayerRoundTrip(t *testing.T) {
+	text, record := compressionTestFiles()
+	plain := buildPlainLayer(t, record)
+
+	for _, c := range []struct {
+		name string
+		alg  erofs.CompressionAlgorithm
+		cb   int
+	}{
+		{"lz4", erofs.CompressionLZ4, 1},
+		{"zstd", erofs.CompressionZstd, 1},
+		{"deflate", erofs.CompressionDeflate, 1},
+		{"lz4-clusters", erofs.CompressionLZ4, 4},
+		{"zstd-clusters", erofs.CompressionZstd, 4},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			compressed := buildPlainLayer(t, record, FileCompression(c.alg), ClusterBlocks(c.cb))
+			if len(compressed.image) >= len(plain.image)/2 {
+				t.Errorf("compressed image is %d bytes, uncompressed %d", len(compressed.image), len(plain.image))
+			}
+			if got := compressed.read(t, "usr/share/text"); got != text {
+				t.Errorf("usr/share/text reads back as %d bytes, want %d", len(got), len(text))
+			}
+			if got := compressed.read(t, "usr/share/rand"); got != plain.read(t, "usr/share/rand") {
+				t.Errorf("usr/share/rand does not read back as written")
+			}
+			if got := compressed.read(t, "etc/small"); got != "small\n" {
+				t.Errorf("etc/small reads back as %q", got)
+			}
+		})
+	}
+}
+
+// File compression stores bytes that are not a copy of the referenced content,
+// so a compact stream cannot describe it.
+func TestCompressedLayerRejectsCompactStream(t *testing.T) {
+	_, record := compressionTestFiles()
+	var blob bytes.Buffer
+	appender, err := compress.AppenderFactory("sha256", "none", &blob)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cs bytes.Buffer
+	csWriter := compactstream.NewWriter(&cs, compactstream.HashAlgoSHA256, sha256.Size,
+		compactstream.StreamCompressionZstd,
+		compactstream.OriginalCompressionInfo{CompressionLevel: -1, CompressorJobs: 1}, 0)
+	c := NewSHA256CASWithDigestFS(appender, digestfs.New(SHA256Helper{}),
+		WithCompactStreamWriter{Writer: csWriter}, FileCompression(erofs.CompressionLZ4))
+	record(t, c, memBlobStore{})
+	if err := c.Close(); err == nil {
+		t.Fatal("closing a compressed layer with a compact stream writer succeeded")
 	}
 }

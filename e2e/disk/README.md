@@ -5,7 +5,7 @@ This example builds a bootable UEFI disk image with `disk_image`:
 | Partition | Type | File system | Content |
 |-----------|------|-------------|---------|
 | `ESP`     | EFI system partition | FAT32 | `/EFI/BOOT/BOOTX64.EFI`: a unified kernel image |
-| `root`    | root, x86-64 | erofs (read-only) | Debian bookworm userspace with systemd as init |
+| `root`    | root, x86-64 | erofs (read-only, LZ4-compressed) | Debian bookworm userspace with systemd as init |
 | `var`     | `/var` | ext4 | state that systemd writes |
 | `home`    | `/home` | ext4 | writable user data |
 
@@ -57,7 +57,8 @@ partition, and the sections of the unified kernel image. `//disktest:boot_test` 
 `bazel run //:write_disk -- of=disk.img` writes the disk image to a file or a block device
 (`image_dd`). With `--config=compact`, layers are compact streams and the disk image is an
 extent stream, so nothing large is stored in the output tree; `write_disk` reconstructs
-the bytes when it runs.
+the bytes when it runs. The root partition is the exception: its files are compressed
+inside the file system, which a compact stream cannot describe, so it is built in full.
 
 To try the image by hand:
 

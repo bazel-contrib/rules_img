@@ -184,6 +184,14 @@ Override the layer media type. By default, the media type is auto-detected from 
         default = Label("//img/settings:erofs_synthetic_directories"),
         providers = [BuildSettingInfo],
     ),
+    _erofs_compression = attr.label(
+        default = Label("//img/settings:erofs_compression"),
+        providers = [BuildSettingInfo],
+    ),
+    _erofs_cluster_size = attr.label(
+        default = Label("//img/settings:erofs_cluster_size"),
+        providers = [BuildSettingInfo],
+    ),
     _cpio_deduplicate = attr.label(
         default = Label("//img/settings:cpio_deduplicate"),
         providers = [BuildSettingInfo],

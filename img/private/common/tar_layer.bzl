@@ -330,6 +330,12 @@ def resolve_layer_settings(ctx):
     compact_layers_inline_threshold = ctx.attr._experimental_compact_layers_inline_threshold[BuildSettingInfo].value
     compact_layers_materialize_blob = ctx.attr._experimental_compact_layers_materialize_blob[BuildSettingInfo].value == "enabled"
 
+    # EROFS file compression stores bytes that are not a copy of the files a compact
+    # stream would reference, so such a layer is always built in full.
+    if compact_layers and is_erofs and format_config.erofs.compression != "none":
+        compact_layers = False
+        compact_layers_materialize_blob = False
+
     return struct(
         compression = compression,
         layer_format = layer_format,
