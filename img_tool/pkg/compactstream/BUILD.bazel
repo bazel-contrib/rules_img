@@ -10,6 +10,7 @@ go_library(
         "plan.go",
         "reader.go",
         "sparse.go",
+        "transform.go",
         "writer.go",
     ],
     importpath = "github.com/bazel-contrib/rules_img/img_tool/pkg/compactstream",
@@ -17,6 +18,7 @@ go_library(
     deps = [
         "//pkg/casdirlayout",
         "//pkg/compress",
+        "//pkg/go-erofs",
         "@com_github_klauspost_compress//zstd",
     ],
 )
@@ -29,12 +31,14 @@ go_test(
         "image_test.go",
         "reader_test.go",
         "reconstruct_uncompressed_test.go",
+        "transform_test.go",
         "writer_test.go",
     ],
     embed = [":compactstream"],
     deps = [
         "//pkg/casdirlayout",
         "//pkg/compress",
+        "//pkg/go-erofs",
         "@com_github_klauspost_compress//zstd",
     ],
 )

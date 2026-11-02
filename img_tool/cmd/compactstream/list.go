@@ -82,7 +82,11 @@ func writeListing(w io.Writer, name string, info *compactstream.Info, indexSize 
 		if gap := r.Offset - outputPos; gap > 0 {
 			fmt.Fprintf(w, "  %d bytes of stream data\n", gap)
 		}
-		fmt.Fprintf(w, "  cas reference %s:%s %d bytes\n", hashAlgoName(h.HashAlgo), hex.EncodeToString(r.Digest), r.Size)
+		if r.Transform != nil {
+			fmt.Fprintf(w, "  cas reference %s:%s %d bytes, %s of its %d bytes\n", hashAlgoName(h.HashAlgo), hex.EncodeToString(r.Digest), r.Size, transformName(r.Transform), r.Transform.SourceSize)
+		} else {
+			fmt.Fprintf(w, "  cas reference %s:%s %d bytes\n", hashAlgoName(h.HashAlgo), hex.EncodeToString(r.Digest), r.Size)
+		}
 		outputPos = r.Offset + r.Size
 	}
 	if total := info.ReconstructedSize(); outputPos < total {
@@ -92,7 +96,7 @@ func writeListing(w io.Writer, name string, info *compactstream.Info, indexSize 
 	reconstructed := info.ReconstructedSize()
 	fmt.Fprintln(w, "\nStatistics")
 	row(w, "CAS references:", fmt.Sprintf("%d", len(info.Refs)))
-	row(w, "Referenced content (in CAS):", humanizeBytes(info.ReferencedBytes()))
+	row(w, "Referenced content (in CAS):", humanizeBytes(info.CASBytes()))
 	row(w, "Byte stream (uncompressed):", humanizeBytes(info.StreamUncompressedSize))
 	row(w, fmt.Sprintf("Byte stream (on disk, %s):", streamCompressionName(h.StreamCompression)), humanizeBytes(h.StreamSize))
 	row(w, fmt.Sprintf("Reconstructed %s (uncompressed):", contentFormatNoun(h.ContentFormat)), humanizeBytes(reconstructed))
@@ -252,4 +256,17 @@ func humanizeBytes(n uint64) string {
 		i++
 	}
 	return fmt.Sprintf("%d bytes (%.1f %s)", n, value, units[i])
+}
+
+func transformName(t *compactstream.Transform) string {
+	switch t.Kind {
+	case compactstream.TransformErofsLZ4:
+		return fmt.Sprintf("EROFS LZ4 encoding (%d byte blocks, %d block clusters)", 1<<t.BlockBits, max(t.ClusterBlocks, 1))
+	case compactstream.TransformErofsDeflate:
+		return fmt.Sprintf("EROFS DEFLATE encoding (%d byte blocks, %d block clusters)", 1<<t.BlockBits, max(t.ClusterBlocks, 1))
+	case compactstream.TransformErofsZstd:
+		return fmt.Sprintf("EROFS zstd encoding (%d byte blocks, %d block clusters)", 1<<t.BlockBits, max(t.ClusterBlocks, 1))
+	default:
+		return fmt.Sprintf("unknown transform %d", t.Kind)
+	}
 }

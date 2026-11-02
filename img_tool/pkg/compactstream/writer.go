@@ -18,12 +18,19 @@ const (
 	// FormatVersion is the on-disk format version written to and validated in
 	// the header.
 	FormatVersion uint8 = 0x01
+	// FormatVersionTransform is the version of a stream that holds transformed
+	// references (see [Transform]). Streams without them keep FormatVersion, so
+	// a reader that predates transforms still reads every stream it can.
+	FormatVersionTransform uint8 = 0x02
 
 	headerSize = 128
 
 	// flagCompressedStreamInfo marks (in the header Flags byte) that the
 	// optional compressed-stream digest and size fields are present and valid.
 	flagCompressedStreamInfo uint8 = 0x01
+	// flagTransformedRefs marks that every reference table entry is followed by
+	// a transform record. It requires FormatVersionTransform.
+	flagTransformedRefs uint8 = 0x02
 
 	HashAlgoSHA256 uint16 = 1
 
@@ -60,9 +67,10 @@ type OriginalCompressionInfo struct {
 }
 
 type casRef struct {
-	offset uint64
-	digest []byte
-	size   uint64
+	offset    uint64
+	digest    []byte
+	size      uint64
+	transform *Transform
 }
 
 type Writer struct {
@@ -83,7 +91,12 @@ type Writer struct {
 	compressedStreamDigest  []byte
 	compressedStreamSize    uint64
 	hasCompressedStreamInfo bool
-	err                     error
+	// hasTransform is set once a transformed reference was written, which
+	// changes the shape of the whole reference table; pendingTransform marks
+	// that the latest one still waits for its output digest.
+	hasTransform     bool
+	pendingTransform bool
+	err              error
 
 	// enc and encoded are set by CompressIncrementally: the byte stream is then
 	// compressed as it is written, so only its compressed form is held in memory.
@@ -225,12 +238,72 @@ func (w *Writer) WriteCASRef(digest []byte, size uint64) error {
 	return nil
 }
 
+// WriteTransformedCASRef records a range of size bytes that is derived from the
+// blob with the given digest by the transform t: the reconstructed bytes are
+// not the blob itself but the result of applying t to it (see [Transform]).
+//
+// The digest of those bytes is not known yet in general; the caller supplies it
+// with [Writer.SetTransformOutputDigest] before the next reference or Close.
+func (w *Writer) WriteTransformedCASRef(digest []byte, size uint64, t Transform) error {
+	if w.err != nil {
+		return w.err
+	}
+	if len(digest) != w.hashSize {
+		w.err = fmt.Errorf("compact stream: digest length %d does not match expected hash size %d", len(digest), w.hashSize)
+		return w.err
+	}
+	if err := t.validate(); err != nil {
+		w.err = err
+		return w.err
+	}
+	if w.pendingTransform {
+		w.err = fmt.Errorf("compact stream: transformed reference at offset %d has no output digest", w.refs[len(w.refs)-1].offset)
+		return w.err
+	}
+	d := make([]byte, len(digest))
+	copy(d, digest)
+	t.OutputDigest = nil
+	w.refs = append(w.refs, casRef{offset: w.currentOffset, digest: d, size: size, transform: &t})
+	w.currentOffset += size
+	w.hasTransform = true
+	w.pendingTransform = true
+	return nil
+}
+
+// SetTransformOutputDigest records the digest of the bytes the most recent
+// transformed reference produces.
+func (w *Writer) SetTransformOutputDigest(digest []byte) error {
+	if w.err != nil {
+		return w.err
+	}
+	if !w.pendingTransform {
+		w.err = fmt.Errorf("compact stream: no transformed reference is waiting for an output digest")
+		return w.err
+	}
+	if len(digest) != w.hashSize {
+		w.err = fmt.Errorf("compact stream: output digest length %d does not match expected hash size %d", len(digest), w.hashSize)
+		return w.err
+	}
+	d := make([]byte, len(digest))
+	copy(d, digest)
+	w.refs[len(w.refs)-1].transform.OutputDigest = d
+	w.pendingTransform = false
+	return nil
+}
+
 func (w *Writer) Close() error {
 	if w.err != nil {
 		return w.err
 	}
+	if w.pendingTransform {
+		w.err = fmt.Errorf("compact stream: transformed reference at offset %d has no output digest", w.refs[len(w.refs)-1].offset)
+		return w.err
+	}
 
 	refEntrySize := 16 + w.hashSize
+	if w.hasTransform {
+		refEntrySize += transformRecordSize(w.hashSize)
+	}
 	refTableSize := uint64(len(w.refs) * refEntrySize)
 	refTableOffset := uint64(headerSize)
 
@@ -271,6 +344,9 @@ func (w *Writer) Close() error {
 	copy(header[0:6], magic)
 	header[6] = 0x00
 	header[7] = FormatVersion
+	if w.hasTransform {
+		header[7] = FormatVersionTransform
+	}
 	binary.BigEndian.PutUint16(header[8:10], w.hashAlgo)
 	binary.BigEndian.PutUint16(header[10:12], uint16(w.hashSize))
 	header[12] = w.streamCompression
@@ -287,6 +363,9 @@ func (w *Writer) Close() error {
 	binary.BigEndian.PutUint64(header[40:48], streamOffset)
 	binary.BigEndian.PutUint64(header[48:56], streamSize)
 	// byte 56: flags; bytes 57-63: reserved
+	if w.hasTransform {
+		header[56] |= flagTransformedRefs
+	}
 	if w.hasCompressedStreamInfo {
 		header[56] |= flagCompressedStreamInfo
 		binary.BigEndian.PutUint64(header[64:72], w.compressedStreamSize)
@@ -317,6 +396,12 @@ func (w *Writer) Close() error {
 		if _, err := w.output.Write(entry[8:16]); err != nil {
 			w.err = err
 			return err
+		}
+		if w.hasTransform {
+			if _, err := w.output.Write(ref.transform.record(w.hashSize)); err != nil {
+				w.err = err
+				return err
+			}
 		}
 	}
 

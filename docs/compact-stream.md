@@ -153,7 +153,7 @@ Offset  Size  Type       Field                  Description
 ------  ----  ---------  ---------------------  -------------------------------------------
 0       6     ASCII      Magic                  "CASSTR"
 6       1     uint8      NUL                    Always 0x00
-7       1     uint8      Version                Format version (0x01)
+7       1     uint8      Version                Format version (0x01, or 0x02 with transformed references)
 8       2     uint16 BE  HashAlgorithm          Digest algorithm for content hashes
 10      2     uint16 BE  HashSize               Digest size in bytes
 12      1     uint8      StreamCompression      On-disk compression of the byte stream section
@@ -182,6 +182,7 @@ Total: 128 bytes.
 | Bit  | Mask | Meaning                                                              |
 |------|------|---------------------------------------------------------------------|
 | 0    | 0x01 | Compressed-stream info present (CompressedStreamSize/Digest valid)   |
+| 1    | 0x02 | [Transformed references](#transformed-references): every reference table entry carries a transform record (requires Version 0x02) |
 
 When bit 0 is clear, the `CompressedStreamSize` and `CompressedStreamDigest`
 fields are absent (zero) and must be ignored.
@@ -313,6 +314,47 @@ Key properties:
 - Entries must not overlap: for any two adjacent entries `i` and `i+1`,
   `entries[i].Offset + entries[i].Size <= entries[i+1].Offset`.
 - Fixed-size entries enable O(1) random access by index.
+
+### Transformed references
+
+A plain reference says that the bytes of its range *are* the blob it names. A
+transformed reference says they are *derived* from that blob: the range holds
+the result of applying a deterministic transform to the blob. The stream then
+holds a function of a file without storing the result, and the content-addressed
+store keeps holding the original file, which is what Bazel's cache, the disk
+cache and the remote cache have anyway.
+
+The transforms today are the ones an [EROFS layer](erofs-layers.md#file-compression)
+with per-file compression needs: the encoding of a file as LZ4-, DEFLATE- or
+Zstandard-compressed EROFS physical clusters. The metadata that describes those clusters (the inode and its
+index) stays in the byte stream, as before.
+
+A stream with at least one transformed reference has Version `0x02` and flag bit 1
+set, and then **every** entry of the reference table is followed by a transform
+record of `16 + HashSize` bytes, so the entry size becomes `32 + 2 * HashSize`
+(96 bytes for SHA-256):
+
+```
+Offset  Size      Type       Field         Description
+------  --------  ---------  ------------  -------------------------------------------
+0       1         uint8      Kind          0 = plain reference (the rest of the record is zero), 1 = EROFS LZ4 encoding, 2 = EROFS Zstandard encoding, 3 = EROFS DEFLATE encoding
+1       1         uint8      BlockBits     log2 of the block size of the encoding (9 to 16)
+2       2         uint16 BE  ClusterBlocks Most blocks in one compressed cluster of the encoding (0 = one)
+4       4         -          Reserved      Must be zero
+8       8         uint64 BE  SourceSize    Size of the blob the transform reads
+16      HashSize  bytes      OutputDigest  Digest of the bytes the transform produced
+```
+
+For a transformed entry, `Digest` is the digest of the *source blob*, `Size` is
+the length of the *transformed* bytes (what the range contributes to the
+reconstructed stream), and `SourceSize` is the number of bytes to fetch from the
+store. Stores are therefore asked for `SourceSize` bytes, not `Size`.
+
+Reconstruction applies the transform to the blob and checks the output against
+`Size` and `OutputDigest`. As with the compressed-stream digest, this makes a
+compressor that changed between `img` versions fail loudly instead of producing a
+different layer. Version `0x01` streams, which every stream without transformed
+references remains, are unaffected.
 
 ## Byte Stream
 

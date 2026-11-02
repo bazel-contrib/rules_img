@@ -18,8 +18,13 @@ type Region struct {
 	// Size is the range's length in bytes.
 	Size int64
 	// Digest is the content digest of the referenced blob, which must be the
-	// digest of exactly the bytes in the range.
+	// digest of exactly the bytes in the range, or of the blob they are derived
+	// from when Transform is set.
 	Digest []byte
+	// Transform, when set, says the bytes in the range are derived from the blob
+	// instead of being the blob. Its SourceSize and Kind are required; the
+	// splitter fills in OutputDigest from the bytes it sees.
+	Transform *Transform
 }
 
 // PlanSplitter is an io.Writer that forwards every byte to a downstream writer
@@ -64,6 +69,11 @@ func NewPlanSplitter(w *Writer, next io.Writer, regions []Region, verify bool) (
 		}
 		if r.Offset < prevEnd {
 			return nil, fmt.Errorf("compact stream: region %d at offset %d overlaps or precedes the previous region ending at %d", i, r.Offset, prevEnd)
+		}
+		if r.Transform != nil {
+			if err := r.Transform.validate(); err != nil {
+				return nil, fmt.Errorf("region %d: %w", i, err)
+			}
 		}
 		if len(r.Digest) != w.hashSize {
 			return nil, fmt.Errorf("compact stream: region %d digest length %d does not match expected hash size %d", i, len(r.Digest), w.hashSize)
@@ -149,11 +159,19 @@ func (s *PlanSplitter) Finish(size int64) error {
 
 func (s *PlanSplitter) beginRegion() error {
 	r := s.regions[s.idx]
-	if err := s.writer.WriteCASRef(r.Digest, uint64(r.Size)); err != nil {
+	var err error
+	if r.Transform != nil {
+		err = s.writer.WriteTransformedCASRef(r.Digest, uint64(r.Size), *r.Transform)
+	} else {
+		err = s.writer.WriteCASRef(r.Digest, uint64(r.Size))
+	}
+	if err != nil {
 		return err
 	}
 	s.remaining = r.Size
-	if s.verify {
+	// A transformed region's digest is what the stream records, so it is always
+	// needed; a plain one is only hashed to check the plan.
+	if s.verify || r.Transform != nil {
 		s.hasher = sha256.New()
 	}
 	return nil
@@ -161,6 +179,12 @@ func (s *PlanSplitter) beginRegion() error {
 
 func (s *PlanSplitter) endRegion() error {
 	r := s.regions[s.idx]
+	if s.hasher != nil && r.Transform != nil {
+		if err := s.writer.SetTransformOutputDigest(s.hasher.Sum(nil)); err != nil {
+			return err
+		}
+		s.hasher = nil
+	}
 	if s.hasher != nil {
 		if got := s.hasher.Sum(nil); !bytes.Equal(got, r.Digest) {
 			return fmt.Errorf("compact stream: region at offset %d (%d bytes) hashes to %s, but the plan recorded %s",

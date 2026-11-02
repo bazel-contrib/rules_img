@@ -48,11 +48,21 @@ type Header struct {
 	// CompressedStreamSize is the size in bytes of the reconstructed, compressed
 	// stream. Valid only when HasCompressedStreamInfo is true.
 	CompressedStreamSize uint64
+	// TransformedRefs reports that the reference table carries a transform
+	// record after every entry (see [Transform]).
+	TransformedRefs bool
 }
 
-// RefEntrySize is the size in bytes of a single CAS reference table entry
-// (an 8-byte offset, the digest, and an 8-byte size).
-func (h Header) RefEntrySize() int { return 16 + h.HashSize }
+// RefEntrySize is the size in bytes of a single CAS reference table entry:
+// an 8-byte offset, the digest and an 8-byte size, followed by the transform
+// record when the stream has [Header.TransformedRefs].
+func (h Header) RefEntrySize() int {
+	n := 16 + h.HashSize
+	if h.TransformedRefs {
+		n += transformRecordSize(h.HashSize)
+	}
+	return n
+}
 
 // RefCount is the number of CAS reference entries in the reference table.
 func (h Header) RefCount() int {
@@ -68,7 +78,20 @@ func (h Header) RefCount() int {
 type CASReference struct {
 	Offset uint64 // byte offset of the range in the reconstructed (uncompressed) stream
 	Digest []byte // content digest of the referenced blob
-	Size   uint64 // number of bytes the blob contributes to the stream
+	Size   uint64 // number of bytes the reference contributes to the stream
+	// Transform is set when the bytes in the range are derived from the blob
+	// rather than being the blob itself. Size is then the length of the derived
+	// bytes and [Transform.SourceSize] the length of the blob.
+	Transform *Transform
+}
+
+// BlobSize is the length of the blob the reference names: the number of bytes
+// to fetch from a store, which differs from Size for a transformed reference.
+func (r CASReference) BlobSize() uint64 {
+	if r.Transform != nil {
+		return r.Transform.SourceSize
+	}
+	return r.Size
 }
 
 // Info is a structural view of a compact stream sufficient to describe
@@ -89,6 +112,17 @@ func (i *Info) ReferencedBytes() uint64 {
 	var total uint64
 	for _, r := range i.Refs {
 		total += r.Size
+	}
+	return total
+}
+
+// CASBytes is the total number of bytes to fetch from the content-addressed
+// store to reconstruct the stream. It differs from [Info.ReferencedBytes] for
+// transformed references, whose blobs are not the bytes they contribute.
+func (i *Info) CASBytes() uint64 {
+	var total uint64
+	for _, r := range i.Refs {
+		total += r.BlobSize()
 	}
 	return total
 }
@@ -129,8 +163,12 @@ func parseHeader(raw [headerSize]byte) (Header, error) {
 	if raw[6] != 0x00 {
 		return Header{}, fmt.Errorf("expected NUL byte at offset 6, got %x", raw[6])
 	}
-	if raw[7] != FormatVersion {
+	if raw[7] != FormatVersion && raw[7] != FormatVersionTransform {
 		return Header{}, fmt.Errorf("unsupported compact stream version: %d", raw[7])
+	}
+	transformed := raw[56]&flagTransformedRefs != 0
+	if transformed && raw[7] < FormatVersionTransform {
+		return Header{}, fmt.Errorf("compact stream version %d cannot have transformed references", raw[7])
 	}
 
 	h := Header{
@@ -151,6 +189,8 @@ func parseHeader(raw [headerSize]byte) (Header, error) {
 		RefTableSize:   binary.BigEndian.Uint64(raw[32:40]),
 		StreamOffset:   binary.BigEndian.Uint64(raw[40:48]),
 		StreamSize:     binary.BigEndian.Uint64(raw[48:56]),
+
+		TransformedRefs: transformed,
 	}
 
 	if h.HashAlgo != HashAlgoSHA256 {
@@ -202,7 +242,14 @@ func readRefTable(r io.Reader, header Header) ([]CASReference, error) {
 		ref := CASReference{
 			Offset: binary.BigEndian.Uint64(refTableData[base : base+8]),
 			Digest: digest,
-			Size:   binary.BigEndian.Uint64(refTableData[base+8+header.HashSize : base+entry]),
+			Size:   binary.BigEndian.Uint64(refTableData[base+8+header.HashSize : base+16+header.HashSize]),
+		}
+		if header.TransformedRefs {
+			t, err := parseTransformRecord(refTableData[base+16+header.HashSize:base+entry], header.HashSize)
+			if err != nil {
+				return nil, fmt.Errorf("CAS ref %d: %w", i, err)
+			}
+			ref.Transform = t
 		}
 
 		// Validate the invariants the format promises (see docs/compact-stream.md):

@@ -261,7 +261,7 @@ func (r *ReconstructingReader) Read(p []byte) (int, error) {
 	if r.refIdx < len(r.refs) && r.refs[r.refIdx].Offset == r.outputPos {
 		ref := r.refs[r.refIdx]
 		r.refIdx++
-		blob, err := r.store.ReaderForBlob(r.ctx, ref.Digest, int64(ref.Size))
+		blob, err := r.openRef(ref)
 		if err != nil {
 			r.err = err
 			return 0, err
@@ -372,7 +372,11 @@ func writeReconstructed(ctx context.Context, dst io.Writer, stream io.Reader, re
 				return fmt.Errorf("copying stream bytes at offset %d (gap %d): %w", outputPos, gap, err)
 			}
 		}
-		if _, err := io.CopyN(dst, blobs, int64(r.Size)); err != nil {
+		if r.Transform != nil {
+			if err := applyTransform(dst, io.LimitReader(blobs, int64(r.Transform.SourceSize)), r); err != nil {
+				return fmt.Errorf("transforming blob at offset %d: %w", r.Offset, err)
+			}
+		} else if _, err := io.CopyN(dst, blobs, int64(r.Size)); err != nil {
 			return fmt.Errorf("reading blob at offset %d: %w", r.Offset, err)
 		}
 
@@ -389,7 +393,7 @@ func writeReconstructed(ctx context.Context, dst io.Writer, stream io.Reader, re
 func blobRequests(refs []CASReference) []BlobRequest {
 	requests := make([]BlobRequest, len(refs))
 	for i, r := range refs {
-		requests[i] = BlobRequest{Digest: r.Digest, Size: int64(r.Size)}
+		requests[i] = BlobRequest{Digest: r.Digest, Size: int64(r.BlobSize())}
 	}
 	return requests
 }
@@ -412,3 +416,53 @@ func (hw *hashCountWriter) Write(p []byte) (int, error) {
 	}
 	return n, err
 }
+
+// openRef returns a reader over the bytes a reference contributes to the stream.
+func (r *ReconstructingReader) openRef(ref CASReference) (io.ReadCloser, error) {
+	if ref.Transform == nil {
+		return r.store.ReaderForBlob(r.ctx, ref.Digest, int64(ref.Size))
+	}
+	if _, ok := r.store.(NullBlobStore); ok {
+		// The caller wants the shape of the stream, not its contents.
+		return NullBlobStore{}.ReaderForBlob(r.ctx, ref.Digest, int64(ref.Size))
+	}
+	blob, err := r.store.ReaderForBlob(r.ctx, ref.Digest, int64(ref.Transform.SourceSize))
+	if err != nil {
+		return nil, err
+	}
+	pr, pw := io.Pipe()
+	go func() {
+		err := applyTransform(pw, io.LimitReader(blob, int64(ref.Transform.SourceSize)), ref)
+		_ = blob.Close()
+		_ = pw.CloseWithError(err)
+	}()
+	return &transformReader{pr: pr, size: int64(ref.Size)}, nil
+}
+
+// transformReader reads the output of a transform running in another goroutine.
+// The consumer stops reading once it has the bytes it expects and never sees the
+// end of the pipe, which is where the transform reports that its output differs
+// from what the stream recorded. After the last expected byte the reader waits
+// for that verdict itself.
+type transformReader struct {
+	pr   *io.PipeReader
+	size int64
+	n    int64
+}
+
+func (t *transformReader) Read(p []byte) (int, error) {
+	n, err := t.pr.Read(p)
+	t.n += int64(n)
+	if err == nil && t.n == t.size {
+		var extra [1]byte
+		switch m, eerr := t.pr.Read(extra[:]); {
+		case m > 0:
+			return n, fmt.Errorf("the transform produced more than the %d recorded bytes", t.size)
+		case eerr != io.EOF:
+			return n, eerr
+		}
+	}
+	return n, err
+}
+
+func (t *transformReader) Close() error { return t.pr.Close() }
