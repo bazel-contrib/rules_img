@@ -3,8 +3,8 @@
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("//img/private/common:build.bzl", "TOOLCHAIN")
 load("//img/private/common:layout_blob.bzl", "generated_blob_or_none")
-load("//img/private/common:media_types.bzl", "media_type_is_cpio", "media_type_is_erofs", "media_type_is_ext4", "media_type_is_fat32")
-load("//img/private/providers:format_config_info.bzl", "CpioConfigInfo", "ErofsConfigInfo", "Ext4ConfigInfo", "Fat32ConfigInfo")
+load("//img/private/common:media_types.bzl", "media_type_is_cpio", "media_type_is_erofs", "media_type_is_ext4", "media_type_is_fat32", "media_type_is_iso9660")
+load("//img/private/providers:format_config_info.bzl", "CpioConfigInfo", "ErofsConfigInfo", "Ext4ConfigInfo", "Fat32ConfigInfo", "Iso9660ConfigInfo")
 load("//img/private/providers:single_layer_info.bzl", "SingleLayerInfo")
 
 allow_tar_files = [".tar", ".tar.gz", ".tgz", ".tar.zst", ".tzst"]
@@ -126,14 +126,14 @@ def layer_history_args(ctx):
         fail("history supports at most one entry (the img tool records a single --history value); got {}".format(history))
     return ["--history", history[0] if history else ""]
 
-def resolve_tar_format(ctx, compression, erofs = False, ext4 = False, fat32 = False, cpio = False):
+def resolve_tar_format(ctx, compression, erofs = False, ext4 = False, fat32 = False, iso9660 = False, cpio = False):
     """Resolve the estargz / zstd_chunked attributes into a tar format.
 
     Both attributes default to "auto", which defers to the matching global
     build setting. The two formats are mutually exclusive and zstd:chunked
     requires zstd compression; violating either is a configuration error.
     Both are tar formats: an EROFS layer resolves "auto" to disabled and
-    rejects an explicit "enabled", while an ext4, FAT32 or cpio layer resolves both to
+    rejects an explicit "enabled", while an ext4, FAT32, ISO 9660 or cpio layer resolves both to
     disabled whatever was asked for -- it ignores every tar-only option.
 
     Args:
@@ -143,12 +143,13 @@ def resolve_tar_format(ctx, compression, erofs = False, ext4 = False, fat32 = Fa
         erofs: Whether the layer is an EROFS filesystem image.
         ext4: Whether the layer is an ext4 filesystem image.
         fat32: Whether the layer is a FAT32 filesystem image.
+        iso9660: Whether the layer is an ISO 9660 filesystem image.
         cpio: Whether the layer is a cpio archive.
 
     Returns:
         struct with boolean fields `estargz` and `zstd_chunked`.
     """
-    if ext4 or fat32 or cpio:
+    if ext4 or fat32 or iso9660 or cpio:
         return struct(estargz = False, zstd_chunked = False)
 
     estargz = ctx.attr.estargz
@@ -281,13 +282,14 @@ def compression_tuning_args(ctx, compression, tar_format):
             tuned_args.extend(["--zstd-window-log", window_log])
     return tuned_args
 
-def build_layer_mtree(ctx, name, *, tar_blob = None, compact_stream = None, erofs_blob = None, erofs_compact_stream = None, ext4_blob = None, ext4_compact_stream = None, fat32_blob = None, fat32_compact_stream = None, cpio_blob = None, cpio_compact_stream = None):
+def build_layer_mtree(ctx, name, *, tar_blob = None, compact_stream = None, erofs_blob = None, erofs_compact_stream = None, ext4_blob = None, ext4_compact_stream = None, fat32_blob = None, fat32_compact_stream = None, iso9660_blob = None, iso9660_compact_stream = None, cpio_blob = None, cpio_compact_stream = None):
     """Produce an mtree spec describing the metadata of a layer.
 
     Runs `img mtree` over exactly one of: a materialized (possibly compressed)
     tar blob, a tar layer's compact stream, a materialized EROFS layer blob, an
     EROFS layer's compact stream, an ext4 layer image, an ext4 layer's compact
-    stream, a FAT32 layer image, a FAT32 layer's compact stream, a cpio layer, or a
+    stream, a FAT32 layer image, a FAT32 layer's compact stream, an ISO 9660
+    layer image, an ISO 9660 layer's compact stream, a cpio layer, or a
     cpio layer's compact stream (the compact streams
     are read as sparse images whose file payloads are absent). Writes a single mtree text file describing the layer's entries.
     The path layout, included fields, and layer layout are controlled by the
@@ -306,15 +308,17 @@ def build_layer_mtree(ctx, name, *, tar_blob = None, compact_stream = None, erof
         ext4_compact_stream: An ext4 layer's compact stream (.cstream) File.
         fat32_blob: A FAT32 layer image File.
         fat32_compact_stream: A FAT32 layer's compact stream (.cstream) File.
+        iso9660_blob: An ISO 9660 layer image File.
+        iso9660_compact_stream: An ISO 9660 layer's compact stream (.cstream) File.
         cpio_blob: A cpio layer File (optionally gzip/zstd compressed).
         cpio_compact_stream: A cpio layer's compact stream (.cstream) File.
 
     Returns:
         The generated mtree File.
     """
-    inputs = [i for i in [tar_blob, compact_stream, erofs_blob, erofs_compact_stream, ext4_blob, ext4_compact_stream, fat32_blob, fat32_compact_stream, cpio_blob, cpio_compact_stream] if i != None]
+    inputs = [i for i in [tar_blob, compact_stream, erofs_blob, erofs_compact_stream, ext4_blob, ext4_compact_stream, fat32_blob, fat32_compact_stream, iso9660_blob, iso9660_compact_stream, cpio_blob, cpio_compact_stream] if i != None]
     if len(inputs) != 1:
-        fail("build_layer_mtree requires exactly one of tar_blob, compact_stream, erofs_blob, erofs_compact_stream, ext4_blob, ext4_compact_stream, fat32_blob, fat32_compact_stream, cpio_blob or cpio_compact_stream")
+        fail("build_layer_mtree requires exactly one of tar_blob, compact_stream, erofs_blob, erofs_compact_stream, ext4_blob, ext4_compact_stream, fat32_blob, fat32_compact_stream, iso9660_blob, iso9660_compact_stream, cpio_blob or cpio_compact_stream")
     input = inputs[0]
 
     mtree_out = ctx.actions.declare_file(name + ".mtree")
@@ -336,6 +340,10 @@ def build_layer_mtree(ctx, name, *, tar_blob = None, compact_stream = None, erof
         args.add("--fat32", fat32_blob)
     elif fat32_compact_stream != None:
         args.add("--fat32-cstream", fat32_compact_stream)
+    elif iso9660_blob != None:
+        args.add("--iso9660", iso9660_blob)
+    elif iso9660_compact_stream != None:
+        args.add("--iso9660-cstream", iso9660_compact_stream)
     elif cpio_blob != None:
         args.add("--cpio", cpio_blob)
     else:
@@ -465,7 +473,7 @@ def media_type_ships_no_filesystem(media_type):
     """Whether this media type positively states the layer carries no files.
 
     True only for a media type that is known and is neither a tar changeset nor
-    an EROFS or ext4 filesystem image or a cpio archive -- an empty layer, say, or a non-tar artifact
+    an EROFS, ext4, FAT32 or ISO 9660 filesystem image or a cpio archive -- an empty layer, say, or a non-tar artifact
     blob. Unlike `not media_type_is_tar(...)`, an absent or "unknown" media type
     is NOT reported as such: a layer whose descriptor simply omits the field may
     well be a filesystem layer, and a consumer that must account for every byte
@@ -474,7 +482,7 @@ def media_type_ships_no_filesystem(media_type):
     """
     if media_type == None or media_type == "" or media_type == "unknown":
         return False
-    return not media_type_is_tar(media_type) and not media_type_is_erofs(media_type) and not media_type_is_ext4(media_type) and not media_type_is_fat32(media_type) and not media_type_is_cpio(media_type)
+    return not media_type_is_tar(media_type) and not media_type_is_erofs(media_type) and not media_type_is_ext4(media_type) and not media_type_is_fat32(media_type) and not media_type_is_iso9660(media_type) and not media_type_is_cpio(media_type)
 
 def layer_mtree_or_none(ctx, layer, name):
     """The mtree File describing one layer's tar entries, or None.
@@ -482,7 +490,7 @@ def layer_mtree_or_none(ctx, layer, name):
     Uses the layer's own `mtree` when it carries one (produced by a rules_img
     layer rule, or by the pull/import rule for a blob-bearing layer); otherwise
     renders one on the fly from the layer's materialized blob (a tar changeset
-    an EROFS, an ext4 or a FAT32 filesystem image, or a cpio archive) or compact stream -- this covers raw tars
+    an EROFS, an ext4, a FAT32 or an ISO 9660 filesystem image, or a cpio archive) or compact stream -- this covers raw tars
     added via `DefaultInfo` and any other blob-bearing layer whose source did
     not precompute one. Returns None for a layer whose filesystem content is not
     available: a shallow/lazy layer with no blob, or a blob that is neither,
@@ -505,6 +513,8 @@ def layer_mtree_or_none(ctx, layer, name):
         return build_layer_mtree(ctx, name, ext4_blob = layer.blob)
     if layer.blob != None and media_type_is_fat32(layer.media_type):
         return build_layer_mtree(ctx, name, fat32_blob = layer.blob)
+    if layer.blob != None and media_type_is_iso9660(layer.media_type):
+        return build_layer_mtree(ctx, name, iso9660_blob = layer.blob)
     if layer.blob != None and media_type_is_cpio(layer.media_type):
         return build_layer_mtree(ctx, name, cpio_blob = layer.blob)
     if layer.blob != None and media_type_is_tar(layer.media_type):
@@ -734,23 +744,27 @@ def resolve_format_config(ctx, layer_format):
 
     Args:
         ctx: Rule context with a `format_config` attribute and the
-            `_erofs_inline_threshold`, `_erofs_synthetic_directories` and
-            `_ext4_deduplicate` and `_cpio_deduplicate` settings.
-        layer_format: Resolved container format name ("tar", "erofs", "ext4", "fat32", "cpio").
+            `_erofs_inline_threshold`, `_erofs_synthetic_directories`,
+            `_ext4_deduplicate`, `_cpio_deduplicate`, `_iso9660_rock_ridge` and
+            `_iso9660_deduplicate` settings.
+        layer_format: Resolved container format name ("tar", "erofs", "ext4", "fat32", "iso9660", "cpio").
 
     Returns:
-        struct with an `ext4`, a `fat32`, a `cpio` and an `erofs` field, each a struct of
+        struct with an `ext4`, a `fat32`, an `iso9660`, a `cpio` and an `erofs` field, each a struct of
         the options of that format.
     """
     config = ctx.attr.format_config
     ext4 = config[Ext4ConfigInfo] if config != None and Ext4ConfigInfo in config else None
     fat32 = config[Fat32ConfigInfo] if config != None and Fat32ConfigInfo in config else None
+    iso9660 = config[Iso9660ConfigInfo] if config != None and Iso9660ConfigInfo in config else None
     cpio = config[CpioConfigInfo] if config != None and CpioConfigInfo in config else None
     erofs = config[ErofsConfigInfo] if config != None and ErofsConfigInfo in config else None
     if cpio != None and layer_format != "cpio":
         fail("format_config = {} configures a cpio archive, but the layer has format = \"{}\".".format(config.label, layer_format))
     if fat32 != None and layer_format != "fat32":
         fail("format_config = {} configures a FAT32 image, but the layer has format = \"{}\".".format(config.label, layer_format))
+    if iso9660 != None and layer_format != "iso9660":
+        fail("format_config = {} configures an ISO 9660 image, but the layer has format = \"{}\".".format(config.label, layer_format))
     if ext4 != None and layer_format != "ext4":
         fail("format_config = {} configures an ext4 image, but the layer has format = \"{}\".".format(config.label, layer_format))
     if erofs != None and layer_format != "erofs":
@@ -762,6 +776,12 @@ def resolve_format_config(ctx, layer_format):
     cpio_deduplicate = cpio.deduplicate if cpio != None else "auto"
     if cpio_deduplicate == "auto":
         cpio_deduplicate = ctx.attr._cpio_deduplicate[BuildSettingInfo].value
+    iso9660_rock_ridge = iso9660.rock_ridge if iso9660 != None else "auto"
+    if iso9660_rock_ridge == "auto":
+        iso9660_rock_ridge = ctx.attr._iso9660_rock_ridge[BuildSettingInfo].value
+    iso9660_deduplicate = iso9660.deduplicate if iso9660 != None else "auto"
+    if iso9660_deduplicate == "auto":
+        iso9660_deduplicate = ctx.attr._iso9660_deduplicate[BuildSettingInfo].value
     inline_threshold = erofs.inline_threshold if erofs != None else -1
     if inline_threshold < 0:
         inline_threshold = ctx.attr._erofs_inline_threshold[BuildSettingInfo].value
@@ -783,6 +803,21 @@ def resolve_format_config(ctx, layer_format):
         fat32 = struct(
             sector_size = fat32.sector_size if fat32 != None else 0,
         ),
+        iso9660 = struct(
+            volume_id = iso9660.volume_id if iso9660 != None else "",
+            system_id = iso9660.system_id if iso9660 != None else "",
+            volume_set_id = iso9660.volume_set_id if iso9660 != None else "",
+            publisher = iso9660.publisher if iso9660 != None else "",
+            data_preparer = iso9660.data_preparer if iso9660 != None else "",
+            application_id = iso9660.application_id if iso9660 != None else "",
+            rock_ridge = iso9660_rock_ridge,
+            joliet = iso9660.joliet if iso9660 != None else False,
+            joliet_long_names = iso9660.joliet_long_names if iso9660 != None else False,
+            udf = iso9660.udf if iso9660 != None else False,
+            deduplicate = iso9660_deduplicate == "enabled",
+            min_size = iso9660.min_size if iso9660 != None else "",
+            boot = iso9660.boot if iso9660 != None else [],
+        ),
         cpio = struct(
             deduplicate = cpio_deduplicate == "enabled",
         ),
@@ -797,7 +832,7 @@ def format_config_args(layer_format, format_config):
     """The command line of the format-specific options of a layer.
 
     Args:
-        layer_format: Resolved container format name ("tar", "erofs", "ext4", "fat32", "cpio").
+        layer_format: Resolved container format name ("tar", "erofs", "ext4", "fat32", "iso9660", "cpio").
         format_config: struct returned by resolve_format_config().
 
     Returns:
@@ -830,6 +865,42 @@ def format_config_args(layer_format, format_config):
         if format_config.fat32.sector_size:
             args.extend(["--fat32-sector-size", str(format_config.fat32.sector_size)])
         return args
+    if layer_format == "iso9660":
+        iso9660 = format_config.iso9660
+        args = [
+            "--layer-format",
+            "iso9660",
+            "--iso9660-rock-ridge=" + iso9660.rock_ridge,
+            "--iso9660-deduplicate=" + ("true" if iso9660.deduplicate else "false"),
+        ]
+        for flag, value in [
+            ("--iso9660-volume-id", iso9660.volume_id),
+            ("--iso9660-system-id", iso9660.system_id),
+            ("--iso9660-volume-set-id", iso9660.volume_set_id),
+            ("--iso9660-publisher", iso9660.publisher),
+            ("--iso9660-data-preparer", iso9660.data_preparer),
+            ("--iso9660-application-id", iso9660.application_id),
+            ("--iso9660-min-size", iso9660.min_size),
+        ]:
+            if value:
+                args.extend([flag, value])
+        if iso9660.joliet:
+            args.append("--iso9660-joliet")
+        if iso9660.joliet_long_names:
+            args.append("--iso9660-joliet-long-names")
+        if iso9660.udf:
+            args.append("--iso9660-udf")
+        for entry in iso9660.boot:
+            args.extend(["--iso9660-boot", json.encode(struct(
+                image = entry.image,
+                platform = entry.platform,
+                emulation = entry.emulation,
+                load_size = entry.load_size,
+                load_segment = entry.load_segment,
+                boot_info_table = entry.boot_info_table,
+                id = entry.id,
+            ))])
+        return args
     if layer_format == "cpio":
         return [
             "--layer-format",
@@ -855,8 +926,8 @@ def optimize_layer(*, ctx, media_type, tar_file, metadata_file, output, target_c
 
     With layer_format = "erofs" the same rewrite converts the tar into an EROFS
     filesystem image: the tar is fed to the EROFS sink entry by entry, so every
-    entry keeps its metadata. With layer_format = "ext4", "fat32" or "cpio" it converts the
-    tar into an ext4 or FAT32 filesystem image or a cpio archive the same way. A format
+    entry keeps its metadata. With layer_format = "ext4", "fat32", "iso9660" or "cpio" it converts the
+    tar into an ext4, FAT32 or ISO 9660 filesystem image or a cpio archive the same way. A format
     change always takes this path,
     because the source blob cannot be reused.
 
@@ -869,7 +940,7 @@ def optimize_layer(*, ctx, media_type, tar_file, metadata_file, output, target_c
         target_compression: Target compression format.
         tar_format: struct returned by resolve_tar_format().
         annotations: Dict of string annotations to add to the layer metadata.
-        layer_format: "tar", "erofs", "ext4", "fat32" or "cpio".
+        layer_format: "tar", "erofs", "ext4", "fat32", "iso9660" or "cpio".
         format_args: list returned by format_config_args(), the
             format-specific options of the layer.
 
@@ -879,6 +950,7 @@ def optimize_layer(*, ctx, media_type, tar_file, metadata_file, output, target_c
     is_erofs = layer_format == "erofs"
     is_ext4 = layer_format == "ext4"
     is_fat32 = layer_format == "fat32"
+    is_iso9660 = layer_format == "iso9660"
     is_cpio = layer_format == "cpio"
     inputs = [tar_file]
     args = ctx.actions.args()
@@ -899,7 +971,7 @@ def optimize_layer(*, ctx, media_type, tar_file, metadata_file, output, target_c
         outputs = [output, metadata_file],
         executable = img_toolchain_info.tool_exe,
         arguments = [args],
-        mnemonic = "LayerErofs" if is_erofs else ("LayerExt4" if is_ext4 else ("LayerFat32" if is_fat32 else ("LayerCpio" if is_cpio else "LayerOptimize"))),
+        mnemonic = "LayerErofs" if is_erofs else ("LayerExt4" if is_ext4 else ("LayerFat32" if is_fat32 else ("LayerIso9660" if is_iso9660 else ("LayerCpio" if is_cpio else "LayerOptimize")))),
     )
     if is_cpio:
         mtree = build_layer_mtree(ctx, ctx.label.name, cpio_blob = output)
@@ -907,6 +979,8 @@ def optimize_layer(*, ctx, media_type, tar_file, metadata_file, output, target_c
         mtree = build_layer_mtree(ctx, ctx.label.name, ext4_blob = output)
     elif is_fat32:
         mtree = build_layer_mtree(ctx, ctx.label.name, fat32_blob = output)
+    elif is_iso9660:
+        mtree = build_layer_mtree(ctx, ctx.label.name, iso9660_blob = output)
     elif is_erofs:
         mtree = build_layer_mtree(ctx, ctx.label.name, erofs_blob = output)
     else:

@@ -26,6 +26,10 @@ EXT4_LAYER = "application/x-ext4"
 # layer, it is not an OCI layer and not one of the LAYER_TYPES.
 FAT32_LAYER = "application/x-fat32"
 
+# The media type recorded for an ISO 9660 filesystem image layer. Like an ext4
+# layer, it is not an OCI layer and not one of the LAYER_TYPES.
+ISO9660_LAYER = "application/x-iso9660-image"
+
 # The media types recorded for a cpio archive (an initramfs), by compression.
 # Like an ext4 layer, a cpio layer is not an OCI layer and not a LAYER_TYPE.
 CPIO_LAYER = "application/x-cpio"
@@ -65,6 +69,17 @@ def media_type_is_fat32(media_type):
         True if the media type is the FAT32 layer media type.
     """
     return media_type == FAT32_LAYER
+
+def media_type_is_iso9660(media_type):
+    """Whether a layer blob with this media type is an ISO 9660 filesystem image.
+
+    Args:
+        media_type: Layer media type string, or None.
+
+    Returns:
+        True if the media type is the ISO 9660 layer media type.
+    """
+    return media_type == ISO9660_LAYER
 
 def media_type_is_cpio(media_type):
     """Whether a layer blob with this media type is a cpio archive.

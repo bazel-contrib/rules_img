@@ -29,7 +29,8 @@ string_flag(
 # Layer container format, orthogonal to :compress. "tar" writes an OCI tar
 # changeset; "erofs" writes a mountable EROFS filesystem image (see
 # docs/erofs-layers.md), which accepts only compress=none or zstd; "ext4"
-# and "fat32" write an ext4 or FAT32 filesystem image, and "cpio" a cpio archive (an initramfs, which
+# and "fat32" write an ext4 or FAT32 filesystem image, "iso9660" an ISO 9660
+# image (with the Rock Ridge, Joliet and UDF extensions as options), and "cpio" a cpio archive (an initramfs, which
 # can be compressed). These are for using a layer on its own (they are not OCI
 # layers) and ignore the options that only apply to tar layers.
 string_flag(
@@ -40,7 +41,37 @@ string_flag(
         "erofs",
         "ext4",
         "fat32",
+        "iso9660",
         "cpio",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+# Whether an ISO 9660 layer carries the Rock Ridge extension, which adds the real
+# names and the POSIX metadata of the entries. Without it, symbolic links, device
+# nodes and FIFOs cannot be stored and a layer with such an entry fails.
+# "rationalized" normalizes the metadata the way mkisofs -rational-rock does.
+string_flag(
+    name = "iso9660_rock_ridge",
+    build_setting_default = "enabled",
+    values = [
+        "enabled",
+        "rationalized",
+        "disabled",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+# Whether an ISO 9660 layer stores regular files with the same content and
+# metadata once, sharing one extent (with Rock Ridge, as hard links of each
+# other, like tar layers do). Turning it off spares reading file content only to
+# find duplicates, at the cost of larger images.
+string_flag(
+    name = "iso9660_deduplicate",
+    build_setting_default = "enabled",
+    values = [
+        "enabled",
+        "disabled",
     ],
     visibility = ["//visibility:public"],
 )
@@ -383,7 +414,7 @@ string_flag(
 # after their last entry (some libarchive-based readers cannot tell the archive
 # has ended without reading past it). Only applies to tar layers that rules_img
 # writes: it has no effect on estargz layers (which write their own archive end),
-# on layers of other formats (erofs, ext4, fat32, cpio) or on layers taken
+# on layers of other formats (erofs, ext4, fat32, iso9660, cpio) or on layers taken
 # unchanged from a pulled base image.
 string_flag(
     name = "tar_end_of_archive",

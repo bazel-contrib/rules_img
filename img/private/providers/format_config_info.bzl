@@ -37,6 +37,54 @@ Fat32ConfigInfo = provider(
     fields = FAT32_FIELDS,
 )
 
+ISO9660_DOC = """\
+Options of an ISO 9660 filesystem image layer, produced by the `iso9660_config`
+rule and selected per target through the `format_config` attribute of the layer
+rules.
+"""
+
+ISO9660_FIELDS = dict(
+    volume_id = "string: volume identifier (at most 32 characters), or \"\" for the default (\"CDROM\").",
+    system_id = "string: system identifier (at most 32 characters), or \"\" for none.",
+    volume_set_id = "string: volume set identifier (at most 128 characters), or \"\" for none.",
+    publisher = "string: publisher identifier (at most 128 characters), or \"\" for none.",
+    data_preparer = "string: data preparer identifier (at most 128 characters), or \"\" for none.",
+    application_id = "string: application identifier (at most 128 characters), or \"\" for none.",
+    rock_ridge = "string: \"auto\", \"enabled\", \"rationalized\" or \"disabled\"; whether the image carries the Rock Ridge extension, and whether its metadata is normalized.",
+    joliet = "bool: whether the image carries a second, Joliet hierarchy with UCS-2 names.",
+    joliet_long_names = "bool: whether Joliet names may be longer than the 64 characters of the specification.",
+    udf = "bool: whether the image carries UDF structures describing the same file data.",
+    deduplicate = "string: \"auto\", \"enabled\" or \"disabled\"; whether identical files share one extent.",
+    min_size = "string: minimum image size with an optional binary unit, or \"\" for an image as large as its content needs.",
+    boot = "list: the El Torito boot entries of the image, in order, as Iso9660BootEntryInfo providers.",
+)
+
+Iso9660ConfigInfo = provider(
+    doc = ISO9660_DOC,
+    fields = ISO9660_FIELDS,
+)
+
+ISO9660_BOOT_ENTRY_DOC = """\
+One El Torito boot entry of an ISO 9660 image, produced by the
+`iso9660_boot_entry` rule and passed to the `boot` attribute of
+`iso9660_config`.
+"""
+
+ISO9660_BOOT_ENTRY_FIELDS = dict(
+    image = "string: the path of the boot image in the layer, without a leading slash.",
+    platform = "string: \"bios\", \"powerpc\", \"mac\" or \"uefi\".",
+    emulation = "string: \"none\", \"floppy120\", \"floppy144\", \"floppy288\" or \"harddisk\".",
+    load_size = "int: how many 512 byte sectors the firmware loads, or 0 for the whole image.",
+    load_segment = "int: the real mode segment a BIOS entry is loaded at, or 0 for the default.",
+    boot_info_table = "bool: whether the boot information table isolinux expects is patched into the image.",
+    id = "string: the identifier recorded on the section header of an entry other than the first.",
+)
+
+Iso9660BootEntryInfo = provider(
+    doc = ISO9660_BOOT_ENTRY_DOC,
+    fields = ISO9660_BOOT_ENTRY_FIELDS,
+)
+
 CPIO_DOC = """\
 Options of a cpio archive layer, produced by the `cpio_config` rule and selected
 per target through the `format_config` attribute of the layer rules.

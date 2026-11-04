@@ -2,7 +2,7 @@
 
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("//img/private/common:transitions.bzl", "reset_compact_image_transition")
-load("//img/private/providers:format_config_info.bzl", "CpioConfigInfo", "ErofsConfigInfo", "Ext4ConfigInfo", "Fat32ConfigInfo")
+load("//img/private/providers:format_config_info.bzl", "CpioConfigInfo", "ErofsConfigInfo", "Ext4ConfigInfo", "Fat32ConfigInfo", "Iso9660ConfigInfo")
 
 _common_attrs = dict(
     compress = attr.string(
@@ -15,17 +15,18 @@ Compression algorithm to use. If set to 'auto', uses the global default compress
 (the blob is then mountable as it is). EROFS layers cannot be gzip-compressed.
 
 A `cpio` layer (an initramfs) is also left uncompressed by default. It can be compressed with
-`gzip` or `zstd`, which the kernel unpacks as it is. The `ext4` and `fat32` formats ignore this attribute.
+`gzip` or `zstd`, which the kernel unpacks as it is. The `ext4`, `fat32` and `iso9660` formats ignore this attribute.
 """,
     ),
     format = attr.string(
         default = "auto",
-        values = ["auto", "tar", "erofs", "ext4", "fat32", "cpio"],
+        values = ["auto", "tar", "erofs", "ext4", "fat32", "iso9660", "cpio"],
         doc = """\
 Container format of the layer blob, orthogonal to `compress`.
 
 'tar' writes an OCI tar changeset. 'erofs' writes a mountable EROFS filesystem image. 'ext4' and 'fat32' write an
-ext4 or FAT32 filesystem image, 'cpio' a cpio archive in the newc format (an initramfs). If set to 'auto', uses the global default
+ext4 or FAT32 filesystem image, 'iso9660' an ISO 9660 image (with the Rock Ridge, Joliet and UDF extensions and
+El Torito boot entries as options), 'cpio' a cpio archive in the newc format (an initramfs). If set to 'auto', uses the global default
 --@rules_img//img/settings:layer_format setting.
 
 An EROFS layer is a filesystem, not a changeset. See docs/erofs-layers.md before using it.
@@ -34,10 +35,11 @@ See docs/filesystems.md for how the formats compare.
 """,
     ),
     format_config = attr.label(
-        providers = [[Ext4ConfigInfo], [Fat32ConfigInfo], [CpioConfigInfo], [ErofsConfigInfo]],
+        providers = [[Ext4ConfigInfo], [Fat32ConfigInfo], [Iso9660ConfigInfo], [CpioConfigInfo], [ErofsConfigInfo]],
         doc = """\
 Options of the filesystem image the layer is written as: an `ext4_config` target
-for `format = "ext4"`, a `fat32_config` target for `format = "fat32"`, a `cpio_config` target for `format = "cpio"`, or an `erofs_config`
+for `format = "ext4"`, a `fat32_config` target for `format = "fat32"`, an `iso9660_config` target for `format = "iso9660"`,
+a `cpio_config` target for `format = "cpio"`, or an `erofs_config`
 target for `format = "erofs"`.
 
 Without it, every option of the format is left at its default. A config for a
@@ -190,6 +192,14 @@ Override the layer media type. By default, the media type is auto-detected from 
     ),
     _ext4_deduplicate = attr.label(
         default = Label("//img/settings:ext4_deduplicate"),
+        providers = [BuildSettingInfo],
+    ),
+    _iso9660_rock_ridge = attr.label(
+        default = Label("//img/settings:iso9660_rock_ridge"),
+        providers = [BuildSettingInfo],
+    ),
+    _iso9660_deduplicate = attr.label(
+        default = Label("//img/settings:iso9660_deduplicate"),
         providers = [BuildSettingInfo],
     ),
     _default_estargz = attr.label(
