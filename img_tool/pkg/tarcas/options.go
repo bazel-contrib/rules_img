@@ -42,6 +42,7 @@ type options struct {
 	writeHeaderCallback       WriteHeaderCallback
 	writeHeaderCallbackFilter WriteHeaderCallbackFilter
 	createParentDirectories   bool
+	endOfArchive              bool
 	deduplicateTreeArtifacts  bool
 	compactStreamWriter       *compactstream.Writer
 	observer                  EntryObserver
@@ -49,6 +50,18 @@ type options struct {
 }
 
 type CreateParentDirectories bool
+
+// EndOfArchive makes Close terminate the archive with the two zero-filled
+// 512-byte blocks that POSIX requires at the end of a tar archive.
+// Without it the archive simply ends after the last entry, which Go's
+// archive/tar and GNU tar accept, but readers that cannot tell the end of
+// the archive without reading past it (libarchive) depend on the underlying
+// stream to signal EOF cleanly.
+//
+// Observers see the blocks if they implement EndOfArchiveObserver.
+type EndOfArchive bool
+
+func (e EndOfArchive) apply(opts *options) { opts.endOfArchive = bool(e) }
 
 func (s FileStructure) apply(opts *options) { opts.structure = s }
 

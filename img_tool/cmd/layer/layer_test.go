@@ -43,7 +43,7 @@ func TestTreeMetadata(t *testing.T) {
 				{PathInImage: "app/second", File: dir, FileType: api.Directory},
 			}, nil, nil, symlinks{{LinkName: "links/alias", Target: "../app/first/a"}}, nil, nil,
 				contentmanifest.NewMultiImporter(nil, api.SHA256), contentmanifest.NopExporter(), &out, metadata,
-				"1", -1, 0, true, handling, "", 0)
+				"1", -1, 0, true, handling, false, "", 0)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -175,5 +175,37 @@ func TestCompactStreamCompressionLevel(t *testing.T) {
 		if _, err := compactStreamCompressionLevel(lvl); err == nil {
 			t.Errorf("compactStreamCompressionLevel(%d): expected error, got nil", lvl)
 		}
+	}
+}
+
+// TestHandleLayerStateEndOfArchive checks that --tar-end-of-archive terminates
+// the layer with the two zero blocks POSIX requires, and that the layer stays
+// byte-identical to the default one up to that point.
+func TestHandleLayerStateEndOfArchive(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "a"), []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	build := func(endOfArchive bool) []byte {
+		var out bytes.Buffer
+		_, err := handleLayerState(api.TarFormat, erofsSettings{}, api.Uncompressed, compress.TarFormatPlain, addFiles{
+			{PathInImage: "app/a", File: filepath.Join(dir, "a"), FileType: api.RegularFile},
+		}, nil, nil, nil, nil, nil,
+			contentmanifest.NewMultiImporter(nil, api.SHA256), contentmanifest.NopExporter(), &out, nil,
+			"1", -1, 0, false, "full", endOfArchive, "", 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out.Bytes()
+	}
+	without, with := build(false), build(true)
+	if len(with) != len(without)+1024 {
+		t.Fatalf("layer with end-of-archive is %d bytes, want %d + 1024", len(with), len(without))
+	}
+	if !bytes.Equal(with[:len(without)], without) {
+		t.Fatal("end-of-archive changed the layer before the end-of-archive blocks")
+	}
+	if !bytes.Equal(with[len(without):], make([]byte, 1024)) {
+		t.Fatal("end-of-archive blocks are not zero")
 	}
 }

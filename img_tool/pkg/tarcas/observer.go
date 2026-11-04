@@ -21,6 +21,15 @@ type EntryObserver interface {
 	Close() error
 }
 
+// EndOfArchiveObserver is implemented by observers that need to see the
+// end-of-archive blocks written by Close when EndOfArchive is enabled.
+type EndOfArchiveObserver interface {
+	EndOfArchive(blocks []byte) error
+}
+
+// endOfArchiveBlocks is the tar end-of-archive marker: two zero-filled blocks.
+var endOfArchiveBlocks = make([]byte, 2*512)
+
 type compactStreamObserver[HM hashHelper] struct {
 	compactStreamWriter *compactstream.Writer
 	hasher              hash.Hash
@@ -121,6 +130,12 @@ func (o *compactStreamObserver[HM]) EndEntry() error {
 		return o.compactStreamWriter.WriteStreamBytes(padding)
 	}
 	return nil
+}
+
+// EndOfArchive records the end-of-archive blocks as plain stream bytes, so that
+// reconstructing the tar reproduces them.
+func (o *compactStreamObserver[HM]) EndOfArchive(blocks []byte) error {
+	return o.compactStreamWriter.WriteStreamBytes(blocks)
 }
 
 // Close is a no-op: the observer collects stream bytes and CAS references into

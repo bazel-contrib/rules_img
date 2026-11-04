@@ -212,6 +212,10 @@ Override the layer media type. By default, the media type is auto-detected from 
         default = Label("//img/settings:create_parent_directories"),
         providers = [BuildSettingInfo],
     ),
+    _tar_end_of_archive = attr.label(
+        default = Label("//img/settings:tar_end_of_archive"),
+        providers = [BuildSettingInfo],
+    ),
     _default_tree_artifact_handling = attr.label(
         default = Label("//img/settings:layer_tree_artifact_handling"),
         providers = [BuildSettingInfo],
