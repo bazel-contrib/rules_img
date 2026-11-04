@@ -217,6 +217,7 @@ fields are absent (zero) and must be ignored.
 | 3     | [ext4 filesystem image](#compact-streams-of-ext4-images) |
 | 4     | [cpio archive](filesystems.md#cpio) (newc)   |
 | 5     | [FAT32 filesystem image](filesystems.md#fat32) |
+| 6     | [ISO 9660 image](filesystems.md#iso9660)     |
 
 `ContentFormat` identifies the filetype of the payload. Reconstruction itself
 does not need it, but a tool that interprets the content rather than just
