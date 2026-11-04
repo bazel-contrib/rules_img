@@ -13,6 +13,7 @@ go_library(
         "//pkg/api",
         "//pkg/compactstream",
         "//pkg/deployvfs",
+        "//pkg/destination",
         "//pkg/gateway",
         "//pkg/push",
         "//pkg/registryopts",

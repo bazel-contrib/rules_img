@@ -226,6 +226,7 @@ def _image_push_impl(ctx):
                 insecure = ctx.attr._push_settings[PushSettingsInfo].insecure,
                 pull_info = ctx.attr.image[PullInfo] if PullInfo in ctx.attr.image else None,
                 exec_requirements = pbt.exec_properties,
+                destination_file = ctx.file.destination_file,
             ),
             pbt.output_group,
         )

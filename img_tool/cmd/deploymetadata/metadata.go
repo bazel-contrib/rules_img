@@ -15,6 +15,7 @@ import (
 	registryv1 "github.com/google/go-containerregistry/pkg/v1"
 
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/api"
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/destination"
 )
 
 var (
@@ -707,7 +708,7 @@ func referrerPushOperation(baseCommand api.BaseCommandOperation, config map[stri
 	var registry, repository string
 
 	if destinationFilePath != "" {
-		reg, repo, err := parseDestinationFile(destinationFilePath)
+		reg, repo, err := destination.ParseFile(destinationFilePath)
 		if err != nil {
 			return api.PushDeployOperation{}, err
 		}
@@ -808,45 +809,11 @@ func pickCrossMountSource(targetRegistry string) (*api.CrossMountSource, error) 
 	return nil, nil
 }
 
-func parseDestinationFile(path string) (registry string, repository string, err error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return "", "", fmt.Errorf("reading destination file: %w", err)
-	}
-
-	destination := strings.TrimSpace(string(data))
-
-	if destination == "" {
-		return "", "", fmt.Errorf("destination file %q is empty", path)
-	}
-
-	if strings.ContainsAny(destination, "\n\r") {
-		return "", "", fmt.Errorf("destination file %q must contain exactly one line", path)
-	}
-
-	slashIndex := strings.Index(destination, "/")
-	if slashIndex < 0 {
-		return "", "", fmt.Errorf("destination file %q must contain a '/' separating registry from repository, got %q", path, destination)
-	}
-
-	registry = destination[:slashIndex]
-	repository = destination[slashIndex+1:]
-
-	if registry == "" {
-		return "", "", fmt.Errorf("destination file %q has an empty registry (content: %q)", path, destination)
-	}
-	if repository == "" {
-		return "", "", fmt.Errorf("destination file %q has an empty repository (content: %q)", path, destination)
-	}
-
-	return registry, repository, nil
-}
-
 func pushOperation(baseCommand api.BaseCommandOperation, config map[string]any) (api.PushDeployOperation, error) {
 	var registry, repository string
 
 	if destinationFilePath != "" {
-		reg, repo, err := parseDestinationFile(destinationFilePath)
+		reg, repo, err := destination.ParseFile(destinationFilePath)
 		if err != nil {
 			return api.PushDeployOperation{}, err
 		}

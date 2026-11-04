@@ -17,6 +17,7 @@ import (
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/api"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/compactstream"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/deployvfs"
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/destination"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/gateway"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/registryopts"
 )
@@ -36,7 +37,8 @@ func (s *stringSliceFlag) Set(value string) error {
 }
 
 // configurationFile is the expanded push configuration written by the image
-// rules ({registry, repository, tags}). Only registry/repository are used here.
+// rules ({registry, repository, tags}). Only registry/repository are used here,
+// and only when no destination file is given.
 type configurationFile struct {
 	Registry   string `json:"registry"`
 	Repository string `json:"repository"`
@@ -45,6 +47,7 @@ type configurationFile struct {
 func blobProcess(ctx context.Context, args []string) {
 	var (
 		configurationPath string
+		destinationPath   string
 		metadataPath      string
 		blobPath          string
 		compactStreamPath string
@@ -58,6 +61,7 @@ func blobProcess(ctx context.Context, args []string) {
 
 	flagSet := flag.NewFlagSet("push blob", flag.ContinueOnError)
 	flagSet.StringVar(&configurationPath, "configuration-file", "", "Path to the configuration file ({registry, repository}). Required.")
+	flagSet.StringVar(&destinationPath, "destination-file", "", `(Optional) path to a file containing the push destination as "registry/repository". Takes precedence over registry/repository in the configuration file.`)
 	flagSet.StringVar(&metadataPath, "metadata", "", "Path to the blob metadata JSON (digest/mediaType/size). Optional: when omitted, the descriptor is derived by hashing --blob (used for the config blob, whose descriptor has no standalone file).")
 	flagSet.StringVar(&blobPath, "blob", "", "Path to the materialized blob (layer or config) to push.")
 	flagSet.StringVar(&compactStreamPath, "compact-stream", "", "Path to the layer's compact stream (.cstream) to reconstruct and push.")
@@ -81,7 +85,7 @@ func blobProcess(ctx context.Context, args []string) {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
-	cfg, err := readConfiguration(configurationPath)
+	cfg, err := readConfiguration(configurationPath, destinationPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
@@ -233,7 +237,9 @@ func readDescriptor(path string) (api.Descriptor, error) {
 	return desc, nil
 }
 
-func readConfiguration(path string) (configurationFile, error) {
+// readConfiguration reads the push configuration at path. When destinationPath
+// is set, the registry and repository come from that destination file instead.
+func readConfiguration(path, destinationPath string) (configurationFile, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return configurationFile{}, fmt.Errorf("reading configuration %s: %w", path, err)
@@ -241,6 +247,13 @@ func readConfiguration(path string) (configurationFile, error) {
 	var cfg configurationFile
 	if err := json.Unmarshal(raw, &cfg); err != nil {
 		return configurationFile{}, fmt.Errorf("parsing configuration %s: %w", path, err)
+	}
+	if destinationPath != "" {
+		registry, repository, err := destination.ParseFile(destinationPath)
+		if err != nil {
+			return configurationFile{}, err
+		}
+		cfg.Registry, cfg.Repository = registry, repository
 	}
 	if cfg.Registry == "" || cfg.Repository == "" {
 		return configurationFile{}, fmt.Errorf("configuration %s must contain non-empty 'registry' and 'repository'", path)

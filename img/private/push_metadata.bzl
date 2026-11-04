@@ -532,7 +532,8 @@ def build_time_push_actions(
         pull_gateway,
         insecure,
         pull_info,
-        exec_requirements):
+        exec_requirements,
+        destination_file = None):
     """Create the PushImage actions for one push operation.
 
     Emits one action per blob (mnemonic PushImage) that pushes a single blob to
@@ -581,6 +582,9 @@ def build_time_push_actions(
       pull_info: PullInfo used when computing the manifest push metadata.
       exec_requirements: dict forwarded as the execution_requirements of every
         emitted PushImage action (e.g. {"requires-network": "1"}).
+      destination_file: optional File containing the push destination as
+        `{registry}/{repository}`, overriding the registry and repository of
+        configuration_json, as it does for the deploy manifest.
 
     Returns:
       List of Files that drive the emitted actions when built: the per-layer and
@@ -628,6 +632,9 @@ def build_time_push_actions(
             args.add("--mode", mode)
             args.add("--output", result)
             inputs = [configuration_json, layer.metadata]
+            if destination_file != None:
+                args.add("--destination-file", destination_file)
+                inputs.append(destination_file)
             if layer.blob != None:
                 args.add("--blob", layer.blob)
                 inputs.append(layer.blob)
@@ -671,8 +678,12 @@ def build_time_push_actions(
                 ztoc_args.add("--blob-repository", blob_repository)
             ztoc_args.add("--mode", mode)
             ztoc_args.add("--output", result)
+            ztoc_inputs = [configuration_json, ztoc_layer.blob]
+            if destination_file != None:
+                ztoc_args.add("--destination-file", destination_file)
+                ztoc_inputs.append(destination_file)
             ztoc_run_kwargs = dict(
-                inputs = [configuration_json, ztoc_layer.blob],
+                inputs = ztoc_inputs,
                 outputs = [result],
                 executable = tool,
                 arguments = [ztoc_args],
@@ -704,8 +715,12 @@ def build_time_push_actions(
             config_args.add("--blob-repository", blob_repository)
         config_args.add("--mode", mode)
         config_args.add("--output", config_result)
+        config_inputs = [configuration_json, manifest.config]
+        if destination_file != None:
+            config_args.add("--destination-file", destination_file)
+            config_inputs.append(destination_file)
         config_run_kwargs = dict(
-            inputs = [configuration_json, manifest.config],
+            inputs = config_inputs,
             outputs = [config_result],
             executable = tool,
             arguments = [config_args],
@@ -741,7 +756,7 @@ def build_time_push_actions(
         referrers = [],
         manifest_tags_expanded = [],
         pull_info = pull_info,
-        destination_file = None,
+        destination_file = destination_file,
         output_prefix = prefix,
         blob_repository = blob_repository,
     )
@@ -931,6 +946,7 @@ def process_deploy_specs(
                     insecure = push_config.insecure,
                     pull_info = pull_info,
                     exec_requirements = push_config.push_at_build_time_exec_properties,
+                    destination_file = push_config.destination_file,
                 ),
                 push_config.push_at_build_time_output_group,
             )
