@@ -376,6 +376,25 @@ string_flag(
     visibility = ["//visibility:public"],
 )
 
+# Terminate tar layers built by rules_img with the two zero-filled 512-byte
+# blocks that POSIX requires at the end of a tar archive. Disabled by default
+# because enabling it changes the digest of every layer. Enable it if a
+# container runtime fails to unpack uncompressed or zstd layers that end right
+# after their last entry (some libarchive-based readers cannot tell the archive
+# has ended without reading past it). Only applies to tar layers that rules_img
+# writes: it has no effect on estargz layers (which write their own archive end),
+# on layers of other formats (erofs, ext4, fat32, cpio) or on layers taken
+# unchanged from a pulled base image.
+string_flag(
+    name = "tar_end_of_archive",
+    build_setting_default = "disabled",
+    values = [
+        "enabled",
+        "disabled",
+    ],
+    visibility = ["//visibility:public"],
+)
+
 string_flag(
     name = "layer_tree_artifact_handling",
     build_setting_default = "full",

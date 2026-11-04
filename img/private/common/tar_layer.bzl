@@ -274,6 +274,8 @@ def resolve_layer_settings(ctx):
         create_parent_directories = ctx.attr._default_create_parent_directories[BuildSettingInfo].value
     create_parent_directories_enabled = create_parent_directories == "enabled"
 
+    tar_end_of_archive = ctx.attr._tar_end_of_archive[BuildSettingInfo].value == "enabled" and layer_format == "tar"
+
     tree_artifact_handling = ctx.attr.tree_artifact_handling
     if tree_artifact_handling == "auto":
         tree_artifact_handling = ctx.attr._default_tree_artifact_handling[BuildSettingInfo].value
@@ -337,6 +339,7 @@ def resolve_layer_settings(ctx):
         estargz = tar_format.estargz,
         zstd_chunked = tar_format.zstd_chunked,
         create_parent_directories = create_parent_directories_enabled,
+        tar_end_of_archive = tar_end_of_archive,
         tree_artifact_handling = tree_artifact_handling,
         media_type = media_type,
         out_ext = out_ext,
@@ -400,6 +403,8 @@ def create_single_layer(ctx, settings, name, extra_args = [], extra_inputs = [])
     args.extend(tar_format_args(settings.tar_format))
     if settings.create_parent_directories:
         args.append("--create-parent-directories")
+    if settings.tar_end_of_archive:
+        args.append("--tar-end-of-archive")
     args.extend(["--layer-tree-artifact-handling", settings.tree_artifact_handling])
     for key, value in ctx.attr.annotations.items():
         args.extend(["--annotation", "{}={}".format(key, value)])

@@ -71,6 +71,7 @@ func LayerProcess(ctx context.Context, args []string) {
 	var compressionLevelFlag int
 	var zstdWindowLogFlag int
 	var createParentDirectoriesFlag bool
+	var tarEndOfArchiveFlag bool
 	var treeArtifactHandlingFlag string
 	var compactStreamOutputFlag string
 	var compactStreamOnlyFlag bool
@@ -142,6 +143,7 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 	flagSet.StringVar(&defaultMetadataFlag, "default-metadata", "", `JSON-encoded default metadata to apply to all files in the layer. Can include fields like mode, uid, gid, uname, gname, mtime, and pax_records.`)
 	flagSet.Var(&fileMetadataFlags, "file-metadata", `Per-file metadata override in the format path=json. Can be specified multiple times. Overrides any defaults from --default-metadata.`)
 	flagSet.BoolVar(&createParentDirectoriesFlag, "create-parent-directories", false, `Create parent directory entries in the tar file for all files. Default is false.`)
+	flagSet.BoolVar(&tarEndOfArchiveFlag, "tar-end-of-archive", false, `Terminate tar layers with the two zero-filled blocks POSIX requires at the end of a tar archive. Default is false. Has no effect on estargz layers, which write their own archive end, nor on EROFS, ext4, FAT32 and cpio layers.`)
 	flagSet.StringVar(&treeArtifactHandlingFlag, "layer-tree-artifact-handling", "full", `How to handle duplicate tree artifacts. "full" stores each tree at its path. "deduplicate_symlink" replaces duplicates with symlinks.`)
 	flagSet.StringVar(&compactStreamOutputFlag, "compact-stream", "", `Write a compact stream representation of the layer alongside the tar output. The compact stream records raw tar headers with content digests in an optionally zstd-compressed format, enabling bit-for-bit tar reconstruction from a content-addressed store.`)
 	flagSet.BoolVar(&compactStreamOnlyFlag, "compact-stream-only", false, `Only produce the compact stream and metadata; do not write the tar output file. Requires --compact-stream.`)
@@ -512,7 +514,7 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 		baseMetadataPaths,
 		casImporter, casExporter, outputFile, layerMetadata,
 		compressorJobsFlag, compressionLevelFlag, zstdWindowLogFlag, createParentDirectoriesFlag,
-		treeArtifactHandlingFlag,
+		treeArtifactHandlingFlag, tarEndOfArchiveFlag,
 		compactStreamOutputFlag, compactStreamInlineThresholdFlag,
 	)
 	if err != nil {
@@ -655,7 +657,7 @@ func handleLayerState(
 	baseMetadataPaths []string,
 	casImporter api.CASStateSupplier, casExporter api.CASStateExporter, outputFile io.Writer, layerMetadata *LayerMetadata,
 	compressorJobsFlag string, compressionLevelFlag int, zstdWindowLog int, createParentDirectories bool,
-	treeArtifactHandling string,
+	treeArtifactHandling string, tarEndOfArchive bool,
 	compactStreamPath string, compactStreamInlineThreshold uint64,
 ) (compressorState api.AppenderState, err error) {
 	// Create shared digestfs with precaching
@@ -764,6 +766,8 @@ func handleLayerState(
 		tarcasOpts := []tarcas.Option{
 			tarcas.CreateParentDirectories(createParentDirectories),
 			tarcas.DeduplicateTreeArtifacts(treeArtifactHandling == "deduplicate_symlink"),
+			// estargz layers end with their own TOC entry and archive end.
+			tarcas.EndOfArchive(tarEndOfArchive && tarFormat != compress.TarFormatEstargz),
 		}
 		if layerMetadata != nil && (layerMetadata.Defaults != nil || len(layerMetadata.FileOverrides) > 0) {
 			tarcasOpts = append(tarcasOpts, tarcas.GeneratedMetadata(layerMetadata.applyToGeneratedHeader))

@@ -252,7 +252,8 @@ func (c *CAS[HM]) Export(to api.CASStateExporter) error {
 	})
 }
 
-// Close closes the tar archive by flushing the padding, and optionally writing the footer.
+// Close closes the tar archive by flushing the padding, and writing the
+// end-of-archive blocks if EndOfArchive was enabled.
 // If the current file (from a prior call to Writer.WriteHeader) is not fully written,
 // then this returns an error.
 func (c *CAS[HM]) Close() error {
@@ -264,6 +265,17 @@ func (c *CAS[HM]) Close() error {
 	for _, hdr := range c.deferredFiles {
 		if err := c.writeHeaderOrDefer(hdr, nil, nil); err != nil {
 			return fmt.Errorf("error writing deferred header: %w", err)
+		}
+	}
+
+	if c.endOfArchive {
+		if err := c.tarAppender.AppendTar(bytes.NewReader(endOfArchiveBlocks)); err != nil {
+			return fmt.Errorf("error writing end-of-archive blocks: %w", err)
+		}
+		if observer, ok := c.observer.(EndOfArchiveObserver); ok {
+			if err := observer.EndOfArchive(endOfArchiveBlocks); err != nil {
+				return fmt.Errorf("error recording end-of-archive blocks: %w", err)
+			}
 		}
 	}
 

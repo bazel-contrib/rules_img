@@ -22,6 +22,7 @@ go_library(
 go_test(
     name = "tarcas_test",
     srcs = [
+        "end_of_archive_test.go",
         "inspect_test.go",
         "reconstruct_integration_test.go",
         "reconstruct_test.go",
@@ -33,5 +34,6 @@ go_test(
         "//pkg/compactstream",
         "//pkg/compress",
         "//pkg/tree/merkle",
+        "@com_github_klauspost_compress//zstd",
     ],
 )

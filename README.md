@@ -77,6 +77,12 @@ common --@rules_img//img/settings:soci=enabled
 # This is disabled by default to avoid overwriting existing directory permissions in lower layers.
 common --@rules_img//img/settings:create_parent_directories=disabled
 
+# Terminate tar layers with the two zero-filled blocks POSIX requires at the end of
+# a tar archive. Disabled by default because enabling it changes every layer digest.
+# Enable it if a container runtime fails to unpack zstd or uncompressed layers
+# because it cannot find the end of the archive.
+common --@rules_img//img/settings:tar_end_of_archive=disabled
+
 # How to handle duplicate tree artifacts (directories) in layers.
 # "full" stores each tree at its intended path (no tree-level deduplication).
 # "deduplicate_symlink" replaces duplicate trees with symlinks to the first occurrence.
