@@ -3,14 +3,12 @@ package pushcmd
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
-	"path/filepath"
 
 	"github.com/google/go-containerregistry/pkg/name"
 	registryv1 "github.com/google/go-containerregistry/pkg/v1"
@@ -162,7 +160,7 @@ func layerForBlob(ctx context.Context, desc api.Descriptor, blobPath, compactStr
 			if err != nil {
 				return nil, fmt.Errorf("opening compact stream %s: %w", compactStreamPath, err)
 			}
-			store := &dirStore{shaDir: filepath.Join(casDir, "sha256")}
+			store := compactstream.NewDirStore(casDir)
 			pr, pw := io.Pipe()
 			go func() {
 				err := compactstream.Reconstruct(ctx, csFile, store, pw)
@@ -248,19 +246,4 @@ func readConfiguration(path string) (configurationFile, error) {
 		return configurationFile{}, fmt.Errorf("configuration %s must contain non-empty 'registry' and 'repository'", path)
 	}
 	return cfg, nil
-}
-
-// dirStore is a compactstream.BlobStore backed by a content-addressed directory,
-// where each blob is stored at sha256/<hex of content>.
-type dirStore struct {
-	shaDir string
-}
-
-func (s *dirStore) ReaderForBlob(_ context.Context, digest []byte, size int64) (io.ReadCloser, error) {
-	path := filepath.Join(s.shaDir, hex.EncodeToString(digest))
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, fmt.Errorf("blob sha256:%s (size %d) not found in content-addressed directory: %w", hex.EncodeToString(digest), size, err)
-	}
-	return f, nil
 }

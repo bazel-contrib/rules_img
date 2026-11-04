@@ -1,6 +1,7 @@
 package pushcmd
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -20,6 +21,8 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/api"
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/casdirlayout"
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/compactstream"
 )
 
 // newTestRegistry starts an in-memory registry and returns its host (rewritten to
@@ -182,4 +185,70 @@ func anyHasPrefix(items []string, prefix string) bool {
 		}
 	}
 	return false
+}
+
+// TestLayerForBlobReadsCASDirLayouts checks that a layer reconstructed from a
+// compact stream finds its files in the content-addressed directory that
+// `img cas-dir` writes (sharded by digest prefix), as well as in the flat layout
+// of older versions.
+func TestLayerForBlobReadsCASDirLayouts(t *testing.T) {
+	content := []byte("a file large enough to be referenced from the compact stream by digest")
+	sum := sha256.Sum256(content)
+	hexDigest := hex.EncodeToString(sum[:])
+
+	for _, tc := range []struct {
+		name string
+		path func(shaDir string) string
+	}{
+		{"sharded", func(shaDir string) string { return casdirlayout.Path(shaDir, hexDigest) }},
+		{"flat", func(shaDir string) string { return filepath.Join(shaDir, hexDigest) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			casDir := t.TempDir()
+			blobPath := tc.path(filepath.Join(casDir, "sha256"))
+			if err := os.MkdirAll(filepath.Dir(blobPath), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(blobPath, content, 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			var stream bytes.Buffer
+			w := compactstream.NewWriter(&stream, compactstream.HashAlgoSHA256, 32, compactstream.StreamCompressionZstd,
+				compactstream.OriginalCompressionInfo{Compression: compactstream.OriginalCompressionNone}, 0)
+			if err := w.WriteStreamBytes([]byte("head-")); err != nil {
+				t.Fatal(err)
+			}
+			if err := w.WriteCASRef(sum[:], uint64(len(content))); err != nil {
+				t.Fatal(err)
+			}
+			if err := w.WriteStreamBytes([]byte("-tail")); err != nil {
+				t.Fatal(err)
+			}
+			if err := w.Close(); err != nil {
+				t.Fatal(err)
+			}
+			streamPath := filepath.Join(t.TempDir(), "layer.cstream")
+			if err := os.WriteFile(streamPath, stream.Bytes(), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			layer, err := layerForBlob(context.Background(), api.Descriptor{}, "", streamPath, casDir, nil, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			r, err := layer.Compressed()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer r.Close()
+			got, err := io.ReadAll(r)
+			if err != nil {
+				t.Fatalf("reconstructing the layer: %v", err)
+			}
+			if want := "head-" + string(content) + "-tail"; string(got) != want {
+				t.Fatalf("reconstructed layer = %q, want %q", got, want)
+			}
+		})
+	}
 }
