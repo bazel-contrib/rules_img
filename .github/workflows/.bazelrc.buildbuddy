@@ -4,6 +4,8 @@ common --remote_timeout=10m
 common --remote_cache=grpcs://rules-img.buildbuddy.io
 common --remote_header=x-buildbuddy-api-key=BUILDBUDDY_API_KEY
 common --bes_header=x-buildbuddy-api-key=BUILDBUDDY_API_KEY
+common --experimental_remote_downloader=grpcs://rules-img.buildbuddy.io
+common --experimental_remote_downloader_local_fallback
 
 # Build metadata for better tracking and organization
 common --build_metadata=ROLE=CI
