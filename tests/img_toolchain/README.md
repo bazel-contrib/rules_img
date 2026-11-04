@@ -77,6 +77,7 @@ Define validation checks to run after command execution. Multiple assertions can
 - `file_valid_tar = path`: File is valid tar format
 - `file_valid_ext4 = path`: File is an ext4 image with a valid superblock (magic, checksum, size)
 - `file_valid_fat32 = path`: File is a FAT32 image with a valid boot area (BPB, FSInfo, backup sectors, cluster count)
+- `file_valid_iso9660 = path`: File is an ISO 9660 image with a valid structure (system area, volume descriptor set, both-endian fields, path tables, root directory)
 - `file_valid_cpio = path`: File is a cpio archive in the newc format, made of well-formed records that end with the trailer
 - `file_valid_gpt = path`: File is a disk image with a valid GUID partition table (protective MBR, both headers and CRCs, entries, usable range)
 - `file_valid_mbr = path`: File is a disk image with a valid MBR partition table (signature, entries, overlaps, bounds)

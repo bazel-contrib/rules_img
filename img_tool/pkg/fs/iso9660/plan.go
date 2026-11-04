@@ -210,10 +210,19 @@ func (b *Builder) collectNodes(l *layout) {
 	walk(b.root, "")
 
 	sort.SliceStable(l.nodes, func(i, j int) bool { return l.nodes[i].seq < l.nodes[j].seq })
-	// A directory's link count is the number of its subdirectories plus the
-	// "." entry it holds and the ".." entry of each child, as POSIX reports
-	// it: two plus the number of subdirectories.
 	for _, n := range l.nodes {
+		// An entry with no timestamp of its own, such as a directory nothing
+		// described, takes the default time of the image. Resolving it here
+		// keeps the directory records, the Rock Ridge timestamps and the UDF
+		// File Entries from each inventing their own fallback.
+		for _, t := range []*time.Time{&n.mtime, &n.atime, &n.ctime} {
+			if t.IsZero() {
+				*t = b.opts.Time
+			}
+		}
+		// A directory's link count is the number of its subdirectories plus
+		// the "." entry it holds and the ".." entry of each child, as POSIX
+		// reports it: two plus the number of subdirectories.
 		if n.kind != kindDir {
 			continue
 		}

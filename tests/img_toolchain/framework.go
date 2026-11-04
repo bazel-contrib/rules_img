@@ -301,7 +301,7 @@ func parseAssertion(line string) *AssertionSpec {
 			assertion.Path = strings.TrimSpace(parts[0])
 			assertion.Content = strings.Trim(strings.TrimSpace(parts[1]), `"`)
 		}
-	case "file_valid_json", "file_valid_gzip", "file_valid_tar", "file_valid_ext4", "file_valid_fat32", "file_valid_cpio", "file_valid_gpt", "file_valid_mbr":
+	case "file_valid_json", "file_valid_gzip", "file_valid_tar", "file_valid_ext4", "file_valid_fat32", "file_valid_iso9660", "file_valid_cpio", "file_valid_gpt", "file_valid_mbr":
 		assertion.Path = value
 	case "json_field_equals", "json_field_exists":
 		parts := strings.SplitN(value, ",", 3)
@@ -702,6 +702,15 @@ func (tf *TestFramework) checkAssertion(assertion AssertionSpec, result *Command
 		}
 		if err := validateFat32(image); err != nil {
 			return fmt.Errorf("file %s is not a valid FAT32 image: %w", assertion.Path, err)
+		}
+	case "file_valid_iso9660":
+		fullPath := filepath.Join(tf.tempDir, assertion.Path)
+		image, err := os.ReadFile(fullPath)
+		if err != nil {
+			return fmt.Errorf("failed to read file %s: %w", assertion.Path, err)
+		}
+		if err := validateIso9660(image); err != nil {
+			return fmt.Errorf("file %s is not a valid ISO 9660 image: %w", assertion.Path, err)
 		}
 	case "file_valid_cpio":
 		fullPath := filepath.Join(tf.tempDir, assertion.Path)
@@ -1467,6 +1476,107 @@ func validateFat32(image []byte) error {
 	first, second := image[reserved*sectorSize:][:8], image[(reserved+fatSize)*sectorSize:][:8]
 	if !bytes.Equal(first, second) || le.Uint32(first[0:]) != 0x0FFFFFF8 || le.Uint32(first[4:]) != 0x0FFFFFFF {
 		return fmt.Errorf("bad FATs: % x and % x", first, second)
+	}
+	return nil
+}
+
+// validateIso9660 checks the structure of an ISO 9660 image: the system area,
+// the primary volume descriptor and the terminator that ends the descriptor
+// set, the both-endian fields, the path tables and the root directory extent.
+func validateIso9660(image []byte) error {
+	const block = 2048
+	if len(image) < 17*block {
+		return fmt.Errorf("image is only %d bytes", len(image))
+	}
+	if len(image)%block != 0 {
+		return fmt.Errorf("image of %d bytes is not a whole number of %d byte blocks", len(image), block)
+	}
+	for i, b := range image[:16*block] {
+		if b != 0 {
+			return fmt.Errorf("the system area is not all zero: byte %d is %#x", i, b)
+		}
+	}
+	le, be := binary.LittleEndian, binary.BigEndian
+	pvd := image[16*block : 17*block]
+	if pvd[0] != 1 || string(pvd[1:6]) != "CD001" || pvd[6] != 1 {
+		return fmt.Errorf("block 16 is not a primary volume descriptor: type %d, id %q, version %d", pvd[0], pvd[1:6], pvd[6])
+	}
+	for _, f := range []struct {
+		name   string
+		offset int
+		width  int
+	}{
+		{"volume space size", 80, 4},
+		{"volume set size", 120, 2},
+		{"volume sequence number", 124, 2},
+		{"logical block size", 128, 2},
+		{"path table size", 132, 4},
+	} {
+		if f.width == 2 {
+			if le.Uint16(pvd[f.offset:]) != be.Uint16(pvd[f.offset+2:]) {
+				return fmt.Errorf("%s disagrees between the two byte orders", f.name)
+			}
+			continue
+		}
+		if le.Uint32(pvd[f.offset:]) != be.Uint32(pvd[f.offset+4:]) {
+			return fmt.Errorf("%s disagrees between the two byte orders", f.name)
+		}
+	}
+	if got := le.Uint16(pvd[128:]); got != block {
+		return fmt.Errorf("logical block size is %d", got)
+	}
+	if blocks := int64(le.Uint32(pvd[80:])); blocks*block != int64(len(image)) {
+		return fmt.Errorf("image is %d bytes, but the volume descriptor says %d blocks", len(image), blocks)
+	}
+	if pvd[881] != 1 {
+		return fmt.Errorf("file structure version is %d", pvd[881])
+	}
+
+	// The descriptor set has to end with a terminator.
+	terminated := false
+	for lba := 17; lba < len(image)/block; lba++ {
+		d := image[lba*block:]
+		if string(d[1:6]) != "CD001" {
+			return fmt.Errorf("block %d of the volume descriptor set has the standard identifier %q", lba, d[1:6])
+		}
+		if d[0] == 255 {
+			terminated = true
+			break
+		}
+	}
+	if !terminated {
+		return fmt.Errorf("the volume descriptor set has no terminator")
+	}
+
+	// The path tables and the root directory extent have to be inside the
+	// volume, and the root record has to describe a directory.
+	pathTableSize := int64(le.Uint32(pvd[132:]))
+	for _, t := range []struct {
+		name string
+		lba  int64
+	}{
+		{"type L path table", int64(le.Uint32(pvd[140:]))},
+		{"type M path table", int64(be.Uint32(pvd[148:]))},
+	} {
+		end := t.lba*block + pathTableSize
+		if t.lba < 17 || end > int64(len(image)) {
+			return fmt.Errorf("the %s at block %d does not fit in the image", t.name, t.lba)
+		}
+	}
+	root := pvd[156:190]
+	if root[0] != 34 {
+		return fmt.Errorf("the root directory record is %d bytes", root[0])
+	}
+	if root[25]&0x02 == 0 {
+		return fmt.Errorf("the root directory record is not marked as a directory")
+	}
+	rootLBA, rootLength := int64(le.Uint32(root[2:])), int64(le.Uint32(root[10:]))
+	if rootLength == 0 || rootLength%block != 0 || rootLBA*block+rootLength > int64(len(image)) {
+		return fmt.Errorf("the root directory extent at block %d is %d bytes", rootLBA, rootLength)
+	}
+	dir := image[rootLBA*block:][:rootLength]
+	if dir[0] < 34 || dir[32] != 1 || dir[33] != 0 {
+		return fmt.Errorf("the root directory does not start with a \".\" record")
 	}
 	return nil
 }

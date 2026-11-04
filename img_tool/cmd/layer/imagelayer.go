@@ -18,7 +18,8 @@ import (
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/tree/merkle"
 )
 
-// imageBuilder is what the image and archive writers (ext4, FAT32 and cpio) share with
+// imageBuilder is what the image and archive writers (ext4, FAT32, ISO 9660
+// and cpio) share with
 // the tar writer: tar headers, with content from a reader, a path or an entry
 // of a tar archive that is read when the image is written.
 type imageBuilder interface {
@@ -236,7 +237,7 @@ type imageLayer struct {
 // (compact-stream-only), the image only exists temporarily, to be turned into
 // the compact stream.
 func handleImageLayer(
-	format api.ContainerFormat, ext4Settings ext4Settings, fat32Settings fat32Settings, cpioSettings cpioSettings, image *os.File, addFiles addFiles, importTars importTars, addExecutables executables, addSymlinks symlinks, emptyFiles []string,
+	format api.ContainerFormat, ext4Settings ext4Settings, fat32Settings fat32Settings, iso9660Settings iso9660Settings, cpioSettings cpioSettings, image *os.File, addFiles addFiles, importTars importTars, addExecutables executables, addSymlinks symlinks, emptyFiles []string,
 	baseMetadataPaths []string, createParentDirectories bool, layerMetadata *LayerMetadata,
 	history, mediaType string, annotations map[string]string, metadataPath string,
 	compactStreamPath string, compactStreamInlineThreshold uint64,
@@ -290,6 +291,20 @@ func handleImageLayer(
 		}
 		digest := fmt.Sprintf("sha256:%x", info.Digest)
 		layer = imageLayer{mediaType: api.Fat32Layer, digest: digest, diffID: digest, size: info.Size}
+	case api.Iso9660Format:
+		if image == nil {
+			var cleanup func()
+			if image, cleanup, err = tempImage(compactStreamPath, "iso9660-layer-*"); err != nil {
+				return err
+			}
+			defer cleanup()
+		}
+		info, err := writeIso9660Layer(image, iso9660Settings, addFiles, importTars, addExecutables, addSymlinks, emptyFiles, baseMetadataPaths, createParentDirectories, layerMetadata, compactStream, compactStreamInlineThreshold)
+		if err != nil {
+			return err
+		}
+		digest := fmt.Sprintf("sha256:%x", info.Digest)
+		layer = imageLayer{mediaType: api.Iso9660Layer, digest: digest, diffID: digest, size: info.Size}
 	case api.CpioFormat:
 		layer, err = writeCpioLayer(image, cpioSettings, addFiles, importTars, addExecutables, addSymlinks, emptyFiles, baseMetadataPaths, createParentDirectories, layerMetadata, compactStream, compactStreamInlineThreshold, compactStreamPath)
 		if err != nil {
