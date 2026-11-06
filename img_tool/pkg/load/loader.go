@@ -148,6 +148,12 @@ func (l *loader) LoadAll(ctx context.Context, ops []api.IndexedLoadDeployOperati
 			fmt.Fprintf(os.Stderr, "\033[33mNOTE:\033[0m DOCKER_HOST=%s points at a non-local Docker daemon.\n", host)
 			fmt.Fprintln(os.Stderr, "Using 'docker load' instead of loading into the local containerd, so the image reaches that daemon.")
 		}
+
+		if _, err := containerd.DockerSupportsContainerd(); err != nil {
+			fmt.Fprintf(os.Stderr, "\033[33mNOTE:\033[0m Docker does not appear to support containerd: %v\n", err)
+			fmt.Fprintln(os.Stderr, "Using 'docker load' instead of loading into containerd, so the image reaches that daemon.")
+			upgradeDockerLoads = false
+		}
 	}
 
 	// try to connect to containerd once (but not for podman/generic-only loads)
