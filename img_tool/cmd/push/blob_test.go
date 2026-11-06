@@ -252,3 +252,57 @@ func TestLayerForBlobReadsCASDirLayouts(t *testing.T) {
 		})
 	}
 }
+
+// writeTestFile writes content to name in dir and returns its path.
+func writeTestFile(t *testing.T, dir, name, content string) string {
+	t.Helper()
+	path := filepath.Join(dir, name)
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// TestReadConfigurationUsesTheConfigurationFile verifies that, without a
+// destination file, the registry and repository come from the configuration.
+func TestReadConfigurationUsesTheConfigurationFile(t *testing.T) {
+	dir := t.TempDir()
+	configPath := writeTestFile(t, dir, "config.json", `{"registry":"ghcr.io","repository":"acme/app"}`)
+
+	cfg, err := readConfiguration(configPath, "")
+	if err != nil {
+		t.Fatalf("readConfiguration: %v", err)
+	}
+	if cfg.Registry != "ghcr.io" || cfg.Repository != "acme/app" {
+		t.Errorf("got %+v, want ghcr.io/acme/app", cfg)
+	}
+}
+
+// TestReadConfigurationPrefersTheDestinationFile verifies that a destination file
+// supplies the registry and repository, so a push spec using destination_file
+// (whose configuration has neither) pushes its blobs to the same repository as
+// the deploy manifest.
+func TestReadConfigurationPrefersTheDestinationFile(t *testing.T) {
+	dir := t.TempDir()
+	configPath := writeTestFile(t, dir, "config.json", `{"registry":"","repository":"","tags":["latest"]}`)
+	destinationPath := writeTestFile(t, dir, "destination.txt", "ghcr.io/acme/app\n")
+
+	cfg, err := readConfiguration(configPath, destinationPath)
+	if err != nil {
+		t.Fatalf("readConfiguration: %v", err)
+	}
+	if cfg.Registry != "ghcr.io" || cfg.Repository != "acme/app" {
+		t.Errorf("got %+v, want ghcr.io/acme/app", cfg)
+	}
+}
+
+// TestReadConfigurationRequiresADestination verifies that a configuration without
+// registry/repository is rejected when there is no destination file either.
+func TestReadConfigurationRequiresADestination(t *testing.T) {
+	dir := t.TempDir()
+	configPath := writeTestFile(t, dir, "config.json", `{"registry":"","repository":""}`)
+
+	if _, err := readConfiguration(configPath, ""); err == nil {
+		t.Error("readConfiguration succeeded, want an error")
+	}
+}
