@@ -138,21 +138,18 @@ func (l *loader) LoadAll(ctx context.Context, ops []api.IndexedLoadDeployOperati
 	}
 
 	// Upgrading a docker load to a direct containerd write is only correct when
-	// the docker daemon shares this machine's containerd content store. When
-	// DOCKER_HOST points somewhere else, the image would land in a store that
-	// daemon never reads.
+	// the docker daemon shares this machine's containerd content store, and
+	// actually reads its images from it. Otherwise the image would land in a
+	// store that daemon never reads.
 	upgradeDockerLoads := hasDocker
 	if hasDocker {
-		if host, remote := docker.RemoteDaemonHost(); remote {
+		if endpoint := docker.EffectiveDaemonHost(ctx); endpoint.Remote {
 			upgradeDockerLoads = false
-			fmt.Fprintf(os.Stderr, "\033[33mNOTE:\033[0m DOCKER_HOST=%s points at a non-local Docker daemon.\n", host)
+			fmt.Fprintf(os.Stderr, "\033[33mNOTE:\033[0m %s points at a non-local Docker daemon (%s).\n", endpoint.Source, endpoint.Host)
 			fmt.Fprintln(os.Stderr, "Using 'docker load' instead of loading into the local containerd, so the image reaches that daemon.")
-		}
-
-		if _, err := containerd.DockerSupportsContainerd(); err != nil {
-			fmt.Fprintf(os.Stderr, "\033[33mNOTE:\033[0m Docker does not appear to support containerd: %v\n", err)
-			fmt.Fprintln(os.Stderr, "Using 'docker load' instead of loading into containerd, so the image reaches that daemon.")
+		} else if err := containerd.DockerUsesContainerd(ctx); err != nil {
 			upgradeDockerLoads = false
+			printDockerLoadFallbackWarning("Docker does not read its images from containerd.", err)
 		}
 	}
 
@@ -496,25 +493,7 @@ func (l *loader) connect(ctx context.Context, daemon string, showDockerWarnings 
 	if err != nil {
 		// Print warning about performance impact and digest differences (only for Docker)
 		if showDockerWarnings {
-			fmt.Fprintf(os.Stderr, "Connecting to containerd failed: %v\n", err)
-			fmt.Fprintln(os.Stderr, "\n\033[33mWARNING: Docker is not using containerd storage backend.\033[0m")
-			fmt.Fprintln(os.Stderr, "This will use 'docker load' which is significantly slower than direct containerd loading.")
-			fmt.Fprintln(os.Stderr, "")
-			fmt.Fprintln(os.Stderr, "\033[33mIMPORTANT: The digest of the image will be different due to the use of 'docker load'.\033[0m")
-			fmt.Fprintln(os.Stderr, "Docker load creates a custom Docker manifest that doesn't adhere to OCI spec.")
-			fmt.Fprintln(os.Stderr, "If you can load into the containerd backend, you can load the exact OCI image with the expected digest.")
-			fmt.Fprintln(os.Stderr, "See: https://github.com/bazel-contrib/rules_img/issues/76")
-			fmt.Fprintln(os.Stderr, "")
-			if runtime.GOOS == "darwin" {
-				fmt.Fprintln(os.Stderr, "\033[33mmacOS note:\033[0m On macOS, containerd runs in a Linux VM, so the containerd socket")
-				fmt.Fprintln(os.Stderr, "is never accessible from the host. Docker is working on exposing the content store")
-				fmt.Fprintln(os.Stderr, "via the docker socket, which will soon make incremental loading available via the docker socket.")
-				fmt.Fprintln(os.Stderr, "")
-			} else {
-				fmt.Fprintln(os.Stderr, "To improve performance, configure Docker to use containerd:")
-				fmt.Fprintln(os.Stderr, "  https://docs.docker.com/storage/containerd/")
-				fmt.Fprintln(os.Stderr, "")
-			}
+			printDockerLoadFallbackWarning("Could not connect to Docker's containerd.", err)
 		}
 		l.haveContainerd = false
 		l.triedContainerd = true
@@ -524,6 +503,32 @@ func (l *loader) connect(ctx context.Context, daemon string, showDockerWarnings 
 	l.haveContainerd = true
 	l.triedContainerd = true
 	return l.clientConn, nil
+}
+
+// printDockerLoadFallbackWarning explains why the direct containerd path is
+// unavailable and what falling back to `docker load` costs.
+func printDockerLoadFallbackWarning(headline string, cause error) {
+	fmt.Fprintf(os.Stderr, "\n\033[33mWARNING: %s\033[0m\n", headline)
+	if cause != nil {
+		fmt.Fprintf(os.Stderr, "%v\n", cause)
+	}
+	fmt.Fprintln(os.Stderr, "This will use 'docker load' which is significantly slower than direct containerd loading.")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "\033[33mIMPORTANT: The digest of the image will be different due to the use of 'docker load'.\033[0m")
+	fmt.Fprintln(os.Stderr, "Docker load creates a custom Docker manifest that doesn't adhere to OCI spec.")
+	fmt.Fprintln(os.Stderr, "If you can load into the containerd backend, you can load the exact OCI image with the expected digest.")
+	fmt.Fprintln(os.Stderr, "See: https://github.com/bazel-contrib/rules_img/issues/76")
+	fmt.Fprintln(os.Stderr, "")
+	if runtime.GOOS == "darwin" {
+		fmt.Fprintln(os.Stderr, "\033[33mmacOS note:\033[0m On macOS, containerd runs in a Linux VM, so the containerd socket")
+		fmt.Fprintln(os.Stderr, "is never accessible from the host. Docker is working on exposing the content store")
+		fmt.Fprintln(os.Stderr, "via the docker socket, which will soon make incremental loading available via the docker socket.")
+		fmt.Fprintln(os.Stderr, "")
+	} else {
+		fmt.Fprintln(os.Stderr, "If Docker is not configured to read its images from containerd, see:")
+		fmt.Fprintln(os.Stderr, "  https://docs.docker.com/storage/containerd/")
+		fmt.Fprintln(os.Stderr, "")
+	}
 }
 
 type taskSet struct {
