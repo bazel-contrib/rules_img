@@ -2,7 +2,7 @@
 
 load("//img/private/providers:signing_config_info.bzl", "SigningConfigInfo")
 
-_SIGN_TARGETS = ["roots", "child_manifests", "referrers"]
+_SIGN_TARGETS = ["roots", "child_manifests", "referrers", "plugin_artifacts"]
 
 def rlocationpath(file, workspace_name):
     """Return the runfiles rlocation path of a file (as accepted by runfiles.Rlocation)."""
@@ -31,6 +31,9 @@ def _signing_config_impl(ctx):
     else:
         config["mode"] = "command"
         config["tool"] = ctx.attr.tool_command
+    if ctx.attr.protocol != 1:
+        # Omitted for the original protocol so existing configs keep their digest.
+        config["protocol"] = ctx.attr.protocol
     if ctx.attr.args:
         config["args"] = ctx.attr.args
     if ctx.attr.env:
@@ -40,11 +43,11 @@ def _signing_config_impl(ctx):
     ctx.actions.write(config_file, json.encode(config))
 
     return [
-        SigningConfigInfo(
+        SigningConfigInfo(steps = [struct(
             config_file = config_file,
             runfiles = runfiles,
             targets = ctx.attr.targets,
-        ),
+        )]),
         DefaultInfo(files = depset([config_file]), runfiles = runfiles),
     ]
 
@@ -53,10 +56,19 @@ signing_config = rule(
     doc = """Describes how `img deploy` signs images by invoking a signer plugin.
 
 `img deploy` runs the plugin as `<tool> sign-oci-artifact [args...]`, writes the
-JSON descriptor of the artifact to sign to the plugin's stdin, and expects an OCI
-image layout tar (the signature artifact) on stdout. The signature is then
-pushed to the image's repository as an OCI referrer. `img` itself performs no
-cryptography; all signing logic lives in the plugin.
+artifact to sign to the plugin's stdin, and expects an OCI image layout tar (the
+signature artifact) on stdout. The signature is then pushed to the image's
+repository as an OCI referrer. `img` itself performs no cryptography; all signing
+logic lives in the plugin.
+
+By default (`protocol = 1`) stdin is the JSON descriptor of the artifact, and the
+plugin runs once per push operation and subject. A plugin that needs to know
+*where* the image is pushed (its registry, repository and tags), its platform, or
+facts about the deploy such as the `img` version opts in with `protocol = 2`:
+stdin is then a JSON request holding all of that, and the plugin runs once per
+registry, repository and image digest, with the tags of every operation that
+pushes it there. Whether to use it is a property of the plugin, so see its
+documentation.
 
 The plugin is referenced either as a Bazel executable (`tool`, shipped in the
 push binary's runfiles) or as a host-installed command (`tool_command`, resolved
@@ -71,7 +83,7 @@ load("@rules_img//img:signing.bzl", "signing_config")
 # Use a Bazel-built plugin.
 signing_config(
     name = "notary",
-    tool = "@rules_img//img/signer:notation",
+    tool = "@rules_img_signer_notation",
     args = ["--key", "release"],
 )
 
@@ -96,6 +108,11 @@ Signing is enabled with the `sign` attribute or the `//img/settings:sign` flag.
         "tool_command": attr.string(
             doc = "Name or path of a host-installed signer tool, resolved on `$PATH` at deploy time. Mutually exclusive with `tool`.",
         ),
+        "protocol": attr.int(
+            doc = "What the plugin receives on stdin: `1` (the default) is the JSON descriptor of the artifact, `2` is a JSON request that also carries the destination (registry, repository, tags, full references), the image platform, and deploy facts (`img` version, invocation id, start time). With `2`, the plugin is called once per registry, repository and digest instead of once per push operation. Set it to `2` only for a plugin that documents support for it.",
+            default = 1,
+            values = [1, 2],
+        ),
         "args": attr.string_list(
             doc = "Arguments passed to the plugin after the `sign-oci-artifact` subcommand.",
         ),
@@ -103,7 +120,14 @@ Signing is enabled with the `sign` attribute or the `//img/settings:sign` flag.
             doc = "Additional (non-secret) environment variables set for the plugin. Secrets should come from the deploy-time environment instead.",
         ),
         "targets": attr.string_list(
-            doc = "Default set of descriptors to sign: any of \"roots\" (the pushed root, the default), \"child_manifests\" (each child of an index), and \"referrers\" (referrer artifacts such as SBOMs). Overridable at deploy time via `--sign_targets`.",
+            doc = """Default set of descriptors to process: any of
+
+- `"roots"` (the pushed root, the default),
+- `"child_manifests"` (each child of an index),
+- `"referrers"` (referrer artifacts such as SBOMs), and
+- `"plugin_artifacts"` (the manifests that plugins *earlier in a `signing_chain`* created, such as a provenance attestation).
+
+Overridable at deploy time via `--sign_targets`.""",
             default = ["roots"],
             allow_empty = False,
         ),
@@ -111,10 +135,85 @@ Signing is enabled with the `sign` attribute or the `//img/settings:sign` flag.
     provides = [SigningConfigInfo],
 )
 
-def _unset_signing_config_impl(ctx):
+def _signing_chain_impl(ctx):
+    steps = []
+    seen = {}
+    runfiles = ctx.runfiles()
+    for config in ctx.attr.steps:
+        for step in config[SigningConfigInfo].steps:
+            path = step.config_file.path
+            if path in seen:
+                fail("signing_chain {}: {} is listed more than once; a plugin config can run only once per chain".format(ctx.label, config.label))
+            seen[path] = True
+            steps.append(step)
+            runfiles = runfiles.merge(step.runfiles)
+    if not steps:
+        fail("signing_chain {} has no plugins".format(ctx.label))
+    return [
+        SigningConfigInfo(steps = steps),
+        DefaultInfo(files = depset([step.config_file for step in steps]), runfiles = runfiles),
+    ]
+
+signing_chain = rule(
+    implementation = _signing_chain_impl,
+    doc = """Runs several signer plugins one after the other, each able to see what the ones before it created.
+
+Use it to sign an image, its SBOM *and* a provenance attestation, which is created at deploy time by
+another plugin:
+
+```python
+load("@rules_img//img:signing.bzl", "signing_chain", "signing_config")
+
+signing_config(
+    name = "provenance",
+    tool = "@rules_img_signer_provenance",
+    protocol = 2,
+    targets = ["roots", "child_manifests"],
+)
+
+signing_config(
+    name = "cosign",
+    tool = "@rules_img_signer_cosign",
+    # Sign the image and its SBOM, and also what the plugins before this one made.
+    targets = ["roots", "child_manifests", "referrers", "plugin_artifacts"],
+)
+
+signing_chain(
+    name = "release",
+    steps = [":provenance", ":cosign"],  # in this order
+)
+```
+
+Select the chain like a `signing_config`: `--@rules_img//img/settings:sign_setting=//path:release` or
+the `sign_setting` attribute of `image_push`.
+
+The plugins run in the order of `steps`. A plugin sees the manifests that the plugins *before* it
+created (an attestation, a signature) only if its `targets` include `"plugin_artifacts"`, and never its
+own output or that of the plugins after it. A chain therefore cannot recurse, and each manifest is pushed
+before the next plugin attaches something to it. A plugin that does not select `"plugin_artifacts"` just
+processes the image as usual.
+
+`targets = ["referrers"]` applies per plugin too: a plugin only processes the SBOM (and other referrers
+built into the image) if it selects them, and the plugins after it can then process what it created for
+the SBOM as well.
+
+A `signing_chain` can list other chains. The same `signing_config` cannot appear twice.
+""",
+    attrs = {
+        "steps": attr.label_list(
+            doc = "The `signing_config` (or `signing_chain`) targets to run, in order. Unlike most label lists, the order is meaningful: later plugins can see what earlier ones created. (buildifier leaves this attribute unsorted.)",
+            providers = [SigningConfigInfo],
+            allow_empty = False,
+            mandatory = True,
+        ),
+    },
+    provides = [SigningConfigInfo],
+)
+
+def _unset_signing_config_impl(_ctx):
     # Sentinel used as the default of the //img/settings:sign_setting label flag.
-    # config_file == None marks "no signing configured".
-    return [SigningConfigInfo(config_file = None, runfiles = ctx.runfiles(), targets = [])]
+    # No steps marks "no signing configured".
+    return [SigningConfigInfo(steps = [])]
 
 unset_signing_config = rule(
     implementation = _unset_signing_config_impl,

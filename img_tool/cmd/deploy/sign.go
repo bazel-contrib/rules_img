@@ -2,16 +2,19 @@ package deploy
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/bazelbuild/rules_go/go/runfiles"
 	"github.com/google/go-containerregistry/pkg/name"
 	registryv1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
+	registrytypes "github.com/google/go-containerregistry/pkg/v1/types"
 
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/api"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/ocilayout"
@@ -33,15 +36,28 @@ type signOptions struct {
 	// captures signatures locally instead of pushing.
 	pushTransport http.RoundTripper
 	jobs          int
+
+	// images, when set, lets signer.ProtocolRequest plugins be told the platform
+	// of each single-platform image (read from its config).
+	images imageSource
+	// additionalTags are the tags added with --tag, which every push operation
+	// is pushed under besides its own.
+	additionalTags []string
+}
+
+// signStep is one plugin of an operation's signing chain.
+type signStep struct {
+	setting *api.Descriptor // explicit setting, or nil to use the default
+	targets map[string]bool // effective targets (roots/child_manifests/...)
 }
 
 // signDecision is the outcome of deciding whether and how a push operation is
-// signed.
+// signed: an ordered chain of plugins. Plugins run in this order, and a step only
+// sees what the steps before it created.
 type signDecision struct {
 	sign       bool
 	bestEffort bool
-	setting    *api.Descriptor // explicit op setting, or nil to use the default
-	targets    map[string]bool // effective subject targets (roots/child_manifests)
+	steps      []signStep
 }
 
 // signEmitter attaches the signature artifacts produced for one subject of a
@@ -170,67 +186,363 @@ func anyOpSigns(pushOps []api.IndexedPushDeployOperation, store *signer.SettingS
 	return false
 }
 
+// signSubject is one descriptor of a push operation that is to be signed.
+type signSubject struct {
+	desc api.Descriptor
+	// artifactType is the artifactType of a plugin artifact subject.
+	artifactType string
+	// role is signer.RoleRoot, signer.RoleChildManifest or signer.RolePluginArtifact.
+	role string
+	// parent is the index a child manifest belongs to, or what a plugin artifact
+	// is attached to.
+	parent *api.Descriptor
+}
+
+// signCandidate is one subject of one push operation that is to be signed.
+type signCandidate struct {
+	op                   api.IndexedPushDeployOperation
+	registry, repository string
+	decision             signDecision
+	cfg                  signer.SignSettingConfig
+	subject              signSubject
+	tags                 []string
+}
+
+// signJob is one plugin invocation. Under signer.ProtocolDescriptor it is a
+// single subject of a single operation, exactly as before. Under
+// signer.ProtocolRequest it is a registry, repository and digest, with the tags
+// of every operation that pushes the subject there.
+type signJob struct {
+	signCandidate
+	// ops are the indexes of the operations this job serves. A plugin artifact is
+	// only offered to later steps of the operations that caused it.
+	ops map[int]bool
+}
+
+// mergeSignJobs turns the signing candidates, in operation order, into plugin
+// invocations. Candidates of a signer.ProtocolRequest setting that push the same
+// digest to the same registry and repository share one job, so the plugin is not
+// asked to attest an image once per tag or per operation, and the tags are merged.
+// Everything else stays one job per candidate.
+func mergeSignJobs(cands []signCandidate) []*signJob {
+	var jobs []*signJob
+	byKey := map[string]*signJob{}
+	for _, c := range cands {
+		c.tags = sortedUnique(c.tags)
+		if c.cfg.Protocol != signer.ProtocolRequest {
+			jobs = append(jobs, &signJob{c, map[int]bool{c.op.I: true}})
+			continue
+		}
+		cfgJSON, _ := json.Marshal(c.cfg) // map keys are sorted, so this is stable
+		key := strings.Join([]string{string(cfgJSON), c.registry, c.repository, c.subject.desc.Digest}, "\x00")
+		job, ok := byKey[key]
+		if !ok {
+			job = &signJob{c, map[int]bool{c.op.I: true}}
+			byKey[key] = job
+			jobs = append(jobs, job)
+			continue
+		}
+		job.ops[c.op.I] = true
+		job.tags = sortedUnique(append(job.tags, c.tags...))
+		// A merged job fails the deploy unless every operation asked for best effort.
+		job.decision.bestEffort = job.decision.bestEffort && c.decision.bestEffort
+		// The same manifest can be pushed on its own and as part of an index; it
+		// is a root if it is one anywhere.
+		if c.subject.role == signer.RoleRoot && job.subject.role != signer.RoleRoot {
+			job.subject = c.subject
+		}
+	}
+	return jobs
+}
+
+func sortedUnique(in []string) []string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := append([]string(nil), in...)
+	sort.Strings(out)
+	w := 0
+	for i, s := range out {
+		if i == 0 || s != out[w-1] {
+			out[w] = s
+			w++
+		}
+	}
+	return out[:w]
+}
+
+// imageSource gives access to the images of the deploy (a *deployvfs.VFS). It is
+// optional: without it, requests carry no platform.
+type imageSource interface {
+	Image(registryv1.Hash) (registryv1.Image, error)
+}
+
+// platformOf reads the platform of a single-platform image from its config. It
+// returns nil for indexes and whenever the config cannot be read, because the
+// platform is a convenience for the plugin, not something signing depends on.
+func platformOf(images imageSource, d api.Descriptor) *registryv1.Platform {
+	if images == nil || registrytypes.MediaType(d.MediaType).IsIndex() {
+		return nil
+	}
+	h, err := registryv1.NewHash(d.Digest)
+	if err != nil {
+		return nil
+	}
+	img, err := images.Image(h)
+	if err != nil {
+		return nil
+	}
+	cfg, err := img.ConfigFile()
+	if err != nil || cfg == nil || (cfg.OS == "" && cfg.Architecture == "") {
+		return nil
+	}
+	return &registryv1.Platform{OS: cfg.OS, Architecture: cfg.Architecture, Variant: cfg.Variant, OSVersion: cfg.OSVersion}
+}
+
+// pluginArtifact is a manifest a signer plugin created for a subject.
+type pluginArtifact struct {
+	desc         api.Descriptor
+	artifactType string
+	// subject is what the artifact is attached to.
+	subject *api.Descriptor
+	// registry and repository are where it was attached.
+	registry, repository string
+	// ops are the operations whose chain caused it.
+	ops map[int]bool
+}
+
+func newPluginArtifact(img registryv1.Image, job *signJob) (*pluginArtifact, error) {
+	digest, err := img.Digest()
+	if err != nil {
+		return nil, fmt.Errorf("computing artifact digest: %w", err)
+	}
+	raw, err := img.RawManifest()
+	if err != nil {
+		return nil, fmt.Errorf("reading artifact manifest: %w", err)
+	}
+	mediaType, err := img.MediaType()
+	if err != nil {
+		return nil, fmt.Errorf("reading artifact media type: %w", err)
+	}
+	manifest, err := img.Manifest()
+	if err != nil {
+		return nil, fmt.Errorf("parsing artifact manifest: %w", err)
+	}
+	artifact := &pluginArtifact{
+		desc:         api.Descriptor{MediaType: string(mediaType), Digest: digest.String(), Size: int64(len(raw))},
+		artifactType: manifest.ArtifactType,
+		registry:     job.registry,
+		repository:   job.repository,
+		ops:          job.ops,
+	}
+	if manifest.Subject != nil {
+		artifact.subject = &api.Descriptor{MediaType: string(manifest.Subject.MediaType), Digest: manifest.Subject.Digest.String(), Size: manifest.Subject.Size}
+	}
+	return artifact, nil
+}
+
+// plannedOp is a push operation that is to be signed, with its chain resolved.
+type plannedOp struct {
+	op                   api.IndexedPushDeployOperation
+	registry, repository string
+	decision             signDecision
+	// cfgs are the resolved plugin configs, one per step.
+	cfgs []signer.SignSettingConfig
+	tags []string
+}
+
 // forEachSignature signs every eligible push operation and invokes emit once
 // per signed subject with the signer plugin's artifact images. It centralizes
 // the sign decision, plugin invocation and best-effort error handling shared by
 // the registry push and --sink paths. Signing is sequential so interactive
 // plugin prompts do not interleave. precheck (optional) runs before the plugin
 // is invoked so an operation that cannot be signed is skipped without prompting.
+//
+// An operation's plugins form a chain that runs in order: every plugin of step 0
+// first, then step 1, and so on, across all operations. A step with the
+// plugin_artifacts target also processes the manifests the earlier steps created
+// for that operation. It never sees its own output or that of later steps, so a
+// chain cannot recurse, and each artifact is pushed before the next step is asked
+// to attach something to it.
+//
+// All operations are planned before the first plugin runs, so a configuration
+// error in a later operation is reported before anything is signed.
 func forEachSignature(ctx context.Context, pushOps []api.IndexedPushDeployOperation, settings api.DeploySettings, store *signer.SettingStore, rfHandle *runfiles.Runfiles, opts signOptions, precheck func(op api.IndexedPushDeployOperation) error, emit signEmitter) error {
 	override := normalizeTargets(opts.targetOverride)
 
+	var planned []plannedOp
+	chainLen := 0
 	for _, op := range pushOps {
 		decision := decideSigning(op, store, opts.force, override)
 		if !decision.sign {
 			continue
 		}
 		reg, repo := opRegistry(op, opts), opRepository(op, opts)
+		skipOrFail := func(err error) error {
+			if decision.bestEffort {
+				fmt.Fprintf(os.Stderr, "warning: %s\n", err)
+				return nil
+			}
+			return err
+		}
 		if precheck != nil {
 			if err := precheck(op); err != nil {
-				if decision.bestEffort {
-					fmt.Fprintf(os.Stderr, "warning: %s\n", err)
-					continue
+				if err := skipOrFail(err); err != nil {
+					return err
 				}
-				return err
-			}
-		}
-		if err := signOneEmit(ctx, op, decision, store, settings.DefaultSignSetting, rfHandle, emit); err != nil {
-			if decision.bestEffort {
-				fmt.Fprintf(os.Stderr, "warning: signing %s/%s@%s skipped: %v\n", reg, repo, op.Root.Digest, err)
 				continue
 			}
-			return fmt.Errorf("signing %s/%s@%s: %w", reg, repo, op.Root.Digest, err)
+		}
+		cfgs := make([]signer.SignSettingConfig, 0, len(decision.steps))
+		var resolveErr error
+		for _, step := range decision.steps {
+			cfg, err := store.Resolve(step.setting, settings.DefaultSignSetting)
+			if err != nil {
+				resolveErr = err
+				break
+			}
+			cfgs = append(cfgs, cfg)
+		}
+		if resolveErr != nil {
+			if err := skipOrFail(fmt.Errorf("signing %s/%s@%s skipped: %v", reg, repo, op.Root.Digest, resolveErr)); err != nil {
+				return fmt.Errorf("signing %s/%s@%s: %w", reg, repo, op.Root.Digest, resolveErr)
+			}
+			continue
+		}
+		planned = append(planned, plannedOp{
+			op: op, registry: reg, repository: repo, decision: decision, cfgs: cfgs,
+			tags: append(append([]string(nil), op.Tags...), opts.additionalTags...),
+		})
+		if len(cfgs) > chainLen {
+			chainLen = len(cfgs)
+		}
+	}
+
+	var deploy *signer.Deploy
+	deployInfo := func() (signer.Deploy, error) {
+		if deploy == nil {
+			d, err := signer.NewDeploy(settings.PushStrategy)
+			if err != nil {
+				return signer.Deploy{}, err
+			}
+			deploy = &d
+		}
+		return *deploy, nil
+	}
+	plugins := map[string]*signer.Subprocess{}
+	var produced []*pluginArtifact
+	for step := 0; step < chainLen; step++ {
+		var cands []signCandidate
+		for _, p := range planned {
+			if step >= len(p.cfgs) {
+				continue
+			}
+			targets := p.decision.steps[step].targets
+			base := signCandidate{
+				op: p.op, registry: p.registry, repository: p.repository,
+				decision: p.decision, cfg: p.cfgs[step], tags: p.tags,
+			}
+			for _, subject := range collectSubjects(p.op, targets) {
+				c := base
+				c.subject = subject
+				cands = append(cands, c)
+			}
+			if !targets[api.SignTargetPluginArtifacts] {
+				continue
+			}
+			// produced only holds what earlier steps created: a step's output is
+			// added after the whole step ran, so a step never sees its own.
+			for _, a := range produced {
+				if !a.ops[p.op.I] || a.registry != p.registry || a.repository != p.repository {
+					continue
+				}
+				c := base
+				c.tags = nil // artifacts are attached by digest
+				c.subject = signSubject{desc: a.desc, artifactType: a.artifactType, role: signer.RolePluginArtifact, parent: a.subject}
+				cands = append(cands, c)
+			}
+		}
+
+		for _, job := range mergeSignJobs(cands) {
+			imgs, err := runSignJob(ctx, job, rfHandle, plugins, deployInfo, opts.images, emit)
+			if err == nil {
+				// What this step created is offered to the steps after it only.
+				for _, img := range imgs {
+					var artifact *pluginArtifact
+					if artifact, err = newPluginArtifact(img, job); err != nil {
+						break
+					}
+					produced = append(produced, artifact)
+				}
+			}
+			if err != nil {
+				if job.decision.bestEffort {
+					fmt.Fprintf(os.Stderr, "warning: signing %s/%s@%s skipped: %v\n", job.registry, job.repository, job.subject.desc.Digest, err)
+					continue
+				}
+				return fmt.Errorf("signing %s/%s@%s: %w", job.registry, job.repository, job.subject.desc.Digest, err)
+			}
 		}
 	}
 	return nil
 }
 
-// signOneEmit signs every selected subject of op and hands the resulting
-// artifacts to emit.
-func signOneEmit(ctx context.Context, op api.IndexedPushDeployOperation, decision signDecision, store *signer.SettingStore, manifestDefault *api.Descriptor, rf *runfiles.Runfiles, emit signEmitter) error {
-	cfg, err := store.Resolve(decision.setting, manifestDefault)
-	if err != nil {
-		return err
-	}
-	sub, err := signer.NewSubprocess(cfg, rf)
-	if err != nil {
-		return err
+// runSignJob invokes the plugin for one job, hands the resulting artifacts to
+// emit, and returns them.
+func runSignJob(ctx context.Context, job *signJob, rf *runfiles.Runfiles, plugins map[string]*signer.Subprocess, deployInfo func() (signer.Deploy, error), images imageSource, emit signEmitter) ([]registryv1.Image, error) {
+	cfgJSON, _ := json.Marshal(job.cfg)
+	sub, ok := plugins[string(cfgJSON)]
+	if !ok {
+		var err error
+		if sub, err = signer.NewSubprocess(job.cfg, rf); err != nil {
+			return nil, err
+		}
+		plugins[string(cfgJSON)] = sub
 	}
 
-	for _, subjectDesc := range collectSubjects(op, decision.targets) {
-		vDesc, err := signer.SubjectDescriptor(subjectDesc)
-		if err != nil {
-			return err
-		}
-		imgs, err := sub.SignArtifacts(ctx, vDesc)
-		if err != nil {
-			return fmt.Errorf("signing subject %s: %w", subjectDesc.Digest, err)
-		}
-		if err := emit(ctx, op, subjectDesc, imgs); err != nil {
-			return err
-		}
+	subject, err := signer.SubjectDescriptor(job.subject.desc)
+	if err != nil {
+		return nil, err
 	}
-	return nil
+	subject.ArtifactType = job.subject.artifactType
+	var imgs []registryv1.Image
+	if sub.Protocol() == signer.ProtocolRequest {
+		deploy, err := deployInfo()
+		if err != nil {
+			return nil, err
+		}
+		if job.subject.role != signer.RolePluginArtifact {
+			subject.Platform = platformOf(images, job.subject.desc)
+		}
+		req := signer.Request{
+			Subject: subject,
+			Role:    job.subject.role,
+			Destination: signer.Destination{
+				Registry:   job.registry,
+				Repository: job.repository,
+				Tags:       job.tags,
+				References: signer.References(job.registry, job.repository, job.tags, job.subject.desc.Digest),
+			},
+			Deploy: deploy,
+		}
+		if job.subject.parent != nil {
+			parent, err := signer.SubjectDescriptor(*job.subject.parent)
+			if err != nil {
+				return nil, err
+			}
+			req.Parent = &parent
+		}
+		imgs, err = sub.SignRequest(ctx, req)
+	} else {
+		imgs, err = sub.SignArtifacts(ctx, subject)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("signing subject %s: %w", job.subject.desc.Digest, err)
+	}
+	if err := emit(ctx, job.op, job.subject.desc, imgs); err != nil {
+		return nil, err
+	}
+	return imgs, nil
 }
 
 // signatureSinkImage converts a signature artifact image (produced by a signer
@@ -294,23 +606,26 @@ func signatureSinkImage(img registryv1.Image, registry, repository string) (sink
 	}, nil
 }
 
-// decideSigning determines whether op should be signed and with which effective
-// targets. Precedence: an operation with an explicit Sign config is always
+// decideSigning determines whether op should be signed and with which chain of
+// plugins. Precedence: an operation with an explicit Sign config is always
 // signed; --sign_force signs any op using the default; and a --sign_targets
-// override that includes "referrers" signs referrer ops using the default.
+// override that includes "referrers" signs referrer ops using the default. The
+// runtime --sign_targets override replaces the targets of every step.
 func decideSigning(op api.IndexedPushDeployOperation, store *signer.SettingStore, force bool, override map[string]bool) signDecision {
+	defaultStep := func() []signStep {
+		return []signStep{{targets: chooseTargets(nil, override)}}
+	}
 	switch {
 	case op.Sign != nil:
-		return signDecision{
-			sign:       true,
-			bestEffort: op.Sign.BestEffort,
-			setting:    op.Sign.Setting,
-			targets:    chooseTargets(op.Sign.Targets, override),
+		var steps []signStep
+		for _, step := range op.Sign.EffectiveSteps() {
+			steps = append(steps, signStep{setting: step.Setting, targets: chooseTargets(step.Targets, override)})
 		}
+		return signDecision{sign: true, bestEffort: op.Sign.BestEffort, steps: steps}
 	case force && store.HasDefault():
-		return signDecision{sign: true, targets: chooseTargets(nil, override)}
+		return signDecision{sign: true, steps: defaultStep()}
 	case op.Referrer && override[api.SignTargetReferrers] && store.HasDefault():
-		return signDecision{sign: true, targets: chooseTargets(nil, override)}
+		return signDecision{sign: true, steps: defaultStep()}
 	default:
 		return signDecision{}
 	}
@@ -319,21 +634,22 @@ func decideSigning(op api.IndexedPushDeployOperation, store *signer.SettingStore
 // collectSubjects returns the descriptors of op to sign, honoring the effective
 // target selection. Roots are always included; index children are added when
 // the child_manifests target is selected.
-func collectSubjects(op api.IndexedPushDeployOperation, targets map[string]bool) []api.Descriptor {
-	var subjects []api.Descriptor
+func collectSubjects(op api.IndexedPushDeployOperation, targets map[string]bool) []signSubject {
+	var subjects []signSubject
 	seen := map[string]bool{}
-	add := func(d api.Descriptor) {
-		if d.Digest == "" || seen[d.Digest] {
+	add := func(s signSubject) {
+		if s.desc.Digest == "" || seen[s.desc.Digest] {
 			return
 		}
-		seen[d.Digest] = true
-		subjects = append(subjects, d)
+		seen[s.desc.Digest] = true
+		subjects = append(subjects, s)
 	}
 
-	add(op.Root)
+	add(signSubject{desc: op.Root, role: signer.RoleRoot})
 	if targets[api.SignTargetChildManifests] && op.RootKind == "index" {
+		root := op.Root
 		for _, m := range op.Manifests {
-			add(m.Descriptor)
+			add(signSubject{desc: m.Descriptor, role: signer.RoleChildManifest, parent: &root})
 		}
 	}
 	return subjects
@@ -365,6 +681,7 @@ func normalizeTargets(list []string) map[string]bool {
 			m[api.SignTargetRoots] = true
 			m[api.SignTargetChildManifests] = true
 			m[api.SignTargetReferrers] = true
+			m[api.SignTargetPluginArtifacts] = true
 		default:
 			m[t] = true
 		}

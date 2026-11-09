@@ -597,6 +597,8 @@ func DeployWithExtras(ctx context.Context, rawRequest []byte, opts DeployOptions
 			overrideRepository: opts.OverrideRepository,
 			pushTransport:      pushTransport,
 			jobs:               opts.Jobs,
+			images:             vfs,
+			additionalTags:     opts.AdditionalTags,
 		}); err != nil {
 			return err
 		}
@@ -1157,6 +1159,8 @@ func deployToSink(ctx context.Context, spec string, vfs *deployvfs.VFS, casBlobs
 		targetOverride:     opts.SignTargets,
 		overrideRegistry:   opts.OverrideRegistry,
 		overrideRepository: opts.OverrideRepository,
+		images:             vfs,
+		additionalTags:     opts.AdditionalTags,
 	}); err != nil {
 		s.Close()
 		return err

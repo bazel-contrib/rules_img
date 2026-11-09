@@ -4,6 +4,7 @@ See the `signing_config` rule for how `img deploy` signs images by delegating to
 external signer plugins.
 """
 
-load("//img/private:signing_config.bzl", _signing_config = "signing_config")
+load("//img/private:signing_config.bzl", _signing_chain = "signing_chain", _signing_config = "signing_config")
 
+signing_chain = _signing_chain
 signing_config = _signing_config

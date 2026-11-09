@@ -72,6 +72,7 @@ var (
 	signSettingFile        string
 	signBestEffort         bool
 	signTargets            []string
+	signSteps              []signStepFlag
 	defaultSignSettingFile string
 
 	// toolSettings are the `img` tool settings resolved by Bazel that this
@@ -89,6 +90,7 @@ func DeployMetadataProcess(ctx context.Context, args []string) {
 	manifestTagFiles = nil
 	layerSourcesForManifest = nil
 	signTargets = nil
+	signSteps = nil
 
 	flagSet := flag.NewFlagSet("deploy-metadata", flag.ExitOnError)
 	flagSet.Usage = func() {
@@ -168,14 +170,27 @@ func DeployMetadataProcess(ctx context.Context, args []string) {
 	flagSet.Var(layerCompactStreams, "layer-compact-stream", `(Optional) compact-stream (.cstream) file for a layer. Format: manifest_idx,layer_idx=path. The file's CAS digest is recorded so the layer can be reconstructed from it (used by the bes strategy). Can be specified multiple times.`)
 	flagSet.StringVar(&signSettingFile, "sign-setting-file", "", `(Optional) path to the sign_setting config file for this push operation. Its content descriptor is recorded so the deploy tool can match it against the sign_settings shipped in runfiles.`)
 	flagSet.BoolVar(&signBestEffort, "sign-best-effort", false, `(Optional) when set, signing failures for this operation are warnings instead of hard errors.`)
-	flagSet.Func("sign-target", `(Optional) a descriptor selection to sign for this operation: "roots" (default), "child_manifests", "referrers", or "all". Can be specified multiple times.`, func(value string) error {
-		switch value {
-		case api.SignTargetRoots, api.SignTargetChildManifests, api.SignTargetReferrers, "all":
-			signTargets = append(signTargets, value)
-			return nil
-		default:
-			return fmt.Errorf("invalid --sign-target %q", value)
+	flagSet.Func("sign-target", `(Optional) a descriptor selection to sign for this operation: "roots" (default), "child_manifests", "referrers", "plugin_artifacts", or "all". Can be specified multiple times. Describes a single step; see --sign-step-file for a chain.`, func(value string) error {
+		if err := validSignTarget(value); err != nil {
+			return err
 		}
+		signTargets = append(signTargets, value)
+		return nil
+	})
+	flagSet.Func("sign-step-file", `(Optional) path to the sign_setting config file of the next plugin in a signing chain. Can be specified multiple times; plugins run in that order. The --sign-step-target flags that follow belong to this step.`, func(value string) error {
+		signSteps = append(signSteps, signStepFlag{file: value})
+		return nil
+	})
+	flagSet.Func("sign-step-target", `(Optional) a descriptor selection for the preceding --sign-step-file: "roots" (default), "child_manifests", "referrers", "plugin_artifacts", or "all". Can be specified multiple times.`, func(value string) error {
+		if err := validSignTarget(value); err != nil {
+			return err
+		}
+		if len(signSteps) == 0 {
+			return fmt.Errorf("--sign-step-target %q must follow a --sign-step-file", value)
+		}
+		last := &signSteps[len(signSteps)-1]
+		last.targets = append(last.targets, value)
+		return nil
 	})
 	flagSet.StringVar(&defaultSignSettingFile, "default-sign-setting-file", "", `(Optional) path to a sign_setting config file used as the manifest-level default for operations that request signing but carry no setting of their own.`)
 	toolSettings = &toolSettingsFlags{}
@@ -445,15 +460,14 @@ func WriteMetadata(ctx context.Context, outputPath string) error {
 		// Attach signing intent. The sign_setting config file's content
 		// descriptor is recorded here (build time) and matched at deploy time
 		// against the sign_settings shipped in runfiles.
-		signSetting, err := signConfigDescriptor(signSettingFile)
+		steps, err := signChain()
 		if err != nil {
 			return err
 		}
-		if signSetting != nil {
+		if len(steps) > 0 {
 			operation.Sign = &api.SignConfig{
-				Setting:    signSetting,
+				Steps:      steps,
 				BestEffort: signBestEffort,
-				Targets:    append([]string(nil), signTargets...),
 			}
 		}
 		defaultSignSetting, err := signConfigDescriptor(defaultSignSettingFile)
@@ -502,10 +516,10 @@ func WriteMetadata(ctx context.Context, outputPath string) error {
 		// When the main image's sign targets include referrers, propagate the
 		// signing intent to the referrer push operations so they are signed too.
 		var referrerSign *api.SignConfig
-		if signSetting, err := signConfigDescriptor(signSettingFile); err != nil {
+		if steps, err := signChain(); err != nil {
 			return err
-		} else if signSetting != nil && targetsIncludeReferrers(signTargets) {
-			referrerSign = &api.SignConfig{Setting: signSetting, BestEffort: signBestEffort}
+		} else if referrerSteps := referrerSignSteps(steps); len(referrerSteps) > 0 {
+			referrerSign = &api.SignConfig{Steps: referrerSteps, BestEffort: signBestEffort}
 		}
 
 		referrerOps, err := processReferrers(knownDigests, config, referrerSign)
@@ -757,11 +771,67 @@ func signConfigDescriptor(path string) (*api.Descriptor, error) {
 	}, nil
 }
 
-// targetsIncludeReferrers reports whether the sign-target selection covers
-// referrer artifacts (either explicitly or via "all").
-func targetsIncludeReferrers(targets []string) bool {
+// signStepFlag is one --sign-step-file with the --sign-step-target flags after it.
+type signStepFlag struct {
+	file    string
+	targets []string
+}
+
+func validSignTarget(value string) error {
+	switch value {
+	case api.SignTargetRoots, api.SignTargetChildManifests, api.SignTargetReferrers, api.SignTargetPluginArtifacts, "all":
+		return nil
+	}
+	return fmt.Errorf("invalid sign target %q", value)
+}
+
+// signChain turns the signing flags into the operation's ordered steps. The
+// original single-plugin flags (--sign-setting-file and --sign-target) describe
+// one step and cannot be combined with --sign-step-file.
+func signChain() ([]api.SignStep, error) {
+	if len(signSteps) > 0 && (signSettingFile != "" || len(signTargets) > 0) {
+		return nil, fmt.Errorf("--sign-step-file cannot be combined with --sign-setting-file or --sign-target")
+	}
+	flags := signSteps
+	if signSettingFile != "" {
+		flags = []signStepFlag{{file: signSettingFile, targets: signTargets}}
+	}
+	var steps []api.SignStep
+	for _, f := range flags {
+		setting, err := signConfigDescriptor(f.file)
+		if err != nil {
+			return nil, err
+		}
+		steps = append(steps, api.SignStep{Setting: setting, Targets: append([]string(nil), f.targets...)})
+	}
+	return steps, nil
+}
+
+// referrerSignSteps returns the chain for the push operations of the main
+// image's referrers (an SBOM, say): the steps that select referrers, each
+// processing the referrer as a root. A step keeps plugin_artifacts, so the
+// referrer's own attestations are processed by the later plugins like the main
+// image's are.
+func referrerSignSteps(steps []api.SignStep) []api.SignStep {
+	var out []api.SignStep
+	for _, step := range steps {
+		if !targetsInclude(step.Targets, api.SignTargetReferrers) {
+			continue
+		}
+		referrerStep := api.SignStep{Setting: step.Setting}
+		if targetsInclude(step.Targets, api.SignTargetPluginArtifacts) {
+			referrerStep.Targets = []string{api.SignTargetPluginArtifacts}
+		}
+		out = append(out, referrerStep)
+	}
+	return out
+}
+
+// targetsInclude reports whether the selection covers target, explicitly or
+// through "all".
+func targetsInclude(targets []string, target string) bool {
 	for _, t := range targets {
-		if t == api.SignTargetReferrers || t == "all" {
+		if t == target || t == "all" {
 			return true
 		}
 	}

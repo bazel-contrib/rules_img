@@ -256,6 +256,106 @@ Both are wired into a build the same way: reference the plugin from a
 [`signing_config`](signing.md#signing_config) via `tool` (or `tool_command`) and
 enable signing on the push as described in [Configuring signing](#configuring-signing).
 
+## Attaching build provenance
+
+The same plugin mechanism can attach things that are not signatures.
+[`@rules_img_signer_provenance`](../modules/rules_img_signer_provenance) attaches
+a [SLSA provenance][slsa-provenance] attestation in the format
+`docker buildx build --provenance` produces: an attestation manifest with
+`artifactType` `application/vnd.docker.attestation.manifest.v1+json` and an
+in-toto statement layer, linked to the image through the `subject` field.
+`docker buildx imagetools inspect` finds it through the referrers API.
+
+Because it runs at deploy time, it can record facts that change on every push
+(timestamps, the CI run, the commit) without invalidating any Bazel action, so
+the image and its layers stay cached.
+
+```python
+signing_config(
+    name = "provenance",
+    tool = "@rules_img_signer_provenance",
+    args = ["--builder-id=https://example.com/my-ci", "--record-timestamps"],
+    protocol = 2,  # lets the plugin see the image name, platform and rules_img version
+    # One attestation per platform manifest, like BuildKit. Never add
+    # "referrers": that would attest the attestations.
+    targets = ["roots", "child_manifests"],
+)
+```
+
+Two things to keep in mind:
+
+- The attestation is **not signed**, just like BuildKit's. To sign it, run a
+  cosign or Notation plugin after it in a
+  [`signing_chain`](#signing-the-image-its-sbom-and-its-provenance).
+- It only records what it is told (flags, an optional `--build-info` file, a
+  workspace-status style `--status-command` for the commit and other source
+  information, the deploy-time environment, and — with `protocol = 2` — where
+  `img deploy` pushes the image). It cannot observe the build the way BuildKit does,
+  so it never claims completeness or hermeticity unless you assert it. See the
+  [plugin README](../modules/rules_img_signer_provenance/README.md) for the
+  complete list of what is recorded and which options exist.
+
+## Signing the image, its SBOM, and its provenance
+
+Some things to sign do not exist at build time. A provenance attestation, for
+instance, is created by a plugin during the deploy. To sign the image, an SBOM
+built into it, **and** the provenance, list the plugins in a
+[`signing_chain`](signing.md#signing_chain). They run in that order, and a plugin
+can see what the plugins before it created:
+
+```python
+load("@rules_img//img:signing.bzl", "signing_chain", "signing_config")
+
+signing_config(
+    name = "provenance",
+    tool = "@rules_img_signer_provenance",
+    protocol = 2,
+    targets = ["roots", "child_manifests", "referrers"],
+)
+
+signing_config(
+    name = "cosign",
+    tool = "@rules_img_signer_cosign",
+    targets = ["roots", "child_manifests", "referrers", "plugin_artifacts"],
+)
+
+signing_chain(
+    name = "release",
+    steps = [":provenance", ":cosign"],
+)
+```
+
+Select `//:release` wherever you would select a `signing_config`
+(`--@rules_img//img/settings:sign_setting` or the `sign_setting` attribute).
+
+| Target | The plugin processes |
+| --- | --- |
+| `roots` | The pushed image (or index). Always included. |
+| `child_manifests` | Each platform manifest of an index. |
+| `referrers` | The referrers built into the image, such as an SBOM, as roots of their own. |
+| `plugin_artifacts` | The manifests the plugins **before it in the chain** created: attestations and signatures, including those they created for the SBOM and for each other. |
+
+The order is what rules out recursion: the plugins run one after the other, and a
+plugin is only offered what earlier ones created, never its own output or what
+later ones will create. With the chain above, the provenance plugin attests the
+image, its platform manifests, and the SBOM; cosign then signs all of those *and*
+all of the attestations. Each manifest is pushed before the next plugin attaches
+something to it. Without `plugin_artifacts`, a later plugin processes the image as
+if it were alone in the chain, so the target is opt-in and costs nothing for
+plugins that do not need it. Listing it on the first plugin has no effect, since
+nothing has been created yet.
+
+- A plugin that opted in to `protocol = 2` is told what it is looking at: its
+  request has `role` set to `plugin_artifact`, the subject's `artifactType` says
+  which kind (for example `application/vnd.docker.attestation.manifest.v1+json`),
+  and `parent` is what that artifact is attached to. The artifact has no tags;
+  `destination.references` is its digest.
+- `sign = best_effort` applies to the whole chain: a plugin that fails is skipped
+  with a warning, and the plugins after it simply have one artifact less to see.
+- The runtime `--sign_targets` flag replaces the targets of every plugin of the
+  chain.
+- A plugin config can appear in a chain once. Chains can be nested.
+
 ## Writing your own signer plugin
 
 Because `img` and the plugins are decoupled by a subprocess protocol, you can
@@ -275,6 +375,55 @@ A plugin is any executable that:
 4. Exits `0` on success, non-zero (with a diagnostic on stderr) on failure.
 5. Never contacts the container registry — that is `img`'s job. The plugin may
    reach its *own* signing infrastructure (KMS, HSM, transparency log).
+
+### Asking for more context: `protocol = 2`
+
+The contract above is protocol 1: the plugin only learns *what* to sign. A plugin
+that also needs to know *where* the image is pushed — to name it in an
+attestation, say — opts in per `signing_config` with `protocol = 2`. Image names
+do not belong in `args`, and the host knows them.
+
+With `protocol = 2`, stdin is a JSON request instead of the bare descriptor, and
+`img deploy` calls the plugin **once per registry, repository, and image digest**
+(not once per push operation), with the tags of every operation that pushes the
+image there:
+
+```json
+{
+  "protocol_version": 2,
+  "subject": {"mediaType": "...", "digest": "sha256:...", "size": 1054,
+              "platform": {"architecture": "arm64", "os": "linux"}},
+  "role": "child_manifest",
+  "parent": {"mediaType": "...", "digest": "sha256:...", "size": 2310},
+  "destination": {"registry": "ghcr.io", "repository": "example/app",
+                  "tags": ["latest", "v1"],
+                  "references": ["ghcr.io/example/app:latest", "ghcr.io/example/app:v1"]},
+  "deploy": {"rules_img_version": "0.3.25",
+             "invocation_id": "d6f1c0a0-...", "started_at": "2025-01-31T12:00:00Z",
+             "push_strategy": "eager"}
+}
+```
+
+- `subject.platform` is read from the image config; it is absent for image
+  indexes and when the config is unavailable.
+- `role` is `root`, `child_manifest` (a manifest of an index, selected with the
+  `child_manifests` target; `parent` is that index) or `plugin_artifact` (a
+  manifest an earlier plugin of a [`signing_chain`](#signing-the-image-its-sbom-and-its-provenance)
+  created; `parent` is what it is attached to, and the subject's `artifactType`
+  says what it is).
+- `destination` reflects `--registry`/`--repository` overrides. `references` has
+  one entry per tag, or `registry/repository@digest` for a push by digest. Tags
+  attached by separate `registry_tag` operations are not included.
+- `deploy` is identical for every call of one deploy, so plugins that attest
+  several images agree on the invocation and start time. `started_at` honors
+  `$SOURCE_DATE_EPOCH`.
+
+A plugin must ignore request fields it does not know, since more may be added, and
+may refuse a `protocol_version` it does not support. Telling a request from the
+bare descriptor is as simple as checking for a non-zero `protocol_version`; the
+bundled helper package does it for you and calls an optional `SignRequest` method
+when the signer implements one, so a signer that only knows `Sign(ctx, subject)`
+keeps working under `protocol = 2`.
 
 In Go, the bundled plugins share a small helper package that implements the
 stdin/stdout framing and the OCI-layout writing for you; you only implement the
@@ -297,6 +446,7 @@ and reference it from a `signing_config` via `tool` (a Bazel target) or
 anything that speaks the stdin/stdout protocol above works.
 
 [kyverno]: https://kyverno.io/
+[slsa-provenance]: https://slsa.dev/spec/v1.0/provenance
 [policy-controller]: https://docs.sigstore.dev/policy-controller/overview/
 [ratify]: https://ratify.dev/
 [oci-referrers]: https://github.com/opencontainers/distribution-spec/blob/main/spec.md#listing-referrers

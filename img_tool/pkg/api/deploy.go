@@ -191,6 +191,10 @@ const (
 	SignTargetRoots          = "roots"
 	SignTargetChildManifests = "child_manifests"
 	SignTargetReferrers      = "referrers"
+	// SignTargetPluginArtifacts selects the manifests that signer plugins earlier in
+	// the operation's chain produced (attestations, signatures). A step sees only
+	// what steps before it produced, never its own output, so chains cannot recurse.
+	SignTargetPluginArtifacts = "plugin_artifacts"
 )
 
 // SignConfig captures, per push operation, whether and how the pushed artifact
@@ -200,7 +204,8 @@ const (
 type SignConfig struct {
 	// Setting is the content descriptor of the sign_setting config file to use.
 	// When nil, the operation falls back to DeploySettings.DefaultSignSetting
-	// (or the runtime --default_sign_setting override).
+	// (or the runtime --default_sign_setting override). Together with Targets it
+	// describes a single step; use Steps for a chain of plugins.
 	Setting *Descriptor `json:"setting,omitempty"`
 	// BestEffort, when true, downgrades signing failures for this operation to a
 	// warning instead of aborting the deploy.
@@ -209,6 +214,28 @@ type SignConfig struct {
 	// SignTarget* constants). Empty means the default (roots only). The runtime
 	// --sign_targets flag overrides this value.
 	Targets []string `json:"targets,omitempty"`
+	// Steps is an ordered chain of plugins, each with its own targets. When set,
+	// Setting and Targets are ignored. Plugins run in this order, and a step with
+	// the plugin_artifacts target also processes what the steps before it created.
+	Steps []SignStep `json:"steps,omitempty"`
+}
+
+// SignStep is one plugin of a signing chain.
+type SignStep struct {
+	// Setting is the content descriptor of the plugin's sign_setting config file.
+	Setting *Descriptor `json:"setting,omitempty"`
+	// Targets selects what this step processes (see the SignTarget* constants).
+	// Empty means roots only.
+	Targets []string `json:"targets,omitempty"`
+}
+
+// EffectiveSteps returns the chain to run: Steps, or the single step described by
+// Setting and Targets. It is never empty.
+func (c *SignConfig) EffectiveSteps() []SignStep {
+	if len(c.Steps) > 0 {
+		return c.Steps
+	}
+	return []SignStep{{Setting: c.Setting, Targets: c.Targets}}
 }
 
 // Values of BaseCommandOperation.DeduplicatedPush: whether `img deploy` may serve

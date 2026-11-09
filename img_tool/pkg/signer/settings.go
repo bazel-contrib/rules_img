@@ -42,6 +42,9 @@ type SignSettingConfig struct {
 	Tool          string            `json:"tool"` // runfiles rlocation path or host command
 	Args          []string          `json:"args,omitempty"`
 	Env           map[string]string `json:"env,omitempty"`
+	// Protocol selects what the plugin receives on stdin: ProtocolDescriptor (1,
+	// also what unset means) or ProtocolRequest (2).
+	Protocol int `json:"protocol,omitempty"`
 }
 
 // SettingStore maps a sign_setting content digest ("sha256:<hex>") to the raw
@@ -158,6 +161,13 @@ func parseConfig(data []byte) (SignSettingConfig, error) {
 	}
 	if cfg.SchemaVersion != 1 {
 		return cfg, fmt.Errorf("unsupported sign_setting schema_version %d (want 1)", cfg.SchemaVersion)
+	}
+	switch cfg.Protocol {
+	case 0:
+		cfg.Protocol = ProtocolDescriptor
+	case ProtocolDescriptor, ProtocolRequest:
+	default:
+		return cfg, fmt.Errorf("unsupported sign_setting protocol %d (want %d or %d)", cfg.Protocol, ProtocolDescriptor, ProtocolRequest)
 	}
 	return cfg, nil
 }

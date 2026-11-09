@@ -411,6 +411,7 @@ func (h *deployWorkerHandler) routeGlobalSink(ctx context.Context, vfs *deployvf
 	if err := signIntoSink(ctx, h.globalSink, pushOps, dm.Settings, signOptions{
 		overrideRegistry:   opts.overrideRegistry,
 		overrideRepository: opts.overrideRepository,
+		images:             vfs,
 	}); err != nil {
 		return "", err
 	}
@@ -447,6 +448,7 @@ func (h *deployWorkerHandler) routePerRequestSink(ctx context.Context, vfs *depl
 	if err := signIntoSink(ctx, s, pushOps, dm.Settings, signOptions{
 		overrideRegistry:   opts.overrideRegistry,
 		overrideRepository: opts.overrideRepository,
+		images:             vfs,
 	}); err != nil {
 		s.Close()
 		return "", err

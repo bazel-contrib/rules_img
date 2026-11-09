@@ -22,6 +22,7 @@ type Subprocess struct {
 	toolPath string
 	args     []string // ["sign-oci-artifact", <plugin args>...]
 	env      []string
+	protocol int // ProtocolDescriptor or ProtocolRequest
 }
 
 var _ api.OCIArtifactSigner = (*Subprocess)(nil)
@@ -66,24 +67,62 @@ func NewSubprocess(cfg SignSettingConfig, rf *runfiles.Runfiles) (*Subprocess, e
 		env = append(env, k+"="+v)
 	}
 
+	protocol := cfg.Protocol
+	if protocol == 0 {
+		protocol = ProtocolDescriptor
+	}
 	return &Subprocess{
 		toolPath: toolPath,
 		args:     append([]string{"sign-oci-artifact"}, cfg.Args...),
 		env:      env,
+		protocol: protocol,
 	}, nil
 }
 
 // SignArtifacts runs the plugin for subject and returns every artifact image in
 // its OCI-layout output (a plugin may emit more than one, e.g. a signature plus
 // an attestation).
+//
+// It always sends what the plugin's protocol expects. A ProtocolRequest plugin
+// gets a Request with only the subject filled in; use SignRequest to give it
+// the full context.
 func (s *Subprocess) SignArtifacts(ctx context.Context, subject v1.Descriptor) ([]v1.Image, error) {
+	if s.protocol == ProtocolRequest {
+		deploy, err := NewDeploy("")
+		if err != nil {
+			return nil, err
+		}
+		return s.SignRequest(ctx, Request{Subject: subject, Role: RoleRoot, Deploy: deploy})
+	}
 	subjJSON, err := json.Marshal(subject)
 	if err != nil {
 		return nil, fmt.Errorf("marshalling subject descriptor: %w", err)
 	}
+	return s.run(ctx, subjJSON)
+}
 
+// Protocol returns the protocol the plugin is called with.
+func (s *Subprocess) Protocol() int { return s.protocol }
+
+// SignRequest runs a ProtocolRequest plugin for req and returns every artifact
+// image in its OCI-layout output. It fails for a plugin that was not configured
+// with ProtocolRequest, since such a plugin cannot parse a Request.
+func (s *Subprocess) SignRequest(ctx context.Context, req Request) ([]v1.Image, error) {
+	if s.protocol != ProtocolRequest {
+		return nil, fmt.Errorf("signer plugin %q is not configured for protocol %d", s.toolPath, ProtocolRequest)
+	}
+	req.ProtocolVersion = ProtocolRequest
+	reqJSON, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("marshalling signing request: %w", err)
+	}
+	return s.run(ctx, reqJSON)
+}
+
+// run feeds stdin to the plugin and parses the OCI layout it writes to stdout.
+func (s *Subprocess) run(ctx context.Context, stdin []byte) ([]v1.Image, error) {
 	cmd := exec.CommandContext(ctx, s.toolPath, s.args...)
-	cmd.Stdin = bytes.NewReader(subjJSON) // os/exec closes the write end at EOF
+	cmd.Stdin = bytes.NewReader(stdin) // os/exec closes the write end at EOF
 	cmd.Env = s.env
 	// Stream stderr to the user so interactive prompts (security-key touch, PIN,
 	// OIDC device flow) are visible.

@@ -375,8 +375,9 @@ def resolve_signing(ctx):
         ctx: Rule context with sign/sign_setting attributes and _sign/_sign_setting.
 
     Returns:
-        A struct(config_info, best_effort, targets) when signing is active, or
-        None when signing is disabled or best-effort with no configured setting.
+        A struct(steps, best_effort) when signing is active, where steps are the
+        plugins to run in order (see SigningConfigInfo), or None when signing is
+        disabled or best-effort with no configured setting.
     """
     mode = ctx.attr.sign
     if mode == "auto":
@@ -385,15 +386,14 @@ def resolve_signing(ctx):
         return None
 
     config_info = ctx.attr.sign_setting[SigningConfigInfo] if ctx.attr.sign_setting != None else ctx.attr._sign_setting[SigningConfigInfo]
-    if config_info.config_file == None:
+    if not config_info.steps:
         if mode == "enabled":
             fail("sign is 'enabled' but no sign_setting is configured; set the 'sign_setting' attribute or --@rules_img//img/settings:sign_setting")
         return None  # best_effort with no configured setting: nothing to sign
 
     return struct(
-        config_info = config_info,
+        steps = config_info.steps,
         best_effort = mode == "best_effort",
-        targets = config_info.targets,
     )
 
 def resolve_tool_settings(ctx):

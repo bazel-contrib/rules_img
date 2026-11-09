@@ -27,6 +27,7 @@ go_test(
         "metadata_dedup_test.go",
         "metadata_load_test.go",
         "metadata_media_type_test.go",
+        "sign_chain_test.go",
     ],
     embed = [":deploymetadata"],
     deps = ["//pkg/api"],

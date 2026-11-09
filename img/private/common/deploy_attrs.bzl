@@ -219,7 +219,7 @@ The signing plugin is selected by `sign_setting` (or the global
         values = ["auto", "enabled", "disabled", "best_effort"],
     ),
     sign_setting = attr.label(
-        doc = """A `signing_config` target selecting how this image is signed.
+        doc = """A `signing_config` (or, for several plugins in order, a `signing_chain`) target selecting how this image is signed.
 
 Overrides the global `--@rules_img//img/settings:sign_setting`. Only consulted
 when signing is enabled (see `sign`).

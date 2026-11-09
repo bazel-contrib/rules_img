@@ -3,7 +3,7 @@ load("@rules_img//img:image.bzl", "image_manifest")
 load("@rules_img//img:layer.bzl", "image_layer")
 load("@rules_img//img:multi_deploy.bzl", "multi_deploy")
 load("@rules_img//img:push.bzl", "image_push")
-load("@rules_img//img:signing.bzl", "signing_config")
+load("@rules_img//img:signing.bzl", "signing_chain", "signing_config")
 
 # gazelle:exclude_from_release
 
@@ -41,6 +41,67 @@ signing_config(
     tool_command = "true",
 )
 
+# Opts in to the request protocol (a JSON request on stdin, one call per
+# registry, repository and digest).
+signing_config(
+    name = "by_command_request",
+    protocol = 2,
+    targets = [
+        "roots",
+        "child_manifests",
+    ],
+    tool_command = "true",
+)
+
+image_push(
+    name = "push_request_protocol",
+    image = ":image",
+    registry = "example.com",
+    repository = "test/app",
+    sign = "enabled",
+    sign_setting = ":by_command_request",
+)
+
+# Two plugins in order: the second also processes what the first one created.
+signing_config(
+    name = "first_plugin",
+    args = ["--first"],
+    protocol = 2,
+    targets = [
+        "roots",
+        "child_manifests",
+    ],
+    tool_command = "true",
+)
+
+signing_config(
+    name = "second_plugin",
+    args = ["--second"],
+    targets = [
+        "roots",
+        "referrers",
+        "plugin_artifacts",
+    ],
+    tool_command = "true",
+)
+
+signing_chain(
+    name = "chain",
+    steps = [
+        ":first_plugin",
+        ":second_plugin",
+    ],
+)
+
+image_push(
+    name = "push_chain",
+    image = ":image",
+    registry = "example.com",
+    repository = "test/app",
+    sign = "enabled",
+    sign_setting = ":chain",
+)
+
 image_push(
     name = "push_enabled",
     image = ":image",
@@ -63,6 +124,8 @@ multi_deploy(
     name = "deploy_all",
     operations = [
         ":push_best_effort",
+        ":push_chain",
         ":push_enabled",
+        ":push_request_protocol",
     ],
 )

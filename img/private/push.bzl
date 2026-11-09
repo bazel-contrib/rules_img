@@ -138,8 +138,8 @@ def _image_push_impl(ctx):
     if layer_hints != None:
         root_symlinks["{}layer_hints".format(root_symlinks_prefix)] = layer_hints
 
-    # Ship the sign_setting config file and signer plugin (if signing is active).
-    sign_settings = [signing.config_info] if signing != None else []
+    # Ship the sign_setting config files and signer plugins (if signing is active).
+    sign_settings = signing.steps if signing != None else []
     plugin_runfiles = add_sign_setting_symlinks(root_symlinks, sign_settings)
 
     # Keep the embedded request path below the launcher's 256-byte argument limit.

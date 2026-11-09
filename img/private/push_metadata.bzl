@@ -119,7 +119,7 @@ def compute_push_metadata(
         pull_info: PullInfo or None (for original registry/repository/tag/digest).
         destination_file: File containing {registry}/{repository}, or None.
         output_prefix: String prefix for declared output files.
-        signing: struct(config_info, best_effort, targets) to enable signing of
+        signing: struct(steps, best_effort) to enable signing of
             this push, or None.
         tool_settings: Result of `resolve_tool_settings` to record the deploy
             tool's settings (remote cache, credential helpers, ...) in the deploy
@@ -252,16 +252,18 @@ def compute_push_metadata(
             inputs.append(ref_index_info.index)
             inputs.extend([manifest.manifest for manifest in ref_index_info.manifests])
 
-    # Signing: record the sign_setting config file's descriptor in the operation
-    # so the deploy tool can match it against the sign_settings shipped in
-    # runfiles. The config file itself is added to runfiles by the calling rule.
+    # Signing: record the descriptor of each plugin's sign_setting config file, in
+    # the order the plugins run, so the deploy tool can match them against the
+    # sign_settings shipped in runfiles. The config files themselves are added to
+    # runfiles by the calling rule. The targets after a step's file belong to it.
     if signing != None:
-        inputs.append(signing.config_info.config_file)
-        args.add("--sign-setting-file", signing.config_info.config_file)
+        for step in signing.steps:
+            inputs.append(step.config_file)
+            args.add("--sign-step-file", step.config_file)
+            for target in step.targets:
+                args.add("--sign-step-target", target)
         if signing.best_effort:
             args.add("--sign-best-effort")
-        for target in signing.targets:
-            args.add("--sign-target", target)
 
     outputs = []
     layer_hints_file = layer_hints_for_deploy_metadata(
@@ -931,7 +933,7 @@ def process_deploy_specs(
         deploy_infos.append(struct(metadata = deploy_metadata, layer_hints = layer_hints))
         referrers.extend(push_config.referrers)
         if push_config.signing != None:
-            sign_config_infos.append(push_config.signing.config_info)
+            sign_config_infos.extend(push_config.signing.steps)
 
         # Push at build time via PushImage actions, per push spec.
         if push_config.push_at_build_time_mode in ("best_effort", "enabled"):
