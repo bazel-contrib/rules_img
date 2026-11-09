@@ -2,6 +2,7 @@
 
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("@hermetic_launcher//launcher:lib.bzl", "launcher")
+load("//img/private:blob_validation.bzl", "add_blob_validation_outputs", "blob_validation_outputs", "blobs_from_cas")
 load("//img/private:root_symlinks.bzl", "calculate_root_symlinks", "symlink_name_prefix")
 load("//img/private:sign_settings.bzl", "add_sign_setting_symlinks")
 load("//img/private/common:build.bzl", "TOOLCHAIN", "TOOLCHAINS")
@@ -141,6 +142,23 @@ def _collect_operation_root_symlinks(deploy_infos, *, symlink_name_prefix):
             ))
     return root_symlinks
 
+def _blob_validation_operations(deploy_infos):
+    """One blob-validation operation per deploy operation, with its images.
+
+    Each operation keeps its own (unmerged) deploy manifest, so its validation
+    action only depends on -- and only re-runs for -- its own image.
+    """
+    return [
+        struct(
+            deploy_manifest = deploy_info.deploy_manifest,
+            images = [deploy_info.image] + [
+                referrer.index_info if referrer.index_info != None else referrer.manifest_info
+                for referrer in getattr(deploy_info, "referrers", [])
+            ],
+        )
+        for deploy_info in deploy_infos
+    ]
+
 def _multi_deploy_impl(ctx):
     """Implementation of the multi_deploy rule."""
     if not ctx.attr.operations:
@@ -236,6 +254,29 @@ def _multi_deploy_impl(ctx):
     if docker_config_path:
         environment["REGISTRY_AUTH_FILE"] = docker_config_path
 
+    output_groups = dict(
+        deploy_manifest = depset([deploy_metadata]),
+        push_at_build_time = depset(transitive = [
+            op[OutputGroupInfo].push_at_build_time
+            for op in ctx.attr.operations
+            if OutputGroupInfo in op and hasattr(op[OutputGroupInfo], "push_at_build_time")
+        ]),
+    )
+
+    # Keep the blobs this deployment reads from Bazel's cache in it. Every
+    # operation is deployed with the strategy resolved here for its kind, so one
+    # cache-reading strategy among the deployed kinds covers all operations.
+    add_blob_validation_outputs(output_groups, blob_validation_outputs(
+        ctx,
+        operations = _blob_validation_operations(deploy_infos),
+        enabled = push_settings.validate_cas_blobs or load_settings.validate_cas_blobs,
+        from_cas = any([
+            blobs_from_cas(_multi_deploy_strategy(ctx, operation))
+            for operation in ctx.attr.deploy_operations
+        ]),
+        output_prefix = ctx.label.name,
+    ))
+
     return [
         DefaultInfo(
             files = depset([deployer]),
@@ -248,14 +289,7 @@ def _multi_deploy_impl(ctx):
                 root_symlinks = root_symlinks,
             ).merge_all(plugin_runfiles),
         ),
-        OutputGroupInfo(
-            deploy_manifest = depset([deploy_metadata]),
-            push_at_build_time = depset(transitive = [
-                op[OutputGroupInfo].push_at_build_time
-                for op in ctx.attr.operations
-                if OutputGroupInfo in op and hasattr(op[OutputGroupInfo], "push_at_build_time")
-            ]),
-        ),
+        OutputGroupInfo(**output_groups),
         RunEnvironmentInfo(
             environment = environment,
             inherited_environment = inherited_environment,

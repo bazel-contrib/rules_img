@@ -17,6 +17,7 @@ def _push_settings_impl(ctx):
     deduplicated_push_blob_repository = ctx.attr._deduplicated_push_blob_repository[BuildSettingInfo].value
     deduplicated_push_content = ctx.attr._deduplicated_push_content[BuildSettingInfo].value
     insecure = ctx.attr._insecure[BuildSettingInfo].value == "enabled"
+    validate_cas_blobs = ctx.attr._validate_cas_blobs[BuildSettingInfo].value == "enabled"
 
     return [PushSettingsInfo(
         strategy = strategy,
@@ -32,6 +33,7 @@ def _push_settings_impl(ctx):
         deduplicated_push_blob_repository = deduplicated_push_blob_repository,
         deduplicated_push_content = deduplicated_push_content,
         insecure = insecure,
+        validate_cas_blobs = validate_cas_blobs,
     )]
 
 push_settings = rule(
@@ -87,6 +89,10 @@ push_settings = rule(
         ),
         "_insecure": attr.label(
             default = Label("//img/settings:insecure"),
+            providers = [BuildSettingInfo],
+        ),
+        "_validate_cas_blobs": attr.label(
+            default = Label("//img/settings:validate_cas_blobs"),
             providers = [BuildSettingInfo],
         ),
     },

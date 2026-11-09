@@ -13,6 +13,7 @@ FIELDS = dict(
     credential_helper_oci_registry = "Credential helper used only for OCI registry operations. Takes precedence over credential_helper for registry auth. Uses $IMG_CREDENTIAL_HELPER_OCI_REGISTRY env var if not set. See docs/credential-helpers.md.",
     credential_helper_remote_cache = "Credential helper used only to authenticate gRPC calls to the remote cache / remote execution API. Takes precedence over credential_helper for those calls. Uses $IMG_CREDENTIAL_HELPER_REMOTE_CACHE env var if not set. See docs/credential-helpers.md.",
     insecure = "Bool: when True, registries are addressed over plain HTTP and untrusted TLS certificates are accepted (like crane's --insecure). Maps to the IMG_INSECURE env var of the img tool.",
+    validate_cas_blobs = "Bool: when True, each deploy operation that reads its blobs from Bazel's cache (every push strategy but 'eager', and the lazy load strategy) gets a validation action taking all of its layer blobs as action inputs, so the cache keeps them. See docs/push-strategies.md#remote-cache-eviction.",
 )
 
 LoadSettingsInfo = provider(

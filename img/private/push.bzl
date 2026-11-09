@@ -2,6 +2,7 @@
 
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("@hermetic_launcher//launcher:lib.bzl", "launcher")
+load("//img/private:blob_validation.bzl", "add_blob_validation_outputs", "blob_validation_outputs", "blobs_from_cas")
 load("//img/private:push_metadata.bzl", "build_time_push_actions", "compute_push_metadata")
 load("//img/private:root_symlinks.bzl", "calculate_root_symlinks", "symlink_name_prefix")
 load("//img/private:sign_settings.bzl", "add_sign_setting_symlinks")
@@ -232,6 +233,21 @@ def _image_push_impl(ctx):
         )
         for group_name, files in push_output_groups.items():
             output_groups[group_name] = depset(files)
+
+    # Keep the blobs this push reads from Bazel's cache in it.
+    add_blob_validation_outputs(output_groups, blob_validation_outputs(
+        ctx,
+        operations = [struct(
+            deploy_manifest = deploy_metadata,
+            images = [image_provider] + [
+                referrer.index_info if referrer.index_info != None else referrer.manifest_info
+                for referrer in extract_referrers(ctx)
+            ],
+        )],
+        enabled = ctx.attr._push_settings[PushSettingsInfo].validate_cas_blobs,
+        from_cas = blobs_from_cas(push_strategy),
+        output_prefix = ctx.label.name,
+    ))
 
     return [
         DefaultInfo(

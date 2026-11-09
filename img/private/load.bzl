@@ -2,6 +2,7 @@
 
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("@hermetic_launcher//launcher:lib.bzl", "launcher")
+load("//img/private:blob_validation.bzl", "add_blob_validation_outputs", "blob_validation_outputs", "blobs_from_cas")
 load("//img/private:push_metadata.bzl", "compute_load_metadata")
 load("//img/private:root_symlinks.bzl", "calculate_root_symlinks", "symlink_name_prefix")
 load("//img/private:stamp.bzl", "expand_or_write")
@@ -213,6 +214,15 @@ def _image_load_impl(ctx):
     output_groups = dict(
         deploy_manifest = depset([deploy_metadata]),
     )
+
+    # Keep the blobs this load reads from Bazel's cache in it.
+    add_blob_validation_outputs(output_groups, blob_validation_outputs(
+        ctx,
+        operations = [struct(deploy_manifest = deploy_metadata, images = [image_provider])],
+        enabled = ctx.attr._load_settings[LoadSettingsInfo].validate_cas_blobs,
+        from_cas = blobs_from_cas(strategy),
+        output_prefix = ctx.label.name,
+    ))
 
     if manifest_info != None:
         tarball = _build_docker_tarball(ctx, configuration_json, manifest_info = manifest_info)
