@@ -18,6 +18,7 @@ FIELDS = dict(
     deduplicated_push_blob_repository = "When non-empty, the repository within the destination registry that every blob the deduplicated push shares between repositories is uploaded to and cross-mounted from, ahead of any home repository the deploy would have picked itself. Empty means the deploy picks one per blob.",
     deduplicated_push_content = "Resolved deduplicated push content: 'blobs' uploads a shared blob to its home repository and nothing else, 'blobs_and_artificial_manifests' also uploads a config blob and creates a manifest referencing the blob there, for registries that only expose a blob to other repositories once a manifest references it.",
     insecure = "Bool: when True, registries are addressed over plain HTTP and untrusted TLS certificates are accepted (like crane's --insecure). Maps to the IMG_INSECURE env var of the img tool.",
+    validate_cas_blobs = "Bool: when True, each deploy operation that reads its blobs from Bazel's cache (every push strategy but 'eager', and the lazy load strategy) gets a validation action taking all of its layer blobs as action inputs, so the cache keeps them. See docs/push-strategies.md#remote-cache-eviction.",
 )
 
 PushSettingsInfo = provider(

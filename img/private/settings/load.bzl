@@ -13,6 +13,7 @@ def _load_settings_impl(ctx):
         credential_helper_oci_registry = ctx.attr._credential_helper_oci_registry[BuildSettingInfo].value,
         credential_helper_remote_cache = ctx.attr._credential_helper_remote_cache[BuildSettingInfo].value,
         insecure = ctx.attr._insecure[BuildSettingInfo].value == "enabled",
+        validate_cas_blobs = ctx.attr._validate_cas_blobs[BuildSettingInfo].value == "enabled",
     )]
 
 load_settings = rule(
@@ -48,6 +49,10 @@ load_settings = rule(
         ),
         "_insecure": attr.label(
             default = Label("//img/settings:insecure"),
+            providers = [BuildSettingInfo],
+        ),
+        "_validate_cas_blobs": attr.label(
+            default = Label("//img/settings:validate_cas_blobs"),
             providers = [BuildSettingInfo],
         ),
     },

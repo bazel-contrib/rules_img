@@ -584,6 +584,32 @@ string_flag(
     visibility = ["//visibility:public"],
 )
 
+# When "enabled", each deploy operation of an image_push, image_load or
+# multi_deploy that reads its blobs from Bazel's remote cache -- every push
+# strategy but `eager`, and the lazy load strategy -- gets a validation action
+# that takes all of the operation's layer blobs as action inputs.
+#
+# A blob only stays in the cache while something in the build refers to it. A
+# layer whose content no action reads (one written by `ctx.actions.write`, say)
+# can be evicted with nothing to put it back, because the action that uploaded it
+# is a cache hit from then on and a remote cache re-checks a cached action's
+# outputs but not its inputs.
+#
+# The action itself only copies the operation's deploy manifest, but staging the
+# blobs is not free: the executor (or the local machine, for an action that runs
+# locally) reads bytes it has no use for.
+#
+# See docs/push-strategies.md#remote-cache-eviction.
+string_flag(
+    name = "validate_cas_blobs",
+    build_setting_default = "disabled",
+    values = [
+        "disabled",
+        "enabled",
+    ],
+    visibility = ["//visibility:public"],
+)
+
 # When "enabled", `img deploy` (image_push / multi_deploy) is forbidden from
 # uploading layer blob bytes: layers may still be cross-mounted server-side or
 # skipped when already present, but an actual upload fails loudly. Use when layer

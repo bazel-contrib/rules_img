@@ -115,6 +115,12 @@ common --@rules_img//img/settings:stamp=disabled
 # "eager", "lazy", "cas_registry", or "bes"
 common --@rules_img//img/settings:push_strategy=eager
 
+# Give every deploy operation that reads its blobs from Bazel's remote cache
+# (every push strategy but "eager", and the lazy load strategy) a validation
+# action that takes those blobs as action inputs, so the cache keeps them
+# instead of evicting blobs no other action of the build refers to.
+common --@rules_img//img/settings:validate_cas_blobs=disabled
+
 # Default registry for image_push and image_push_spec when no explicit registry is set.
 # Useful for setting a project-wide default so individual push rules don't need to repeat it.
 common --@rules_img//img/settings:destination_registry=gcr.io
