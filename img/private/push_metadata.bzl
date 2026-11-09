@@ -403,6 +403,7 @@ def compute_load_metadata(
         strategy,
         pull_info,
         output_prefix,
+        destination_file = None,
         tool_settings = None):
     """Compute load metadata for a deploy operation.
 
@@ -414,6 +415,9 @@ def compute_load_metadata(
         strategy: Resolved load strategy string (never 'auto').
         pull_info: PullInfo or None (for original registry/repository/tag/digest).
         output_prefix: String prefix for declared output files.
+        destination_file: File containing {registry}/{repository}, or None. When
+            given, the loaded image names are built from it instead of the
+            registry/repository of configuration_json.
         tool_settings: Result of `resolve_tool_settings` to record the deploy
             tool's settings in the deploy manifest, or None to record none. See
             `compute_push_metadata`.
@@ -434,6 +438,10 @@ def compute_load_metadata(
     args.add("--strategy", strategy)
     args.add("--configuration-file", configuration_json)
     add_tool_settings_args(args, tool_settings)
+
+    if destination_file != None:
+        inputs.append(destination_file)
+        args.add("--destination-file", destination_file)
 
     if pull_info != None:
         if pull_info.registries:
@@ -991,6 +999,7 @@ def process_deploy_specs(
             strategy = load_config.strategy,
             pull_info = pull_info,
             output_prefix = "{}.load_deploy.{}".format(ctx.label.name, load_idx),
+            destination_file = load_config.destination_file,
             tool_settings = tool_settings,
         )
         deploy_infos.append(struct(metadata = deploy_metadata, layer_hints = layer_hints))

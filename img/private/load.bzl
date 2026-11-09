@@ -27,6 +27,7 @@ def _compute_load_metadata(*, ctx, configuration_json):
         strategy = resolve_load_strategy(ctx),
         pull_info = pull_info,
         output_prefix = ctx.label.name,
+        destination_file = ctx.file.destination_file,
         tool_settings = resolve_tool_settings(ctx),
     )
 
@@ -63,6 +64,12 @@ def _build_docker_tarball(ctx, configuration_json, manifest_info = None, index_i
         args.add("--oci-ref-name-tag-only")
 
     inputs = [configuration_json]
+
+    # With a destination_file the configuration names no registry/repository, so
+    # the image names written to the tarball are built from the file instead.
+    if ctx.file.destination_file != None:
+        args.add("--destination-file", ctx.file.destination_file)
+        inputs.append(ctx.file.destination_file)
 
     if manifest_info != None:
         args.add("--manifest", manifest_info.manifest.path)
@@ -270,6 +277,10 @@ The resulting name is used verbatim: nothing is prepended to it and no
 `my-app:latest`. Only a missing tag is filled in with `:latest`; a name that is
 not a valid image reference fails the build.
 
+When the registry and repository are only known at build time, `destination_file`
+takes their place: a file containing `{registry}/{repository}`, which puts the
+target in the same split form.
+
 Output groups:
 - `tarball`: "docker save" compatible tarball with OCI layout (available for both single and multi-platform images).
   For multi-platform images, the first manifest is used as the default in `manifest.json`,
@@ -309,6 +320,15 @@ image_load(
     name = "load_legacy",
     image = ":my_app",
     tag = "my-app:latest",
+)
+
+# The registry/repository can also come from a file written by another rule,
+# which loads gcr.io/my-project/my-app:latest if that is the file's content.
+image_load(
+    name = "load_from_destination_file",
+    image = ":my_app",
+    destination_file = ":destination.txt",
+    tag = "latest",
 )
 
 # ...including multiple full-reference tags:

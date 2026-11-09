@@ -117,14 +117,26 @@ def resolve_load_destination(ctx):
     fallback deliberately does not apply, so legacy `rules_oci`-style targets
     never get a registry injected.
 
+    A `destination_file` names both components in a file instead, so it is
+    mutually exclusive with both attributes (and with the global fallback) and
+    leaves the resolved values empty: the registry and repository are read from
+    the file by the `img` tool, which also puts the load in the split form.
+
     Args:
-        ctx: Rule context with registry/repository attributes.
+        ctx: Rule context with registry/repository/destination_file attributes.
 
     Returns:
         Tuple (registry, repository) of the (possibly empty) resolved values.
     """
     registry = ctx.attr.registry
     repository = ctx.attr.repository
+
+    if ctx.attr.destination_file:
+        if registry:
+            fail("Cannot specify both 'destination_file' and 'registry' attributes")
+        if repository:
+            fail("Cannot specify both 'destination_file' and 'repository' attributes")
+        return "", ""
 
     # Fall back to the global destination_registry only for the split
     # registry/repository/tag form. Legacy usage (a single full-reference `tag`

@@ -477,6 +477,9 @@ When omitted together with `repository`, the tags are used verbatim as full
 image references, preserving the `rules_oci`-compatible behavior. In this mode
 the `destination_registry` fallback does not apply.
 
+Cannot be used together with `destination_file`, which names both components in
+a file instead.
+
 Whichever way the name is put together, it is then used as written: it never
 goes through Docker's reference normalization (which would add `index.docker.io`
 and the `library/` namespace), and a name that is not a valid image reference
@@ -533,6 +536,25 @@ stable
 
 Can be combined with `tag` or `tag_list` to merge tags from multiple sources.
 Each tag is subject to [template expansion](/docs/templating.md).
+""",
+        allow_single_file = True,
+    ),
+    destination_file = attr.label(
+        doc = """File containing the registry and repository as `{registry}/{repository}`.
+
+An alternative to the `registry` / `repository` attributes for cases where the
+destination is only known at build time (e.g. written by another rule). The file
+should contain a single line with the registry and repository separated by the
+first `/`. For example: `gcr.io/my-project/my-app`.
+
+The content is read as a literal string without Go template expansion. Trailing
+newlines and whitespace are stripped.
+
+Setting it puts the load target in the split form, exactly as if `registry` and
+`repository` had been set: each entry in `tag` / `tag_list` / `tag_file` is a
+bare tag and the loaded image name is `{registry}/{repository}:{tag}`.
+
+Cannot be used together with `registry` or `repository` attributes.
 """,
         allow_single_file = True,
     ),

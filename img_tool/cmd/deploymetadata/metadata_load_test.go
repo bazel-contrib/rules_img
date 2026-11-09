@@ -144,6 +144,84 @@ func TestLoadOperationRegistryWithPort(t *testing.T) {
 	}
 }
 
+// TestLoadOperationDestinationFile covers image_load's destination_file: the
+// configuration names no registry/repository, so both come from the file and the
+// load lands in the split "<registry>/<repository>:<tag>" form.
+func TestLoadOperationDestinationFile(t *testing.T) {
+	tmp := t.TempDir()
+	manifestPath := filepath.Join(tmp, "manifest.json")
+	if err := os.WriteFile(manifestPath, []byte(loadTestManifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(tmp, "config.json")
+	if err := os.WriteFile(configPath, []byte(`{"tags":["latest","v1"],"daemon":"docker"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	destPath := filepath.Join(tmp, "destination.txt")
+	if err := os.WriteFile(destPath, []byte("gcr.io/proj/app\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	command = "load"
+	resetMetadataFlags(manifestPath, configPath)
+	destinationFilePath = destPath
+
+	outputPath := filepath.Join(tmp, "deploy.json")
+	if err := WriteMetadata(context.Background(), outputPath); err != nil {
+		t.Fatalf("WriteMetadata: %v", err)
+	}
+	data, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var dm api.DeployManifest
+	if err := json.Unmarshal(data, &dm); err != nil {
+		t.Fatalf("unmarshalling deploy manifest: %v", err)
+	}
+	ops, err := dm.LoadOperations()
+	if err != nil {
+		t.Fatalf("LoadOperations: %v", err)
+	}
+	if len(ops) != 1 {
+		t.Fatalf("got %d load operations, want 1", len(ops))
+	}
+	op := ops[0].LoadDeployOperation
+
+	if op.Registry != "gcr.io" || op.Repository != "proj/app" {
+		t.Errorf("registry/repository = %q / %q, want gcr.io / proj/app", op.Registry, op.Repository)
+	}
+	want := []string{"gcr.io/proj/app:latest", "gcr.io/proj/app:v1"}
+	if got := op.ImageNames(); !reflect.DeepEqual(got, want) {
+		t.Errorf("ImageNames() = %v, want %v", got, want)
+	}
+}
+
+// TestLoadOperationDestinationFileErrors verifies that a malformed destination
+// file fails the build rather than loading a nameless image.
+func TestLoadOperationDestinationFileErrors(t *testing.T) {
+	tmp := t.TempDir()
+	manifestPath := filepath.Join(tmp, "manifest.json")
+	if err := os.WriteFile(manifestPath, []byte(loadTestManifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(tmp, "config.json")
+	if err := os.WriteFile(configPath, []byte(`{"tags":["latest"],"daemon":"docker"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	destPath := filepath.Join(tmp, "destination.txt")
+	if err := os.WriteFile(destPath, []byte("no-slash"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	command = "load"
+	resetMetadataFlags(manifestPath, configPath)
+	destinationFilePath = destPath
+
+	if err := WriteMetadata(context.Background(), filepath.Join(tmp, "deploy.json")); err == nil {
+		t.Fatal("expected error for a destination file without a '/', got nil")
+	}
+}
+
 // TestLoadOperationInvalidReferenceErrors verifies that image names which cannot
 // be a valid reference fail the build instead of the `bazel run`.
 func TestLoadOperationInvalidReferenceErrors(t *testing.T) {

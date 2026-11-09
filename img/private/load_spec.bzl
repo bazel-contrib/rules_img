@@ -17,6 +17,7 @@ def _image_load_spec_impl(ctx):
     return [LoadConfigInfo(
         registry = registry,
         repository = repository,
+        destination_file = ctx.file.destination_file,
         daemon = resolve_daemon(ctx),
         tags = get_tags(ctx),
         tag_file = ctx.file.tag_file,
@@ -59,6 +60,14 @@ image_load_spec(
     name = "load_config_split",
     registry = "gcr.io",
     repository = "my-project/{{.image_target_package}}/{{.image_target_name}}",
+    tag = "latest",
+    daemon = "containerd",
+)
+
+# Or take the registry/repository from a file written by another rule:
+image_load_spec(
+    name = "load_config_destination_file",
+    destination_file = ":destination.txt",
     tag = "latest",
     daemon = "containerd",
 )

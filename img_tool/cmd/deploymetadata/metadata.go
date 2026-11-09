@@ -125,7 +125,7 @@ func DeployMetadataProcess(ctx context.Context, args []string) {
 	flagSet.StringVar(&orginalTag, "original-tag", "", `(Optional) original tag that the base of this image was pulled from.`)
 	flagSet.StringVar(&originalDigest, "original-digest", "", `(Optional) original digest that the base of this image was pulled from.`)
 	flagSet.StringVar(&runfilesSlot, "runfiles-slot", "", `Runfiles directory, below the deploy tool's runfiles root symlinks prefix, holding the image's sparse layout and layers.`)
-	flagSet.StringVar(&destinationFilePath, "destination-file", "", `(Optional) path to a file containing the push destination as "registry/repository". Mutually exclusive with registry/repository in the configuration file.`)
+	flagSet.StringVar(&destinationFilePath, "destination-file", "", `(Optional) path to a file containing the destination as "registry/repository": the repository a push writes to, or the registry/repository component of the image names a load gives the daemon. Mutually exclusive with registry/repository in the configuration file.`)
 	flagSet.StringVar(&layerHintsInputPath, "layer-hints-paths-file-input", "", `(Optional) path to file containing layer path hints (null-separated blob/metadata pairs).`)
 	flagSet.StringVar(&layerHintsOutputPath, "layer-hints-paths-output", "", `(Optional) path to write resolved layer hints output.`)
 	flagSet.StringVar(&layerSourcesPath, "layer-sources-file", "", `(Optional) path to a JSON file describing the upstream sources of each layer. Maps manifest index (as string) to a list (aligned with the manifest's layers) of source lists, each source being {"registry":..,"repository":..}.`)
@@ -986,9 +986,19 @@ func loadOperation(baseCommand api.BaseCommandOperation, config map[string]any) 
 	// references and only the 'tags' field is emitted (registry/repository are
 	// omitempty on LoadDeployOperation). Exactly one being set (e.g. a template
 	// that expanded to empty) is a hard error, mirroring the push path.
+	//
+	// A destination file names both instead, so the configuration file carries
+	// neither and the operation is always in the "<registry>/<repository>:<tag>"
+	// form.
 	registry, _ := config["registry"].(string)
 	repository, _ := config["repository"].(string)
-	if err := api.ValidateLoadDestination(registry, repository); err != nil {
+	if destinationFilePath != "" {
+		reg, repo, err := destination.ParseFile(destinationFilePath)
+		if err != nil {
+			return api.LoadDeployOperation{}, err
+		}
+		registry, repository = reg, repo
+	} else if err := api.ValidateLoadDestination(registry, repository); err != nil {
 		return api.LoadDeployOperation{}, err
 	}
 
