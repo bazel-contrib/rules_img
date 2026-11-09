@@ -40,7 +40,7 @@ func TestReadTagsFromConfigFile(t *testing.T) {
 			if err := os.WriteFile(path, []byte(tc.content), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			got, err := readTagsFromConfigFile(path)
+			got, err := readTagsFromConfigFile(path, "")
 			if err != nil {
 				t.Fatalf("readTagsFromConfigFile: %v", err)
 			}
@@ -52,7 +52,7 @@ func TestReadTagsFromConfigFile(t *testing.T) {
 }
 
 func TestReadTagsFromConfigFileEmptyPath(t *testing.T) {
-	got, err := readTagsFromConfigFile("")
+	got, err := readTagsFromConfigFile("", "")
 	if err != nil || got != nil {
 		t.Fatalf("readTagsFromConfigFile(\"\") = %v, %v; want nil, nil", got, err)
 	}
@@ -65,8 +65,70 @@ func TestReadTagsFromConfigFileLoneRegistryErrors(t *testing.T) {
 	if err := os.WriteFile(path, []byte(`{"registry":"gcr.io","repository":"","tags":["latest"],"daemon":"docker"}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := readTagsFromConfigFile(path); err == nil {
+	if _, err := readTagsFromConfigFile(path, ""); err == nil {
 		t.Fatal("expected error for registry without repository, got nil")
+	}
+}
+
+// TestReadTagsFromConfigFileDestinationFile covers the destination_file form of
+// image_load: the configuration names no registry/repository, so the full image
+// names are built from the destination file and the tags stay bare tags.
+func TestReadTagsFromConfigFileDestinationFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+	if err := os.WriteFile(path, []byte(`{"tags":["latest","v1"],"daemon":"docker"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	destPath := filepath.Join(dir, "destination.txt")
+	if err := os.WriteFile(destPath, []byte("gcr.io/proj/app\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := readTagsFromConfigFile(path, destPath)
+	if err != nil {
+		t.Fatalf("readTagsFromConfigFile: %v", err)
+	}
+	want := []string{"gcr.io/proj/app:latest", "gcr.io/proj/app:v1"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("readTagsFromConfigFile() = %v, want %v", got, want)
+	}
+}
+
+// TestReadTagsFromConfigFileDestinationFileWins documents the precedence: a
+// destination file overrides a registry/repository the configuration carries.
+func TestReadTagsFromConfigFileDestinationFileWins(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+	if err := os.WriteFile(path, []byte(`{"registry":"example.com","repository":"other/app","tags":["latest"],"daemon":"docker"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	destPath := filepath.Join(dir, "destination.txt")
+	if err := os.WriteFile(destPath, []byte("gcr.io/proj/app"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := readTagsFromConfigFile(path, destPath)
+	if err != nil {
+		t.Fatalf("readTagsFromConfigFile: %v", err)
+	}
+	want := []string{"gcr.io/proj/app:latest"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("readTagsFromConfigFile() = %v, want %v", got, want)
+	}
+}
+
+func TestReadTagsFromConfigFileDestinationFileErrors(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+	if err := os.WriteFile(path, []byte(`{"tags":["latest"],"daemon":"docker"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	destPath := filepath.Join(dir, "destination.txt")
+	if err := os.WriteFile(destPath, []byte("no-slash"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readTagsFromConfigFile(path, destPath); err == nil {
+		t.Fatal("expected error for a destination file without a '/', got nil")
 	}
 }
 
@@ -128,7 +190,7 @@ func TestResolveRepoTags(t *testing.T) {
 			if err := os.WriteFile(path, []byte(tc.content), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			repoTags, ociTags, err := resolveRepoTags(tc.flagTags, path)
+			repoTags, ociTags, err := resolveRepoTags(tc.flagTags, path, "")
 			if tc.wantErr {
 				if err == nil {
 					t.Fatalf("resolveRepoTags() = %v, %v; want error", repoTags, ociTags)
@@ -151,7 +213,7 @@ func TestResolveRepoTags(t *testing.T) {
 // TestResolveRepoTagsNoConfigFile covers the plain CLI use: only --repo-tag
 // flags, no load configuration file.
 func TestResolveRepoTagsNoConfigFile(t *testing.T) {
-	repoTags, ociTags, err := resolveRepoTags([]string{"my/image"}, "")
+	repoTags, ociTags, err := resolveRepoTags([]string{"my/image"}, "", "")
 	if err != nil {
 		t.Fatalf("resolveRepoTags(): %v", err)
 	}

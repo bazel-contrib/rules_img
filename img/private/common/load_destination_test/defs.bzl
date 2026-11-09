@@ -8,6 +8,7 @@ excluded from the release source tarball (which lists packages explicitly).
 
 load("@bazel_skylib//lib:unittest.bzl", "analysistest", "asserts")
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
 load("//img/private/common:deploy_helpers.bzl", "resolve_load_destination")
 
 _ProbeInfo = provider(
@@ -24,6 +25,7 @@ _load_destination_probe = rule(
     attrs = {
         "registry": attr.string(),
         "repository": attr.string(),
+        "destination_file": attr.label(allow_single_file = True),
         "_destination_registry": attr.label(
             default = Label("//img/settings:destination_registry"),
             providers = [BuildSettingInfo],
@@ -77,6 +79,29 @@ def _xor_failure_impl(ctx):
 
 _xor_failure_test = analysistest.make(_xor_failure_impl, expect_failure = True)
 
+# A `destination_file` resolves to no registry/repository: both are read from the
+# file by the img tool. The global fallback is not consulted either.
+def _destination_file_impl(ctx):
+    env = analysistest.begin(ctx)
+    _assert_resolved(env, "", "")
+    return analysistest.end(env)
+
+_destination_file_test = analysistest.make(
+    _destination_file_impl,
+    config_settings = {_DESTINATION_REGISTRY: "injected.example.com"},
+)
+
+# `destination_file` combined with `registry` or `repository` -> analysis fails.
+def _destination_file_conflict_impl(ctx):
+    env = analysistest.begin(ctx)
+    asserts.expect_failure(env, "Cannot specify both 'destination_file'")
+    return analysistest.end(env)
+
+_destination_file_conflict_test = analysistest.make(
+    _destination_file_conflict_impl,
+    expect_failure = True,
+)
+
 def load_destination_test_suite(name):
     """Declares the probe targets, analysis tests, and a wrapping test_suite.
 
@@ -111,6 +136,44 @@ def load_destination_test_suite(name):
     )
     _xor_failure_test(name = "xor_failure_test", target_under_test = ":xor_probe", size = "small")
 
+    write_file(
+        name = "destination",
+        out = "destination.txt",
+        content = ["file.example.com/repo/app\n"],
+        tags = ["manual"],
+    )
+
+    _load_destination_probe(
+        name = "destination_file_probe",
+        destination_file = ":destination.txt",
+        tags = ["manual"],
+    )
+    _destination_file_test(name = "destination_file_test", target_under_test = ":destination_file_probe", size = "small")
+
+    _load_destination_probe(
+        name = "destination_file_registry_probe",
+        destination_file = ":destination.txt",
+        registry = "explicit.example.com",
+        tags = ["manual"],
+    )
+    _destination_file_conflict_test(
+        name = "destination_file_registry_test",
+        target_under_test = ":destination_file_registry_probe",
+        size = "small",
+    )
+
+    _load_destination_probe(
+        name = "destination_file_repository_probe",
+        destination_file = ":destination.txt",
+        repository = "repo/app",
+        tags = ["manual"],
+    )
+    _destination_file_conflict_test(
+        name = "destination_file_repository_test",
+        target_under_test = ":destination_file_repository_probe",
+        size = "small",
+    )
+
     native.test_suite(
         name = name,
         tests = [
@@ -118,5 +181,8 @@ def load_destination_test_suite(name):
             ":fallback_test",
             ":legacy_test",
             ":xor_failure_test",
+            ":destination_file_test",
+            ":destination_file_registry_test",
+            ":destination_file_repository_test",
         ],
     )

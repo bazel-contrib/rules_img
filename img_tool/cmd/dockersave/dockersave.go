@@ -10,6 +10,7 @@ import (
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/api"
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/destination"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/ocilayout"
 )
 
@@ -18,7 +19,10 @@ import (
 // and repository are both set, each tag becomes "<registry>/<repository>:<tag>";
 // otherwise the tags are returned verbatim (backwards-compatible full
 // references). See api.QualifyLoadTags.
-func readTagsFromConfigFile(configPath string) ([]string, error) {
+//
+// When destinationPath is set, the registry and repository come from that
+// destination file instead, and the configuration file carries neither.
+func readTagsFromConfigFile(configPath, destinationPath string) ([]string, error) {
 	if configPath == "" {
 		return nil, nil
 	}
@@ -49,7 +53,13 @@ func readTagsFromConfigFile(configPath string) ([]string, error) {
 
 	registry, _ := config["registry"].(string)
 	repository, _ := config["repository"].(string)
-	if err := api.ValidateLoadDestination(registry, repository); err != nil {
+	if destinationPath != "" {
+		reg, repo, err := destination.ParseFile(destinationPath)
+		if err != nil {
+			return nil, err
+		}
+		registry, repository = reg, repo
+	} else if err := api.ValidateLoadDestination(registry, repository); err != nil {
 		return nil, err
 	}
 	return api.QualifyLoadTags(registry, repository, tags), nil
@@ -57,7 +67,7 @@ func readTagsFromConfigFile(configPath string) ([]string, error) {
 
 // resolveRepoTags determines the image references written to the tarball: the
 // --repo-tag flags when given, otherwise the names reconstructed from the load
-// configuration file.
+// configuration file (and the destination file, when one is given).
 //
 // The returned ociTags are those references (possibly none) and are used for the
 // index.json annotations; repoTags is the same list, except that a nameless
@@ -65,10 +75,10 @@ func readTagsFromConfigFile(configPath string) ([]string, error) {
 // RepoTags entry to Docker's manifest.json. References end up in the tarball as
 // they are, so they are validated here (see api.NormalizeLoadReference) instead
 // of writing a name nothing can resolve.
-func resolveRepoTags(flagTags []string, configPath string) (repoTags, ociTags []string, err error) {
+func resolveRepoTags(flagTags []string, configPath, destinationPath string) (repoTags, ociTags []string, err error) {
 	tags := flagTags
 	if len(tags) == 0 && configPath != "" {
-		configTags, err := readTagsFromConfigFile(configPath)
+		configTags, err := readTagsFromConfigFile(configPath, destinationPath)
 		if err != nil {
 			return nil, nil, fmt.Errorf("reading configuration file: %w", err)
 		}
@@ -99,6 +109,7 @@ func DockerSaveProcess(ctx context.Context, args []string) {
 	var useSymlinks bool
 	var allowMissingBlobs bool
 	var configurationFilePath string
+	var destinationFilePath string
 	var indexPath string
 	var manifestPaths stringSliceFlag
 	var configPaths stringSliceFlag
@@ -129,6 +140,7 @@ func DockerSaveProcess(ctx context.Context, args []string) {
 	flagSet.BoolVar(&useSymlinks, "symlink", false, "Use symlinks instead of copying files")
 	flagSet.BoolVar(&allowMissingBlobs, "allow-missing-blobs", false, "Allow missing blobs instead of failing the build")
 	flagSet.StringVar(&configurationFilePath, "configuration-file", "", "Path to configuration file containing tag information (optional)")
+	flagSet.StringVar(&destinationFilePath, "destination-file", "", `(Optional) path to a file containing the registry and repository of the image names as "registry/repository". Takes precedence over registry/repository in the configuration file.`)
 	flagSet.StringVar(&indexPath, "index", "", "Path to the image index (for multi-platform, mutually exclusive with --manifest and --config)")
 	flagSet.Var(&manifestPaths, "manifest-path", "Path to manifest file (for index, can be specified multiple times)")
 	flagSet.Var(&configPaths, "config-path", "Path to config file (for index, can be specified multiple times)")
@@ -152,7 +164,7 @@ func DockerSaveProcess(ctx context.Context, args []string) {
 	}
 
 	// Read tags from configuration file if provided and no --repo-tag was specified.
-	repoTagsResolved, ociTags, err := resolveRepoTags(repoTags, configurationFilePath)
+	repoTagsResolved, ociTags, err := resolveRepoTags(repoTags, configurationFilePath, destinationFilePath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)

@@ -9,6 +9,7 @@ image.
 FIELDS = dict(
     registry = "Registry template string (empty for full-reference tags).",
     repository = "Repository template string (empty for full-reference tags).",
+    destination_file = "File containing `{registry}/{repository}`, or None.",
     daemon = "Resolved daemon string (never 'auto').",
     tags = "List of tag template strings (combined from tag/tag_list).",
     tag_file = "File with newline-delimited tags, or None.",

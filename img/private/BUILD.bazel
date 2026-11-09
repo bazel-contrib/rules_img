@@ -3,6 +3,7 @@ load("//img/private:compression_tuning_test.bzl", "compression_tuning_test_suite
 load("//img/private:download_blobs_test.bzl", "download_blobs_test_suite")
 load("//img/private:import_test.bzl", "import_test_suite")
 load("//img/private:layer_history_test.bzl", "layer_history_test_suite")
+load("//img/private:load_destination_file_test.bzl", "load_destination_file_test_suite")
 load("//img/private:push_at_build_time_test.bzl", "push_at_build_time_test_suite")
 load("//img/private:tar_layer_materialize_blob_test.bzl", "tar_layer_materialize_blob_test_suite")
 
@@ -13,6 +14,8 @@ download_blobs_test_suite(name = "download_blobs_test")
 import_test_suite(name = "import_test")
 
 layer_history_test_suite(name = "layer_history_test")
+
+load_destination_file_test_suite(name = "load_destination_file_test")
 
 push_at_build_time_test_suite(name = "push_at_build_time_test")
 

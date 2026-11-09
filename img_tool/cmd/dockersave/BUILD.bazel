@@ -10,6 +10,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/api",
+        "//pkg/destination",
         "//pkg/ocilayout",
         "@com_github_google_go_containerregistry//pkg/v1:pkg",
     ],
