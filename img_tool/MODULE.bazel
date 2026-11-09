@@ -1,9 +1,9 @@
 module(
     name = "rules_img_tool",
-    version = "0.3.24",
+    version = "0.3.25",
 )
 
-bazel_dep(name = "rules_img", version = "0.3.24")
+bazel_dep(name = "rules_img", version = "0.3.25")
 bazel_dep(name = "bazel_lib", version = "3.3.1")
 bazel_dep(name = "bazel_skylib", version = "1.9.2")
 bazel_dep(name = "gazelle", version = "0.54.0")
