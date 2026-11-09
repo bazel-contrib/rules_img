@@ -1,0 +1,312 @@
+load("@bazel_skylib//rules:build_test.bzl", "build_test")
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@rules_img//img:layer.bzl", "file_metadata", "image_layer", "iso9660_boot_entry", "iso9660_config", "layer_from_tar")
+load("@rules_pkg//pkg:tar.bzl", "pkg_tar")
+load("//tests/mtree:defs.bzl", "mtree_golden_test")
+
+# gazelle:exclude_from_release
+
+genrule(
+    name = "hello",
+    outs = ["hello.txt"],
+    cmd = "echo 'hello from an ISO 9660 layer' > $@",
+)
+
+# Options that only apply to tar layers are ignored for ISO 9660 layers -- even
+# estargz and zstd_chunked together, which a tar layer rejects as exclusive.
+image_layer(
+    name = "iso9660_layer",
+    srcs = {
+        "/etc/hello.txt": ":hello",
+    },
+    compress = "zstd",
+    estargz = "enabled",
+    format = "iso9660",
+    zstd_chunked = "enabled",
+)
+
+# Fails the build unless the layer is an ISO 9660 image holding the file.
+genrule(
+    name = "check_iso9660_layer",
+    srcs = [":iso9660_layer"],
+    outs = ["iso9660_layer_ok"],
+    cmd = """
+layer="$(location :iso9660_layer)"
+case "$$layer" in *.iso) ;; *) echo "expected a .iso layer, got $$layer" >&2; exit 1;; esac
+# The primary volume descriptor is in block 16: type 1, then the standard identifier.
+[ "$$(dd if="$$layer" bs=1 skip=32768 count=1 2>/dev/null | od -An -tu1 | tr -d ' \\n')" = "1" ] || { echo "block 16 is not a primary volume descriptor" >&2; exit 1; }
+[ "$$(dd if="$$layer" bs=1 skip=32769 count=5 2>/dev/null)" = "CD001" ] || { echo "not an ISO 9660 image" >&2; exit 1; }
+# Rock Ridge is on by default, so the extension announces itself.
+grep -q "IEEE_P1282" "$$layer" || { echo "the image does not announce Rock Ridge" >&2; exit 1; }
+grep -q "hello from an ISO 9660 layer" "$$layer" || { echo "file content not found in the image" >&2; exit 1; }
+touch $@
+""",
+)
+
+build_test(
+    name = "iso9660_layer_test",
+    targets = [":check_iso9660_layer"],
+)
+
+# Files for the mtree tests. config_dup.txt has the same content and metadata as
+# config.txt, so the two share an extent and become hard links of each other.
+# big.txt is large enough to become a content-addressed reference in the compact
+# stream; its digest then has to come from the reference table.
+write_file(
+    name = "config_txt",
+    out = "config.txt",
+    content = ["server.port=8080\n"],
+    newline = "unix",
+)
+
+write_file(
+    name = "config_dup_txt",
+    out = "config_dup.txt",
+    content = ["server.port=8080\n"],
+    newline = "unix",
+)
+
+write_file(
+    name = "tool_sh",
+    out = "tool.sh",
+    content = ["#!/bin/sh\necho hi\n"],
+    newline = "unix",
+)
+
+write_file(
+    name = "big_txt",
+    out = "big.txt",
+    content = ["payload line %d\n" % i for i in range(1000)],
+    newline = "unix",
+)
+
+image_layer(
+    name = "mtree_layer",
+    srcs = {
+        "/etc/app/config.txt": ":config_txt",
+        "/etc/app/config_dup.txt": ":config_dup_txt",
+        "/usr/local/bin/tool": ":tool_sh",
+        "/var/lib/data/big.txt": ":big_txt",
+    },
+    default_metadata = file_metadata(
+        mode = "0644",
+        mtime = "2023-01-01T00:00:00Z",
+    ),
+    format = "iso9660",
+    symlinks = {"/etc/app/current.txt": "config.txt"},
+)
+
+# The layer's mtree is identical whether the image was materialized (rendered
+# with `img mtree --iso9660`) or only described by a compact stream (rendered
+# with `img mtree --iso9660-cstream`, which reads the image without the file
+# payloads).
+mtree_golden_test(
+    name = "layer_mtree_test",
+    golden = "expected.mtree",
+    layer = ":mtree_layer",
+)
+
+# Converting an existing tar layer rewrites it entry by entry into an image.
+pkg_tar(
+    name = "source_tar",
+    srcs = [
+        ":config_txt",
+        ":tool_sh",
+    ],
+    package_dir = "/etc/app",
+)
+
+# The tar-only options are ignored when converting, exactly as for a built layer.
+layer_from_tar(
+    name = "converted_layer",
+    src = ":source_tar",
+    compress = "zstd",
+    estargz = "enabled",
+    format = "iso9660",
+    zstd_chunked = "enabled",
+)
+
+mtree_golden_test(
+    name = "converted_mtree_test",
+    golden = "converted_expected.mtree",
+    layer = ":converted_layer",
+)
+
+# The extensions and the volume identifier come from an iso9660_config target.
+iso9660_config(
+    name = "configured",
+    joliet = True,
+    joliet_long_names = True,
+    udf = True,
+    volume_id = "CONFIGURED",
+)
+
+image_layer(
+    name = "configured_layer",
+    srcs = {
+        "/etc/hello.txt": ":hello",
+    },
+    format = "iso9660",
+    format_config = ":configured",
+)
+
+# Fails the build unless every option reached the image.
+genrule(
+    name = "check_configured_layer",
+    srcs = [":configured_layer"],
+    outs = ["configured_layer_ok"],
+    cmd = """
+layer="$(location :configured_layer)"
+grep -q "CONFIGURED" "$$layer" || { echo "the volume identifier is missing" >&2; exit 1; }
+# The Joliet supplementary volume descriptor carries the UCS-2 escape sequence.
+grep -q "%/E" "$$layer" || { echo "the image carries no Joliet hierarchy" >&2; exit 1; }
+# The UDF volume recognition sequence continues the ISO 9660 one.
+for id in BEA01 NSR02 TEA01; do
+  grep -q "$$id" "$$layer" || { echo "the image carries no UDF structures ($$id missing)" >&2; exit 1; }
+done
+touch $@
+""",
+)
+
+build_test(
+    name = "configured_layer_test",
+    targets = [":check_configured_layer"],
+)
+
+# Without Rock Ridge the image is plain ISO 9660: the names are mangled and
+# nothing the format cannot describe may be in the layer.
+iso9660_config(
+    name = "plain",
+    rock_ridge = "disabled",
+)
+
+image_layer(
+    name = "plain_layer",
+    srcs = {
+        "/etc/MixedCase.txt": ":hello",
+    },
+    format = "iso9660",
+    format_config = ":plain",
+)
+
+genrule(
+    name = "check_plain_layer",
+    srcs = [":plain_layer"],
+    outs = ["plain_layer_ok"],
+    cmd = """
+layer="$(location :plain_layer)"
+grep -q "IEEE_P1282" "$$layer" && { echo "the image announces Rock Ridge" >&2; exit 1; }
+grep -q "MIXEDCASE.TXT" "$$layer" || { echo "the mangled identifier is missing" >&2; exit 1; }
+touch $@
+""",
+)
+
+build_test(
+    name = "plain_layer_test",
+    targets = [":check_plain_layer"],
+)
+
+# A bootable image: a BIOS boot sector with the boot information table patched
+# in and a UEFI boot image, which is how a hybrid installer image is laid out.
+write_file(
+    name = "isolinux_bin",
+    out = "isolinux.bin",
+    content = ["ISOLINUX" + "x" * 56 + "payload %d" % i for i in range(8)],
+    newline = "unix",
+)
+
+write_file(
+    name = "efiboot_img",
+    out = "efiboot.img",
+    content = ["EFIBOOT %d" % i for i in range(64)],
+    newline = "unix",
+)
+
+iso9660_boot_entry(
+    name = "bios_boot",
+    boot_info_table = True,
+    image = "/isolinux/isolinux.bin",
+    load_size = 4,
+    platform = "bios",
+)
+
+iso9660_boot_entry(
+    name = "efi_boot",
+    id = "EFI",
+    image = "/EFI/BOOT/efiboot.img",
+    platform = "uefi",
+)
+
+iso9660_config(
+    name = "bootable",
+    boot = [
+        ":bios_boot",
+        ":efi_boot",
+    ],
+    joliet = True,
+    volume_id = "INSTALLER",
+)
+
+image_layer(
+    name = "bootable_layer",
+    srcs = {
+        "/isolinux/isolinux.bin": ":isolinux_bin",
+        "/EFI/BOOT/efiboot.img": ":efiboot_img",
+    },
+    format = "iso9660",
+    format_config = ":bootable",
+)
+
+# Fails the build unless the boot record and the catalog are there.
+genrule(
+    name = "check_bootable_layer",
+    srcs = [":bootable_layer"],
+    outs = ["bootable_layer_ok"],
+    cmd = """
+layer="$(location :bootable_layer)"
+grep -q "EL TORITO SPECIFICATION" "$$layer" || { echo "the image has no El Torito boot record" >&2; exit 1; }
+# The section header of the second entry names it.
+grep -q "EFI" "$$layer" || { echo "the UEFI section header is missing" >&2; exit 1; }
+touch $@
+""",
+)
+
+build_test(
+    name = "bootable_layer_test",
+    targets = [":check_bootable_layer"],
+)
+
+# Rationalized Rock Ridge normalizes the owner and the mode, so an image does
+# not depend on whoever built it.
+iso9660_config(
+    name = "rationalized",
+    rock_ridge = "rationalized",
+)
+
+image_layer(
+    name = "rationalized_layer",
+    srcs = {
+        "/etc/data.txt": ":config_txt",
+        "/etc/tool.sh": ":tool_sh",
+    },
+    default_metadata = file_metadata(
+        gid = 2000,
+        mode = "0640",
+        mtime = "2023-01-01T00:00:00Z",
+        uid = 1000,
+    ),
+    format = "iso9660",
+    format_config = ":rationalized",
+)
+
+mtree_golden_test(
+    name = "rationalized_mtree_test",
+    golden = "rationalized_expected.mtree",
+    layer = ":rationalized_layer",
+)
+
+filegroup(
+    name = "all_files",
+    srcs = glob(["**"]),
+    visibility = ["//img/private/release:__subpackages__"],
+)

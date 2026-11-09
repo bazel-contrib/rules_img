@@ -53,6 +53,19 @@ func LayerProcess(ctx context.Context, args []string) {
 	var erofsNoVerifyCASRefsFlag bool
 	var cpioDeduplicateFlag bool
 	var fat32SectorSizeFlag int
+	var iso9660VolumeIDFlag string
+	var iso9660SystemIDFlag string
+	var iso9660VolumeSetIDFlag string
+	var iso9660PublisherFlag string
+	var iso9660DataPreparerFlag string
+	var iso9660ApplicationIDFlag string
+	var iso9660RockRidgeFlag string
+	var iso9660JolietFlag bool
+	var iso9660JolietLongNamesFlag bool
+	var iso9660UDFFlag bool
+	var iso9660DeduplicateFlag bool
+	var iso9660SizeFlag string
+	var iso9660BootFlag iso9660BootFlag
 	var ext4DeduplicateFlag bool
 	var ext4BlockSizeFlag int
 	var ext4SizeFlag string
@@ -115,9 +128,22 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 	flagSet.Var(&contentManifestInputFlags, "deduplicate", `Path of a content manifest of a previous layer that can be used for deduplication.`)
 	flagSet.StringVar(&contentManifestCollection, "deduplicate-collection", "", `Path of a content manifest collection file that can be used for deduplication.`)
 	flagSet.StringVar(&formatFlag, "format", "", `The compression format of the output layer. Can be "gzip", "zstd", or "none". Default is to guess the algorithm based on the filename, but fall back to "gzip".`)
-	flagSet.StringVar(&layerFormatFlag, "layer-format", "tar", `The container format of the output layer. "tar" writes an OCI tar changeset. "erofs" writes a mountable EROFS filesystem image, which accepts only --format none or zstd and no --estargz or --ztoc. "ext4" writes an ext4 filesystem image instead of a tar file. It is not an OCI layer: the options that only apply to tar layers (--format, --estargz, --zstd-chunked, --ztoc and the compressor flags) are ignored, while --compact-stream writes a compact stream of the image. "cpio" writes a cpio archive in the newc format, which is what the Linux kernel unpacks as an initramfs. It is not an OCI layer either. It is not compressed unless --format says gzip or zstd (the kernel unpacks both), and --estargz, --zstd-chunked and --ztoc are ignored. "fat32" writes a FAT32 filesystem image, like ext4 not an OCI layer and ignoring the same options. FAT cannot store symbolic links, device nodes and FIFOs, so layers with such entries fail.`)
+	flagSet.StringVar(&layerFormatFlag, "layer-format", "tar", `The container format of the output layer. "tar" writes an OCI tar changeset. "erofs" writes a mountable EROFS filesystem image, which accepts only --format none or zstd and no --estargz or --ztoc. "ext4" writes an ext4 filesystem image instead of a tar file. It is not an OCI layer: the options that only apply to tar layers (--format, --estargz, --zstd-chunked, --ztoc and the compressor flags) are ignored, while --compact-stream writes a compact stream of the image. "cpio" writes a cpio archive in the newc format, which is what the Linux kernel unpacks as an initramfs. It is not an OCI layer either. It is not compressed unless --format says gzip or zstd (the kernel unpacks both), and --estargz, --zstd-chunked and --ztoc are ignored. "fat32" writes a FAT32 filesystem image, like ext4 not an OCI layer and ignoring the same options. FAT cannot store symbolic links, device nodes and FIFOs, so layers with such entries fail. "iso9660" writes an ISO 9660 image, like ext4 not an OCI layer and ignoring the same options, with the Rock Ridge, Joliet and UDF extensions and El Torito boot entries configurable through the --iso9660-* flags.`)
 	flagSet.BoolVar(&cpioDeduplicateFlag, "cpio-deduplicate", true, `Store regular files with the same content and metadata of a cpio layer once, as hard links of each other. Turning this off avoids reading file content just to find duplicates. Only used with --layer-format cpio.`)
 	flagSet.IntVar(&fat32SectorSizeFlag, "fat32-sector-size", 0, `Logical sector size of a FAT32 layer in bytes: 512 (the default for 0), 1024, 2048 or 4096. It has to match the sector size of the disk the file system ends up in. Only used with --layer-format fat32.`)
+	flagSet.StringVar(&iso9660VolumeIDFlag, "iso9660-volume-id", "", `Volume identifier of an ISO 9660 layer, at most 32 characters. Empty uses "CDROM". It is what a mounted image is usually named after. Only used with --layer-format iso9660.`)
+	flagSet.StringVar(&iso9660SystemIDFlag, "iso9660-system-id", "", `System identifier of an ISO 9660 layer, at most 32 characters. Only used with --layer-format iso9660.`)
+	flagSet.StringVar(&iso9660VolumeSetIDFlag, "iso9660-volume-set-id", "", `Volume set identifier of an ISO 9660 layer, at most 128 characters. Only used with --layer-format iso9660.`)
+	flagSet.StringVar(&iso9660PublisherFlag, "iso9660-publisher", "", `Publisher identifier of an ISO 9660 layer, at most 128 characters. Only used with --layer-format iso9660.`)
+	flagSet.StringVar(&iso9660DataPreparerFlag, "iso9660-data-preparer", "", `Data preparer identifier of an ISO 9660 layer, at most 128 characters. Only used with --layer-format iso9660.`)
+	flagSet.StringVar(&iso9660ApplicationIDFlag, "iso9660-application-id", "", `Application identifier of an ISO 9660 layer, at most 128 characters. Only used with --layer-format iso9660.`)
+	flagSet.StringVar(&iso9660RockRidgeFlag, "iso9660-rock-ridge", "enabled", `Whether an ISO 9660 layer carries the Rock Ridge extension, which adds the real names and the POSIX metadata of the entries: "enabled" (the default), "rationalized" or "disabled". Without the extension, symbolic links, device nodes and FIFOs cannot be stored and are an error. "rationalized" normalizes the metadata the way mkisofs -rational-rock does: the owner becomes root, the mode becomes read-only for everyone, the execute bit is kept and shared by all three classes, and the setuid, setgid and sticky bits are cleared. Only used with --layer-format iso9660.`)
+	flagSet.BoolVar(&iso9660JolietFlag, "iso9660-joliet", false, `Add the Joliet extension to an ISO 9660 layer: a second directory hierarchy with UCS-2 names, which is what Windows reads. Only used with --layer-format iso9660.`)
+	flagSet.BoolVar(&iso9660JolietLongNamesFlag, "iso9660-joliet-long-names", false, `Raise the Joliet name limit of an ISO 9660 layer from the 64 characters of the specification to the 103 every implementation accepts. Only used with --layer-format iso9660 and --iso9660-joliet.`)
+	flagSet.BoolVar(&iso9660UDFFlag, "iso9660-udf", false, `Add UDF 1.02 structures describing the same file data to an ISO 9660 layer, in the layout known as a UDF bridge image. Only used with --layer-format iso9660.`)
+	flagSet.BoolVar(&iso9660DeduplicateFlag, "iso9660-deduplicate", true, `Store regular files with the same content and metadata of an ISO 9660 layer once, sharing one extent. With --iso9660-rock-ridge they become hard links of each other. Turning this off avoids reading file content just to find duplicates. Only used with --layer-format iso9660.`)
+	flagSet.StringVar(&iso9660SizeFlag, "iso9660-min-size", "", `Minimum size of an ISO 9660 layer, with an optional binary unit ("64MiB"). The image is otherwise exactly as large as its content needs; a larger size leaves the extra space unused. Only used with --layer-format iso9660.`)
+	flagSet.Var(&iso9660BootFlag, "iso9660-boot", `Add an El Torito boot entry to an ISO 9660 layer, as a JSON object: {"image": "/isolinux/isolinux.bin", "platform": "bios", "emulation": "none", "load_size": 4, "load_segment": 0, "boot_info_table": true, "id": "BIOS"}. The image has to be a regular file of the layer. platform is bios (the default), powerpc, mac or uefi; emulation is none (the default), floppy120, floppy144, floppy288 or harddisk; load_size is in 512 byte sectors and defaults to the whole image. Can be specified several times; the first entry becomes the default boot entry of the catalog. Only used with --layer-format iso9660.`)
 	flagSet.BoolVar(&ext4DeduplicateFlag, "ext4-deduplicate", true, `Store regular files with the same content and metadata of an ext4 layer once, as hard links of each other. Turning this off avoids reading file content just to find duplicates. Only used with --layer-format ext4.`)
 	flagSet.IntVar(&ext4BlockSizeFlag, "ext4-block-size", 0, `Filesystem block size of an ext4 layer, in bytes: a power of two between 1024 and 65536. 0 uses 4096. Linux can only mount block sizes up to the page size of the machine. Only used with --layer-format ext4.`)
 	flagSet.StringVar(&ext4SizeFlag, "ext4-min-size", "", `Minimum size of an ext4 layer, with an optional binary unit ("512MiB"). The filesystem is otherwise exactly as large as its content needs; a larger size leaves the extra space free. Only used with --layer-format ext4.`)
@@ -169,15 +195,17 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 		containerFormat = api.CpioFormat
 	case "fat32":
 		containerFormat = api.Fat32Format
+	case "iso9660":
+		containerFormat = api.Iso9660Format
 	default:
-		fmt.Fprintf(os.Stderr, "Unknown layer format %s. Supported layer formats are tar, erofs, ext4, fat32 and cpio.\n", layerFormatFlag)
+		fmt.Fprintf(os.Stderr, "Unknown layer format %s. Supported layer formats are tar, erofs, ext4, fat32, iso9660 and cpio.\n", layerFormatFlag)
 		os.Exit(1)
 	}
 	if containerFormat.IsImageFormat() {
 		// A filesystem image is written directly. Options that only apply to
 		// tar layers are ignored. A compact stream is written next to the
-		// image, or instead of it with --compact-stream-only. An ext4 or FAT32
-		// image is not compressed, while a cpio archive is as asked.
+		// image, or instead of it with --compact-stream-only. An ext4, FAT32
+		// or ISO 9660 image is not compressed, while a cpio archive is as asked.
 		if containerFormat != api.CpioFormat {
 			formatFlag = "none"
 		}
@@ -217,6 +245,23 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 				fmt.Fprintf(os.Stderr, "Error: --ext4-uuid: %v\n", err)
 				os.Exit(1)
 			}
+		}
+	}
+
+	iso9660RockRidge := iso9660RockRidgeFlag
+	switch iso9660RockRidge {
+	case "enabled", "rationalized", "disabled":
+	default:
+		fmt.Fprintf(os.Stderr, "Unknown --iso9660-rock-ridge value %s. Supported values are enabled, rationalized and disabled.\n", iso9660RockRidge)
+		os.Exit(1)
+	}
+
+	var iso9660Size int64
+	if containerFormat == api.Iso9660Format && iso9660SizeFlag != "" {
+		var err error
+		if iso9660Size, err = bytesize.Parse(iso9660SizeFlag); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: --iso9660-min-size %s: %v\n", iso9660SizeFlag, err)
+			os.Exit(1)
 		}
 	}
 
@@ -485,8 +530,25 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 			zstdWindowLog:    zstdWindowLogFlag,
 		}
 		fat32Settings := fat32Settings{sectorSize: fat32SectorSizeFlag}
+		iso9660Settings := iso9660Settings{
+			volumeID:         iso9660VolumeIDFlag,
+			systemID:         iso9660SystemIDFlag,
+			volumeSetID:      iso9660VolumeSetIDFlag,
+			publisher:        iso9660PublisherFlag,
+			dataPreparer:     iso9660DataPreparerFlag,
+			applicationID:    iso9660ApplicationIDFlag,
+			rockRidge:        iso9660RockRidge != "disabled",
+			rationalizeRR:    iso9660RockRidge == "rationalized",
+			joliet:           iso9660JolietFlag,
+			jolietLongName:   iso9660JolietLongNamesFlag,
+			udf:              iso9660UDFFlag,
+			deduplicate:      iso9660DeduplicateFlag,
+			size:             iso9660Size,
+			boot:             iso9660BootFlag,
+			deduplicateTrees: treeArtifactHandlingFlag == "deduplicate_symlink",
+		}
 		if err := handleImageLayer(
-			containerFormat, ext4Settings, fat32Settings, cpioSettings, outputOSFile, addFiles, importTarFlags, executableFlags, symlinkFlags, emptyFilePaths, baseMetadataPaths,
+			containerFormat, ext4Settings, fat32Settings, iso9660Settings, cpioSettings, outputOSFile, addFiles, importTarFlags, executableFlags, symlinkFlags, emptyFilePaths, baseMetadataPaths,
 			createParentDirectoriesFlag, layerMetadata, layerHistory, mediaTypeFlag, annotations, metadataOutputFlag,
 			compactStreamOutputFlag, compactStreamInlineThresholdFlag,
 		); err != nil {

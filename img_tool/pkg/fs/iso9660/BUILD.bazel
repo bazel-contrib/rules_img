@@ -1,0 +1,34 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "iso9660",
+    srcs = [
+        "builder.go",
+        "dedup.go",
+        "eltorito.go",
+        "emit.go",
+        "encode.go",
+        "iso9660.go",
+        "names.go",
+        "plan.go",
+        "reader.go",
+        "rockridge.go",
+        "tarsource.go",
+        "udf.go",
+    ],
+    importpath = "github.com/bazel-contrib/rules_img/img_tool/pkg/fs/iso9660",
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "iso9660_test",
+    srcs = [
+        "checker_test.go",
+        "iso9660_test.go",
+        "reader_test.go",
+        "streaming_test.go",
+        "structure_test.go",
+        "udfchecker_test.go",
+    ],
+    embed = [":iso9660"],
+)

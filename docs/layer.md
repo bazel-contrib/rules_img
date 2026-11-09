@@ -280,14 +280,14 @@ image_layer(
 | <a id="image_layer-srcs"></a>srcs |  Files to include in the layer. Keys are paths in the image (e.g., "/app/bin/server"), values are labels to files or executables.<br><br>When a value is an executable, the executable is placed at the path key and its runfiles tree is included (unless include_runfiles is set to False). Any additional default outputs of the target (the rest of `DefaultInfo.files` beyond the executable) are also copied, each placed at the same location relative to the executable that it has in the source tree. Outputs that live above the executable need a path key deep enough to hold them; `extra_default_outputs` decides what happens to the ones that don't fit (by default they are dropped).<br><br>When a value is a non-executable target that produces more than one default output, the path key is treated as a directory and the outputs are placed inside it according to `multi_file_layout`. A path key that ends with "/" is always treated as a directory, even when the target produces exactly one output.   | Dictionary: String -> Label | optional |  `{}`  |
 | <a id="image_layer-annotations"></a>annotations |  Annotations to add to the layer metadata as key-value pairs.   | <a href="https://bazel.build/rules/lib/core/dict">Dictionary: String -> String</a> | optional |  `{}`  |
 | <a id="image_layer-annotations_file"></a>annotations_file |  File containing annotations for the layer, as JSON or newline-delimited text.<br><br>The file is parsed in one of the following formats, auto-detected from its contents:<br><br>- JSON object with string values: `{"key": "value"}` - JSON object with list values: `{"key": ["value1", "value2"]}` (the last value wins) - JSON array of `KEY=VALUE` strings: `["key=value"]` - newline-delimited `KEY=VALUE` text (one per line; blank lines and `#` comments are ignored)<br><br>Values in JSON objects are used verbatim, so they can encode arbitrary strings including values that contain `=`, spaces, or newlines. The `KEY=VALUE` forms (JSON array and text) split on the first `=` and trim surrounding whitespace from the key and value.<br><br>Annotations from this file are merged with annotations specified via the `annotations` attribute, which take precedence for matching keys.<br><br>Example file content: <pre><code>version=1.0.0&#10;build.date=2024-01-15&#10;source.url=https://github.com/...</code></pre>   | <a href="https://bazel.build/concepts/labels">Label</a> | optional |  `None`  |
-| <a id="image_layer-compress"></a>compress |  Compression algorithm to use. If set to 'auto', uses the global default compression setting.<br><br>'none' leaves the layer uncompressed, which is the useful choice for an EROFS layer (the blob is then mountable as it is). EROFS layers cannot be gzip-compressed.<br><br>A `cpio` layer (an initramfs) is also left uncompressed by default. It can be compressed with `gzip` or `zstd`, which the kernel unpacks as it is. The `ext4` and `fat32` formats ignore this attribute.   | String | optional |  `"auto"`  |
+| <a id="image_layer-compress"></a>compress |  Compression algorithm to use. If set to 'auto', uses the global default compression setting.<br><br>'none' leaves the layer uncompressed, which is the useful choice for an EROFS layer (the blob is then mountable as it is). EROFS layers cannot be gzip-compressed.<br><br>A `cpio` layer (an initramfs) is also left uncompressed by default. It can be compressed with `gzip` or `zstd`, which the kernel unpacks as it is. The `ext4`, `fat32` and `iso9660` formats ignore this attribute.   | String | optional |  `"auto"`  |
 | <a id="image_layer-create_parent_directories"></a>create_parent_directories |  Whether to automatically create parent directory entries in the tar file for all files. If set to 'auto', uses the global default create_parent_directories setting. When enabled, parent directories will be created automatically for all files in the layer.   | String | optional |  `"auto"`  |
 | <a id="image_layer-default_metadata"></a>default_metadata |  JSON-encoded default metadata to apply to all files in the layer. Can include fields like mode, uid, gid, uname, gname, mtime, and pax_records. Applies to regular files (including tree contents) and symlinks. Generated directories inherit only mtime; use file_metadata for directory modes or ownership.   | String | optional |  `""`  |
 | <a id="image_layer-estargz"></a>estargz |  Whether to use estargz format. If set to 'auto', uses the global default estargz setting. When enabled, the layer will be optimized for lazy pulling and will be compatible with the estargz format.   | String | optional |  `"auto"`  |
 | <a id="image_layer-extra_default_outputs"></a>extra_default_outputs |  How to handle an executable's additional default outputs (the rest of `DefaultInfo.files` beyond the executable itself).<br><br>Those files are placed at the same offset relative to the executable that they have in the source tree, so a file that lives above the executable's directory needs a path in the image that is deep enough to place it. This setting decides what happens when it isn't:<br><br>- `"best_effort"` (default): place every additional default output that fits, and silently   drop the ones that would land above the image root. This is what wrapper rules such as   bazel-lib's `transition_binary` need, where the executable is a symlink in a sibling   directory of the real outputs. - `"drop"`: never place additional default outputs. Only the executable itself (and its   runfiles, if `include_runfiles` is True) is included. - `"strict"`: place every additional default output, and fail the build if any of them   would land above the image root.   | String | optional |  `"best_effort"`  |
 | <a id="image_layer-file_metadata"></a>file_metadata |  Per-file metadata overrides as a dict mapping file paths to JSON-encoded metadata. The path should match the path in the image, including paths inside directory inputs. Directory paths should omit the trailing slash. Metadata specified here overrides any defaults from default_metadata.   | <a href="https://bazel.build/rules/lib/core/dict">Dictionary: String -> String</a> | optional |  `{}`  |
-| <a id="image_layer-format"></a>format |  Container format of the layer blob, orthogonal to `compress`.<br><br>'tar' writes an OCI tar changeset. 'erofs' writes a mountable EROFS filesystem image. 'ext4' and 'fat32' write an ext4 or FAT32 filesystem image, 'cpio' a cpio archive in the newc format (an initramfs). If set to 'auto', uses the global default --@rules_img//img/settings:layer_format setting.<br><br>An EROFS layer is a filesystem, not a changeset. See docs/erofs-layers.md before using it.<br><br>See docs/filesystems.md for how the formats compare.   | String | optional |  `"auto"`  |
-| <a id="image_layer-format_config"></a>format_config |  Options of the filesystem image the layer is written as: an `ext4_config` target for `format = "ext4"`, a `fat32_config` target for `format = "fat32"`, a `cpio_config` target for `format = "cpio"`, or an `erofs_config` target for `format = "erofs"`.<br><br>Without it, every option of the format is left at its default. A config for a format other than the layer's own is a configuration error, since it would silently have no effect.   | <a href="https://bazel.build/concepts/labels">Label</a> | optional |  `None`  |
+| <a id="image_layer-format"></a>format |  Container format of the layer blob, orthogonal to `compress`.<br><br>'tar' writes an OCI tar changeset. 'erofs' writes a mountable EROFS filesystem image. 'ext4' and 'fat32' write an ext4 or FAT32 filesystem image, 'iso9660' an ISO 9660 image (with the Rock Ridge, Joliet and UDF extensions and El Torito boot entries as options), 'cpio' a cpio archive in the newc format (an initramfs). If set to 'auto', uses the global default --@rules_img//img/settings:layer_format setting.<br><br>An EROFS layer is a filesystem, not a changeset. See docs/erofs-layers.md before using it.<br><br>See docs/filesystems.md for how the formats compare.   | String | optional |  `"auto"`  |
+| <a id="image_layer-format_config"></a>format_config |  Options of the filesystem image the layer is written as: an `ext4_config` target for `format = "ext4"`, a `fat32_config` target for `format = "fat32"`, an `iso9660_config` target for `format = "iso9660"`, a `cpio_config` target for `format = "cpio"`, or an `erofs_config` target for `format = "erofs"`.<br><br>Without it, every option of the format is left at its default. A config for a format other than the layer's own is a configuration error, since it would silently have no effect.   | <a href="https://bazel.build/concepts/labels">Label</a> | optional |  `None`  |
 | <a id="image_layer-history"></a>history |  Overrides the `created_by` history entry recorded for this layer.<br><br>By default the layer records one entry, "bazel build <label>", so two layers with identical contents but different labels have different config digests. `history = []` records no history entry, so identical contents give identical config digests regardless of label. A single-element list is recorded verbatim. The img tool records at most one history entry per layer, so longer lists are rejected.   | List of strings | optional |  `["<default bazel build history>"]`  |
 | <a id="image_layer-include_runfiles"></a>include_runfiles |  Whether to include runfiles for executable targets. When True (default), executables in srcs will include their runfiles tree. When False, only the executable file itself is included, without runfiles.<br><br>Either way, any additional default outputs of the target (the rest of `DefaultInfo.files` beyond the executable) are copied into the layer, placed relative to the executable, as configured by `extra_default_outputs`.   | Boolean | optional |  `True`  |
 | <a id="image_layer-media_type"></a>media_type |  Override the layer media type. By default, the media type is auto-detected from the compression algorithm.   | String | optional |  `""`  |
@@ -296,6 +296,151 @@ image_layer(
 | <a id="image_layer-symlinks"></a>symlinks |  Symlinks to create in the layer. Keys are symlink paths in the image, values are the targets they point to.   | <a href="https://bazel.build/rules/lib/core/dict">Dictionary: String -> String</a> | optional |  `{}`  |
 | <a id="image_layer-tree_artifact_handling"></a>tree_artifact_handling |  How to handle duplicate tree artifacts (directories) in the layer. If set to 'full', each tree artifact is stored at its intended path (no deduplication). If set to 'deduplicate_symlink', duplicate tree artifacts are replaced with symlinks to the first occurrence. If set to 'auto', uses the global default from --@rules_img//img/settings:layer_tree_artifact_handling. When file metadata is configured, trees are stored in full so path-specific metadata is preserved. Regular files with identical contents and metadata still deduplicate.   | String | optional |  `"auto"`  |
 | <a id="image_layer-zstd_chunked"></a>zstd_chunked |  Whether to use the zstd:chunked format. If set to 'auto', uses the global default zstd_chunked setting. When enabled, the layer is written with content-defined chunks and a table of contents, so compatible runtimes (podman, CRI-O) can fetch and deduplicate individual chunks. Requires zstd compression and cannot be combined with estargz.   | String | optional |  `"auto"`  |
+
+
+<a id="iso9660_boot_entry"></a>
+
+## iso9660_boot_entry
+
+<pre>
+load("@rules_img//img:layer.bzl", "iso9660_boot_entry")
+
+iso9660_boot_entry(<a href="#iso9660_boot_entry-name">name</a>, <a href="#iso9660_boot_entry-boot_info_table">boot_info_table</a>, <a href="#iso9660_boot_entry-emulation">emulation</a>, <a href="#iso9660_boot_entry-id">id</a>, <a href="#iso9660_boot_entry-image">image</a>, <a href="#iso9660_boot_entry-load_segment">load_segment</a>, <a href="#iso9660_boot_entry-load_size">load_size</a>, <a href="#iso9660_boot_entry-platform">platform</a>)
+</pre>
+
+One El Torito boot entry of an ISO 9660 image.
+
+El Torito makes an image bootable by pointing firmware at a boot image that is
+an ordinary file of the filesystem. Pass the targets to the `boot` attribute of
+an `iso9660_config`, in the order the boot catalog should list them: the first
+one becomes the default entry, and every further one becomes a section of its
+own, so a single image can boot on BIOS and on UEFI.
+
+Example:
+
+```python
+load("@rules_img//img:layer.bzl", "image_layer", "iso9660_boot_entry", "iso9660_config")
+
+# A BIOS boot sector that wants the boot information table patched in.
+iso9660_boot_entry(
+    name = "bios_boot",
+    boot_info_table = True,
+    image = "/isolinux/isolinux.bin",
+    load_size = 4,
+    platform = "bios",
+)
+
+# A FAT image the firmware mounts and reads the boot loader from.
+iso9660_boot_entry(
+    name = "efi_boot",
+    id = "EFI",
+    image = "/EFI/BOOT/efiboot.img",
+    platform = "uefi",
+)
+
+iso9660_config(
+    name = "installer_config",
+    boot = [
+        ":bios_boot",
+        ":efi_boot",
+    ],
+    joliet = True,
+)
+
+image_layer(
+    name = "installer",
+    srcs = {
+        "/isolinux/isolinux.bin": ":isolinux",
+        "/EFI/BOOT/efiboot.img": ":esp_image",
+    },
+    format = "iso9660",
+    format_config = ":installer_config",
+)
+```
+
+See [docs/filesystems.md](filesystems.md) for the format itself.
+
+**ATTRIBUTES**
+
+
+| Name  | Description | Type | Mandatory | Default |
+| :------------- | :------------- | :------------- | :------------- | :------------- |
+| <a id="iso9660_boot_entry-name"></a>name |  A unique name for this target.   | <a href="https://bazel.build/concepts/labels#target-names">Name</a> | required |  |
+| <a id="iso9660_boot_entry-boot_info_table"></a>boot_info_table |  Patch the boot information table isolinux and its relatives expect into bytes 8 to 64 of the boot image.<br><br>The stored content then differs from the file that went in, so the boot image is always carried in the image itself and never becomes a reference in a compact stream. A boot image that shares its content with another entry cannot be patched.   | Boolean | optional |  `False`  |
+| <a id="iso9660_boot_entry-emulation"></a>emulation |  What the firmware emulates while it reads the boot image.<br><br>'none' loads the image as it is, which is what every current boot loader and every UEFI firmware wants. The floppy and hard disk modes present the image as a drive of that shape.   | String | optional |  `"none"`  |
+| <a id="iso9660_boot_entry-id"></a>id |  Identifier recorded on the section header of an entry other than the first, at most 28 characters.<br><br>"EFI" is conventional for a UEFI section, but nothing reads it.   | String | optional |  `""`  |
+| <a id="iso9660_boot_entry-image"></a>image |  Path of the boot image in the layer, which has to be a regular file with content.<br><br>A leading slash is optional. The file is stored once: the boot entry points at the extent the directory record points at.   | String | required |  |
+| <a id="iso9660_boot_entry-load_segment"></a>load_segment |  The real mode segment a BIOS entry is loaded at. 0 uses the default of 0x7C0.   | Integer | optional |  `0`  |
+| <a id="iso9660_boot_entry-load_size"></a>load_size |  How many 512 byte sectors the firmware loads.<br><br>0 loads the whole image (clamped to the 65535 sectors the field can hold), which is what a UEFI boot image needs. isolinux wants 4.   | Integer | optional |  `0`  |
+| <a id="iso9660_boot_entry-platform"></a>platform |  The firmware the entry is for.<br><br>'uefi' is what a current PC boots from; its boot image is usually a FAT filesystem (an `image_layer` with `format = "fat32"`) that the firmware mounts and reads the boot loader from.   | String | optional |  `"bios"`  |
+
+
+<a id="iso9660_config"></a>
+
+## iso9660_config
+
+<pre>
+load("@rules_img//img:layer.bzl", "iso9660_config")
+
+iso9660_config(<a href="#iso9660_config-name">name</a>, <a href="#iso9660_config-application_id">application_id</a>, <a href="#iso9660_config-boot">boot</a>, <a href="#iso9660_config-data_preparer">data_preparer</a>, <a href="#iso9660_config-deduplicate">deduplicate</a>, <a href="#iso9660_config-joliet">joliet</a>, <a href="#iso9660_config-joliet_long_names">joliet_long_names</a>,
+               <a href="#iso9660_config-min_size">min_size</a>, <a href="#iso9660_config-publisher">publisher</a>, <a href="#iso9660_config-rock_ridge">rock_ridge</a>, <a href="#iso9660_config-system_id">system_id</a>, <a href="#iso9660_config-udf">udf</a>, <a href="#iso9660_config-volume_id">volume_id</a>, <a href="#iso9660_config-volume_set_id">volume_set_id</a>)
+</pre>
+
+Options for layers written as an ISO 9660 filesystem image.
+
+Pass the target to the `format_config` attribute of a layer rule that uses
+`format = "iso9660"`. Options that are left at their default are decided by the
+`img` tool or by the matching global setting.
+
+Plain ISO 9660 can only store upper case, 8.3-ish names and no POSIX metadata at
+all, so the interesting part of the format is its extensions. Rock Ridge is on by
+default; Joliet and UDF are not, because enabling them is a decision about who
+reads the image.
+
+Example:
+
+```python
+load("@rules_img//img:layer.bzl", "image_layer", "iso9660_config")
+
+iso9660_config(
+    name = "release_config",
+    # Readable on Linux (Rock Ridge, on by default), on Windows (Joliet) and on
+    # macOS (UDF).
+    joliet = True,
+    udf = True,
+    volume_id = "MYPRODUCT_1_0",
+)
+
+image_layer(
+    name = "release",
+    srcs = {"/README.md": ":readme"},
+    format = "iso9660",
+    format_config = ":release_config",
+)
+```
+
+See [docs/filesystems.md](filesystems.md) for the format itself and
+`iso9660_boot_entry` for making the image bootable.
+
+**ATTRIBUTES**
+
+
+| Name  | Description | Type | Mandatory | Default |
+| :------------- | :------------- | :------------- | :------------- | :------------- |
+| <a id="iso9660_config-name"></a>name |  A unique name for this target.   | <a href="https://bazel.build/concepts/labels#target-names">Name</a> | required |  |
+| <a id="iso9660_config-application_id"></a>application_id |  Application identifier, at most 128 characters.   | String | optional |  `""`  |
+| <a id="iso9660_config-boot"></a>boot |  El Torito boot entries, as `iso9660_boot_entry` targets, in the order the boot catalog should list them.<br><br>The first one becomes the default entry; every further one becomes a section of its own, so a single image can boot on BIOS and on UEFI.   | <a href="https://bazel.build/concepts/labels">List of labels</a> | optional |  `[]`  |
+| <a id="iso9660_config-data_preparer"></a>data_preparer |  Data preparer identifier, at most 128 characters.   | String | optional |  `""`  |
+| <a id="iso9660_config-deduplicate"></a>deduplicate |  Whether regular files with the same content and metadata are stored once, sharing one extent. With Rock Ridge they become hard links of each other (what tar layers do). If set to 'auto', uses the global default `--@rules_img//img/settings:iso9660_deduplicate` setting.<br><br>Turning it off spares reading file content only to find duplicates, at the cost of a larger image.   | String | optional |  `"auto"`  |
+| <a id="iso9660_config-joliet"></a>joliet |  Add a second directory hierarchy with UCS-2 names, which is what Windows reads.<br><br>It describes the same file data, so it only costs its directory extents and path tables. Names are capped at the 64 characters of the specification unless `joliet_long_names` is set.   | Boolean | optional |  `False`  |
+| <a id="iso9660_config-joliet_long_names"></a>joliet_long_names |  Raise the Joliet name limit from the 64 characters of the specification to the 103 every implementation accepts.<br><br>Only useful together with `joliet`.   | Boolean | optional |  `False`  |
+| <a id="iso9660_config-min_size"></a>min_size |  Minimum size of the image, with an optional binary unit (`"64MiB"`, `"2GiB"`).<br><br>The image is otherwise exactly as large as its content needs. Blocks that hold nothing are not written, so a sparse-aware filesystem stores such an image in about the size of its content.   | String | optional |  `""`  |
+| <a id="iso9660_config-publisher"></a>publisher |  Publisher identifier, at most 128 characters.   | String | optional |  `""`  |
+| <a id="iso9660_config-rock_ridge"></a>rock_ridge |  Whether the image carries the Rock Ridge extension, which adds the real names, the mode, the owner, the timestamps, symbolic links, device nodes, FIFOs and hard links. This is what Linux uses.<br><br>'rationalized' additionally normalizes the metadata of every entry the way `mkisofs -rational-rock` does: the owner becomes root, the mode becomes read-only for everyone, the execute bit is kept and shared by all three classes, and the setuid, setgid and sticky bits are cleared. It makes the image independent of whoever built it, and it applies to the UDF metadata too, because that describes the same entries.<br><br>Without the extension, symbolic links, device nodes and FIFOs cannot be stored and a layer with such an entry fails. If set to 'auto', uses the global default `--@rules_img//img/settings:iso9660_rock_ridge` setting.   | String | optional |  `"auto"`  |
+| <a id="iso9660_config-system_id"></a>system_id |  System identifier, at most 32 characters, naming the system that can act on the image's system area.   | String | optional |  `""`  |
+| <a id="iso9660_config-udf"></a>udf |  Add UDF 1.02 structures describing the same file data, in the layout known as a UDF bridge image. This is what macOS and Windows prefer.<br><br>UDF has the real names and POSIX metadata without an extension and no 4 GiB file size limit. It costs one 2 KiB block per file and directory for its File Entry, plus the blocks of the directories' file identifier descriptors.   | Boolean | optional |  `False`  |
+| <a id="iso9660_config-volume_id"></a>volume_id |  Volume identifier, at most 32 characters. Empty uses "CDROM".<br><br>It is what a mounted image is usually named after.   | String | optional |  `""`  |
+| <a id="iso9660_config-volume_set_id"></a>volume_set_id |  Volume set identifier, at most 128 characters.   | String | optional |  `""`  |
 
 
 <a id="layer_from_binary"></a>
@@ -394,13 +539,13 @@ layer_from_binary(
 | <a id="layer_from_binary-annotations"></a>annotations |  Annotations to add to the layer metadata as key-value pairs.   | <a href="https://bazel.build/rules/lib/core/dict">Dictionary: String -> String</a> | optional |  `{}`  |
 | <a id="layer_from_binary-annotations_file"></a>annotations_file |  File containing annotations for the layer, as JSON or newline-delimited text.<br><br>The file is parsed in one of the following formats, auto-detected from its contents:<br><br>- JSON object with string values: `{"key": "value"}` - JSON object with list values: `{"key": ["value1", "value2"]}` (the last value wins) - JSON array of `KEY=VALUE` strings: `["key=value"]` - newline-delimited `KEY=VALUE` text (one per line; blank lines and `#` comments are ignored)<br><br>Values in JSON objects are used verbatim, so they can encode arbitrary strings including values that contain `=`, spaces, or newlines. The `KEY=VALUE` forms (JSON array and text) split on the first `=` and trim surrounding whitespace from the key and value.<br><br>Annotations from this file are merged with annotations specified via the `annotations` attribute, which take precedence for matching keys.<br><br>Example file content: <pre><code>version=1.0.0&#10;build.date=2024-01-15&#10;source.url=https://github.com/...</code></pre>   | <a href="https://bazel.build/concepts/labels">Label</a> | optional |  `None`  |
 | <a id="layer_from_binary-binary"></a>binary |  The *_binary target to package into the layer.<br><br>The binary's `args` and `env` attributes are extracted and provided as image configuration (cmd and env) via ImageLayerConfigInfo. The `data` attribute is used for `$(location)` expansion in args and env values.<br><br>If the binary provides RunfilesGroupInfo, the runfiles are split into separate layers per group.   | <a href="https://bazel.build/concepts/labels">Label</a> | required |  |
-| <a id="layer_from_binary-compress"></a>compress |  Compression algorithm to use. If set to 'auto', uses the global default compression setting.<br><br>'none' leaves the layer uncompressed, which is the useful choice for an EROFS layer (the blob is then mountable as it is). EROFS layers cannot be gzip-compressed.<br><br>A `cpio` layer (an initramfs) is also left uncompressed by default. It can be compressed with `gzip` or `zstd`, which the kernel unpacks as it is. The `ext4` and `fat32` formats ignore this attribute.   | String | optional |  `"auto"`  |
+| <a id="layer_from_binary-compress"></a>compress |  Compression algorithm to use. If set to 'auto', uses the global default compression setting.<br><br>'none' leaves the layer uncompressed, which is the useful choice for an EROFS layer (the blob is then mountable as it is). EROFS layers cannot be gzip-compressed.<br><br>A `cpio` layer (an initramfs) is also left uncompressed by default. It can be compressed with `gzip` or `zstd`, which the kernel unpacks as it is. The `ext4`, `fat32` and `iso9660` formats ignore this attribute.   | String | optional |  `"auto"`  |
 | <a id="layer_from_binary-create_parent_directories"></a>create_parent_directories |  Whether to automatically create parent directory entries in the tar file for all files. If set to 'auto', uses the global default create_parent_directories setting. When enabled, parent directories will be created automatically for all files in the layer.   | String | optional |  `"auto"`  |
 | <a id="layer_from_binary-default_metadata"></a>default_metadata |  JSON-encoded default metadata to apply to all files in the layers. Can include fields like mode, uid, gid, uname, gname, mtime, and pax_records. Applies to regular files (including tree contents) and symlinks. Generated directories inherit only mtime, retaining their default mode and ownership.<br><br>Accepts the same value as image_layer's attribute of the same name, so img/layer.bzl's file_metadata() builds it.   | String | optional |  `""`  |
 | <a id="layer_from_binary-estargz"></a>estargz |  Whether to use estargz format. If set to 'auto', uses the global default estargz setting. When enabled, the layer will be optimized for lazy pulling and will be compatible with the estargz format.   | String | optional |  `"auto"`  |
 | <a id="layer_from_binary-extra_default_outputs"></a>extra_default_outputs |  How to handle an executable's additional default outputs (the rest of `DefaultInfo.files` beyond the executable itself).<br><br>Those files are placed at the same offset relative to the executable that they have in the source tree, so a file that lives above the executable's directory needs a path in the image that is deep enough to place it. This setting decides what happens when it isn't:<br><br>- `"best_effort"` (default): place every additional default output that fits, and silently   drop the ones that would land above the image root. This is what wrapper rules such as   bazel-lib's `transition_binary` need, where the executable is a symlink in a sibling   directory of the real outputs. - `"drop"`: never place additional default outputs. Only the executable itself (and its   runfiles, if `include_runfiles` is True) is included. - `"strict"`: place every additional default output, and fail the build if any of them   would land above the image root.   | String | optional |  `"best_effort"`  |
-| <a id="layer_from_binary-format"></a>format |  Container format of the layer blob, orthogonal to `compress`.<br><br>'tar' writes an OCI tar changeset. 'erofs' writes a mountable EROFS filesystem image. 'ext4' and 'fat32' write an ext4 or FAT32 filesystem image, 'cpio' a cpio archive in the newc format (an initramfs). If set to 'auto', uses the global default --@rules_img//img/settings:layer_format setting.<br><br>An EROFS layer is a filesystem, not a changeset. See docs/erofs-layers.md before using it.<br><br>See docs/filesystems.md for how the formats compare.   | String | optional |  `"auto"`  |
-| <a id="layer_from_binary-format_config"></a>format_config |  Options of the filesystem image the layer is written as: an `ext4_config` target for `format = "ext4"`, a `fat32_config` target for `format = "fat32"`, a `cpio_config` target for `format = "cpio"`, or an `erofs_config` target for `format = "erofs"`.<br><br>Without it, every option of the format is left at its default. A config for a format other than the layer's own is a configuration error, since it would silently have no effect.   | <a href="https://bazel.build/concepts/labels">Label</a> | optional |  `None`  |
+| <a id="layer_from_binary-format"></a>format |  Container format of the layer blob, orthogonal to `compress`.<br><br>'tar' writes an OCI tar changeset. 'erofs' writes a mountable EROFS filesystem image. 'ext4' and 'fat32' write an ext4 or FAT32 filesystem image, 'iso9660' an ISO 9660 image (with the Rock Ridge, Joliet and UDF extensions and El Torito boot entries as options), 'cpio' a cpio archive in the newc format (an initramfs). If set to 'auto', uses the global default --@rules_img//img/settings:layer_format setting.<br><br>An EROFS layer is a filesystem, not a changeset. See docs/erofs-layers.md before using it.<br><br>See docs/filesystems.md for how the formats compare.   | String | optional |  `"auto"`  |
+| <a id="layer_from_binary-format_config"></a>format_config |  Options of the filesystem image the layer is written as: an `ext4_config` target for `format = "ext4"`, a `fat32_config` target for `format = "fat32"`, an `iso9660_config` target for `format = "iso9660"`, a `cpio_config` target for `format = "cpio"`, or an `erofs_config` target for `format = "erofs"`.<br><br>Without it, every option of the format is left at its default. A config for a format other than the layer's own is a configuration error, since it would silently have no effect.   | <a href="https://bazel.build/concepts/labels">Label</a> | optional |  `None`  |
 | <a id="layer_from_binary-include_runfiles"></a>include_runfiles |  Whether to include runfiles for executable targets. When True (default), executables in srcs will include their runfiles tree. When False, only the executable file itself is included, without runfiles.<br><br>Either way, any additional default outputs of the target (the rest of `DefaultInfo.files` beyond the executable) are copied into the layer, placed relative to the executable, as configured by `extra_default_outputs`.   | Boolean | optional |  `True`  |
 | <a id="layer_from_binary-infer_working_dir"></a>infer_working_dir |  Whether to infer the image's working directory from the binary's runfiles tree.<br><br>When True (default) and `include_runfiles` is True, `ImageLayerConfigInfo.working_dir` is set to the main workspace directory inside the runfiles tree (e.g. "/_main/cmd/server/server_/server.runfiles/_main"), which is the directory a binary launched through the runfiles convention expects to run in.<br><br>When False, `ImageLayerConfigInfo.working_dir` is None, which carries no opinion: `image_manifest` then keeps the base image's working directory, unless its own `working_dir` attribute is set explicitly.   | Boolean | optional |  `True`  |
 | <a id="layer_from_binary-layer_budget"></a>layer_budget |  Maximum total number of layers produced by this rule. If set to a value > 0 and the binary provides RunfilesGroupInfo, groups are merged using the merge algorithm from rules_runfiles_group. The algorithm respects group rank (only merges within the same rank), do_not_merge flags, merge affinity (groups sharing an affinity are preferred merge partners), and weight hints (lighter groups merge first).<br><br>When the binary names an executable_group, the binary executable and supporting files are merged into that group's layer, and the full budget is available for runfiles groups. When no executable_group exists, one layer is reserved for a separate binary layer, and the remaining budget (layer_budget - 1) is used for groups; layer_budget=1 without an executable_group skips the grouped path entirely.<br><br>This is a target, not a hard cap: groups marked do_not_merge are never merged, and groups at different ranks never merge with each other, so a binary whose groups cannot be reduced far enough still produces more layers than the budget.<br><br>0 means no limit (all groups become separate layers, plus a binary layer unless an executable_group absorbs it).   | Integer | optional |  `0`  |
@@ -531,8 +676,8 @@ layer_from_tar(
 | <a id="layer_from_tar-annotations"></a>annotations |  Annotations to add to the layer metadata as key-value pairs.   | <a href="https://bazel.build/rules/lib/core/dict">Dictionary: String -> String</a> | optional |  `{}`  |
 | <a id="layer_from_tar-compress"></a>compress |  Compression algorithm to use. If set to 'auto', it keeps the existing compression, unless the layer is being optimized.   | String | optional |  `"auto"`  |
 | <a id="layer_from_tar-estargz"></a>estargz |  Whether to use estargz format. If set to 'auto', uses the global default estargz setting. When enabled, the layer will be optimized for lazy pulling and will be compatible with the estargz format.   | String | optional |  `"auto"`  |
-| <a id="layer_from_tar-format"></a>format |  Container format of the layer blob. If set to 'auto', uses the global default --@rules_img//img/settings:layer_format setting.<br><br>'erofs' converts the tar into a mountable EROFS filesystem image. That always rewrites the layer (a format change cannot preserve the source blob) and defaults to `compress = "none"`, since the resulting blob is mountable as it is. See docs/erofs-layers.md for what a filesystem image means for the layers below it.<br><br>'ext4' converts the tar into an ext4 filesystem image the same way (always rewritten, never compressed). Like every ext4 layer, it is not a valid OCI layer: use it on its own. The options that only apply to tar layers (`compress`, `estargz`, `zstd_chunked`) are ignored. See docs/filesystems.md.<br><br>'fat32' converts the tar into a FAT32 filesystem image the same way (always rewritten, never compressed). It is not a valid OCI layer either. FAT cannot store symbolic links, device nodes and FIFOs, so a tar with such entries fails. The options that only apply to tar layers are ignored.<br><br>'cpio' converts the tar into a cpio archive in the newc format (an initramfs) the same way. It is left uncompressed unless `compress` asks for `gzip` or `zstd`, which the kernel unpacks as it is. Like an ext4 layer, it is not a valid OCI layer, and `estargz` and `zstd_chunked` are ignored.   | String | optional |  `"auto"`  |
-| <a id="layer_from_tar-format_config"></a>format_config |  Options of the filesystem image the layer is written as: an `ext4_config` target for `format = "ext4"`, a `fat32_config` target for `format = "fat32"`, a `cpio_config` target for `format = "cpio"`, or an `erofs_config` target for `format = "erofs"`.<br><br>Without it, every option of the format is left at its default. A config for a format other than the layer's own is a configuration error, since it would silently have no effect.   | <a href="https://bazel.build/concepts/labels">Label</a> | optional |  `None`  |
+| <a id="layer_from_tar-format"></a>format |  Container format of the layer blob. If set to 'auto', uses the global default --@rules_img//img/settings:layer_format setting.<br><br>'erofs' converts the tar into a mountable EROFS filesystem image. That always rewrites the layer (a format change cannot preserve the source blob) and defaults to `compress = "none"`, since the resulting blob is mountable as it is. See docs/erofs-layers.md for what a filesystem image means for the layers below it.<br><br>'ext4' converts the tar into an ext4 filesystem image the same way (always rewritten, never compressed). Like every ext4 layer, it is not a valid OCI layer: use it on its own. The options that only apply to tar layers (`compress`, `estargz`, `zstd_chunked`) are ignored. See docs/filesystems.md.<br><br>'iso9660' converts the tar into an ISO 9660 image the same way (always rewritten, never compressed), with the Rock Ridge, Joliet and UDF extensions and El Torito boot entries configurable through an `iso9660_config` target. 'fat32' converts the tar into a FAT32 filesystem image the same way (always rewritten, never compressed). It is not a valid OCI layer either. FAT cannot store symbolic links, device nodes and FIFOs, so a tar with such entries fails. The options that only apply to tar layers are ignored.<br><br>'cpio' converts the tar into a cpio archive in the newc format (an initramfs) the same way. It is left uncompressed unless `compress` asks for `gzip` or `zstd`, which the kernel unpacks as it is. Like an ext4 layer, it is not a valid OCI layer, and `estargz` and `zstd_chunked` are ignored.   | String | optional |  `"auto"`  |
+| <a id="layer_from_tar-format_config"></a>format_config |  Options of the filesystem image the layer is written as: an `ext4_config` target for `format = "ext4"`, a `fat32_config` target for `format = "fat32"`, an `iso9660_config` target for `format = "iso9660"`, a `cpio_config` target for `format = "cpio"`, or an `erofs_config` target for `format = "erofs"`.<br><br>Without it, every option of the format is left at its default. A config for a format other than the layer's own is a configuration error, since it would silently have no effect.   | <a href="https://bazel.build/concepts/labels">Label</a> | optional |  `None`  |
 | <a id="layer_from_tar-media_type"></a>media_type |  Override layer media type. Use e.g. "application/vnd.cncf.helm.chart.content.v1.tar" for Helm charts.   | String | optional |  `""`  |
 | <a id="layer_from_tar-optimize"></a>optimize |  If set, rewrites the tar file to deduplicate it's contents. This is useful for reducing the size of the image, but will take extra time and space to store the optimized layer.   | Boolean | optional |  `False`  |
 | <a id="layer_from_tar-zstd_chunked"></a>zstd_chunked |  Whether to use the zstd:chunked format. If set to 'auto', uses the global default zstd_chunked setting. When enabled, the layer is written with content-defined chunks and a table of contents, so compatible runtimes (podman, CRI-O) can fetch and deduplicate individual chunks. Requires zstd compression and cannot be combined with estargz.   | String | optional |  `"auto"`  |

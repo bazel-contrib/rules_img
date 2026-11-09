@@ -1,6 +1,6 @@
 """Rules that configure the filesystem image a layer is written as."""
 
-load("//img/private/providers:format_config_info.bzl", "CpioConfigInfo", "ErofsConfigInfo", "Ext4ConfigInfo", "Fat32ConfigInfo")
+load("//img/private/providers:format_config_info.bzl", "CpioConfigInfo", "ErofsConfigInfo", "Ext4ConfigInfo", "Fat32ConfigInfo", "Iso9660BootEntryInfo", "Iso9660ConfigInfo")
 
 def _cpio_config_impl(ctx):
     return [CpioConfigInfo(
@@ -235,6 +235,335 @@ larger, because FAT32 needs at least 65525 clusters.
         ),
     },
     provides = [Fat32ConfigInfo],
+)
+
+_BOOT_PLATFORMS = ["bios", "powerpc", "mac", "uefi"]
+_BOOT_EMULATIONS = ["none", "floppy120", "floppy144", "floppy288", "harddisk"]
+
+def _iso9660_boot_entry_impl(ctx):
+    if ctx.attr.load_size < 0 or ctx.attr.load_size > 0xFFFF:
+        fail("load_size must be between 0 and 65535, got {}".format(ctx.attr.load_size))
+    if ctx.attr.load_segment < 0 or ctx.attr.load_segment > 0xFFFF:
+        fail("load_segment must be between 0 and 65535, got {}".format(ctx.attr.load_segment))
+    if len(ctx.attr.id) > 28:
+        fail("id {} is longer than 28 characters".format(repr(ctx.attr.id)))
+    return [Iso9660BootEntryInfo(
+        image = ctx.attr.image.removeprefix("/"),
+        platform = ctx.attr.platform,
+        emulation = ctx.attr.emulation,
+        load_size = ctx.attr.load_size,
+        load_segment = ctx.attr.load_segment,
+        boot_info_table = ctx.attr.boot_info_table,
+        id = ctx.attr.id,
+    )]
+
+iso9660_boot_entry = rule(
+    implementation = _iso9660_boot_entry_impl,
+    doc = """\
+One El Torito boot entry of an ISO 9660 image.
+
+El Torito makes an image bootable by pointing firmware at a boot image that is
+an ordinary file of the filesystem. Pass the targets to the `boot` attribute of
+an `iso9660_config`, in the order the boot catalog should list them: the first
+one becomes the default entry, and every further one becomes a section of its
+own, so a single image can boot on BIOS and on UEFI.
+
+Example:
+
+```python
+load("@rules_img//img:layer.bzl", "image_layer", "iso9660_boot_entry", "iso9660_config")
+
+# A BIOS boot sector that wants the boot information table patched in.
+iso9660_boot_entry(
+    name = "bios_boot",
+    boot_info_table = True,
+    image = "/isolinux/isolinux.bin",
+    load_size = 4,
+    platform = "bios",
+)
+
+# A FAT image the firmware mounts and reads the boot loader from.
+iso9660_boot_entry(
+    name = "efi_boot",
+    id = "EFI",
+    image = "/EFI/BOOT/efiboot.img",
+    platform = "uefi",
+)
+
+iso9660_config(
+    name = "installer_config",
+    boot = [
+        ":bios_boot",
+        ":efi_boot",
+    ],
+    joliet = True,
+)
+
+image_layer(
+    name = "installer",
+    srcs = {
+        "/isolinux/isolinux.bin": ":isolinux",
+        "/EFI/BOOT/efiboot.img": ":esp_image",
+    },
+    format = "iso9660",
+    format_config = ":installer_config",
+)
+```
+
+See [docs/filesystems.md](filesystems.md) for the format itself.
+""",
+    attrs = {
+        "image": attr.string(
+            mandatory = True,
+            doc = """\
+Path of the boot image in the layer, which has to be a regular file with content.
+
+A leading slash is optional. The file is stored once: the boot entry points at
+the extent the directory record points at.
+""",
+        ),
+        "platform": attr.string(
+            default = "bios",
+            values = _BOOT_PLATFORMS,
+            doc = """\
+The firmware the entry is for.
+
+'uefi' is what a current PC boots from; its boot image is usually a FAT
+filesystem (an `image_layer` with `format = "fat32"`) that the firmware mounts
+and reads the boot loader from.
+""",
+        ),
+        "emulation": attr.string(
+            default = "none",
+            values = _BOOT_EMULATIONS,
+            doc = """\
+What the firmware emulates while it reads the boot image.
+
+'none' loads the image as it is, which is what every current boot loader and
+every UEFI firmware wants. The floppy and hard disk modes present the image as a
+drive of that shape.
+""",
+        ),
+        "load_size": attr.int(
+            default = 0,
+            doc = """\
+How many 512 byte sectors the firmware loads.
+
+0 loads the whole image (clamped to the 65535 sectors the field can hold), which
+is what a UEFI boot image needs. isolinux wants 4.
+""",
+        ),
+        "load_segment": attr.int(
+            default = 0,
+            doc = "The real mode segment a BIOS entry is loaded at. 0 uses the default of 0x7C0.",
+        ),
+        "boot_info_table": attr.bool(
+            default = False,
+            doc = """\
+Patch the boot information table isolinux and its relatives expect into bytes 8
+to 64 of the boot image.
+
+The stored content then differs from the file that went in, so the boot image is
+always carried in the image itself and never becomes a reference in a compact
+stream. A boot image that shares its content with another entry cannot be
+patched.
+""",
+        ),
+        "id": attr.string(
+            default = "",
+            doc = """\
+Identifier recorded on the section header of an entry other than the first, at
+most 28 characters.
+
+"EFI" is conventional for a UEFI section, but nothing reads it.
+""",
+        ),
+    },
+    provides = [Iso9660BootEntryInfo],
+)
+
+def _iso9660_config_impl(ctx):
+    for name, value, limit in [
+        ("volume_id", ctx.attr.volume_id, 32),
+        ("system_id", ctx.attr.system_id, 32),
+        ("volume_set_id", ctx.attr.volume_set_id, 128),
+        ("publisher", ctx.attr.publisher, 128),
+        ("data_preparer", ctx.attr.data_preparer, 128),
+        ("application_id", ctx.attr.application_id, 128),
+    ]:
+        if len(value) > limit:
+            fail("{} {} is longer than {} characters".format(name, repr(value), limit))
+    if ctx.attr.joliet_long_names and not ctx.attr.joliet:
+        fail("joliet_long_names has no effect without joliet = True")
+    return [Iso9660ConfigInfo(
+        volume_id = ctx.attr.volume_id,
+        system_id = ctx.attr.system_id,
+        volume_set_id = ctx.attr.volume_set_id,
+        publisher = ctx.attr.publisher,
+        data_preparer = ctx.attr.data_preparer,
+        application_id = ctx.attr.application_id,
+        rock_ridge = ctx.attr.rock_ridge,
+        joliet = ctx.attr.joliet,
+        joliet_long_names = ctx.attr.joliet_long_names,
+        udf = ctx.attr.udf,
+        deduplicate = ctx.attr.deduplicate,
+        min_size = ctx.attr.min_size,
+        boot = [target[Iso9660BootEntryInfo] for target in ctx.attr.boot],
+    )]
+
+iso9660_config = rule(
+    implementation = _iso9660_config_impl,
+    doc = """\
+Options for layers written as an ISO 9660 filesystem image.
+
+Pass the target to the `format_config` attribute of a layer rule that uses
+`format = "iso9660"`. Options that are left at their default are decided by the
+`img` tool or by the matching global setting.
+
+Plain ISO 9660 can only store upper case, 8.3-ish names and no POSIX metadata at
+all, so the interesting part of the format is its extensions. Rock Ridge is on by
+default; Joliet and UDF are not, because enabling them is a decision about who
+reads the image.
+
+Example:
+
+```python
+load("@rules_img//img:layer.bzl", "image_layer", "iso9660_config")
+
+iso9660_config(
+    name = "release_config",
+    # Readable on Linux (Rock Ridge, on by default), on Windows (Joliet) and on
+    # macOS (UDF).
+    joliet = True,
+    udf = True,
+    volume_id = "MYPRODUCT_1_0",
+)
+
+image_layer(
+    name = "release",
+    srcs = {"/README.md": ":readme"},
+    format = "iso9660",
+    format_config = ":release_config",
+)
+```
+
+See [docs/filesystems.md](filesystems.md) for the format itself and
+`iso9660_boot_entry` for making the image bootable.
+""",
+    attrs = {
+        "volume_id": attr.string(
+            default = "",
+            doc = """\
+Volume identifier, at most 32 characters. Empty uses "CDROM".
+
+It is what a mounted image is usually named after.
+""",
+        ),
+        "system_id": attr.string(
+            default = "",
+            doc = "System identifier, at most 32 characters, naming the system that can act on the image's system area.",
+        ),
+        "volume_set_id": attr.string(
+            default = "",
+            doc = "Volume set identifier, at most 128 characters.",
+        ),
+        "publisher": attr.string(
+            default = "",
+            doc = "Publisher identifier, at most 128 characters.",
+        ),
+        "data_preparer": attr.string(
+            default = "",
+            doc = "Data preparer identifier, at most 128 characters.",
+        ),
+        "application_id": attr.string(
+            default = "",
+            doc = "Application identifier, at most 128 characters.",
+        ),
+        "rock_ridge": attr.string(
+            default = "auto",
+            values = ["auto", "enabled", "rationalized", "disabled"],
+            doc = """\
+Whether the image carries the Rock Ridge extension, which adds the real names,
+the mode, the owner, the timestamps, symbolic links, device nodes, FIFOs and hard
+links. This is what Linux uses.
+
+'rationalized' additionally normalizes the metadata of every entry the way
+`mkisofs -rational-rock` does: the owner becomes root, the mode becomes read-only
+for everyone, the execute bit is kept and shared by all three classes, and the
+setuid, setgid and sticky bits are cleared. It makes the image independent of
+whoever built it, and it applies to the UDF metadata too, because that describes
+the same entries.
+
+Without the extension, symbolic links, device nodes and FIFOs cannot be stored and
+a layer with such an entry fails. If set to 'auto', uses the global default
+`--@rules_img//img/settings:iso9660_rock_ridge` setting.
+""",
+        ),
+        "joliet": attr.bool(
+            default = False,
+            doc = """\
+Add a second directory hierarchy with UCS-2 names, which is what Windows reads.
+
+It describes the same file data, so it only costs its directory extents and path
+tables. Names are capped at the 64 characters of the specification unless
+`joliet_long_names` is set.
+""",
+        ),
+        "joliet_long_names": attr.bool(
+            default = False,
+            doc = """\
+Raise the Joliet name limit from the 64 characters of the specification to the
+103 every implementation accepts.
+
+Only useful together with `joliet`.
+""",
+        ),
+        "udf": attr.bool(
+            default = False,
+            doc = """\
+Add UDF 1.02 structures describing the same file data, in the layout known as a
+UDF bridge image. This is what macOS and Windows prefer.
+
+UDF has the real names and POSIX metadata without an extension and no 4 GiB file
+size limit. It costs one 2 KiB block per file and directory for its File Entry,
+plus the blocks of the directories' file identifier descriptors.
+""",
+        ),
+        "deduplicate": attr.string(
+            default = "auto",
+            values = ["auto", "enabled", "disabled"],
+            doc = """\
+Whether regular files with the same content and metadata are stored once, sharing
+one extent. With Rock Ridge they become hard links of each other (what tar layers
+do). If set to 'auto', uses the global default
+`--@rules_img//img/settings:iso9660_deduplicate` setting.
+
+Turning it off spares reading file content only to find duplicates, at the cost of
+a larger image.
+""",
+        ),
+        "min_size": attr.string(
+            default = "",
+            doc = """\
+Minimum size of the image, with an optional binary unit (`"64MiB"`, `"2GiB"`).
+
+The image is otherwise exactly as large as its content needs. Blocks that hold
+nothing are not written, so a sparse-aware filesystem stores such an image in
+about the size of its content.
+""",
+        ),
+        "boot": attr.label_list(
+            providers = [Iso9660BootEntryInfo],
+            doc = """\
+El Torito boot entries, as `iso9660_boot_entry` targets, in the order the boot
+catalog should list them.
+
+The first one becomes the default entry; every further one becomes a section of
+its own, so a single image can boot on BIOS and on UEFI.
+""",
+        ),
+    },
+    provides = [Iso9660ConfigInfo],
 )
 
 def _erofs_config_impl(ctx):
