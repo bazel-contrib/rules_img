@@ -20,6 +20,10 @@ type Spec struct {
 	// Signatures describes optional signature checks against the dedicated
 	// cosign/notation registries (only exercised on signing-capable tests).
 	Signatures *SignatureAssertions `json:"signatures,omitempty"`
+	// Provenance describes optional checks of the deploy-time provenance
+	// attestation referrers on the dedicated provenance registry (only
+	// exercised on signing-capable tests).
+	Provenance *ProvenanceAssertion `json:"provenance,omitempty"`
 }
 
 // ImageAssertion describes the expected state of a single tagged image.
@@ -84,6 +88,17 @@ type SignatureAssertion struct {
 	Repository   string `json:"repository"`
 	Tag          string `json:"tag"`
 	ArtifactType string `json:"artifact_type,omitempty"`
+}
+
+// ProvenanceAssertion identifies the image whose platform manifests must each
+// carry exactly one BuildKit-style SLSA provenance attestation referrer.
+type ProvenanceAssertion struct {
+	Repository string `json:"repository"`
+	Tag        string `json:"tag"`
+	// BuilderID, when set, must equal runDetails.builder.id.
+	BuilderID string `json:"builder_id,omitempty"`
+	// RecordTimestamps requires startedOn/finishedOn to be recorded.
+	RecordTimestamps bool `json:"record_timestamps,omitempty"`
 }
 
 func loadSpec(path string) (*Spec, error) {

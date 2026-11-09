@@ -201,6 +201,24 @@ func (c *registryClient) effectiveArtifactType(repo string, d v1.Descriptor) str
 	return string(man.Config.MediaType)
 }
 
+// getBlob downloads a blob.
+func (c *registryClient) getBlob(repo, digest string) ([]byte, error) {
+	url := fmt.Sprintf("%s/v2/%s/blobs/%s", c.base, repo, digest)
+	resp, err := c.http.Get(url)
+	if err != nil {
+		return nil, fmt.Errorf("GET %s: %w", url, err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("GET %s: status %d", url, resp.StatusCode)
+	}
+	return body, nil
+}
+
 // configLabels fetches and parses the config blob of a single-arch manifest and
 // returns its image labels.
 func (c *registryClient) configLabels(repo string, config v1.Descriptor) (map[string]string, error) {

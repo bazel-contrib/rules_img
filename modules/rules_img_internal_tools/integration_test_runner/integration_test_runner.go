@@ -26,7 +26,7 @@ const signingEnvMarker = "RULES_IMG_E2E_SIGNING"
 
 // signerModules are the independently released signer plugin modules that the
 // signing-capable e2e workspaces depend on.
-var signerModules = []string{"rules_img_signer_cosign", "rules_img_signer_notation"}
+var signerModules = []string{"rules_img_signer_cosign", "rules_img_signer_notation", "rules_img_signer_provenance"}
 
 type commandLine struct {
 	name string
@@ -516,7 +516,7 @@ func deployPhase(bazel, workspaceDir string, startup []string, mainRegistry stri
 	if err := runBazel(bazel, workspaceDir, startup, nil, "push", "run", "//:push"); err != nil {
 		return err
 	}
-	if err := runAsserter(workspaceDir, mainRegistry, "", "", nil); err != nil {
+	if err := runAsserter(workspaceDir, mainRegistry, "", "", "", nil); err != nil {
 		return err
 	}
 
@@ -542,6 +542,12 @@ func deployPhase(bazel, workspaceDir string, startup []string, mainRegistry stri
 	}
 	defer notationReg.Close()
 
+	provenanceReg, err := startRegistry()
+	if err != nil {
+		return fmt.Errorf("starting provenance registry: %v", err)
+	}
+	defer provenanceReg.Close()
+
 	signEnv := []string{
 		"RULES_IMG_COSIGN_KEY=" + keys.cosignKey,
 		"COSIGN_PASSWORD=",
@@ -560,13 +566,22 @@ func deployPhase(bazel, workspaceDir string, startup []string, mainRegistry stri
 		return err
 	}
 
-	// Verify signature referrers on the per-signer registries with the real CLIs.
-	return runAsserter(workspaceDir, mainRegistry, cosignReg.hostPort, notationReg.hostPort, keys)
+	// The provenance plugin needs no keys: it only attaches an unsigned
+	// attestation, recording the timestamps the signing_config asks for.
+	if err := runBazel(bazel, workspaceDir, startup, signEnv, "push (provenance)",
+		"run", "//:push", "--config=provenance",
+		"--@rules_img//img/settings:destination_registry="+provenanceReg.hostPort); err != nil {
+		return err
+	}
+
+	// Verify signature referrers on the per-signer registries with the real CLIs,
+	// and the provenance attestations structurally.
+	return runAsserter(workspaceDir, mainRegistry, cosignReg.hostPort, notationReg.hostPort, provenanceReg.hostPort, keys)
 }
 
 // runAsserter runs the registry-state asserter against the given registries. When
 // the workspace has no registry_assertions.json, it is skipped.
-func runAsserter(workspaceDir, mainRegistry, cosignRegistry, notationRegistry string, keys *signingKeys) error {
+func runAsserter(workspaceDir, mainRegistry, cosignRegistry, notationRegistry, provenanceRegistry string, keys *signingKeys) error {
 	specPath := filepath.Join(workspaceDir, "registry_assertions.json")
 	if _, err := os.Stat(specPath); err != nil {
 		fmt.Println("\nno registry_assertions.json in this workspace; skipping registry assertions")
@@ -598,6 +613,9 @@ func runAsserter(workspaceDir, mainRegistry, cosignRegistry, notationRegistry st
 			"--notation-registry", notationRegistry,
 			"--notation-cli", notationCLI,
 			"--notation-cert", keys.notationCert)
+	}
+	if provenanceRegistry != "" {
+		args = append(args, "--provenance-registry", provenanceRegistry)
 	}
 
 	fmt.Printf("\nrunning registry asserter $ %s %s\n", filepath.Base(asserter), strings.Join(args, " "))

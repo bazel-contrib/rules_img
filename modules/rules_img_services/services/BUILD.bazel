@@ -1,6 +1,7 @@
+load("@bazel_version//:version.bzl", bazel_version = "version")
 load("@rules_img//img:multi_deploy.bzl", "multi_deploy")
 load("@rules_img//img:push.bzl", "image_push_spec")
-load("@rules_img//img:signing.bzl", "signing_config")
+load("@rules_img//img:signing.bzl", "signing_chain", "signing_config")
 
 multi_deploy(
     name = "push",
@@ -18,15 +19,58 @@ image_push_spec(
     visibility = ["//services:__subpackages__"],
 )
 
+# Signing happens in two steps, in this order (see //services:sign):
+#
+#  1. provenance: attaches a SLSA provenance attestation to the pushed index and to
+#     each of its manifests. It is created while pushing, so that it can say when
+#     and by which workflow run the images were published without making that a
+#     build input (the images stay reproducible).
+#  2. cosign_keyless: signs the images and, because of plugin_artifacts, the
+#     provenance attestation the previous step created.
+
+# The builder id comes from $RULES_IMG_PROVENANCE_BUILDER_ID, which CI sets to the
+# workflow at the ref it ran for (the SLSA GitHub convention); it is empty for a
+# push from a developer machine. The commit comes from the status script, and the
+# Bazel version from the repository rule in //:bazel_version.bzl.
+signing_config(
+    name = "provenance",
+    args = [
+        "--parameter=bazel_version=" + bazel_version,
+        "--record-timestamps",
+        "--status-command=services/workspace_status.sh",
+    ],
+    # The plugin takes the image names, platforms and the rules_img version from the
+    # deploy instead of from the arguments above.
+    protocol = 2,
+    targets = [
+        "roots",
+        "child_manifests",
+    ],
+    tool = "@rules_img_signer_provenance",
+    visibility = ["//visibility:public"],
+)
+
 signing_config(
     name = "cosign_keyless",
     targets = [
         "roots",
         "child_manifests",
+        "plugin_artifacts",
     ],
     tool = "@rules_img_signer_cosign",
     visibility = ["//visibility:public"],
 )
+
+signing_chain(
+    name = "sign",
+    steps = [
+        ":provenance",
+        ":cosign_keyless",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+exports_files(["workspace_status.sh"])
 
 filegroup(
     name = "image_labels",

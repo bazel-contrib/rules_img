@@ -44,6 +44,16 @@ type notationTrustPolicy struct {
 // then confirms them with the real upstream CLIs.
 type signatureChecker struct {
 	errs []string
+	// provenanceRuns collects what each verified provenance attestation says
+	// about the deploy that produced it.
+	provenanceRuns []provenanceRun
+}
+
+// provenanceRun is the part of an attestation that all attestations of one
+// deploy share.
+type provenanceRun struct {
+	InvocationID string
+	StartedOn    string
 }
 
 func (sc *signatureChecker) errf(format string, args ...any) {

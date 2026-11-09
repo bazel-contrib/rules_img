@@ -17,6 +17,12 @@
       ]
     }
   ],
+  "provenance": {
+    "repository": "malt3/supply-chain-example",
+    "tag": "latest",
+    "builder_id": "https://github.com/bazel-contrib/rules_img/e2e/sbom",
+    "record_timestamps": true
+  },
   "signatures": {
     "cosign": {
       "repository": "malt3/supply-chain-example",

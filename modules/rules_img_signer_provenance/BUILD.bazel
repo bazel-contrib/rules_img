@@ -1,0 +1,23 @@
+# The short form `@rules_img_signer_provenance` resolves to this alias, which points
+# at the plugin binary — a prebuilt download for released versions, or the
+# source-built go_binary for any other commit / local / git_override build.
+load("@bazel_skylib//rules:build_test.bzl", "build_test")
+
+alias(
+    name = "rules_img_signer_provenance",
+    actual = "@rules_img_signer_provenance_resolved//:binary",
+    visibility = ["//visibility:public"],
+)
+
+exports_files([
+    "prebuilt_lockfile.json",
+    "slsa-definitions.md",
+])
+
+# The only test target in the released module, and the one the BCR presubmit runs
+# (`//:all`) — so it must go through the alias rather than reference //cmd/provenance
+# directly, which is not part of the release archive.
+build_test(
+    name = "build_test",
+    targets = [":rules_img_signer_provenance"],
+)

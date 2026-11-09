@@ -113,5 +113,6 @@ build_test(
         "//:sbom_manifest",
         "@rules_img_signer_cosign",
         "@rules_img_signer_notation",
+        "@rules_img_signer_provenance",
     ],
 )

@@ -4,6 +4,7 @@ load("@rules_go//go:def.bzl", "go_binary", "go_library")
 go_library(
     name = "integration_test_asserter_lib",
     srcs = [
+        "attest.go",
         "checks.go",
         "main.go",
         "registry_client.go",

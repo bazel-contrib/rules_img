@@ -1,6 +1,6 @@
 # Release a single signer plugin module (independently versioned) when a
 # per-module tag is pushed, e.g. `rules_img_signer_cosign-v0.0.1` or
-# `rules_img_signer_notation-v0.0.2`.
+# `rules_img_signer_notation-v0.0.2`, or `rules_img_signer_provenance-v0.0.1`.
 #
 # Each module version lives in its own MODULE.bazel. The publish job strips the
 # `rules_img_signer_<basename>-v` prefix from the tag to derive the module version
@@ -20,6 +20,7 @@ on:
     tags:
       - "rules_img_signer_cosign-v*.*.*"
       - "rules_img_signer_notation-v*.*.*"
+      - "rules_img_signer_provenance-v*.*.*"
 permissions:
   id-token: write
   attestations: write
@@ -38,6 +39,7 @@ jobs:
           case "${TAG_NAME}" in
             rules_img_signer_cosign-*)   basename=cosign ;;
             rules_img_signer_notation-*) basename=notation ;;
+            rules_img_signer_provenance-*) basename=provenance ;;
             *) echo "unrecognized tag ${TAG_NAME}"; exit 1 ;;
           esac
           echo "basename=${basename}" >> "$GITHUB_OUTPUT"

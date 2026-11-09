@@ -41,3 +41,26 @@ signing_config(
     ],
     tool = "@rules_img_signer_notation",
 )
+
+# Provenance: attaches a BuildKit-style SLSA provenance attestation to every
+# platform manifest at push time. Nothing is signed, so no key is needed.
+# Timestamps are recorded here because the point of attaching provenance at
+# deploy time is that they may change on every push without touching the build.
+# Do not add "referrers" to the targets: that would attest the SBOM referrer.
+# Enable with --config=provenance (see .bazelrc).
+signing_config(
+    name = "provenance",
+    args = [
+        "--builder-id=https://github.com/bazel-contrib/rules_img/e2e/sbom",
+        "--source-uri=https://github.com/bazel-contrib/rules_img",
+        "--record-timestamps",
+    ],
+    # The plugin takes the image name, platform and rules_img version from the
+    # request instead of from args.
+    protocol = 2,
+    targets = [
+        "roots",
+        "child_manifests",
+    ],
+    tool = "@rules_img_signer_provenance",
+)

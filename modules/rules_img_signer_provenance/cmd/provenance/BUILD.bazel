@@ -1,0 +1,43 @@
+load("@rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
+
+go_library(
+    name = "provenance_lib",
+    srcs = [
+        "bazel.go",
+        "ghactx.go",
+        "provenance.go",
+        "purl.go",
+        "status.go",
+    ],
+    importpath = "github.com/bazel-contrib/rules_img_signer_provenance/cmd/provenance",
+    visibility = ["//visibility:private"],
+    deps = [
+        "//pkg/plugin",
+        "//pkg/signerapi",
+        "@com_github_google_go_containerregistry//pkg/name",
+        "@com_github_google_go_containerregistry//pkg/v1:pkg",
+    ],
+)
+
+go_binary(
+    name = "provenance",
+    embed = [":provenance_lib"],
+    pure = "on",
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "provenance_test",
+    srcs = [
+        "bazel_test.go",
+        "provenance_test.go",
+    ],
+    # The tests check that the document defines every field the plugin writes.
+    data = ["//:slsa-definitions.md"],
+    embed = [":provenance_lib"],
+    deps = [
+        "//pkg/plugin",
+        "//pkg/signerapi",
+        "@com_github_google_go_containerregistry//pkg/v1:pkg",
+    ],
+)

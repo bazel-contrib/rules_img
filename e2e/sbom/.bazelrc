@@ -17,3 +17,8 @@ build:cosign --@rules_img//img/settings:sign_setting=//signer:cosign_key
 # Usage: bazel run //:push --config=notation
 build:notation --@rules_img//img/settings:sign=enabled
 build:notation --@rules_img//img/settings:sign_setting=//signer:notation
+
+# Attach SLSA provenance (a BuildKit-style attestation referrer) at push time.
+# Needs no key. Usage: bazel run //:push --config=provenance
+build:provenance --@rules_img//img/settings:sign=enabled
+build:provenance --@rules_img//img/settings:sign_setting=//signer:provenance

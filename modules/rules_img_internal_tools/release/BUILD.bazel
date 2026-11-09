@@ -47,3 +47,13 @@ release_files(
     tags = ["manual"],
     version = "@rules_img//img/private/release:signer_notation_version",
 )
+
+release_files(
+    name = "signer_provenance_prebuilt",
+    basename = "provenance",
+    executable = "@rules_img_signer_provenance//cmd/provenance",
+    lockfile_name = "modules/rules_img_signer_provenance/prebuilt_lockfile.json",
+    tag_template = "rules_img_signer_provenance-v{version}",
+    tags = ["manual"],
+    version = "@rules_img//img/private/release:signer_provenance_version",
+)

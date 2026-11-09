@@ -26,6 +26,7 @@ bazel_dep(name = "rules_img_private", version = "0.0.1")
 bazel_dep(name = "rules_img_tool", version = "0.3.24")
 bazel_dep(name = "rules_img_signer_cosign", version = "0.0.1")
 bazel_dep(name = "rules_img_signer_notation", version = "0.0.1")
+bazel_dep(name = "rules_img_signer_provenance", version = "0.0.1")
 
 go_sdk = use_extension("@rules_go//go:extensions.bzl", "go_sdk")
 go_sdk.from_file(go_mod = "//:go.mod")

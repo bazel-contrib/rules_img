@@ -77,6 +77,10 @@ case "${TAG}" in
     release_prep_signer_plugin notation
     exit 0
     ;;
+  rules_img_signer_provenance-v*)
+    release_prep_signer_plugin provenance
+    exit 0
+    ;;
 esac
 
 ARCHIVE="rules_img-$TAG.tar.gz"

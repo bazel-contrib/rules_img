@@ -66,12 +66,15 @@ jobs:
         bazelrc: import %workspace%/buildbuddy.bazelrc
     - name: Build images
       working-directory: modules/rules_img_services
-      run: bazelisk build --config=cosign //:push
+      run: bazelisk build --config=sign //:push
     - name: Push images to ghcr.io
       working-directory: modules/rules_img_services
       shell: bash
       env:
         TAGS: ${{ steps.version.outputs.tags }}
+        # Who built the images, for the provenance attached to them: this workflow
+        # at the ref it ran for (the SLSA GitHub convention).
+        RULES_IMG_PROVENANCE_BUILDER_ID: ${{ github.server_url }}/${{ github.workflow_ref }}
       run: |
         OIDC_TOKEN_JSON="$(curl -sSf \
           -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
@@ -79,7 +82,7 @@ jobs:
         SIGSTORE_ID_TOKEN="$(jq -er .value <<<"${OIDC_TOKEN_JSON}")"
         export SIGSTORE_ID_TOKEN
         # shellcheck disable=SC2086
-        bazelisk run --config=cosign --stamp //:push -- ${TAGS}
+        bazelisk run --config=sign --stamp //:push -- ${TAGS}
 
   publish-dev-registry:
     # Every commit to main becomes a version of the rules_img module in a Bazel

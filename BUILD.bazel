@@ -83,9 +83,27 @@ filegroup(
     visibility = ["//img/private/release:__subpackages__"],
 )
 
+# buildifier: disable=constant-glob
+filegroup(
+    name = "signer_provenance_source_files",
+    srcs = glob(
+        [
+            "modules/rules_img_signer_provenance/BUILD.bazel",
+            "modules/rules_img_signer_provenance/MODULE.bazel",
+            "modules/rules_img_signer_provenance/README.md",
+            "modules/rules_img_signer_provenance/prebuilt_lockfile.json",
+            "modules/rules_img_signer_provenance/slsa-definitions.md",
+            "modules/rules_img_signer_provenance/prebuilt/**",
+        ],
+        allow_empty = True,
+    ),
+    visibility = ["//img/private/release:__subpackages__"],
+)
+
 exports_files([
     ".bcr/metadata.template.json",
     "modules/rules_img_signer_cosign/MODULE.bazel",
     "modules/rules_img_signer_notation/MODULE.bazel",
+    "modules/rules_img_signer_provenance/MODULE.bazel",
     "prebuilt_lockfile.json",
 ])

@@ -3,6 +3,13 @@ common --override_module=rules_img_tool=%workspace%/../../../img_tool
 common --override_module=rules_img_private=%workspace%/../../../modules/rules_img_private
 common --override_module=rules_img_internal_tools=%workspace%/../../../modules/rules_img_internal_tools
 
+# The provenance signer plugin is not published to the BCR yet, and the internal
+# tools module depends on it, so it has to be resolved locally (and built from
+# source) until it is released. Drop this once it is, which also swaps the source
+# build for the prebuilt plugin binary. rules_img_signer_cosign is already
+# released and resolved from the BCR.
+common --override_module=rules_img_signer_provenance=%workspace%/../../../modules/rules_img_signer_provenance
+
 import %workspace%/.bazelrc.common
 
 common --@rules_img//img/settings:destination_registry=ghcr.io
@@ -12,8 +19,12 @@ common --@rules_img//img/settings:stamp_created=enabled
 common --@rules_img//img/settings:additional_image_labels_file=//services:image_labels
 common --@rules_go//go/config:pure
 
-build:cosign --@rules_img//img/settings:sign=enabled
-build:cosign --@rules_img//img/settings:sign_setting=//services:cosign_keyless
+# Attach SLSA provenance to the pushed images and sign both the images and the
+# provenance with cosign (see //services:sign). Needs $SIGSTORE_ID_TOKEN at deploy
+# time; CI sets it up.
+# Usage: bazel run --config=sign --stamp //:push
+build:sign --@rules_img//img/settings:sign=enabled
+build:sign --@rules_img//img/settings:sign_setting=//services:sign
 
 # The images published from this module must be reproducible: the same commit has
 # to yield the same digests no matter which host built it.

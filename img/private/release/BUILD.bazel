@@ -53,6 +53,7 @@ offline_bundle(
         # them from the distdir instead of building the plugin from source.
         "@rules_img_internal_tools//release:signer_cosign_prebuilt",
         "@rules_img_internal_tools//release:signer_notation_prebuilt",
+        "@rules_img_internal_tools//release:signer_provenance_prebuilt",
     ],
 )
 
@@ -93,7 +94,7 @@ versioned_filename_info(
 
 # Signer plugin modules, packaged into the offline BCR used by the e2e
 # integration tests (see //e2e/sbom) and released for real via the
-# signer_{cosign,notation}_dist_tar targets below (built by the "Release signer
+# signer_{cosign,notation,provenance}_dist_tar targets below (built by the "Release signer
 # plugin" GitHub workflow). We prebuild the plugin the same way as the img tool:
 # source_bundle injects the populated prebuilt_lockfile.json (produced by
 # @rules_img_internal_tools//release:signer_*_prebuilt) into the packaged module
@@ -113,10 +114,15 @@ SIGNER_REQUIRED_FILES = [
     "MODULE.bazel",
     "README.md",
     "prebuilt_lockfile.json",
-    "cli/BUILD.bazel",
-    "cli/cli.bzl",
     "prebuilt/BUILD.bazel",
     "prebuilt/prebuilt.bzl",
+]
+
+# The cosign and notation modules additionally ship the upstream CLI download
+# used by integration tests to verify signatures.
+SIGNER_CLI_REQUIRED_FILES = SIGNER_REQUIRED_FILES + [
+    "cli/BUILD.bazel",
+    "cli/cli.bzl",
 ]
 
 version(
@@ -131,12 +137,18 @@ version(
     version = "0.0.1",
 )
 
+version(
+    name = "signer_provenance_version",
+    tags = ["manual"],
+    version = "0.0.1",
+)
+
 source_bundle(
     name = "signer_cosign_srcs",
     srcs = ["//:signer_cosign_source_files"],
     module_bazel = "//img/private/release/module_bazel_release_prep:cleaned_cosign_module",
     overrides = ["@rules_img_internal_tools//release:signer_cosign_prebuilt"],
-    required_files = SIGNER_REQUIRED_FILES + ["cosign/BUILD.bazel"],
+    required_files = SIGNER_CLI_REQUIRED_FILES + ["cosign/BUILD.bazel"],
     strip_prefix = "modules/rules_img_signer_cosign/",
     tags = ["manual"],
 )
@@ -155,7 +167,7 @@ source_bundle(
     srcs = ["//:signer_notation_source_files"],
     module_bazel = "//img/private/release/module_bazel_release_prep:cleaned_notation_module",
     overrides = ["@rules_img_internal_tools//release:signer_notation_prebuilt"],
-    required_files = SIGNER_REQUIRED_FILES + ["notation/BUILD.bazel"],
+    required_files = SIGNER_CLI_REQUIRED_FILES + ["notation/BUILD.bazel"],
     strip_prefix = "modules/rules_img_signer_notation/",
     tags = ["manual"],
 )
@@ -164,6 +176,25 @@ pkg_tar(
     name = "signer_notation_src_tar",
     srcs = [":signer_notation_srcs"],
     out = "rules_img_signer_notation.tar.gz",
+    extension = "tar.gz",
+    mode = "0755",
+    tags = ["manual"],
+)
+
+source_bundle(
+    name = "signer_provenance_srcs",
+    srcs = ["//:signer_provenance_source_files"],
+    module_bazel = "//img/private/release/module_bazel_release_prep:cleaned_provenance_module",
+    overrides = ["@rules_img_internal_tools//release:signer_provenance_prebuilt"],
+    required_files = SIGNER_REQUIRED_FILES + ["slsa-definitions.md"],
+    strip_prefix = "modules/rules_img_signer_provenance/",
+    tags = ["manual"],
+)
+
+pkg_tar(
+    name = "signer_provenance_src_tar",
+    srcs = [":signer_provenance_srcs"],
+    out = "rules_img_signer_provenance.tar.gz",
     extension = "tar.gz",
     mode = "0755",
     tags = ["manual"],
@@ -187,6 +218,15 @@ versioned_filename_info(
     version = ":signer_notation_version",
 )
 
+versioned_filename_info(
+    name = "versioned_signer_provenance_tar",
+    src = ":signer_provenance_src_tar",
+    extension = "tar.gz",
+    module_name = "rules_img_signer_provenance",
+    tags = ["manual"],
+    version = ":signer_provenance_version",
+)
+
 offline_bcr(
     name = "bcr",
     src_tars = [
@@ -194,6 +234,7 @@ offline_bcr(
         ":versioned_tool_tar",
         ":versioned_signer_cosign_tar",
         ":versioned_signer_notation_tar",
+        ":versioned_signer_provenance_tar",
     ],
 )
 
@@ -233,6 +274,17 @@ pkg_tar(
         "@rules_img_internal_tools//release:signer_notation_prebuilt",
     ],
     out = "rules_img_signer_notation-dist.tar",
+    mode = "0755",
+    tags = ["manual"],
+)
+
+pkg_tar(
+    name = "signer_provenance_dist_tar",
+    srcs = [
+        ":versioned_signer_provenance_tar",
+        "@rules_img_internal_tools//release:signer_provenance_prebuilt",
+    ],
+    out = "rules_img_signer_provenance-dist.tar",
     mode = "0755",
     tags = ["manual"],
 )

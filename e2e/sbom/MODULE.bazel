@@ -9,6 +9,7 @@ module(name = "sbom_e2e")
 # module(version = ...) in each plugin's MODULE.bazel.
 bazel_dep(name = "rules_img_signer_cosign", version = "0.0.1")
 bazel_dep(name = "rules_img_signer_notation", version = "0.0.1")
+bazel_dep(name = "rules_img_signer_provenance", version = "0.0.1")
 
 # BEGIN BAZEL_DEP
 bazel_dep(name = "rules_img")
@@ -31,6 +32,11 @@ local_path_override(
 local_path_override(
     module_name = "rules_img_signer_notation",
     path = "../../modules/rules_img_signer_notation",
+)
+
+local_path_override(
+    module_name = "rules_img_signer_provenance",
+    path = "../../modules/rules_img_signer_provenance",
 )
 
 # Required when building rules_img_signer_cosign from source: gazelle_override is

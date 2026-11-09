@@ -44,4 +44,8 @@ modules/rules_img_signer_notation/bazel-bin
 modules/rules_img_signer_notation/bazel-out
 modules/rules_img_signer_notation/bazel-rules_img_signer_notation
 modules/rules_img_signer_notation/bazel-testlogs
+modules/rules_img_signer_provenance/bazel-bin
+modules/rules_img_signer_provenance/bazel-out
+modules/rules_img_signer_provenance/bazel-rules_img_signer_provenance
+modules/rules_img_signer_provenance/bazel-testlogs
 modules/rules_img_services

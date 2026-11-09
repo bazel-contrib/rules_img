@@ -7,7 +7,8 @@
 // resolving to the same digest), transitive-closure integrity (every referenced
 // manifest/config/layer/referrer is present), and referrer expectations. For
 // signing-capable tests it additionally confirms signature referrers on the
-// per-signer registries and verifies them with the real cosign/notation CLIs.
+// per-signer registries and verifies them with the real cosign/notation CLIs. It
+// also checks the deploy-time provenance attestations on their own registry.
 //
 // Images are named `<repository>:<tag>` in the spec — with no registry, since
 // the registry is injected at test time and supplied here via --registry.
@@ -29,6 +30,7 @@ func run(args []string) int {
 	mainReg := fs.String("registry", "", "host:port of the main registry (required).")
 	cosignReg := fs.String("cosign-registry", "", "host:port of the cosign signature registry (optional).")
 	notationReg := fs.String("notation-registry", "", "host:port of the notation signature registry (optional).")
+	provenanceReg := fs.String("provenance-registry", "", "host:port of the provenance attestation registry (optional).")
 	cosignCLI := fs.String("cosign-cli", "", "Path to the cosign binary for signature verification (optional).")
 	notationCLI := fs.String("notation-cli", "", "Path to the notation binary for signature verification (optional).")
 	cosignPubKey := fs.String("cosign-pubkey", "", "Path to the cosign public key PEM (optional).")
@@ -64,6 +66,10 @@ func run(args []string) int {
 		if s := spec.Signatures.Notation; s != nil && *notationReg != "" {
 			sc.verifyNotation(newRegistryClient(*notationReg), *notationReg, s, *notationCLI, *notationCert)
 		}
+	}
+
+	if spec.Provenance != nil && *provenanceReg != "" {
+		sc.verifyProvenance(newRegistryClient(*provenanceReg), spec.Provenance)
 	}
 
 	errs := append(ck.errs, sc.errs...)
