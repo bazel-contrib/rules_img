@@ -1,7 +1,10 @@
 package containerd
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -12,23 +15,37 @@ import (
 	"time"
 )
 
+// dockerInfoTimeout bounds the `docker system info` probe so a wedged daemon
+// cannot stall a load indefinitely.
+const dockerInfoTimeout = 10 * time.Second
+
 // DockerInfo represents the subset of docker system info we care about
 type dockerInfo struct {
 	DriverStatus [][]string `json:"DriverStatus"`
 }
 
-// checkDockerUsesContainerd checks if Docker is installed and using containerd storage backend
-func checkDockerUsesContainerd() error {
+// DockerUsesContainerd reports whether Docker is installed and reads its images
+// from containerd, returning an error describing why not otherwise. The answer
+// describes whichever daemon the docker CLI resolves to, which is not
+// necessarily the one on this machine.
+func DockerUsesContainerd(ctx context.Context) error {
 	// First, check if docker command exists
 	dockerPath, err := exec.LookPath("docker")
 	if err != nil {
 		return fmt.Errorf("docker command not found in PATH")
 	}
 
+	ctx, cancel := context.WithTimeout(ctx, dockerInfoTimeout)
+	defer cancel()
+
 	// Run docker system info to check storage driver
-	cmd := exec.Command(dockerPath, "system", "info", "-f", "json")
+	cmd := exec.CommandContext(ctx, dockerPath, "system", "info", "-f", "json")
 	output, err := cmd.Output()
 	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && len(exitErr.Stderr) > 0 {
+			return fmt.Errorf("failed to run docker system info: %v: %s", err, bytes.TrimSpace(exitErr.Stderr))
+		}
 		return fmt.Errorf("failed to run docker system info: %v", err)
 	}
 
@@ -126,17 +143,4 @@ func FindContainerdSocket() (string, error) {
 		return "", fmt.Errorf("no containerd sockets found to check")
 	}
 	return "", fmt.Errorf("no accessible containerd socket found:\n  %s", strings.Join(reasons, "\n  "))
-}
-
-// DockerSupportsContainerd checks if Docker supports the containerd storage backend
-// and if the containerd socket is accessible.
-// Returns (socket path, nil) if supported, or ("", error) if not.
-func DockerSupportsContainerd() (string, error) {
-	// First check if Docker uses containerd
-	if err := checkDockerUsesContainerd(); err != nil {
-		return "", err
-	}
-
-	// Then find and test the containerd socket
-	return FindContainerdSocket()
 }
