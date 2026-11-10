@@ -31,7 +31,7 @@ genrule(
     srcs = [":fat32_layer"],
     outs = ["fat32_layer_ok"],
     cmd = """
-layer="$(location :fat32_layer)"
+layer="$(execpath :fat32_layer)"
 case "$$layer" in *.fat32) ;; *) echo "expected a .fat32 layer, got $$layer" >&2; exit 1;; esac
 # The file system type is at offset 82 of the boot sector, the signature at 510.
 [ "$$(dd if="$$layer" bs=1 skip=82 count=8 2>/dev/null)" = "FAT32   " ] || { echo "not a FAT32 image" >&2; exit 1; }
@@ -151,7 +151,7 @@ genrule(
     srcs = [":configured_layer"],
     outs = ["configured_layer_ok"],
     cmd = """
-layer="$(location :configured_layer)"
+layer="$(execpath :configured_layer)"
 # Bytes per sector (little endian) at offset 11 of the boot sector.
 [ "$$(od -An -tx1 -j11 -N2 "$$layer" | tr -d ' \\n')" = "0010" ] || { echo "not a 4096 byte sector file system" >&2; exit 1; }
 touch $@

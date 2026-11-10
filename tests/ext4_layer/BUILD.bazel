@@ -34,7 +34,7 @@ genrule(
     srcs = [":ext4_layer"],
     outs = ["ext4_layer_ok"],
     cmd = """
-layer="$(location :ext4_layer)"
+layer="$(execpath :ext4_layer)"
 case "$$layer" in *.ext4) ;; *) echo "expected a .ext4 layer, got $$layer" >&2; exit 1;; esac
 # The ext4 magic number 0xEF53 is at offset 0x38 of the superblock, which starts at 1024.
 magic="$$(od -An -tx1 -j1080 -N2 "$$layer" | tr -d ' \\n')"
@@ -183,7 +183,7 @@ genrule(
     srcs = [":configured_layer"],
     outs = ["configured_layer_ok"],
     cmd = """
-layer="$(location :configured_layer)"
+layer="$(execpath :configured_layer)"
 size="$$(wc -c < "$$layer" | tr -d ' ')"
 [ "$$size" = "4194304" ] || { echo "image is $$size bytes, want 4194304 (min_size = \\"4MiB\\")" >&2; exit 1; }
 # s_log_block_size (0 = 1024 bytes) at offset 0x18 of the superblock, which starts at 1024.

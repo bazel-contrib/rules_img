@@ -219,7 +219,7 @@ filegroup(
 genrule(
     name = "disk_four_written",
     outs = ["disk_four_written.img"],
-    cmd = "$(location :disk_four_dd) of=$@ bs=64K status=none",
+    cmd = "$(execpath :disk_four_dd) of=$@ bs=64K status=none",
     tools = [":disk_four_dd"],
 )
 
@@ -257,8 +257,8 @@ genrule(
     outs = ["disk_erofs_reconstructed.img"],
     cmd = """
 dirs=""
-for d in $(locations :disk_erofs_cas); do dirs="$$dirs --cas-dir $$d"; done
-$(location @rules_img_tool//cmd/img) extent-stream reconstruct --extent-stream $(location :disk_erofs_xstream) $$dirs --output $@
+for d in $(execpaths :disk_erofs_cas); do dirs="$$dirs --cas-dir $$d"; done
+$(execpath @rules_img_tool//cmd/img) extent-stream reconstruct --extent-stream $(execpath :disk_erofs_xstream) $$dirs --output $@
 """,
     tools = ["@rules_img_tool//cmd/img"],
 )
@@ -276,7 +276,7 @@ genrule(
     srcs = [":disk_erofs_xstream"],
     outs = ["extent_stream_is_small"],
     cmd = """
-size=$$(wc -c < $(location :disk_erofs_xstream))
+size=$$(wc -c < $(execpath :disk_erofs_xstream))
 [ "$$size" -lt 4096 ] || { echo "the extent stream is $$size bytes" >&2; exit 1; }
 touch $@
 """,
@@ -342,7 +342,7 @@ image_dd(
 genrule(
     name = "disk_erofs_written",
     outs = ["disk_erofs_written.img"],
-    cmd = "$(location :disk_erofs_dd) of=$@ bs=64K status=none",
+    cmd = "$(execpath :disk_erofs_dd) of=$@ bs=64K status=none",
     tools = [":disk_erofs_dd"],
 )
 
@@ -373,7 +373,7 @@ image_dd(
 genrule(
     name = "disk_erofs_compact_written",
     outs = ["disk_erofs_compact_written.img"],
-    cmd = "$(location :disk_erofs_dd_compact) of=$@ bs=64K status=none",
+    cmd = "$(execpath :disk_erofs_dd_compact) of=$@ bs=64K status=none",
     tools = [":disk_erofs_dd_compact"],
 )
 
@@ -386,7 +386,7 @@ diff_test(
 genrule(
     name = "root_ext4_written",
     outs = ["root_ext4_written.ext4"],
-    cmd = "$(location :root_ext4_dd) of=$@ status=none",
+    cmd = "$(execpath :root_ext4_dd) of=$@ status=none",
     tools = [":root_ext4_dd"],
 )
 
@@ -399,7 +399,7 @@ diff_test(
 genrule(
     name = "root_erofs_written",
     outs = ["root_erofs_written.erofs"],
-    cmd = "$(location :root_erofs_dd) of=$@ status=none",
+    cmd = "$(execpath :root_erofs_dd) of=$@ status=none",
     tools = [":root_erofs_dd"],
 )
 
@@ -413,7 +413,7 @@ diff_test(
 genrule(
     name = "disk_gpt_written",
     outs = ["disk_gpt_written.img"],
-    cmd = "$(location :disk_gpt_dd) of=$@ status=none",
+    cmd = "$(execpath :disk_gpt_dd) of=$@ status=none",
     tools = [":disk_gpt_dd"],
 )
 
@@ -429,8 +429,8 @@ genrule(
     srcs = [":disk_erofs_lazy_image"],
     outs = ["dd_stdout_skip_count_ok"],
     cmd = """
-disk="$(location :disk_erofs_lazy_image)"
-dd="$(location :disk_erofs_dd)"
+disk="$(execpath :disk_erofs_lazy_image)"
+dd="$(execpath :disk_erofs_dd)"
 work="$(RULEDIR)/dd_stdout_skip_count.tmp"
 mkdir -p "$$work"
 trap 'rm -rf "$$work"' EXIT
@@ -460,7 +460,7 @@ work="$(RULEDIR)/dd_lazy_needs_a_cache.tmp"
 mkdir -p "$$work"
 trap 'rm -rf "$$work"' EXIT
 unset IMG_REAPI_ENDPOINT IMG_DISK_CACHE IMG_CAS_CACHE_DIR
-for target in $(location :disk_erofs_dd_lazy) $(location :root_erofs_dd_lazy) $(location :disk_gpt_dd_lazy) $(location :root_ext4_dd_lazy); do
+for target in $(execpath :disk_erofs_dd_lazy) $(execpath :root_erofs_dd_lazy) $(execpath :disk_gpt_dd_lazy) $(execpath :root_ext4_dd_lazy); do
     if $$target of=/dev/null status=none 2>"$$work/err"; then
         echo "the lazy target $$target worked without a cache" >&2
         exit 1
@@ -487,9 +487,9 @@ genrule(
     ],
     outs = ["disks_ok"],
     cmd = """
-gpt="$(location :disk_gpt)"
-larger="$(location :disk_gpt_larger)"
-mbr="$(location :disk_mbr)"
+gpt="$(execpath :disk_gpt)"
+larger="$(execpath :disk_gpt_larger)"
+mbr="$(execpath :disk_mbr)"
 sig() { dd if="$$1" bs=1 skip="$$2" count="$$3" 2>/dev/null; }
 hex() { od -An -tx1 -j"$$2" -N"$$3" "$$1" | tr -d ' \\n'; }
 fail() { echo "$$1" >&2; exit 1; }

@@ -25,6 +25,10 @@ buildifier_test(
     mode = "diff",
     no_sandbox = True,
     tags = ["no-remote-exec"],
+    target_compatible_with = select({
+        "@platforms//os:windows": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
     workspace = "//:MODULE.bazel",
 )
 

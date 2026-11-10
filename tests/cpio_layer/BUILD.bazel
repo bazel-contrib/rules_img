@@ -52,7 +52,7 @@ genrule(
     srcs = [":cpio_layer"],
     outs = ["cpio_layer_ok"],
     cmd = """
-layer="$(location :cpio_layer)"
+layer="$(execpath :cpio_layer)"
 case "$$layer" in *.cpio) ;; *) echo "expected a .cpio layer, got $$layer" >&2; exit 1;; esac
 [ "$$(dd if="$$layer" bs=1 count=6 2>/dev/null)" = "070701" ] || { echo "not a newc cpio archive" >&2; exit 1; }
 grep -q "TRAILER!!!" "$$layer" || { echo "no trailer" >&2; exit 1; }
@@ -71,8 +71,8 @@ genrule(
     ],
     outs = ["compressed_cpio_layers_ok"],
     cmd = """
-gz="$(location :cpio_layer_gzip)"
-zst="$(location :cpio_layer_zstd)"
+gz="$(execpath :cpio_layer_gzip)"
+zst="$(execpath :cpio_layer_zstd)"
 case "$$gz" in *.cpio.gz) ;; *) echo "expected .cpio.gz, got $$gz" >&2; exit 1;; esac
 case "$$zst" in *.cpio.zst) ;; *) echo "expected .cpio.zst, got $$zst" >&2; exit 1;; esac
 gzip -dc "$$gz" | grep -q "hello from an initramfs" || { echo "gzip layer: content not found" >&2; exit 1; }
@@ -242,8 +242,8 @@ genrule(
     ],
     outs = ["deduplication_ok"],
     cmd = """
-dedup="$(location :dedup_layer)"
-nodedup="$(location :no_dedup_layer)"
+dedup="$(execpath :dedup_layer)"
+nodedup="$(execpath :no_dedup_layer)"
 [ "$$(grep -c "server.port=8080" "$$dedup")" = "1" ] || { echo "deduplicated layer must store the content once" >&2; exit 1; }
 [ "$$(grep -c "server.port=8080" "$$nodedup")" = "2" ] || { echo "layer without deduplication must store the content twice" >&2; exit 1; }
 touch $@
