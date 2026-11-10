@@ -38,12 +38,4 @@ common --enable_platform_specific_config
 common:macos --experimental_output_paths=strip
 common:linux --experimental_output_paths=strip
 
-# Workaround for rules_python no longer being autoloaded by Bazel 9:
-#  https://github.com/bazelbuild/bazel/pull/27593
-#
-#
-# Remove rules_python once googleapis loads rules_python explicitly in their BUILD files:
-#  https://github.com/googleapis/googleapis/blob/c9578f6385fe0fb9067c5dba8d7cdda39efac0ff/google/devtools/build/v1/BUILD.bazel#L168-L176
-common --incompatible_autoload_externally=+@rules_python
-
 try-import %workspace%/.bazelrc.user

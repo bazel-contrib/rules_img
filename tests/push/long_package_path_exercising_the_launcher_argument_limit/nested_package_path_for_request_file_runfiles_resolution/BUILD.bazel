@@ -29,7 +29,7 @@ image_push(
 genrule(
     name = "local_push",
     outs = ["image.tar"],
-    cmd = "$(location :push_with_a_long_target_name_to_ensure_the_generated_deployment_request_runfile_path_exceeds_the_launchers_fixed_size_argument_buffer) --sink oci-tar:$@",
+    cmd = "$(execpath :push_with_a_long_target_name_to_ensure_the_generated_deployment_request_runfile_path_exceeds_the_launchers_fixed_size_argument_buffer) --sink oci-tar:$@",
     target_compatible_with = select({
         "@platforms//os:windows": ["@platforms//:incompatible"],
         "//conditions:default": [],

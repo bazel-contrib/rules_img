@@ -31,7 +31,7 @@ genrule(
     srcs = [":iso9660_layer"],
     outs = ["iso9660_layer_ok"],
     cmd = """
-layer="$(location :iso9660_layer)"
+layer="$(execpath :iso9660_layer)"
 case "$$layer" in *.iso) ;; *) echo "expected a .iso layer, got $$layer" >&2; exit 1;; esac
 # The primary volume descriptor is in block 16: type 1, then the standard identifier.
 [ "$$(dd if="$$layer" bs=1 skip=32768 count=1 2>/dev/null | od -An -tu1 | tr -d ' \\n')" = "1" ] || { echo "block 16 is not a primary volume descriptor" >&2; exit 1; }
@@ -156,7 +156,7 @@ genrule(
     srcs = [":configured_layer"],
     outs = ["configured_layer_ok"],
     cmd = """
-layer="$(location :configured_layer)"
+layer="$(execpath :configured_layer)"
 grep -q "CONFIGURED" "$$layer" || { echo "the volume identifier is missing" >&2; exit 1; }
 # The Joliet supplementary volume descriptor carries the UCS-2 escape sequence.
 grep -q "%/E" "$$layer" || { echo "the image carries no Joliet hierarchy" >&2; exit 1; }
@@ -194,7 +194,7 @@ genrule(
     srcs = [":plain_layer"],
     outs = ["plain_layer_ok"],
     cmd = """
-layer="$(location :plain_layer)"
+layer="$(execpath :plain_layer)"
 grep -q "IEEE_P1282" "$$layer" && { echo "the image announces Rock Ridge" >&2; exit 1; }
 grep -q "MIXEDCASE.TXT" "$$layer" || { echo "the mangled identifier is missing" >&2; exit 1; }
 touch $@
@@ -263,7 +263,7 @@ genrule(
     srcs = [":bootable_layer"],
     outs = ["bootable_layer_ok"],
     cmd = """
-layer="$(location :bootable_layer)"
+layer="$(execpath :bootable_layer)"
 grep -q "EL TORITO SPECIFICATION" "$$layer" || { echo "the image has no El Torito boot record" >&2; exit 1; }
 # The section header of the second entry names it.
 grep -q "EFI" "$$layer" || { echo "the UEFI section header is missing" >&2; exit 1; }
