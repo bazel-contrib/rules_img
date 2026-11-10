@@ -93,6 +93,7 @@ Commands:
   deploy                   pushes an image to a registry or loads it into a local container runtime
   deploy-metadata          calculates metadata for deploying an image (push/load)
   deploy-merge             merges multiple deploy manifests into a single deployment
+  build-info               writes the Bazel targets a deploy was built from, for signer plugins
   push                     pushes image blobs/manifests at build time (subcommands: blob, manifest)`
 
 func Run(ctx context.Context, args []string) {
@@ -163,6 +164,8 @@ func Run(ctx context.Context, args []string) {
 		deploymetadata.DeployMetadataProcess(ctx, args[2:])
 	case "deploy-merge":
 		deploymetadata.DeployMergeProcess(ctx, args[2:])
+	case "build-info":
+		deploymetadata.BuildInfoProcess(ctx, args[2:])
 	case "compress":
 		compress.CompressProcess(ctx, args[2:])
 	case "docker-save":

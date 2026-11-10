@@ -131,6 +131,7 @@ bzl_library(
     visibility = ["//img:__subpackages__"],
     deps = [
         ":blob_validation",
+        ":build_info",
         ":push_metadata",
         ":root_symlinks",
         ":sign_settings",
@@ -384,6 +385,7 @@ bzl_library(
     visibility = ["//img:__subpackages__"],
     deps = [
         ":blob_validation",
+        ":build_info",
         ":root_symlinks",
         ":sign_settings",
         "//img/private/common:build",
@@ -488,6 +490,21 @@ bzl_library(
     srcs = ["signing_config.bzl"],
     visibility = ["//img:__subpackages__"],
     deps = ["//img/private/providers:signing_config_info"],
+)
+
+bzl_library(
+    name = "build_info",
+    srcs = ["build_info.bzl"],
+    visibility = ["//img:__subpackages__"],
+    deps = [
+        ":sign_settings",
+        "//img/private/common:build",
+        "//img/private/providers:index_info",
+        "//img/private/providers:layers_info",
+        "//img/private/providers:manifest_info",
+        "//img/private/providers:pull_info",
+        "//img/private/providers:single_layer_info",
+    ],
 )
 
 bzl_library(

@@ -203,6 +203,25 @@ type provenanceSigner struct {
 	pinnedInvocation bool
 	explicitStarted  bool
 	warnNoRequest    sync.Once
+	// infoMu guards info, the last build info file read: every call of a deploy
+	// names the same file.
+	infoMu   sync.Mutex
+	infoPath string
+	info     *bazelInfoFile
+}
+
+func (s *provenanceSigner) readBazelInfo(path string) (*bazelInfoFile, error) {
+	s.infoMu.Lock()
+	defer s.infoMu.Unlock()
+	if s.info != nil && s.infoPath == path {
+		return s.info, nil
+	}
+	info, err := readBazelInfo(path)
+	if err != nil {
+		return nil, err
+	}
+	s.infoPath, s.info = path, info
+	return info, nil
 }
 
 var (
@@ -234,6 +253,7 @@ func newSigner(args []string) (signerapi.OCIArtifactSigner, error) {
 	reproducible := fs.Bool("reproducible", false, "claim that the same inputs produce the same image (buildkit: buildkit_reproducible; bazel: internalParameters.reproducible).")
 	recordTimestamps := fs.Bool("record-timestamps", false, "record startedOn/finishedOn. Off by default so output is reproducible; honors $SOURCE_DATE_EPOCH, which implies recording.")
 	startedOn := fs.String("started-on", "", "RFC 3339 time to record as startedOn (implies recording timestamps; defaults to finishedOn).")
+	bazelInfo := fs.String("bazel-info", bazelInfoAll, "all, bases or none: which Bazel targets the deploy was built from to record as resolved dependencies, when the signing_config sets build_info (protocol 2): all records the pulled base images, the images and the layers below the deployed image; bases only the pulled base images; none none of them. The label of the deploy rule is recorded as a target either way. bazel definitions only.")
 	var materials, parameters, subjectNames, targets stringSliceFlag
 	fs.Var(&targets, "target", "Bazel label of what was built and deployed (repeatable), recorded as externalParameters.targets. bazel definitions only.")
 	fs.Var(&materials, "material", "input of the build as URI or URI@algo:hex (repeatable), recorded in resolvedDependencies. Use a pkg:docker/... URI for base images.")
@@ -249,10 +269,15 @@ func newSigner(args []string) (signerapi.OCIArtifactSigner, error) {
 	fs.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
 	switch *definitions {
 	case definitionsBuildKit:
-		if len(targets) > 0 || explicit["source-ref"] {
-			return nil, fmt.Errorf("--target and --source-ref are part of the bazel definitions only (use --definitions=bazel)")
+		if len(targets) > 0 || explicit["source-ref"] || explicit["bazel-info"] {
+			return nil, fmt.Errorf("--target, --source-ref and --bazel-info are part of the bazel definitions only (use --definitions=bazel)")
 		}
 	case definitionsBazel:
+		switch *bazelInfo {
+		case bazelInfoAll, bazelInfoBases, bazelInfoNone:
+		default:
+			return nil, fmt.Errorf("unknown --bazel-info %q (want %s, %s or %s)", *bazelInfo, bazelInfoAll, bazelInfoBases, bazelInfoNone)
+		}
 		for _, name := range []string{"frontend", "mode", "github-event-payload"} {
 			if explicit[name] {
 				return nil, fmt.Errorf("--%s is part of the buildkit definitions only (--definitions=buildkit)", name)
@@ -426,6 +451,7 @@ func newSigner(args []string) (signerapi.OCIArtifactSigner, error) {
 			ci:              bazelCI(ghCtx),
 			reproducible:    reproducibleClaim,
 			builderPlatform: platform,
+			bazelInfo:       *bazelInfo,
 			custom:          info.InternalParameters,
 		}
 		return signer, nil
@@ -520,6 +546,8 @@ type subjectFacts struct {
 	pushStrategy    string
 	invocationID    string
 	startedOn       string
+	// buildInfo is the build info file of the deploy, if there is one.
+	buildInfo string
 }
 
 func (s *provenanceSigner) factsFor(subject v1.Descriptor, req *signerapi.Request) subjectFacts {
@@ -536,6 +564,7 @@ func (s *provenanceSigner) factsFor(subject v1.Descriptor, req *signerapi.Reques
 	}
 	f.rulesImgVersion = req.Deploy.RulesImgVersion
 	f.pushStrategy = req.Deploy.PushStrategy
+	f.buildInfo = req.Deploy.BuildInfoFile
 	// Every call of one deploy shares these, like the platforms of one BuildKit
 	// build share an invocation. Explicit values still win.
 	if id := req.Deploy.InvocationID; id != "" && !s.pinnedInvocation {
@@ -575,14 +604,23 @@ func (s *provenanceSigner) sign(subject v1.Descriptor, req *signerapi.Request) (
 	names := f.names
 	var pred any
 	if s.bazel != nil {
-		pred = s.bazel.render(bazelSubject{
+		subj := bazelSubject{
 			targetPlatform:  f.targetPlatform,
 			rulesImgVersion: f.rulesImgVersion,
 			pushStrategy:    f.pushStrategy,
 			invocationID:    f.invocationID,
 			startedOn:       f.startedOn,
 			finishedOn:      s.finishedOn,
-		})
+		}
+		if f.buildInfo != "" {
+			info, err := s.readBazelInfo(f.buildInfo)
+			if err != nil {
+				return nil, fmt.Errorf("reading the build info of the deploy: %w", err)
+			}
+			subj.deployTarget = info.Deploy.Label
+			subj.dependencies = info.dependenciesOf(subject.Digest.String(), s.bazel.bazelInfo)
+		}
+		pred = s.bazel.render(subj)
 	} else {
 		pred = s.renderBuildKit(f)
 	}

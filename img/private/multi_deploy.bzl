@@ -3,6 +3,7 @@
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("@hermetic_launcher//launcher:lib.bzl", "launcher")
 load("//img/private:blob_validation.bzl", "add_blob_validation_outputs", "blob_validation_outputs", "blobs_from_cas")
+load("//img/private:build_info.bzl", "add_build_info_symlink", "build_info_file", "img_build_info_aspect", "wants_build_info")
 load("//img/private:root_symlinks.bzl", "calculate_root_symlinks", "symlink_name_prefix")
 load("//img/private:sign_settings.bzl", "add_sign_setting_symlinks")
 load("//img/private/common:build.bzl", "TOOLCHAIN", "TOOLCHAINS")
@@ -214,6 +215,8 @@ def _multi_deploy_impl(ctx):
         if hasattr(deploy_info, "sign_settings"):
             sign_config_infos.extend(deploy_info.sign_settings)
     plugin_runfiles = add_sign_setting_symlinks(root_symlinks, sign_config_infos)
+    if wants_build_info(sign_config_infos):
+        add_build_info_symlink(root_symlinks, build_info_file(ctx, deps = ctx.attr.operations))
 
     # Merge environment settings from push and load
     environment = {}
@@ -365,6 +368,7 @@ All operations will be merged and executed in the order specified.
 A MultipleDeployInfo with no `infos` is allowed and results in a no-op instead of an error.
 """,
             mandatory = True,
+            aspects = [img_build_info_aspect],
             # OR-semantics: accepts image targets without DeployInfo so that
             # _multi_deploy_impl can provide actionable error messages guiding
             # users to add push_specs/load_specs or wrap with image_push.

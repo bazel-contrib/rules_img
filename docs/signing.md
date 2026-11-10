@@ -74,7 +74,7 @@ A `signing_chain` can list other chains. The same `signing_config` cannot appear
 <pre>
 load("@rules_img//img:signing.bzl", "signing_config")
 
-signing_config(<a href="#signing_config-name">name</a>, <a href="#signing_config-args">args</a>, <a href="#signing_config-env">env</a>, <a href="#signing_config-protocol">protocol</a>, <a href="#signing_config-targets">targets</a>, <a href="#signing_config-tool">tool</a>, <a href="#signing_config-tool_command">tool_command</a>)
+signing_config(<a href="#signing_config-name">name</a>, <a href="#signing_config-args">args</a>, <a href="#signing_config-build_info">build_info</a>, <a href="#signing_config-env">env</a>, <a href="#signing_config-protocol">protocol</a>, <a href="#signing_config-targets">targets</a>, <a href="#signing_config-tool">tool</a>, <a href="#signing_config-tool_command">tool_command</a>)
 </pre>
 
 Describes how `img deploy` signs images by invoking a signer plugin.
@@ -130,6 +130,7 @@ Signing is enabled with the `sign` attribute or the `//img/settings:sign` flag.
 | :------------- | :------------- | :------------- | :------------- | :------------- |
 | <a id="signing_config-name"></a>name |  A unique name for this target.   | <a href="https://bazel.build/concepts/labels#target-names">Name</a> | required |  |
 | <a id="signing_config-args"></a>args |  Arguments passed to the plugin after the `sign-oci-artifact` subcommand.   | List of strings | optional |  `[]`  |
+| <a id="signing_config-build_info"></a>build_info |  Give the plugin the Bazel targets the deploy was built from: the label and configuration of the deploy rule, of every image, image index and layer target below it, and the pulled base images, each with its digest. Needs `protocol = 2`; the plugin finds the file in the request. Collecting it costs one small action per deploy target and the digests of the manifests and layer metadata files, so it is off unless the plugin makes use of it.   | Boolean | optional |  `False`  |
 | <a id="signing_config-env"></a>env |  Additional (non-secret) environment variables set for the plugin. Secrets should come from the deploy-time environment instead.   | <a href="https://bazel.build/rules/lib/core/dict">Dictionary: String -> String</a> | optional |  `{}`  |
 | <a id="signing_config-protocol"></a>protocol |  What the plugin receives on stdin: `1` (the default) is the JSON descriptor of the artifact, `2` is a JSON request that also carries the destination (registry, repository, tags, full references), the image platform, and deploy facts (`img` version, invocation id, start time). With `2`, the plugin is called once per registry, repository and digest instead of once per push operation. Set it to `2` only for a plugin that documents support for it.   | Integer | optional |  `1`  |
 | <a id="signing_config-targets"></a>targets |  Default set of descriptors to process: any of<br><br>- `"roots"` (the pushed root, the default), - `"child_manifests"` (each child of an index), - `"referrers"` (referrer artifacts such as SBOMs), and - `"plugin_artifacts"` (the manifests that plugins *earlier in a `signing_chain`* created, such as a provenance attestation).<br><br>Overridable at deploy time via `--sign_targets`.   | List of strings | optional |  `["roots"]`  |

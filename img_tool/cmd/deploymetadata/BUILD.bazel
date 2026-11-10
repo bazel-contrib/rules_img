@@ -3,6 +3,7 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "deploymetadata",
     srcs = [
+        "buildinfo.go",
         "flags.go",
         "layerhints.go",
         "merge.go",
@@ -22,6 +23,7 @@ go_library(
 go_test(
     name = "deploymetadata_test",
     srcs = [
+        "buildinfo_test.go",
         "layersources_test.go",
         "merge_test.go",
         "metadata_dedup_test.go",

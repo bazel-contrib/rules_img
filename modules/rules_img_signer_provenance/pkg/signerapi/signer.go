@@ -64,6 +64,9 @@ type Deploy struct {
 	// StartedAt is when the deploy started, RFC 3339 in UTC.
 	StartedAt    string `json:"started_at"`
 	PushStrategy string `json:"push_strategy,omitempty"`
+	// BuildInfoFile is the path of a JSON file naming the Bazel targets the deploy
+	// was built from. Present only if the signing_config sets build_info.
+	BuildInfoFile string `json:"build_info_file,omitempty"`
 }
 
 // RequestSigner is implemented by signers that use the context of a Request. A

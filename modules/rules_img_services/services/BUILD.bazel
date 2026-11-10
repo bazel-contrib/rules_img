@@ -19,28 +19,52 @@ image_push_spec(
     visibility = ["//services:__subpackages__"],
 )
 
-# Signing happens in two steps, in this order (see //services:sign):
+# Signing happens in three steps, in this order (see //services:sign):
 #
-#  1. provenance: attaches a SLSA provenance attestation to the pushed index and to
-#     each of its manifests. It is created while pushing, so that it can say when
-#     and by which workflow run the images were published without making that a
-#     build input (the images stay reproducible).
-#  2. cosign_keyless: signs the images and, because of plugin_artifacts, the
-#     provenance attestation the previous step created.
+#  1. provenance_buildkit: attaches a SLSA provenance attestation in the format of
+#     `docker buildx build --provenance` to the pushed index and to each of its
+#     manifests, for tools that understand BuildKit's. It is created while pushing,
+#     so that it can say when and by which workflow run the images were published
+#     without making that a build input (the images stay reproducible).
+#  2. provenance_bazel: attaches a second attestation, in rules_img's own Bazel
+#     definitions, which in addition names the Bazel targets, base images and layers
+#     the image was built from.
+#  3. cosign_keyless: signs the images and, because of plugin_artifacts, the two
+#     provenance attestations the previous steps created.
 
 # The builder id comes from $RULES_IMG_PROVENANCE_BUILDER_ID, which CI sets to the
 # workflow at the ref it ran for (the SLSA GitHub convention); it is empty for a
 # push from a developer machine. The commit comes from the status script, and the
 # Bazel version from the repository rule in //:bazel_version.bzl.
 signing_config(
-    name = "provenance",
+    name = "provenance_buildkit",
     args = [
+        "--definitions=buildkit",
         "--parameter=bazel_version=" + bazel_version,
         "--record-timestamps",
         "--status-command=services/workspace_status.sh",
     ],
     # The plugin takes the image names, platforms and the rules_img version from the
     # deploy instead of from the arguments above.
+    protocol = 2,
+    targets = [
+        "roots",
+        "child_manifests",
+    ],
+    tool = "@rules_img_signer_provenance",
+    visibility = ["//visibility:public"],
+)
+
+signing_config(
+    name = "provenance_bazel",
+    args = [
+        "--definitions=bazel",
+        "--parameter=bazel_version=" + bazel_version,
+        "--record-timestamps",
+        "--status-command=services/workspace_status.sh",
+    ],
+    # The Bazel targets, base images and layers come from the build info of the deploy.
+    build_info = True,
     protocol = 2,
     targets = [
         "roots",
@@ -64,7 +88,8 @@ signing_config(
 signing_chain(
     name = "sign",
     steps = [
-        ":provenance",
+        ":provenance_buildkit",
+        ":provenance_bazel",
         ":cosign_keyless",
     ],
     visibility = ["//visibility:public"],

@@ -34,6 +34,10 @@ def _signing_config_impl(ctx):
     if ctx.attr.protocol != 1:
         # Omitted for the original protocol so existing configs keep their digest.
         config["protocol"] = ctx.attr.protocol
+    if ctx.attr.build_info:
+        if ctx.attr.protocol != 2:
+            fail("signing_config: build_info requires protocol = 2")
+        config["build_info"] = True
     if ctx.attr.args:
         config["args"] = ctx.attr.args
     if ctx.attr.env:
@@ -47,6 +51,7 @@ def _signing_config_impl(ctx):
             config_file = config_file,
             runfiles = runfiles,
             targets = ctx.attr.targets,
+            build_info = ctx.attr.build_info,
         )]),
         DefaultInfo(files = depset([config_file]), runfiles = runfiles),
     ]
@@ -112,6 +117,10 @@ Signing is enabled with the `sign` attribute or the `//img/settings:sign` flag.
             doc = "What the plugin receives on stdin: `1` (the default) is the JSON descriptor of the artifact, `2` is a JSON request that also carries the destination (registry, repository, tags, full references), the image platform, and deploy facts (`img` version, invocation id, start time). With `2`, the plugin is called once per registry, repository and digest instead of once per push operation. Set it to `2` only for a plugin that documents support for it.",
             default = 1,
             values = [1, 2],
+        ),
+        "build_info": attr.bool(
+            doc = "Give the plugin the Bazel targets the deploy was built from: the label and configuration of the deploy rule, of every image, image index and layer target below it, and the pulled base images, each with its digest. Needs `protocol = 2`; the plugin finds the file in the request. Collecting it costs one small action per deploy target and the digests of the manifests and layer metadata files, so it is off unless the plugin makes use of it.",
+            default = False,
         ),
         "args": attr.string_list(
             doc = "Arguments passed to the plugin after the `sign-oci-artifact` subcommand.",

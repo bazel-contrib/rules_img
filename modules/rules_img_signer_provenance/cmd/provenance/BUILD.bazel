@@ -4,6 +4,7 @@ go_library(
     name = "provenance_lib",
     srcs = [
         "bazel.go",
+        "bazelinfo.go",
         "ghactx.go",
         "provenance.go",
         "purl.go",
@@ -30,6 +31,7 @@ go_test(
     name = "provenance_test",
     srcs = [
         "bazel_test.go",
+        "bazelinfo_test.go",
         "provenance_test.go",
     ],
     # The tests check that the document defines every field the plugin writes.

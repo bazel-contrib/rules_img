@@ -10,7 +10,8 @@ FIELDS = dict(
     steps = """list[struct]: the plugins to run, in order (empty for the 'unset' sentinel). A `signing_config` has one step, a `signing_chain` the steps of its configs. Each step has:
 - `config_file` (File): the deterministic sign_setting config JSON handed to `img deploy` (hashed to a content descriptor).
 - `runfiles` (runfiles): the plugin executable plus its runfiles (empty for host-command plugins).
-- `targets` (list[str]): sign-target selection (subset of "roots", "child_manifests", "referrers", "plugin_artifacts").""",
+- `targets` (list[str]): sign-target selection (subset of "roots", "child_manifests", "referrers", "plugin_artifacts").
+- `build_info` (bool): whether the plugin wants the build info file (the Bazel targets the deploy was built from).""",
 )
 
 SigningConfigInfo = provider(

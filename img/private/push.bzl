@@ -3,6 +3,7 @@
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("@hermetic_launcher//launcher:lib.bzl", "launcher")
 load("//img/private:blob_validation.bzl", "add_blob_validation_outputs", "blob_validation_outputs", "blobs_from_cas")
+load("//img/private:build_info.bzl", "add_build_info_symlink", "build_info_file", "img_build_info_aspect", "wants_build_info")
 load("//img/private:push_metadata.bzl", "build_time_push_actions", "compute_push_metadata")
 load("//img/private:root_symlinks.bzl", "calculate_root_symlinks", "symlink_name_prefix")
 load("//img/private:sign_settings.bzl", "add_sign_setting_symlinks")
@@ -141,6 +142,8 @@ def _image_push_impl(ctx):
     # Ship the sign_setting config files and signer plugins (if signing is active).
     sign_settings = signing.steps if signing != None else []
     plugin_runfiles = add_sign_setting_symlinks(root_symlinks, sign_settings)
+    if wants_build_info(sign_settings):
+        add_build_info_symlink(root_symlinks, build_info_file(ctx, deps = [ctx.attr.image]))
 
     # Keep the embedded request path below the launcher's 256-byte argument limit.
     request_runfile = "{}request.json".format(root_symlinks_prefix)
@@ -381,6 +384,7 @@ bazel run //path/to:push_app
         image = attr.label(
             doc = "Image to push. Should provide ImageManifestInfo or ImageIndexInfo.",
             mandatory = True,
+            aspects = [img_build_info_aspect],
         ),
         tool_cfg = attr.string(
             doc = """Configuration of the pusher executable platform.

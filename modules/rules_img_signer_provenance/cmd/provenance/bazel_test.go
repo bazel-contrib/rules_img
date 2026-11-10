@@ -394,6 +394,11 @@ func TestDocumentDefinesEveryField(t *testing.T) {
 	other := signBazel(t, docRequest(), statusArgs("--status-key", "STABLE_TEAM", "--material", "pkg:docker/alpine@3.21@sha256:aa")...)
 	flattenPaths("", predicateOf(t, other), paths)
 
+	// And one that carries the build info of the deploy.
+	withInfo := docRequest()
+	withInfo.Deploy.BuildInfoFile = buildInfoFixture(t)
+	flattenPaths("", predicateOf(t, signBazel(t, withInfo)), paths)
+
 	var missing []string
 	for path := range paths {
 		if !strings.Contains(doc, "`"+path+"`") {

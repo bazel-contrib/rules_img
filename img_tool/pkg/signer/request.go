@@ -89,7 +89,17 @@ type Deploy struct {
 	StartedAt string `json:"started_at"`
 	// PushStrategy is the push strategy of the deploy (e.g. "eager").
 	PushStrategy string `json:"push_strategy,omitempty"`
+	// BuildInfoFile is the path of a JSON file naming the Bazel targets the deploy
+	// was built from: the deploy rule, the images and layers below it and the pulled
+	// base images, with their configurations and digests. Only present when the
+	// plugin's signing_config sets build_info. It is read-only for the plugin and
+	// stays valid while the plugin runs.
+	BuildInfoFile string `json:"build_info_file,omitempty"`
 }
+
+// BuildInfoRunfilesPath is where the Bazel rules ship the build info file in the
+// deploy binary's runfiles (see BUILD_INFO_RUNFILES_PATH in build_info.bzl).
+const BuildInfoRunfilesPath = "++rules_img_private++/build_info.json"
 
 // NewDeploy captures the per-deploy facts once, to be shared by every Request
 // of the deploy.

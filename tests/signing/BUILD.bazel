@@ -62,6 +62,23 @@ image_push(
     sign_setting = ":by_command_request",
 )
 
+# Also asks for the Bazel targets the deploy was built from.
+signing_config(
+    name = "by_command_build_info",
+    build_info = True,
+    protocol = 2,
+    tool_command = "true",
+)
+
+image_push(
+    name = "push_build_info",
+    image = ":image",
+    registry = "example.com",
+    repository = "test/app",
+    sign = "enabled",
+    sign_setting = ":by_command_build_info",
+)
+
 # Two plugins in order: the second also processes what the first one created.
 signing_config(
     name = "first_plugin",
@@ -124,6 +141,7 @@ multi_deploy(
     name = "deploy_all",
     operations = [
         ":push_best_effort",
+        ":push_build_info",
         ":push_chain",
         ":push_enabled",
         ":push_request_protocol",

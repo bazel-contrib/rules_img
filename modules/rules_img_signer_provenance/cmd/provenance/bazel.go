@@ -84,6 +84,7 @@ type bazelBase struct {
 	ci              map[string]any
 	reproducible    bool
 	builderPlatform string
+	bazelInfo       string // --bazel-info
 	custom          map[string]any
 }
 
@@ -95,6 +96,9 @@ type bazelSubject struct {
 	invocationID    string
 	startedOn       string
 	finishedOn      string
+	// deployTarget and dependencies come from the build info of the deploy, if any.
+	deployTarget string
+	dependencies []bazelResource
 }
 
 // reservedBazelInternal are the internalParameters keys the definitions own;
@@ -125,8 +129,12 @@ func (b *bazelBase) render(s bazelSubject) bazelPredicate {
 		internal["ci"] = b.ci
 	}
 
+	targets := b.targets
+	if s.deployTarget != "" {
+		targets = dedupe(append(append([]string(nil), targets...), s.deployTarget))
+	}
 	external := bazelExternalParameters{
-		Targets:         b.targets,
+		Targets:         targets,
 		Parameters:      b.parameters,
 		WorkspaceStatus: b.workspaceStatus,
 	}
@@ -148,6 +156,7 @@ func (b *bazelBase) render(s bazelSubject) bazelPredicate {
 	for _, m := range b.materials {
 		deps = append(deps, bazelResource{Name: m.Name, URI: m.URI, Digest: m.Digest})
 	}
+	deps = append(deps, s.dependencies...)
 
 	var version map[string]string
 	if s.rulesImgVersion != "" {

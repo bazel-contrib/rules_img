@@ -425,6 +425,7 @@ func forEachSignature(ctx context.Context, pushOps []api.IndexedPushDeployOperat
 			if err != nil {
 				return signer.Deploy{}, err
 			}
+			d.BuildInfoFile = buildInfoFile(rfHandle)
 			deploy = &d
 		}
 		return *deploy, nil
@@ -717,4 +718,20 @@ func splitCommaList(s string) []string {
 		}
 	}
 	return out
+}
+
+// buildInfoFile returns the path of the build info file shipped in the runfiles,
+// or "" when the deploy was not built with one.
+func buildInfoFile(rf *runfiles.Runfiles) string {
+	if rf == nil {
+		return ""
+	}
+	path, err := rf.Rlocation(signer.BuildInfoRunfilesPath)
+	if err != nil {
+		return ""
+	}
+	if _, err := os.Stat(path); err != nil {
+		return ""
+	}
+	return path
 }

@@ -12,6 +12,10 @@ load("@sha256.bzl", "sha256")
 # per-target image area so the deploy tool can always find it at one location.
 SIGN_SETTINGS_PREFIX = "++rules_img_private++/sign_settings/"
 
+# Where the build info file (see build_info.bzl) is shipped, for signer plugins
+# that ask for it. A deploy binary has at most one.
+BUILD_INFO_RUNFILES_PATH = "++rules_img_private++/build_info.json"
+
 def add_sign_setting_symlinks(root_symlinks, sign_config_infos):
     """Add fixed-area root symlinks for sign_setting config files.
 

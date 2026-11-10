@@ -101,8 +101,12 @@ is in [`resolvedDependencies`](#builddefinitionresolveddependencies).
 #### `buildDefinition.externalParameters.targets`
 
 The Bazel labels of what was built and deployed, in the order given and without
-duplicates. Set by `--target` and `targets` of `--build-info`; the plugin cannot
-see the Bazel invocation, so these are what the caller says.
+duplicates. Set by `--target` and `targets` of `--build-info`, which are what the
+caller says: the plugin cannot see the Bazel invocation. When the
+[build info](#bazel-target-info) of the deploy is available, the label of the
+deploy rule (the `image_push` or `multi_deploy` that was run) is added last. That
+one is recorded by the rule itself, and a verifier can trust it as far as it
+trusts the rules.
 
 #### `buildDefinition.externalParameters.parameters`
 
@@ -220,6 +224,48 @@ The inputs the producer resolved. In this order:
   }
 ]
 ```
+
+#### Bazel target info
+
+When the `signing_config` of the plugin sets `build_info = True` (which needs
+`protocol = 2`), `img deploy` hands the plugin a file naming the Bazel targets the
+deploy was built from. An aspect collects them below the `image_push` or
+`multi_deploy` rule, so the cost is limited to deploys that ask for it, and
+the file holds labels and digests only (no file contents). The plugin records, for
+the subject it signs:
+
+3. The pulled images the subject is based on, followed down base images of base
+   images:
+   * `buildDefinition.resolvedDependencies[].name` is the label of the target that
+     pulled the image.
+   * `buildDefinition.resolvedDependencies[].uri` is the
+     [package URL](https://github.com/package-url/purl-spec) of the image, such as
+     `pkg:docker/gcr.io/distroless/cc@latest`, and
+     `buildDefinition.resolvedDependencies[].digest.sha256` is its digest.
+   * `buildDefinition.resolvedDependencies[].annotations.kind` is `base-image`.
+   * `buildDefinition.resolvedDependencies[].annotations.registry`,
+     `buildDefinition.resolvedDependencies[].annotations.repository` and
+     `buildDefinition.resolvedDependencies[].annotations.tag` are where it was pulled
+     from (the first of its registries) and the tag, if it has one.
+4. Unless `--bazel-info=bases`, the `image_manifest` and `image_index` targets the
+   subject consists of (for an index, its images) and their layer targets, the layers in the order the image stacks them (bottom first). Their
+   `name` is the label, their `digest.sha256` the digest of the manifest, index, or
+   layer blob, and `buildDefinition.resolvedDependencies[].annotations.kind` is
+   `image`, `index`, or `layer`.
+   `buildDefinition.resolvedDependencies[].annotations.platform` is the platform
+   of an `image` (normalized like `targetPlatform`); an `index` and a `layer` have none.
+   `buildDefinition.resolvedDependencies[].annotations.configuration` is the
+   configuration the target was built in: the name of its output directory, such as
+   `k8-fastbuild`. The same target built in two configurations is listed twice.
+
+`--bazel-info=none` records none of these, but still adds the deploy rule to
+`externalParameters.targets`. An image index and each of its
+children list their own closure.
+
+The Bazel command line is not recorded: `bazel run` replaces the Bazel client with
+the deploy binary, which therefore never sees the arguments. What identifies the
+invocation is its ID (see `runDetails.metadata.invocationId`), and the flags that
+matter can be named with `--parameter`.
 
 ### `runDetails.builder`
 
