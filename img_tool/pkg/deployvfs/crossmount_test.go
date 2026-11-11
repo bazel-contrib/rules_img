@@ -69,6 +69,117 @@ func TestVFSLayerAppliesCrossMountHint(t *testing.T) {
 	}
 }
 
+// TestVFSLayerCrossMountHintRegistryForms verifies the mount reference for every
+// way a push destination's registry can be spelled. A registry with a path after
+// the host is a valid destination, because pushes join registry and repository
+// before parsing them, so a hint that carries one must resolve too: the path
+// belongs in front of the repository, and the registry is the host alone, which
+// is what a mount is matched against.
+func TestVFSLayerCrossMountHintRegistryForms(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		hint           api.CrossMountSource
+		wantRegistry   string
+		wantRepository string
+	}{
+		{
+			name:           "host",
+			hint:           api.CrossMountSource{Registry: "reg.example.com", Repository: "team/app"},
+			wantRegistry:   "reg.example.com",
+			wantRepository: "team/app",
+		},
+		{
+			name:           "host and port",
+			hint:           api.CrossMountSource{Registry: "localhost:5000", Repository: "app"},
+			wantRegistry:   "localhost:5000",
+			wantRepository: "app",
+		},
+		{
+			name:           "host without a dot",
+			hint:           api.CrossMountSource{Registry: "registry", Repository: "app"},
+			wantRegistry:   "registry",
+			wantRepository: "app",
+		},
+		{
+			name:           "host and path",
+			hint:           api.CrossMountSource{Registry: "reg.example.com/project/images", Repository: "app"},
+			wantRegistry:   "reg.example.com",
+			wantRepository: "project/images/app",
+		},
+		{
+			name:           "host, port and path",
+			hint:           api.CrossMountSource{Registry: "localhost:5000/project", Repository: "team/app"},
+			wantRegistry:   "localhost:5000",
+			wantRepository: "project/team/app",
+		},
+		{
+			name:           "trailing slash",
+			hint:           api.CrossMountSource{Registry: "reg.example.com/project/", Repository: "app"},
+			wantRegistry:   "reg.example.com",
+			wantRepository: "project/app",
+		},
+		{
+			name:           "no registry",
+			hint:           api.CrossMountSource{Repository: "team/app"},
+			wantRegistry:   "",
+			wantRepository: "team/app",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			desc := crossMountLayerDesc()
+			vfs := &VFS{
+				blobs: map[string]blobEntry{
+					desc.Digest: {Descriptor: desc, Location: "file", Opener: nopOpener},
+				},
+				crossMountHints: map[string]api.CrossMountSource{desc.Digest: tc.hint},
+				stats:           &Stats{},
+			}
+
+			layer, err := vfs.Layer(mustHash(t, desc.Digest))
+			if err != nil {
+				t.Fatalf("Layer: %v", err)
+			}
+			ml, ok := layer.(*remote.MountableLayer)
+			if !ok {
+				t.Fatalf("Layer returned %T, want *remote.MountableLayer", layer)
+			}
+			if got := ml.Reference.Context().RegistryStr(); got != tc.wantRegistry {
+				t.Errorf("mount reference registry = %q, want %q", got, tc.wantRegistry)
+			}
+			if got := ml.Reference.Context().RepositoryStr(); got != tc.wantRepository {
+				t.Errorf("mount reference repository = %q, want %q", got, tc.wantRepository)
+			}
+			if got := ml.Reference.Identifier(); got != desc.Digest {
+				t.Errorf("mount reference digest = %q, want %q", got, desc.Digest)
+			}
+		})
+	}
+}
+
+// TestVFSLayerRejectsInvalidCrossMountRegistry verifies that a hint whose host
+// is not a valid registry still fails, and that the error names the registry as
+// the user wrote it.
+func TestVFSLayerRejectsInvalidCrossMountRegistry(t *testing.T) {
+	desc := crossMountLayerDesc()
+	vfs := &VFS{
+		blobs: map[string]blobEntry{
+			desc.Digest: {Descriptor: desc, Location: "file", Opener: nopOpener},
+		},
+		crossMountHints: map[string]api.CrossMountSource{
+			desc.Digest: {Registry: "not a host/project", Repository: "app"},
+		},
+		stats: &Stats{},
+	}
+
+	_, err := vfs.Layer(mustHash(t, desc.Digest))
+	if err == nil {
+		t.Fatal("Layer should fail for a hint whose registry host is invalid")
+	}
+	if !strings.Contains(err.Error(), `"not a host/project"`) {
+		t.Errorf("Layer error = %q, want it to quote the registry", err)
+	}
+}
+
 // TestBuilderMergesExtraCrossMountHints verifies WithCrossMountSource is merged
 // into the VFS via ingest (here exercised through layerBlob's stub fallback).
 func TestLayerBlobStubsWhenCrossMountRegistered(t *testing.T) {
