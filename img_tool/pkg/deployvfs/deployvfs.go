@@ -190,18 +190,37 @@ func (vfs *VFS) Layer(digest registryv1.Hash) (registryv1.Layer, error) {
 	}
 
 	if hasHint {
-		reg, err := registryname.NewRegistry(hint.Registry, registryopts.NameOptions(registryname.WithDefaultRegistry(""))...)
+		repo, err := crossMountRepository(hint)
 		if err != nil {
-			return nil, fmt.Errorf("parsing cross-mount registry %q: %w", hint.Registry, err)
+			return nil, err
 		}
 
 		return &remote.MountableLayer{
 			Layer:     layer,
-			Reference: reg.Repo(hint.Repository).Digest(digest.String()),
+			Reference: repo.Digest(digest.String()),
 		}, nil
 	}
 
 	return layer, nil
+}
+
+// crossMountRepository names the repository a cross-mount hint points at.
+//
+// A hint's registry is the registry of a push destination, spelled the way the
+// user wrote it, and that may be a host followed by a path ("host/prefix"). Every
+// push joins registry and repository before parsing them, so such a destination
+// is valid, but a registry on its own has to be a bare host. The path is the
+// leading part of the repository name, so it is moved there.
+func crossMountRepository(hint api.CrossMountSource) (registryname.Repository, error) {
+	host, prefix, _ := strings.Cut(hint.Registry, "/")
+	reg, err := registryname.NewRegistry(host, registryopts.NameOptions(registryname.WithDefaultRegistry(""))...)
+	if err != nil {
+		return registryname.Repository{}, fmt.Errorf("parsing cross-mount registry %q: %w", hint.Registry, err)
+	}
+	if prefix = strings.Trim(prefix, "/"); prefix != "" {
+		return reg.Repo(prefix, hint.Repository), nil
+	}
+	return reg.Repo(hint.Repository), nil
 }
 
 // RawLayer returns the blob for digest without any cross-mount wrapping, so
