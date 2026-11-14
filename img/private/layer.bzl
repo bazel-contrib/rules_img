@@ -43,6 +43,8 @@ def _image_layer_impl(ctx):
     for path, metadata in ctx.attr.file_metadata.items():
         path = path.removeprefix("/")  # the "/" is not included in the tar file.
         extra_args.extend(["--file-metadata", "{}={}".format(path, metadata)])
+    for path in ctx.attr.empty_dirs:
+        extra_args.extend(["--empty-dir", path])
 
     files_args = ctx.actions.args()
     files_args.set_param_file_format("multiline")
@@ -141,6 +143,7 @@ image_layer(
         "/etc/app/config": ":config",
         "/etc/app/secret": ":secret",
     },
+    empty_dirs = ["/var/lib/app"],
     default_metadata = file_metadata(
         mode = "0644",
         uid = 1000,
@@ -148,6 +151,7 @@ image_layer(
     ),
     file_metadata = {
         "/etc/app/secret": file_metadata(mode = "0600"),
+        "/var/lib/app": file_metadata(mode = "0750", uid = 1000, gid = 1000),
     },
 )
 
@@ -185,6 +189,10 @@ key that ends with "/" is always treated as a directory, even when the target pr
 output.""",
             allow_files = True,
             cfg = reset_compact_image_transition,
+        ),
+        "empty_dirs": attr.string_list(
+            doc = """Directories to create in the image without a source file. Each directory defaults to
+mode `0755`, UID 0, and GID 0. Use `file_metadata` to override these values by path.""",
         ),
         "symlinks": attr.string_dict(
             doc = """Symlinks to create in the layer. Keys are symlink paths in the image,

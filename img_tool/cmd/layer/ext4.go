@@ -73,7 +73,7 @@ func parseUUID(raw string) ([16]byte, error) {
 // ztoc) have no effect.
 func writeExt4Layer(
 	out *os.File, settings ext4Settings, addFiles addFiles, importTars importTars, addExecutables executables, addSymlinks symlinks, emptyFiles []string,
-	baseMetadataPaths []string, createParentDirectories bool, layerMetadata *LayerMetadata,
+	base baseEntries, createParentDirectories bool, layerMetadata *LayerMetadata,
 	compactStream io.Writer, compactStreamInlineThreshold uint64,
 ) (*ext4.Info, error) {
 	opts := settings.options()
@@ -92,7 +92,7 @@ func writeExt4Layer(
 	if layerMetadata != nil {
 		recorder = recorder.WithMetadata(layerMetadata)
 	}
-	if err := writeLayer(recorder, addFiles, importTars, addExecutables, addSymlinks, emptyFiles, baseMetadataPaths, createParentDirectories, layerMetadata); err != nil {
+	if err := writeLayer(recorder, addFiles, importTars, addExecutables, addSymlinks, emptyFiles, base, createParentDirectories, layerMetadata); err != nil {
 		return nil, err
 	}
 	if layerMetadata != nil {

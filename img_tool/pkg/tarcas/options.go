@@ -42,6 +42,7 @@ type options struct {
 	writeHeaderCallback       WriteHeaderCallback
 	writeHeaderCallbackFilter WriteHeaderCallbackFilter
 	createParentDirectories   bool
+	parentDirectoriesFirst    bool
 	endOfArchive              bool
 	deduplicateTreeArtifacts  bool
 	compactStreamWriter       *compactstream.Writer
@@ -50,6 +51,11 @@ type options struct {
 }
 
 type CreateParentDirectories bool
+
+// ParentDirectoriesFirst writes deferred directory headers before their children.
+type ParentDirectoriesFirst bool
+
+func (d ParentDirectoriesFirst) apply(opts *options) { opts.parentDirectoriesFirst = bool(d) }
 
 // EndOfArchive makes Close terminate the archive with the two zero-filled
 // 512-byte blocks that POSIX requires at the end of a tar archive.

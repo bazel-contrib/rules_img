@@ -149,7 +149,7 @@ func TestFat32LayerRejectsWhatFATCannotStore(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer out.Close()
-	_, err = writeFat32Layer(out, fat32Settings{}, addFiles{{PathInImage: "/f", File: file, FileType: api.RegularFile}}, nil, nil, symlinks{{LinkName: "/link", Target: "f"}}, nil, nil, false, nil, nil, 0)
+	_, err = writeFat32Layer(out, fat32Settings{}, addFiles{{PathInImage: "/f", File: file, FileType: api.RegularFile}}, nil, nil, symlinks{{LinkName: "/link", Target: "f"}}, nil, baseEntries{}, false, nil, nil, 0)
 	if err == nil {
 		t.Fatal("a symbolic link was accepted")
 	}

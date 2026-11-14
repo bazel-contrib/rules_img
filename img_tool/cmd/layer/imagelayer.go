@@ -238,7 +238,7 @@ type imageLayer struct {
 // the compact stream.
 func handleImageLayer(
 	format api.ContainerFormat, ext4Settings ext4Settings, fat32Settings fat32Settings, iso9660Settings iso9660Settings, cpioSettings cpioSettings, image *os.File, addFiles addFiles, importTars importTars, addExecutables executables, addSymlinks symlinks, emptyFiles []string,
-	baseMetadataPaths []string, createParentDirectories bool, layerMetadata *LayerMetadata,
+	base baseEntries, createParentDirectories bool, layerMetadata *LayerMetadata,
 	history, mediaType string, annotations map[string]string, metadataPath string,
 	compactStreamPath string, compactStreamInlineThreshold uint64,
 ) (err error) {
@@ -271,7 +271,7 @@ func handleImageLayer(
 			}
 			defer cleanup()
 		}
-		info, err := writeExt4Layer(image, ext4Settings, addFiles, importTars, addExecutables, addSymlinks, emptyFiles, baseMetadataPaths, createParentDirectories, layerMetadata, compactStream, compactStreamInlineThreshold)
+		info, err := writeExt4Layer(image, ext4Settings, addFiles, importTars, addExecutables, addSymlinks, emptyFiles, base, createParentDirectories, layerMetadata, compactStream, compactStreamInlineThreshold)
 		if err != nil {
 			return err
 		}
@@ -285,7 +285,7 @@ func handleImageLayer(
 			}
 			defer cleanup()
 		}
-		info, err := writeFat32Layer(image, fat32Settings, addFiles, importTars, addExecutables, addSymlinks, emptyFiles, baseMetadataPaths, createParentDirectories, layerMetadata, compactStream, compactStreamInlineThreshold)
+		info, err := writeFat32Layer(image, fat32Settings, addFiles, importTars, addExecutables, addSymlinks, emptyFiles, base, createParentDirectories, layerMetadata, compactStream, compactStreamInlineThreshold)
 		if err != nil {
 			return err
 		}
@@ -299,14 +299,14 @@ func handleImageLayer(
 			}
 			defer cleanup()
 		}
-		info, err := writeIso9660Layer(image, iso9660Settings, addFiles, importTars, addExecutables, addSymlinks, emptyFiles, baseMetadataPaths, createParentDirectories, layerMetadata, compactStream, compactStreamInlineThreshold)
+		info, err := writeIso9660Layer(image, iso9660Settings, addFiles, importTars, addExecutables, addSymlinks, emptyFiles, base, createParentDirectories, layerMetadata, compactStream, compactStreamInlineThreshold)
 		if err != nil {
 			return err
 		}
 		digest := fmt.Sprintf("sha256:%x", info.Digest)
 		layer = imageLayer{mediaType: api.Iso9660Layer, digest: digest, diffID: digest, size: info.Size}
 	case api.CpioFormat:
-		layer, err = writeCpioLayer(image, cpioSettings, addFiles, importTars, addExecutables, addSymlinks, emptyFiles, baseMetadataPaths, createParentDirectories, layerMetadata, compactStream, compactStreamInlineThreshold, compactStreamPath)
+		layer, err = writeCpioLayer(image, cpioSettings, addFiles, importTars, addExecutables, addSymlinks, emptyFiles, base, createParentDirectories, layerMetadata, compactStream, compactStreamInlineThreshold, compactStreamPath)
 		if err != nil {
 			return err
 		}

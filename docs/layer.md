@@ -210,8 +210,8 @@ See [docs/filesystems.md](filesystems.md) for the format itself.
 load("@rules_img//img:layer.bzl", "image_layer")
 
 image_layer(<a href="#image_layer-name">name</a>, <a href="#image_layer-srcs">srcs</a>, <a href="#image_layer-annotations">annotations</a>, <a href="#image_layer-annotations_file">annotations_file</a>, <a href="#image_layer-compress">compress</a>, <a href="#image_layer-create_parent_directories">create_parent_directories</a>,
-            <a href="#image_layer-default_metadata">default_metadata</a>, <a href="#image_layer-estargz">estargz</a>, <a href="#image_layer-extra_default_outputs">extra_default_outputs</a>, <a href="#image_layer-file_metadata">file_metadata</a>, <a href="#image_layer-format">format</a>, <a href="#image_layer-format_config">format_config</a>,
-            <a href="#image_layer-history">history</a>, <a href="#image_layer-include_runfiles">include_runfiles</a>, <a href="#image_layer-media_type">media_type</a>, <a href="#image_layer-multi_file_layout">multi_file_layout</a>, <a href="#image_layer-soci">soci</a>, <a href="#image_layer-symlinks">symlinks</a>,
+            <a href="#image_layer-default_metadata">default_metadata</a>, <a href="#image_layer-empty_dirs">empty_dirs</a>, <a href="#image_layer-estargz">estargz</a>, <a href="#image_layer-extra_default_outputs">extra_default_outputs</a>, <a href="#image_layer-file_metadata">file_metadata</a>, <a href="#image_layer-format">format</a>,
+            <a href="#image_layer-format_config">format_config</a>, <a href="#image_layer-history">history</a>, <a href="#image_layer-include_runfiles">include_runfiles</a>, <a href="#image_layer-media_type">media_type</a>, <a href="#image_layer-multi_file_layout">multi_file_layout</a>, <a href="#image_layer-soci">soci</a>, <a href="#image_layer-symlinks">symlinks</a>,
             <a href="#image_layer-tree_artifact_handling">tree_artifact_handling</a>, <a href="#image_layer-zstd_chunked">zstd_chunked</a>)
 </pre>
 
@@ -245,6 +245,7 @@ image_layer(
         "/etc/app/config": ":config",
         "/etc/app/secret": ":secret",
     },
+    empty_dirs = ["/var/lib/app"],
     default_metadata = file_metadata(
         mode = "0644",
         uid = 1000,
@@ -252,6 +253,7 @@ image_layer(
     ),
     file_metadata = {
         "/etc/app/secret": file_metadata(mode = "0600"),
+        "/var/lib/app": file_metadata(mode = "0750", uid = 1000, gid = 1000),
     },
 )
 
@@ -283,6 +285,7 @@ image_layer(
 | <a id="image_layer-compress"></a>compress |  Compression algorithm to use. If set to 'auto', uses the global default compression setting.<br><br>'none' leaves the layer uncompressed, which is the useful choice for an EROFS layer (the blob is then mountable as it is). EROFS layers cannot be gzip-compressed.<br><br>A `cpio` layer (an initramfs) is also left uncompressed by default. It can be compressed with `gzip` or `zstd`, which the kernel unpacks as it is. The `ext4`, `fat32` and `iso9660` formats ignore this attribute.   | String | optional |  `"auto"`  |
 | <a id="image_layer-create_parent_directories"></a>create_parent_directories |  Whether to automatically create parent directory entries in the tar file for all files. If set to 'auto', uses the global default create_parent_directories setting. When enabled, parent directories will be created automatically for all files in the layer.   | String | optional |  `"auto"`  |
 | <a id="image_layer-default_metadata"></a>default_metadata |  JSON-encoded default metadata to apply to all files in the layer. Can include fields like mode, uid, gid, uname, gname, mtime, and pax_records. Applies to regular files (including tree contents) and symlinks. Generated directories inherit only mtime; use file_metadata for directory modes or ownership.   | String | optional |  `""`  |
+| <a id="image_layer-empty_dirs"></a>empty_dirs |  Directories to create in the image without a source file. Each directory defaults to mode `0755`, UID 0, and GID 0. Use `file_metadata` to override these values by path.   | List of strings | optional |  `[]`  |
 | <a id="image_layer-estargz"></a>estargz |  Whether to use estargz format. If set to 'auto', uses the global default estargz setting. When enabled, the layer will be optimized for lazy pulling and will be compatible with the estargz format.   | String | optional |  `"auto"`  |
 | <a id="image_layer-extra_default_outputs"></a>extra_default_outputs |  How to handle an executable's additional default outputs (the rest of `DefaultInfo.files` beyond the executable itself).<br><br>Those files are placed at the same offset relative to the executable that they have in the source tree, so a file that lives above the executable's directory needs a path in the image that is deep enough to place it. This setting decides what happens when it isn't:<br><br>- `"best_effort"` (default): place every additional default output that fits, and silently   drop the ones that would land above the image root. This is what wrapper rules such as   bazel-lib's `transition_binary` need, where the executable is a symlink in a sibling   directory of the real outputs. - `"drop"`: never place additional default outputs. Only the executable itself (and its   runfiles, if `include_runfiles` is True) is included. - `"strict"`: place every additional default output, and fail the build if any of them   would land above the image root.   | String | optional |  `"best_effort"`  |
 | <a id="image_layer-file_metadata"></a>file_metadata |  Per-file metadata overrides as a dict mapping file paths to JSON-encoded metadata. The path should match the path in the image, including paths inside directory inputs. Directory paths should omit the trailing slash. Metadata specified here overrides any defaults from default_metadata.   | <a href="https://bazel.build/rules/lib/core/dict">Dictionary: String -> String</a> | optional |  `{}`  |

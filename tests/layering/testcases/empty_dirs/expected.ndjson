@@ -1,0 +1,3 @@
+{"name":"run/app/","typeflag":"5","size":0,"mode":493,"uid":0,"gid":0,"modtime":"2023-01-01T00:00:00Z"}
+{"name":"srv/data/","typeflag":"5","size":0,"mode":448,"uid":4244,"gid":0,"modtime":"2023-01-01T00:00:00Z"}
+{"name":"var/cache/app/","typeflag":"5","size":0,"mode":488,"uid":4242,"gid":4243,"modtime":"2024-01-01T00:00:00Z"}

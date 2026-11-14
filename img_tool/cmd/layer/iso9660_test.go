@@ -188,7 +188,7 @@ func TestIso9660LayerWithoutRockRidge(t *testing.T) {
 	defer image.Close()
 	_, err = writeIso9660Layer(image, iso9660Settings{},
 		addFiles{{PathInImage: "/f", File: file, FileType: api.RegularFile}}, nil, nil,
-		symlinks{{LinkName: "/link", Target: "f"}}, nil, nil, false, nil, nil, 0)
+		symlinks{{LinkName: "/link", Target: "f"}}, nil, baseEntries{}, false, nil, nil, 0)
 	if err == nil {
 		t.Error("a symbolic link was accepted without Rock Ridge")
 	}

@@ -41,7 +41,7 @@ func TestTreeMetadata(t *testing.T) {
 			_, err = handleLayerState(api.TarFormat, erofsSettings{}, api.Uncompressed, compress.TarFormatPlain, addFiles{
 				{PathInImage: "app/first", File: dir, FileType: api.Directory},
 				{PathInImage: "app/second", File: dir, FileType: api.Directory},
-			}, nil, nil, symlinks{{LinkName: "links/alias", Target: "../app/first/a"}}, nil, nil,
+			}, nil, nil, symlinks{{LinkName: "links/alias", Target: "../app/first/a"}}, nil, baseEntries{},
 				contentmanifest.NewMultiImporter(nil, api.SHA256), contentmanifest.NopExporter(), &out, metadata,
 				"1", -1, 0, true, handling, false, "", 0)
 			if err != nil {
@@ -190,7 +190,7 @@ func TestHandleLayerStateEndOfArchive(t *testing.T) {
 		var out bytes.Buffer
 		_, err := handleLayerState(api.TarFormat, erofsSettings{}, api.Uncompressed, compress.TarFormatPlain, addFiles{
 			{PathInImage: "app/a", File: filepath.Join(dir, "a"), FileType: api.RegularFile},
-		}, nil, nil, nil, nil, nil,
+		}, nil, nil, nil, nil, baseEntries{},
 			contentmanifest.NewMultiImporter(nil, api.SHA256), contentmanifest.NopExporter(), &out, nil,
 			"1", -1, 0, false, "full", endOfArchive, "", 0)
 		if err != nil {

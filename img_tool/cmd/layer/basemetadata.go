@@ -4,26 +4,39 @@ import (
 	"archive/tar"
 	"bytes"
 	"fmt"
+	"io/fs"
 	"os"
+	"strings"
 
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/basemeta"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/proto/baselayer"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/tree"
 )
 
-// writeBaseEntries records the merged entries of a set of base metadata streams
-// into the layer.
-//
-// The streams are read in the order given, which is the dependency order of the
-// base_image_layer's srcs: for a path described more than once, the later
-// stream wins. Entry metadata is authoritative -- the whole point of the rules
-// producing these streams is to decide modes and ownership -- with two
-// exceptions applied by the layer's own metadata provider: an entry whose mtime
-// is unset picks up the layer's default mtime, and a --file-metadata override
-// for the entry's path wins outright.
-func writeBaseEntries(recorder tree.Recorder, streamPaths []string, createParentDirectories bool, layerMetadata *LayerMetadata) error {
-	streams := make([][]*baselayer.BaseEntry, 0, len(streamPaths))
-	for _, streamPath := range streamPaths {
+type baseEntries struct {
+	emptyDirs   []string
+	streamPaths []string
+}
+
+func (b *baseEntries) addEmptyDir(value string) error {
+	name := basemeta.NormalizePath(value)
+	if name == "." || !fs.ValidPath(name) || strings.ContainsRune(name, 0) {
+		return fmt.Errorf("invalid image directory %q", value)
+	}
+	b.emptyDirs = append(b.emptyDirs, name)
+	return nil
+}
+
+// writeBaseEntries writes directories and base metadata in parent-first order.
+// Later streams take precedence. Each entry keeps its mode and ownership unless
+// --file-metadata overrides them. Entries without an mtime inherit the default mtime.
+func writeBaseEntries(recorder tree.Recorder, base baseEntries, createParentDirectories bool, layerMetadata *LayerMetadata) error {
+	dirs := make([]*baselayer.BaseEntry, 0, len(base.emptyDirs))
+	for _, name := range base.emptyDirs {
+		dirs = append(dirs, basemeta.Dir(name, 0o755))
+	}
+	streams := [][]*baselayer.BaseEntry{dirs}
+	for _, streamPath := range base.streamPaths {
 		entries, err := basemeta.ReadFile(streamPath)
 		if err != nil {
 			return err

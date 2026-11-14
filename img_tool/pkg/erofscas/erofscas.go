@@ -607,7 +607,7 @@ func (c *CAS[HM]) StoreTree(fsys fs.FS, intendedPath string) (string, error) {
 
 func (c *CAS[HM]) StoreTreeKnownHash(fsys fs.FS, intendedPath string, treeHash []byte) (string, error) {
 	hashStr := string(treeHash)
-	if treeBase, exists := c.firstTreePaths[hashStr]; exists && c.deduplicateTreeArtifacts && c.generatedMetadata == nil {
+	if treeBase, exists := c.firstTreePaths[hashStr]; exists && treeHash != nil && c.deduplicateTreeArtifacts && c.generatedMetadata == nil {
 		return treeBase, nil
 	}
 
@@ -677,7 +677,7 @@ func (c *CAS[HM]) StoreTreeKnownHash(fsys fs.FS, intendedPath string, treeHash [
 		return "", fmt.Errorf("storing tree artifact %x in layer: %w", treeHash, err)
 	}
 
-	if c.generatedMetadata != nil {
+	if treeHash == nil || c.generatedMetadata != nil {
 		return "", nil
 	}
 	c.firstTreePaths[hashStr] = intendedPath
