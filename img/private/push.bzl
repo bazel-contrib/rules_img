@@ -228,6 +228,7 @@ def _image_push_impl(ctx):
                 pull_info = ctx.attr.image[PullInfo] if PullInfo in ctx.attr.image else None,
                 exec_requirements = pbt.exec_properties,
                 destination_file = ctx.file.destination_file,
+                registry_auth_file = ctx.attr._docker_config_path[BuildSettingInfo].value,
             ),
             pbt.output_group,
         )
