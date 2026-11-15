@@ -12,7 +12,9 @@ load(
     _download_layers = "download_layers",
     _download_manifest_rctx = "download_manifest_rctx",
     _download_with_tool = "download_with_tool",
+    _lazy_download_auth_attr = "lazy_download_auth_attr",
     _learn_digest_from_tag = "learn_digest_from_tag",
+    _resolve_docker_config_path = "resolve_docker_config_path",
 )
 load(":registry.bzl", "get_registries")
 
@@ -21,6 +23,7 @@ def _pull_impl(rctx):
 
     # Parse the platform filter before any network access, so a typo fails fast.
     platform_specs = [parse_platform_spec(spec) for spec in rctx.attr.platforms]
+    _resolve_docker_config_path(rctx, rctx.attr.docker_config_path, rctx.attr.config)
 
     have_valid_digest = True
     if len(rctx.attr.digest) != 71:
@@ -184,7 +187,7 @@ Available platforms: {available}""".format(
         maybe_lazy_layer_download = """
 download_blobs(
     name = "layers",
-    docker_config_path = {docker_config_path},
+    {auth_attr}
     digests = {layer_digests},
     sources = {sources},
     tags = ["requires-network"],
@@ -200,7 +203,7 @@ download_blobs(
                 prefix = "    ",
                 indent = "    ",
             ),
-            docker_config_path = repr(rctx.attr.docker_config_path),
+            auth_attr = _lazy_download_auth_attr(rctx),
         )
 
     # Build target_compatible_with based on discovered platforms
@@ -424,6 +427,18 @@ This attribute controls when and how layer data is fetched from the registry.
             doc = """Credential helper to use for registry authentication when this repository rule runs the pull tool.
 
 If omitted, the pull tool inherits `$IMG_CREDENTIAL_HELPER` (or `$IMG_CREDENTIAL_HELPER_OCI_REGISTRY`, which takes precedence) when present.""",
+        ),
+        "config": attr.label(
+            allow_single_file = True,
+            doc = """Label of a Docker-compatible registry authentication config file (for example `//images:config.json`).
+
+This is the label-based alternative to `docker_config_path` and mutually exclusive with it.
+The file is used as `$REGISTRY_AUTH_FILE` for the pull tool. With lazy layer handling, it is also
+declared as an input of the build actions that download layers.
+
+**WARNING:** Because the file is an action input, it may be uploaded to a remote cache or remote
+executor. Do not put secrets (`auth` or `identitytoken` entries) in it. Instead, reference a
+credential helper, for example `{"credHelpers": {"ghcr.io": "gh"}}` or `{"credsStore": "desktop"}`.""",
         ),
         "docker_config_path": attr.string(
             doc = """Path to Docker-compatible registry authentication config.

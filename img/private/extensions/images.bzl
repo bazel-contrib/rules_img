@@ -2,7 +2,7 @@
 
 load("@bazel_skylib//lib:sets.bzl", "sets")
 load("//img/private/extensions:images_helpers.bzl", "build_facts_to_store", "build_image_files_dict", "build_reverse_blob_mappings", "collect_blobs_to_create", "get_merged_sources_from_images", "get_registries_from_image", "merge_pull_attrs", "normalize_repository_name", "pull_tag_to_struct", "sync_oci_ref_graph")
-load("//img/private/repository_rules:download.bzl", "learn_digest_from_tag")
+load("//img/private/repository_rules:download.bzl", "learn_digest_from_tag", "resolve_docker_config_path")
 load("//img/private/repository_rules:image_repo.bzl", "image_repo")
 load("//img/private/repository_rules:pull_blob.bzl", "pull_blob_file", "pull_manifest_blob")
 
@@ -29,6 +29,7 @@ def _images_impl(ctx):
     downloader = "img_tool"
     credential_helper = None
     docker_config_path = None
+    config = None
     timeout = 0
     expose_hub_repo = "auto"
     expose_image_repos = "auto"
@@ -40,9 +41,14 @@ def _images_impl(ctx):
             downloader = settings.downloader
             credential_helper = settings.credential_helper
             docker_config_path = settings.docker_config_path
+            config = settings.config
             timeout = settings.timeout
             expose_hub_repo = settings.hub_repo
             expose_image_repos = settings.image_repos
+
+    # Executions of the extension itself need a plain path. The repositories created
+    # below receive the label instead, so lazy downloads can declare it as an input.
+    extension_docker_config_path = resolve_docker_config_path(ctx, docker_config_path, config)
 
     # TODO(malt3): Add feature detection for dict in root_module_direct_deps
     support_dict_in_root_module_direct_deps = False
@@ -64,7 +70,7 @@ def _images_impl(ctx):
                     downloader = downloader,
                     sources = pull_tag_to_struct(img).sources,
                     credential_helper = credential_helper,
-                    docker_config_path = docker_config_path,
+                    docker_config_path = extension_docker_config_path,
                     timeout = timeout,
                 )
                 resolved_any_tag = True
@@ -95,7 +101,7 @@ def _images_impl(ctx):
         facts,
         downloader,
         credential_helper = credential_helper,
-        docker_config_path = docker_config_path,
+        docker_config_path = extension_docker_config_path,
         timeout = timeout,
     )
 
@@ -122,6 +128,7 @@ def _images_impl(ctx):
             downloader = downloader,
             credential_helper = credential_helper,
             docker_config_path = docker_config_path,
+            config = config,
             timeout = timeout,
         )
 
@@ -144,6 +151,7 @@ def _images_impl(ctx):
             downloader = downloader,
             credential_helper = credential_helper,
             docker_config_path = docker_config_path,
+            config = config,
             timeout = timeout,
         )
 
@@ -166,6 +174,7 @@ def _images_impl(ctx):
             downloader = downloader,
             credential_helper = credential_helper,
             docker_config_path = docker_config_path,
+            config = config,
             timeout = timeout,
         )
 
@@ -393,6 +402,20 @@ _settings_tag = tag_class(
             doc = """Credential helper to use for registry authentication when the module extension runs the pull tool.
 
 If omitted, the pull tool inherits `$IMG_CREDENTIAL_HELPER` (or `$IMG_CREDENTIAL_HELPER_OCI_REGISTRY`, which takes precedence) when present.""",
+        ),
+        "config": attr.label(
+            allow_single_file = True,
+            doc = """Label of a Docker-compatible registry authentication config file (for example `//images:config.json`).
+
+This is the label-based alternative to `docker_config_path` and mutually exclusive with it.
+The file is used as `$REGISTRY_AUTH_FILE` for the pull tool. With lazy layer handling, it is also
+declared as an input of the build actions that download layers.
+
+**WARNING:** Because the file is an action input, it may be uploaded to a remote cache or remote
+executor. Do not put secrets (`auth` or `identitytoken` entries) in it. Instead, reference a
+credential helper, for example `{"credHelpers": {"ghcr.io": "gh"}}` or `{"credsStore": "desktop"}`.
+
+Only honored in the root module.""",
         ),
         "docker_config_path": attr.string(
             doc = """Path to Docker-compatible registry authentication config.

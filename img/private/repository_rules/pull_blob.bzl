@@ -1,7 +1,7 @@
 """Repository rule for pulling individual blobs from a container registry."""
 
 load("@img_toolchain//:defs.bzl", "tool_for_repository_os")
-load("//img/private/repository_rules:download.bzl", "download_blob_from_sources", "download_manifest_from_sources")
+load("//img/private/repository_rules:download.bzl", "download_blob_from_sources", "download_manifest_from_sources", _lazy_download_auth_attr = "lazy_download_auth_attr")
 
 def _pull_blob_file_impl(rctx):
     if rctx.attr.handling == "eager":
@@ -45,7 +45,7 @@ filegroup(
 
 download_blobs(
     name = "blob",
-    docker_config_path = {docker_config_path},
+    {auth_attr}
     digests = ["{digest_filename}"],
     sources = {sources},
     tags = ["requires-network"],
@@ -54,7 +54,7 @@ download_blobs(
 """.format(
                 digest_filename = digest_filename,
                 blob_name = repr(rctx.attr.downloaded_file_path),
-                docker_config_path = repr(rctx.attr.docker_config_path),
+                auth_attr = _lazy_download_auth_attr(rctx),
                 sources = json.encode_indent(
                     rctx.attr.sources,
                     prefix = "    ",
@@ -150,6 +150,18 @@ If a registry list is empty, it defaults to Docker Hub (index.docker.io).""",
             doc = """Credential helper to use for registry authentication when this repository rule runs the pull tool.
 
 If omitted, the pull tool inherits `$IMG_CREDENTIAL_HELPER` (or `$IMG_CREDENTIAL_HELPER_OCI_REGISTRY`, which takes precedence) when present.""",
+        ),
+        "config": attr.label(
+            allow_single_file = True,
+            doc = """Label of a Docker-compatible registry authentication config file (for example `//images:config.json`).
+
+This is the label-based alternative to `docker_config_path` and mutually exclusive with it.
+The file is used as `$REGISTRY_AUTH_FILE` for the pull tool. With lazy layer handling, it is also
+declared as an input of the build actions that download layers.
+
+**WARNING:** Because the file is an action input, it may be uploaded to a remote cache or remote
+executor. Do not put secrets (`auth` or `identitytoken` entries) in it. Instead, reference a
+credential helper, for example `{"credHelpers": {"ghcr.io": "gh"}}` or `{"credsStore": "desktop"}`.""",
         ),
         "docker_config_path": attr.string(
             doc = """Path to Docker-compatible registry authentication config.
@@ -272,6 +284,18 @@ If not specified, defaults to "tgz".""",
             doc = """Credential helper to use for registry authentication when this repository rule runs the pull tool.
 
 If omitted, the pull tool inherits `$IMG_CREDENTIAL_HELPER` (or `$IMG_CREDENTIAL_HELPER_OCI_REGISTRY`, which takes precedence) when present.""",
+        ),
+        "config": attr.label(
+            allow_single_file = True,
+            doc = """Label of a Docker-compatible registry authentication config file (for example `//images:config.json`).
+
+This is the label-based alternative to `docker_config_path` and mutually exclusive with it.
+The file is used as `$REGISTRY_AUTH_FILE` for the pull tool. With lazy layer handling, it is also
+declared as an input of the build actions that download layers.
+
+**WARNING:** Because the file is an action input, it may be uploaded to a remote cache or remote
+executor. Do not put secrets (`auth` or `identitytoken` entries) in it. Instead, reference a
+credential helper, for example `{"credHelpers": {"ghcr.io": "gh"}}` or `{"credsStore": "desktop"}`.""",
         ),
         "docker_config_path": attr.string(
             doc = """Path to Docker-compatible registry authentication config.
@@ -414,6 +438,18 @@ Only used if `digest` is not specified. It's recommended to use a digest for rep
             doc = """Credential helper to use for registry authentication when this repository rule runs the pull tool.
 
 If omitted, the pull tool inherits `$IMG_CREDENTIAL_HELPER` (or `$IMG_CREDENTIAL_HELPER_OCI_REGISTRY`, which takes precedence) when present.""",
+        ),
+        "config": attr.label(
+            allow_single_file = True,
+            doc = """Label of a Docker-compatible registry authentication config file (for example `//images:config.json`).
+
+This is the label-based alternative to `docker_config_path` and mutually exclusive with it.
+The file is used as `$REGISTRY_AUTH_FILE` for the pull tool. With lazy layer handling, it is also
+declared as an input of the build actions that download layers.
+
+**WARNING:** Because the file is an action input, it may be uploaded to a remote cache or remote
+executor. Do not put secrets (`auth` or `identitytoken` entries) in it. Instead, reference a
+credential helper, for example `{"credHelpers": {"ghcr.io": "gh"}}` or `{"credsStore": "desktop"}`.""",
         ),
         "docker_config_path": attr.string(
             doc = """Path to Docker-compatible registry authentication config.

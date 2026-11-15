@@ -74,6 +74,7 @@ pull(
 - `registries` allows defining mirror registries that host the same image.
 - `platforms` parameter is removed (single- and multi-platform images just work without extra configuration)
 - No need for `use_repo()` - the `pull()` rule directly creates a repository
+- `config` (a label of a `.docker/config.json` file for registry authentication) just works: `pull(..., config = "//images/docker-config:config.json")`. Because the file may be uploaded to the remote cache, it should only select credential helpers (`credHelpers` / `credsStore`) and not contain secrets. See [Authenticating build actions](authenticating-build-actions.md).
 
 ---
 

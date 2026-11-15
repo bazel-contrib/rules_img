@@ -18,6 +18,45 @@ def _configured_env(ctx, name):
 
     return value if value else None
 
+def resolve_docker_config_path(ctx, docker_config_path = None, config = None):
+    """Resolve the Docker-compatible auth config to a filesystem path.
+
+    `docker_config_path` (a plain path) and `config` (a label) are mutually exclusive.
+
+    Args:
+        ctx: Repository or module context.
+        docker_config_path: Optional path to a Docker-compatible auth config.
+        config: Optional label of a Docker-compatible auth config file.
+
+    Returns:
+        The path to the auth config as a string, or None if neither is set.
+    """
+    if docker_config_path and config:
+        fail("docker_config_path and config are mutually exclusive; set only one of them")
+    if config:
+        return str(ctx.path(config))
+    return docker_config_path or None
+
+def lazy_download_auth_attr(rctx, symlink_name = "docker_config.json"):
+    """Return the auth attribute line for a generated `download_blobs` target.
+
+    If the `config` label attribute is set, the file is symlinked into the repository
+    so the build action can declare it as an input instead of depending on an
+    absolute host path.
+
+    Args:
+        rctx: Repository context with `docker_config_path` and `config` attributes.
+        symlink_name: Name of the symlink to create in the repository root.
+
+    Returns:
+        A string containing a single `download_blobs` attribute assignment.
+    """
+    resolve_docker_config_path(rctx, rctx.attr.docker_config_path, rctx.attr.config)
+    if rctx.attr.config:
+        rctx.symlink(rctx.attr.config, symlink_name)
+        return "config = {},".format(repr(symlink_name))
+    return "docker_config_path = {},".format(repr(rctx.attr.docker_config_path))
+
 def auth_environment(ctx, credential_helper = None, docker_config_path = None):
     """Build auth-related environment overrides for repository/module executions.
 
@@ -43,7 +82,11 @@ def auth_environment(ctx, credential_helper = None, docker_config_path = None):
     if credential_helper_oci_registry:
         env["IMG_CREDENTIAL_HELPER_OCI_REGISTRY"] = credential_helper_oci_registry
 
-    docker_config_path = docker_config_path or _configured_attr(ctx, "docker_config_path") or _configured_env(ctx, "REGISTRY_AUTH_FILE")
+    docker_config_path = (
+        docker_config_path or
+        resolve_docker_config_path(ctx, _configured_attr(ctx, "docker_config_path"), _configured_attr(ctx, "config")) or
+        _configured_env(ctx, "REGISTRY_AUTH_FILE")
+    )
     if docker_config_path:
         env["REGISTRY_AUTH_FILE"] = docker_config_path
 
