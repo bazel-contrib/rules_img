@@ -6,6 +6,8 @@ load("//img/private/common:build.bzl", "TOOLCHAINS")
 load("//img/private/common:layer_attrs.bzl", "layer_attrs")
 load(
     "//img/private/common:tar_layer.bzl",
+    "DEDUP_BY_CONTENT_END",
+    "DEDUP_BY_CONTENT_START",
     "create_single_layer",
     "create_tar_layer",
     "empty_runfile_short_path",
@@ -273,9 +275,11 @@ def _append_binary_args(ctx, exe, path_in_image, group_runfiles, runfiles_config
         repo_mapping_args.set_param_file_format("multiline")
         repo_mapping_args.use_param_file("--add-from-file=%s", use_always = True)
         repo_mapping_args.add_all([repo_mapping_manifest], map_each = files_arg, format_each = "{}.repo_mapping\0%s".format(_normalize_path(path_in_image)), expand_directories = False)
+        repo_mapping_args.add(DEDUP_BY_CONTENT_START)
         repo_mapping_args.add_all([repo_mapping_manifest], map_each = files_arg, format_each = "{}/_repo_mapping\0%s".format(
             _normalize_path(runfiles_config.runfiles_symlink_path) if runfiles_config.shared else content_prefix,
         ), expand_directories = False)
+        repo_mapping_args.add(DEDUP_BY_CONTENT_END)
         extra_args.append(repo_mapping_args)
 
     _append_extra_default_files(ctx, default_files, exe, path_in_image, extra_args, extra_inputs)
@@ -315,14 +319,18 @@ def _create_grouped_layers(ctx, settings, exe, path_in_image, ordered_groups, ru
         add_args = ctx.actions.args()
         add_args.set_param_file_format("multiline")
         add_args.use_param_file("--add-from-file=%s", use_always = True)
+        add_args.add(DEDUP_BY_CONTENT_START)
         add_args.add_all(group_runfiles.files, map_each = to_short_path_pair, format_each = "{}/%s".format(content_prefix), expand_directories = False, uniquify = True)
+        add_args.add(DEDUP_BY_CONTENT_END)
         extra_args.append(add_args)
 
         symlink_add_args = ctx.actions.args()
         symlink_add_args.set_param_file_format("multiline")
         symlink_add_args.use_param_file("--add-from-file=%s", use_always = True)
+        symlink_add_args.add(DEDUP_BY_CONTENT_START)
         symlink_add_args.add_all(group_runfiles.symlinks, map_each = symlinks_arg, format_each = "{}/%s".format(content_prefix))
         symlink_add_args.add_all(group_runfiles.root_symlinks, map_each = root_symlinks_arg, format_each = "{}/%s".format(content_prefix))
+        symlink_add_args.add(DEDUP_BY_CONTENT_END)
         extra_args.append(symlink_add_args)
 
         symlink_inputs = []
@@ -483,9 +491,11 @@ def _layer_from_binary_impl(ctx):
                     runfiles_args = ctx.actions.args()
                     runfiles_args.set_param_file_format("multiline")
                     runfiles_args.use_param_file("--runfiles={}=%s".format(exe.path), use_always = True)
+                    runfiles_args.add(DEDUP_BY_CONTENT_START)
                     runfiles_args.add_all(runfiles.files, map_each = to_short_path_pair, expand_directories = False, uniquify = True)
                     runfiles_args.add_all(runfiles.symlinks, map_each = symlinks_arg)
                     runfiles_args.add_all(runfiles.root_symlinks, map_each = root_symlinks_arg)
+                    runfiles_args.add(DEDUP_BY_CONTENT_END)
                     extra_args.append(runfiles_args)
                     extra_inputs.append(runfiles.files)
 
@@ -508,7 +518,9 @@ def _layer_from_binary_impl(ctx):
                     repo_mapping_args.set_param_file_format("multiline")
                     repo_mapping_args.use_param_file("--add-from-file=%s", use_always = True)
                     repo_mapping_args.add_all([repo_mapping_manifest], map_each = files_arg, format_each = "{}.repo_mapping\0%s".format(_normalize_path(path_in_image)), expand_directories = False)
+                    repo_mapping_args.add(DEDUP_BY_CONTENT_START)
                     repo_mapping_args.add_all([repo_mapping_manifest], map_each = files_arg, format_each = "{}/_repo_mapping\0%s".format(content_prefix), expand_directories = False)
+                    repo_mapping_args.add(DEDUP_BY_CONTENT_END)
                     extra_args.append(repo_mapping_args)
             else:
                 binary_args = ctx.actions.args()
@@ -522,9 +534,11 @@ def _layer_from_binary_impl(ctx):
                     runfiles_add_args = ctx.actions.args()
                     runfiles_add_args.set_param_file_format("multiline")
                     runfiles_add_args.use_param_file("--add-from-file=%s", use_always = True)
+                    runfiles_add_args.add(DEDUP_BY_CONTENT_START)
                     runfiles_add_args.add_all(runfiles.files, map_each = to_short_path_pair, format_each = "{}/%s".format(content_prefix), expand_directories = False, uniquify = True)
                     runfiles_add_args.add_all(runfiles.symlinks, map_each = symlinks_arg, format_each = "{}/%s".format(content_prefix))
                     runfiles_add_args.add_all(runfiles.root_symlinks, map_each = root_symlinks_arg, format_each = "{}/%s".format(content_prefix))
+                    runfiles_add_args.add(DEDUP_BY_CONTENT_END)
                     extra_args.append(runfiles_add_args)
                     extra_inputs.append(runfiles.files)
 
@@ -550,9 +564,11 @@ def _layer_from_binary_impl(ctx):
                     repo_mapping_args.set_param_file_format("multiline")
                     repo_mapping_args.use_param_file("--add-from-file=%s", use_always = True)
                     repo_mapping_args.add_all([repo_mapping_manifest], map_each = files_arg, format_each = "{}.repo_mapping\0%s".format(_normalize_path(path_in_image)), expand_directories = False)
+                    repo_mapping_args.add(DEDUP_BY_CONTENT_START)
                     repo_mapping_args.add_all([repo_mapping_manifest], map_each = files_arg, format_each = "{}/_repo_mapping\0%s".format(
                         _normalize_path(runfiles_config.runfiles_symlink_path) if runfiles_config.shared else content_prefix,
                     ), expand_directories = False)
+                    repo_mapping_args.add(DEDUP_BY_CONTENT_END)
                     extra_args.append(repo_mapping_args)
 
             _append_extra_default_files(ctx, default_info.files, exe, path_in_image, extra_args, extra_inputs)

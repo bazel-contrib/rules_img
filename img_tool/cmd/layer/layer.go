@@ -115,7 +115,8 @@ func LayerProcess(ctx context.Context, args []string) {
 	flagSet.Var(&addFiles, "add", `Add a file to the image layer. The parameter is a string of the form <path_in_image>=<file> where <path_in_image> is the path in the image and <file> is the path in the host filesystem.`)
 	flagSet.Var(&addFromFile, "add-from-file", `Add all files listed in the parameter file to the image layer. The parameter file is usually written by Bazel.
 The file contains one line per file, where each line contains a path in the image and a path in the host filesystem, separated by a a null byte and a single character indicating the type of the file.
-The type is either 'f' for regular files, 'd' for directories. The parameter file is usually written by Bazel.`)
+The type is either 'f' for regular files, 'd' for directories, or 'l' for symlinks.
+A line starting with a null byte is a directive of null-separated key=value pairs that applies to the lines after it. 'dedup=content' lets the regular files that follow be hardlinked to an earlier file in the layer with the same content even if their metadata differs (they are still written with their own metadata otherwise); 'dedup=exact' ends that again. Bazel brackets the files of a runfiles tree with these directives. The parameter file is usually written by Bazel.`)
 	flagSet.Var(&placeFilesFlags, "place-files", `Add files described by a self-describing placement parameter file. The first line is a header (mode, dest, anchor, skip, optional on_escape; null-separated) carrying per-target placement context; each following line is a file in the same encoding as --add-from-file but keyed by rebased short_path. Used to lazily place a target's default outputs relative to its executable or package. The parameter file is usually written by Bazel.`)
 	flagSet.Var(&importTarFlags, "import-tar", `Import all files from the given tar file into the image layer while deduplicating the contents.`)
 	flagSet.Var(&executableFlags, "executable", `Add the executable file at the specified path in the image. This should be combined with the --runfiles flag to include the runfiles of the executable.`)
@@ -922,7 +923,11 @@ func writeLayer(recorder tree.Recorder, addFiles addFiles, importTars importTars
 	for _, op := range addFiles {
 		switch op.FileType {
 		case api.RegularFile:
-			if err := recorder.RegularFileFromPath(op.File, op.PathInImage); err != nil {
+			record := recorder.RegularFileFromPath
+			if op.DedupByContentOK {
+				record = recorder.RegularFileFromPathDedupByContent
+			}
+			if err := record(op.File, op.PathInImage); err != nil {
 				return fmt.Errorf("writing regular file: %w", err)
 			}
 		case api.Directory:

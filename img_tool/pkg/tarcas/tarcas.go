@@ -34,11 +34,15 @@ type CAS[HM hashHelper] struct {
 	firstBlobPaths map[string]string // maps hash to first occurrence path
 	firstNodePaths map[string]string // maps nodeHash to first occurrence path
 	firstTreePaths map[string]string // maps treeHash to first occurrence path
-	closed         bool
-	digestFS       *digestfs.FileSystem
-	dirs           map[string]struct{}
-	lastParent     string
-	observer       EntryObserver
+	// firstContentPaths maps a content hash to the first path in this layer
+	// that holds a regular file with that content, whatever its metadata. Only
+	// entries that opt into content-only deduplication look here.
+	firstContentPaths map[string]string
+	closed            bool
+	digestFS          *digestfs.FileSystem
+	dirs              map[string]struct{}
+	lastParent        string
+	observer          EntryObserver
 	options
 }
 
@@ -61,20 +65,21 @@ func New[HM hashHelper](appender api.TarAppender, opts ...Option) *CAS[HM] {
 	}
 
 	return &CAS[HM]{
-		tarAppender:    appender,
-		hashOrder:      [][]byte{},
-		nodeOrder:      [][]byte{},
-		treeOrder:      [][]byte{},
-		storedHashes:   make(map[string]struct{}),
-		storedNodes:    make(map[string]struct{}),
-		storedTrees:    make(map[string]struct{}),
-		firstBlobPaths: make(map[string]string),
-		firstNodePaths: make(map[string]string),
-		firstTreePaths: make(map[string]string),
-		digestFS:       digestfs.New(helper),
-		dirs:           make(map[string]struct{}),
-		observer:       observer,
-		options:        options,
+		tarAppender:       appender,
+		hashOrder:         [][]byte{},
+		nodeOrder:         [][]byte{},
+		treeOrder:         [][]byte{},
+		storedHashes:      make(map[string]struct{}),
+		storedNodes:       make(map[string]struct{}),
+		storedTrees:       make(map[string]struct{}),
+		firstBlobPaths:    make(map[string]string),
+		firstNodePaths:    make(map[string]string),
+		firstTreePaths:    make(map[string]string),
+		firstContentPaths: make(map[string]string),
+		digestFS:          digestfs.New(helper),
+		dirs:              make(map[string]struct{}),
+		observer:          observer,
+		options:           options,
 	}
 }
 
@@ -96,20 +101,21 @@ func NewWithDigestFS[HM hashHelper](appender api.TarAppender, digestFS *digestfs
 	}
 
 	return &CAS[HM]{
-		tarAppender:    appender,
-		hashOrder:      [][]byte{},
-		nodeOrder:      [][]byte{},
-		treeOrder:      [][]byte{},
-		storedHashes:   make(map[string]struct{}),
-		storedNodes:    make(map[string]struct{}),
-		storedTrees:    make(map[string]struct{}),
-		firstBlobPaths: make(map[string]string),
-		firstNodePaths: make(map[string]string),
-		firstTreePaths: make(map[string]string),
-		digestFS:       digestFS,
-		dirs:           make(map[string]struct{}),
-		observer:       observer,
-		options:        options,
+		tarAppender:       appender,
+		hashOrder:         [][]byte{},
+		nodeOrder:         [][]byte{},
+		treeOrder:         [][]byte{},
+		storedHashes:      make(map[string]struct{}),
+		storedNodes:       make(map[string]struct{}),
+		storedTrees:       make(map[string]struct{}),
+		firstBlobPaths:    make(map[string]string),
+		firstNodePaths:    make(map[string]string),
+		firstTreePaths:    make(map[string]string),
+		firstContentPaths: make(map[string]string),
+		digestFS:          digestFS,
+		dirs:              make(map[string]struct{}),
+		observer:          observer,
+		options:           options,
 	}
 }
 
@@ -345,6 +351,28 @@ func (c *CAS[HM]) WriteRegularFromPathDeduplicated(hdr *tar.Header, filePath str
 	if hdr.Typeflag != tar.TypeReg {
 		return fmt.Errorf("WriteRegularFromPathDeduplicated called with non-regular header: %s", hdr.Name)
 	}
+	return c.writeRegularFromPathDeduplicated(hdr, filePath, false)
+}
+
+// WriteRegularFromPathDeduplicatedByContent is like
+// WriteRegularFromPathDeduplicated, but the entry's own metadata does not stop
+// it from being deduplicated: if this layer already holds a regular file with
+// the same content, the entry becomes a hardlink to it, and so takes on that
+// file's metadata. An earlier file with matching metadata is preferred. When no
+// earlier file has the same content, the entry is written with its own
+// metadata, exactly as WriteRegularFromPathDeduplicated would.
+//
+// This is for entries whose metadata nobody depends on, such as the files of a
+// runfiles tree, which otherwise duplicate an installed copy of the same file
+// whenever the two differ in something as small as the mode.
+func (c *CAS[HM]) WriteRegularFromPathDeduplicatedByContent(hdr *tar.Header, filePath string) error {
+	if hdr.Typeflag != tar.TypeReg {
+		return fmt.Errorf("WriteRegularFromPathDeduplicatedByContent called with non-regular header: %s", hdr.Name)
+	}
+	return c.writeRegularFromPathDeduplicated(hdr, filePath, true)
+}
+
+func (c *CAS[HM]) writeRegularFromPathDeduplicated(hdr *tar.Header, filePath string, byContent bool) error {
 
 	df, err := c.digestFS.OpenFile(filePath)
 	if err != nil {
@@ -368,6 +396,12 @@ func (c *CAS[HM]) WriteRegularFromPathDeduplicated(hdr *tar.Header, filePath str
 		return err
 	}
 
+	if byContent && !c.hasExactMatch(hdr, hash) {
+		if firstPath, exists := c.firstContentPaths[string(hash)]; exists {
+			return c.linkToFirstOccurrence(hdr, firstPath)
+		}
+	}
+
 	var linkPath string
 	var storeErr error
 
@@ -381,6 +415,25 @@ func (c *CAS[HM]) WriteRegularFromPathDeduplicated(hdr *tar.Header, filePath str
 	}
 
 	return c.linkToFirstOccurrence(hdr, linkPath)
+}
+
+// hasExactMatch reports whether this layer already holds a regular file with
+// both the content and the metadata of hdr, which strict deduplication links to.
+func (c *CAS[HM]) hasExactMatch(hdr *tar.Header, blobHash []byte) bool {
+	if tarmeta.IsBlob(hdr) {
+		_, exists := c.firstBlobPaths[string(blobHash)]
+		return exists
+	}
+	_, exists := c.firstNodePaths[string(c.nodeHash(hdr, blobHash))]
+	return exists
+}
+
+// recordContent remembers the first path holding a regular file with the given
+// content, for content-only deduplication.
+func (c *CAS[HM]) recordContent(blobHash []byte, entryPath string) {
+	if _, exists := c.firstContentPaths[string(blobHash)]; !exists {
+		c.firstContentPaths[string(blobHash)] = entryPath
+	}
 }
 
 func (c *CAS[HM]) WriteRegularDeduplicated(hdr *tar.Header, r io.Reader) error {
@@ -539,6 +592,7 @@ func (c *CAS[HM]) storeKnownHashAndSize(r io.Reader, hash []byte, size int64, in
 	c.storedHashes[hashStr] = struct{}{}
 	c.firstBlobPaths[hashStr] = intendedPath
 	c.hashOrder = append(c.hashOrder, hash)
+	c.recordContent(hash, intendedPath)
 
 	return intendedPath, nil
 }
@@ -570,27 +624,19 @@ func (c *CAS[HM]) StoreNodeKnownHash(r io.Reader, hdr *tar.Header, blobHash []by
 }
 
 func (c *CAS[HM]) storeNodeKnownHash(r io.Reader, hdr *tar.Header, blobHash []byte) (linkPath string, err error) {
-	var helper HM
-
 	if hdr.Typeflag != tar.TypeReg || strings.HasSuffix(hdr.Name, "/") {
 		return "", fmt.Errorf("invalid node header: %s", hdr.Name)
 	}
 
-	recordedTarHeader := tarmeta.Clone(hdr)
-	recordedTarHeader.Name = ""
-	tarmeta.Normalize(&recordedTarHeader)
-
-	hasher := helper.New()
-	tarmeta.Hash(hasher, recordedTarHeader)
-	hasher.Write(blobHash)
-	nodeHash := hasher.Sum(nil)
+	nodeHash := c.nodeHash(hdr, blobHash)
 	nodeHashStr := string(nodeHash)
 
 	if firstPath, exists := c.firstNodePaths[nodeHashStr]; exists {
 		return firstPath, nil
 	}
 
-	recordedTarHeader.Name = hdr.Name
+	recordedTarHeader := tarmeta.Clone(hdr)
+	tarmeta.Normalize(&recordedTarHeader)
 
 	if err := c.writeHeaderAndData(&recordedTarHeader, r, blobHash); err != nil {
 		return hdr.Name, err
@@ -600,7 +646,21 @@ func (c *CAS[HM]) storeNodeKnownHash(r io.Reader, hdr *tar.Header, blobHash []by
 	c.storedNodes[nodeHashStr] = struct{}{}
 	c.firstNodePaths[nodeHashStr] = hdr.Name
 	c.nodeOrder = append(c.nodeOrder, nodeHash)
+	c.recordContent(blobHash, hdr.Name)
 	return hdr.Name, nil
+}
+
+// nodeHash identifies a regular file by its normalized metadata (without its
+// name) plus its content hash.
+func (c *CAS[HM]) nodeHash(hdr *tar.Header, blobHash []byte) []byte {
+	var helper HM
+	recorded := tarmeta.Clone(hdr)
+	recorded.Name = ""
+	tarmeta.Normalize(&recorded)
+	hasher := helper.New()
+	tarmeta.Hash(hasher, recorded)
+	hasher.Write(blobHash)
+	return hasher.Sum(nil)
 }
 
 func (c *CAS[HM]) StoreFileFromPath(filePath string, intendedPath string) (string, []byte, int64, error) {

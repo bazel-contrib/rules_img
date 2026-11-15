@@ -69,9 +69,10 @@ const (
 var errAboveImageRoot = errors.New("placed above the image root")
 
 type placeFilesEntry struct {
-	ShortPath string
-	Type      string
-	Source    string
+	ShortPath      string
+	Type           string
+	Source         string
+	DedupByContent bool
 }
 
 // readPlaceFilesParamFile reads a placement parameter file and resolves it into
@@ -100,9 +101,15 @@ func readPlaceFilesParamFile(paramFile string) (addFiles, error) {
 	}
 
 	var entries []placeFilesEntry
+	var opts paramFileOptions
 	for scanner.Scan() {
 		line := scanner.Text()
 		if line == "" {
+			continue
+		}
+		if isDirective, err := applyParamFileDirective(line, &opts); err != nil {
+			return nil, fmt.Errorf("parsing placement parameter file: %w", err)
+		} else if isDirective {
 			continue
 		}
 		shortPath, typeOfFile, source, err := splitParamFileLine(line)
@@ -112,7 +119,7 @@ func readPlaceFilesParamFile(paramFile string) (addFiles, error) {
 		if spec.Skip != "" && shortPath == spec.Skip {
 			continue
 		}
-		entries = append(entries, placeFilesEntry{ShortPath: shortPath, Type: typeOfFile, Source: source})
+		entries = append(entries, placeFilesEntry{ShortPath: shortPath, Type: typeOfFile, Source: source, DedupByContent: opts.dedupByContent})
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, fmt.Errorf("reading placement parameter file: %w", err)
@@ -139,9 +146,10 @@ func readPlaceFilesParamFile(paramFile string) (addFiles, error) {
 			return nil, fmt.Errorf("parsing placement parameter file: %w", err)
 		}
 		files = append(files, addFile{
-			PathInImage: pathInImage,
-			File:        entry.Source,
-			FileType:    typ,
+			PathInImage:      pathInImage,
+			File:             entry.Source,
+			FileType:         typ,
+			DedupByContentOK: entry.DedupByContent,
 		})
 	}
 	return files, nil

@@ -57,6 +57,10 @@ type CAS[HM hashHelper] struct {
 	firstBlobPaths map[string]string // blob hash -> first occurrence path
 	firstNodePaths map[string]string // node hash -> first occurrence path
 	firstTreePaths map[string]string // tree hash -> first occurrence path
+	// firstContentPaths maps a content digest to the first path holding a
+	// regular file with that content, whatever its metadata. Only entries that
+	// opt into content-only deduplication look here.
+	firstContentPaths map[string]string
 
 	closed bool
 	options
@@ -91,16 +95,17 @@ func New[HM hashHelper](appender io.Writer, digestFS *digestfs.FileSystem, opts 
 	}
 
 	return &CAS[HM]{
-		w:              erofs.NewWriter(createOpts...),
-		appender:       appender,
-		digestFS:       digestFS,
-		hashOrder:      [][]byte{},
-		nodeOrder:      [][]byte{},
-		treeOrder:      [][]byte{},
-		firstBlobPaths: make(map[string]string),
-		firstNodePaths: make(map[string]string),
-		firstTreePaths: make(map[string]string),
-		options:        options,
+		w:                 erofs.NewWriter(createOpts...),
+		appender:          appender,
+		digestFS:          digestFS,
+		hashOrder:         [][]byte{},
+		nodeOrder:         [][]byte{},
+		treeOrder:         [][]byte{},
+		firstBlobPaths:    make(map[string]string),
+		firstNodePaths:    make(map[string]string),
+		firstTreePaths:    make(map[string]string),
+		firstContentPaths: make(map[string]string),
+		options:           options,
 	}
 }
 
@@ -423,7 +428,41 @@ func (c *CAS[HM]) WriteRegularFromPathDeduplicated(hdr *tar.Header, filePath str
 		return fmt.Errorf("expected file of size %d, got %d", hdr.Size, size)
 	}
 
+	return c.writeRegularFromPathDeduplicated(hdr, filePath, digest, size)
+}
+
+// WriteRegularFromPathDeduplicatedByContent is like
+// WriteRegularFromPathDeduplicated, but the entry's own metadata does not stop
+// it from being deduplicated: if this layer already holds a regular file with
+// the same content, the entry becomes a hardlink to it and so takes on that
+// file's metadata. An earlier file with matching metadata is preferred. When no
+// earlier file has the same content, the entry is stored with its own metadata.
+// Mirrors tarcas.
+func (c *CAS[HM]) WriteRegularFromPathDeduplicatedByContent(hdr *tar.Header, filePath string) error {
+	if hdr.Typeflag != tar.TypeReg {
+		return fmt.Errorf("WriteRegularFromPathDeduplicatedByContent called with non-regular header: %s", hdr.Name)
+	}
+	if handled, err := c.whiteout(hdr); handled || err != nil {
+		return err
+	}
+	digest, size, err := c.digestOf(filePath)
+	if err != nil {
+		return err
+	}
+	if size != hdr.Size {
+		return fmt.Errorf("expected file of size %d, got %d", hdr.Size, size)
+	}
+	if !c.hasExactMatch(hdr, digest) {
+		if firstPath, exists := c.firstContentPaths[string(digest)]; exists {
+			return c.linkDuplicate(firstPath, hdr)
+		}
+	}
+	return c.writeRegularFromPathDeduplicated(hdr, filePath, digest, size)
+}
+
+func (c *CAS[HM]) writeRegularFromPathDeduplicated(hdr *tar.Header, filePath string, digest []byte, size int64) error {
 	var linkPath string
+	var err error
 	if tarmeta.IsBlob(hdr) {
 		linkPath, err = c.storeBlob(digest, size, hdr.Name, fromPath(filePath))
 	} else {
@@ -574,7 +613,7 @@ func (c *CAS[HM]) StoreNode(r io.Reader, hdr *tar.Header) (string, []byte, int64
 	if err := c.applyMetadata(p, norm); err != nil {
 		return "", nil, size, err
 	}
-	c.recordNode(nodeHash, hdr.Name)
+	c.recordNode(nodeHash, digest, hdr.Name)
 	return hdr.Name, digest, size, nil
 }
 
@@ -742,18 +781,39 @@ func (c *CAS[HM]) storeNode(hdr *tar.Header, digest []byte, src source) (string,
 	if err := c.applyMetadata(p, norm); err != nil {
 		return "", err
 	}
-	c.recordNode(nodeHash, hdr.Name)
+	c.recordNode(nodeHash, digest, hdr.Name)
 	return hdr.Name, nil
 }
 
 func (c *CAS[HM]) recordBlob(digest []byte, entryPath string) {
 	c.firstBlobPaths[string(digest)] = entryPath
 	c.hashOrder = append(c.hashOrder, digest)
+	c.recordContent(digest, entryPath)
 }
 
-func (c *CAS[HM]) recordNode(nodeHash []byte, entryPath string) {
+func (c *CAS[HM]) recordNode(nodeHash, digest []byte, entryPath string) {
 	c.firstNodePaths[string(nodeHash)] = entryPath
 	c.nodeOrder = append(c.nodeOrder, nodeHash)
+	c.recordContent(digest, entryPath)
+}
+
+// recordContent remembers the first path holding a regular file with the given
+// content, for content-only deduplication.
+func (c *CAS[HM]) recordContent(digest []byte, entryPath string) {
+	if _, exists := c.firstContentPaths[string(digest)]; !exists {
+		c.firstContentPaths[string(digest)] = entryPath
+	}
+}
+
+// hasExactMatch reports whether this layer already holds a regular file with
+// both the content and the metadata of hdr, which strict deduplication links to.
+func (c *CAS[HM]) hasExactMatch(hdr *tar.Header, digest []byte) bool {
+	if tarmeta.IsBlob(hdr) {
+		_, exists := c.firstBlobPaths[string(digest)]
+		return exists
+	}
+	_, exists := c.firstNodePaths[string(c.nodeHash(hdr, digest))]
+	return exists
 }
 
 // nodeHash is the hash identifying an entry by its normalized metadata plus its
@@ -1116,4 +1176,9 @@ func (c *CAS[HM]) forget(p string) {
 	prune(c.firstBlobPaths, &c.hashOrder)
 	prune(c.firstNodePaths, &c.nodeOrder)
 	prune(c.firstTreePaths, &c.treeOrder)
+	for digest, entryPath := range c.firstContentPaths {
+		if under(entryPath) {
+			delete(c.firstContentPaths, digest)
+		}
+	}
 }

@@ -1,0 +1,22 @@
+load("@rules_img//img:layer.bzl", "file_metadata", "image_layer")
+load("//tests/layering:defs.bzl", "layer_contents_test")
+
+# gazelle:exclude_from_release
+
+# The installed executable and its copy in its own runfiles tree get different
+# modes. Runfiles entries are deduplicated by content alone, so the runfiles copy
+# is still a hardlink to the executable instead of a second copy of it. Runfiles
+# that match nothing earlier in the layer keep their own (0644) metadata.
+image_layer(
+    name = "layer",
+    srcs = {"/usr/bin/launcher": "//tests/layering/testcases:tool"},
+    default_metadata = file_metadata(mode = "0644"),
+    file_metadata = {"/usr/bin/launcher": file_metadata(mode = "0755")},
+)
+
+layer_contents_test(
+    name = "test",
+    size = "small",
+    layer = ":layer",
+    manifests = ["expected.ndjson"],
+)

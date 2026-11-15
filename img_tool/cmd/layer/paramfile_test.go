@@ -1,7 +1,10 @@
 package layer
 
 import (
+	"os"
+	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -67,5 +70,47 @@ func TestDedupeSymlinks(t *testing.T) {
 				t.Errorf("dedupeSymlinks() = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestReadParamFileDedupDirectives(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "src")
+	if err := os.WriteFile(src, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	lines := []string{
+		"a\x00f" + src,
+		"\x00dedup=content",
+		"b\x00f" + src,
+		"c\x00f" + src,
+		"\x00dedup=exact",
+		"d\x00f" + src,
+	}
+	paramFile := filepath.Join(dir, "params")
+	if err := os.WriteFile(paramFile, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	files, err := readParamFile(paramFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]bool{"a": false, "b": true, "c": true, "d": false}
+	if len(files) != len(want) {
+		t.Fatalf("got %d files, want %d", len(files), len(want))
+	}
+	for _, f := range files {
+		if f.DedupByContentOK != want[f.PathInImage] {
+			t.Errorf("%s: DedupByContentOK = %v, want %v", f.PathInImage, f.DedupByContentOK, want[f.PathInImage])
+		}
+	}
+
+	for _, bad := range []string{"\x00dedup=bogus", "\x00nope=1", "\x00dedup"} {
+		if err := os.WriteFile(paramFile, []byte(bad+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := readParamFile(paramFile); err == nil {
+			t.Errorf("readParamFile(%q) succeeded, want error", bad)
+		}
 	}
 }

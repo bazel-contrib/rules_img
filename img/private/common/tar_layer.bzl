@@ -8,6 +8,15 @@ load("//img/private/common:media_types.bzl", "CPIO_GZIP_LAYER", "CPIO_LAYER", "C
 load("//img/private/providers:layers_info.bzl", "LayersInfo")
 load("//img/private/providers:single_layer_info.bzl", "SingleLayerInfo")
 
+# Parameter file directive lines bracketing entries whose metadata nothing
+# depends on, such as the files of a runfiles tree. Between them, the img tool
+# may hardlink a file to an earlier regular file in the layer with the same
+# content even if their metadata differs; without such a file the entry is
+# still written with its own metadata. Each is a line of its own (a path in the
+# image is never empty, so a leading NUL marks a directive).
+DEDUP_BY_CONTENT_START = "\0dedup=content"
+DEDUP_BY_CONTENT_END = "\0dedup=exact"
+
 def file_type(f):
     """Returns the tar entry type character for a file.
 
