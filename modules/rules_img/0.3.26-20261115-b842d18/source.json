@@ -1,0 +1,12 @@
+{
+  "url": "https://bazel-contrib.github.io/rules_img/assets/sha256/2b7d8b2ef5b3fdf8255cfcb00e9321022139de4043c54af84e0e04a6a961707c/file.tar.gz",
+  "integrity": "sha256-K32LLvWz/fglXPywDpMhAiE53kBDxUr4Tg4EpqlhcHw=",
+  "archive_type": "tar.gz",
+  "overlay": {
+    "prebuilt_lockfile.json": "sha256-MyXJ7DOg1SMAJ+b0BBplBdqnm4xVJXkQWbnxte2zww4="
+  },
+  "patches": {
+    "0001-set-module-version.patch": "sha256-h0O8xjHlsut16QScJh4agItigz34Qme4jJmDj7ktslw="
+  },
+  "patch_strip": 1
+}
