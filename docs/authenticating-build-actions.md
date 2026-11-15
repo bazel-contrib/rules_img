@@ -73,6 +73,16 @@ make sure that environment sets the variable that points at it:
 - For lazy pulls, set
   `--@rules_img//img/settings:docker_config_path=/path/to/config.json`; rules_img
   passes it to the `DownloadBlob` action as `REGISTRY_AUTH_FILE`.
+- Alternatively, give the `pull` repository rule (or `images.settings` in the
+  root module) a `config` label, such as
+  `config = "//images/docker-config:config.json"`. rules_img declares the file as
+  an input of the `DownloadBlob` action, so it is available in the sandbox and
+  on remote executors.
+  **Warning:** a file passed by label is an ordinary action input and may be
+  uploaded to the remote cache or remote executor. Do not put secrets (`auth`
+  or `identitytoken` entries) in it. Use it only to select credential helpers,
+  for example `{"credHelpers": {"ghcr.io": "gh"}}`, and make sure those helpers
+  are available wherever the action runs.
 - Otherwise ensure `DOCKER_CONFIG` (or `REGISTRY_AUTH_FILE`) is set in the
   environment the action executes in, pointing at a readable config.
 - Under remote execution the file must exist **on the executor**, inside the

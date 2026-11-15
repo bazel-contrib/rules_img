@@ -21,8 +21,16 @@ def _download_blob(ctx, output):
     # Convert sources dict to list of "repository@registry" strings
     sources_list = get_sources_list(ctx.attr.sources)
 
-    # Only set REGISTRY_AUTH_FILE if docker_config_path is non-empty.
-    docker_config_path = ctx.attr.docker_config_path or ctx.attr._docker_config_path[BuildSettingInfo].value
+    # Only set REGISTRY_AUTH_FILE if an auth config is configured. A `config` label is
+    # declared as an action input, so it also works in sandboxed and remote actions.
+    if ctx.attr.docker_config_path and ctx.file.config:
+        fail("docker_config_path and config are mutually exclusive; set only one of them")
+    inputs = []
+    if ctx.file.config:
+        inputs.append(ctx.file.config)
+        docker_config_path = ctx.file.config.path
+    else:
+        docker_config_path = ctx.attr.docker_config_path or ctx.attr._docker_config_path[BuildSettingInfo].value
     env = {
         # Do not inherit a host-local helper path into a potentially remote action.
         "IMG_CREDENTIAL_HELPER": "",
@@ -55,6 +63,7 @@ def _download_blob(ctx, output):
 
     ctx.actions.run(
         outputs = [output],
+        inputs = inputs,
         executable = img_toolchain_info.tool_exe,
         use_default_shell_env = True,
         arguments = [args],
@@ -101,10 +110,17 @@ All repository@registry combinations will be tried (in random order for load dis
 
 If a registry list is empty, it defaults to Docker Hub (index.docker.io).""",
         ),
+        "config": attr.label(
+            allow_single_file = True,
+            doc = """Label of a Docker-compatible registry authentication config file.
+
+Declared as an input of the download actions. Mutually exclusive with `docker_config_path`.
+The file may be uploaded to a remote cache or remote executor, so it should not contain secrets.""",
+        ),
         "docker_config_path": attr.string(
             doc = """Path to Docker-compatible registry authentication config.
 
-If omitted, this falls back to `//img/settings:docker_config_path`.""",
+If neither this nor `config` is set, this falls back to `//img/settings:docker_config_path`.""",
         ),
         "_docker_config_path": attr.label(
             default = Label("//img/settings:docker_config_path"),

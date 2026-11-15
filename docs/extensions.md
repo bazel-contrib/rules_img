@@ -10,7 +10,8 @@ Public API for rules_img module extensions.
 images = use_extension("@rules_img//img:extensions.bzl", "images")
 images.pull(<a href="#images.pull-name">name</a>, <a href="#images.pull-digest">digest</a>, <a href="#images.pull-layer_handling">layer_handling</a>, <a href="#images.pull-registries">registries</a>, <a href="#images.pull-registry">registry</a>, <a href="#images.pull-repository">repository</a>, <a href="#images.pull-tag">tag</a>,
             <a href="#images.pull-unsafe_allow_tag_without_digest">unsafe_allow_tag_without_digest</a>)
-images.settings(<a href="#images.settings-credential_helper">credential_helper</a>, <a href="#images.settings-docker_config_path">docker_config_path</a>, <a href="#images.settings-downloader">downloader</a>, <a href="#images.settings-hub_repo">hub_repo</a>, <a href="#images.settings-image_repos">image_repos</a>, <a href="#images.settings-timeout">timeout</a>)
+images.settings(<a href="#images.settings-config">config</a>, <a href="#images.settings-credential_helper">credential_helper</a>, <a href="#images.settings-docker_config_path">docker_config_path</a>, <a href="#images.settings-downloader">downloader</a>, <a href="#images.settings-hub_repo">hub_repo</a>, <a href="#images.settings-image_repos">image_repos</a>,
+                <a href="#images.settings-timeout">timeout</a>)
 </pre>
 
 Module extension for pulling container images in Bzlmod projects.
@@ -94,6 +95,7 @@ required for reproducibility.
 
 | Name  | Description | Type | Mandatory | Default |
 | :------------- | :------------- | :------------- | :------------- | :------------- |
+| <a id="images.settings-config"></a>config |  Label of a Docker-compatible registry authentication config file (for example `//images:config.json`).<br><br>This is the label-based alternative to `docker_config_path` and mutually exclusive with it. The file is used as `$REGISTRY_AUTH_FILE` for the pull tool. With lazy layer handling, it is also declared as an input of the build actions that download layers.<br><br>**WARNING:** Because the file is an action input, it may be uploaded to a remote cache or remote executor. Do not put secrets (`auth` or `identitytoken` entries) in it. Instead, reference a credential helper, for example `{"credHelpers": {"ghcr.io": "gh"}}` or `{"credsStore": "desktop"}`.<br><br>Only honored in the root module.   | <a href="https://bazel.build/concepts/labels">Label</a> | optional |  `None`  |
 | <a id="images.settings-credential_helper"></a>credential_helper |  Credential helper to use for registry authentication when the module extension runs the pull tool.<br><br>If omitted, the pull tool inherits `$IMG_CREDENTIAL_HELPER` (or `$IMG_CREDENTIAL_HELPER_OCI_REGISTRY`, which takes precedence) when present.   | String | optional |  `""`  |
 | <a id="images.settings-docker_config_path"></a>docker_config_path |  Path to Docker-compatible registry authentication config.<br><br>If omitted, the pull tool inherits `$REGISTRY_AUTH_FILE` when present.   | String | optional |  `""`  |
 | <a id="images.settings-downloader"></a>downloader |  The tool to use for downloading manifests and blobs if the current module is the root module.<br><br>**Available options:**<br><br>* **`img_tool`** (default): Uses the `img` tool for all downloads.<br><br>* **`bazel`**: Uses Bazel's native HTTP capabilities for downloading manifests and blobs.   | String | optional |  `"img_tool"`  |
