@@ -504,15 +504,20 @@ def compute_load_metadata(
     )
     return metadata_out, layer_hints_file
 
-def _registry_env(gateway, push_gateway, pull_gateway, insecure):
+def _registry_env(gateway, push_gateway, pull_gateway, insecure, registry_auth_file = ""):
     """Build the registry-related action env dict, omitting empty entries.
 
     IMG_REGISTRY_GATEWAY is the shared fallback for both push and pull; the
     mode-specific vars take precedence (resolved by the img tool at runtime).
     IMG_INSECURE lets the actions talk to a plain-HTTP registry (or one with an
     untrusted certificate), like the img tool's global --insecure flag.
+    REGISTRY_AUTH_FILE points the img tool at a Docker-compatible auth config.
+    The file is deliberately not an action input (it usually holds secrets that
+    must not reach the remote cache), so it must exist where the action runs.
     """
     env = {}
+    if registry_auth_file:
+        env["REGISTRY_AUTH_FILE"] = registry_auth_file
     if gateway:
         env["IMG_REGISTRY_GATEWAY"] = gateway
     if push_gateway:
@@ -541,7 +546,8 @@ def build_time_push_actions(
         insecure,
         pull_info,
         exec_requirements,
-        destination_file = None):
+        destination_file = None,
+        registry_auth_file = ""):
     """Create the PushImage actions for one push operation.
 
     Emits one action per blob (mnemonic PushImage) that pushes a single blob to
@@ -593,6 +599,9 @@ def build_time_push_actions(
       destination_file: optional File containing the push destination as
         `{registry}/{repository}`, overriding the registry and repository of
         configuration_json, as it does for the deploy manifest.
+      registry_auth_file: optional path to a Docker-compatible registry auth
+        config, passed to every emitted action as REGISTRY_AUTH_FILE. It is not
+        declared as an input, so the file must exist where the actions run.
 
     Returns:
       List of Files that drive the emitted actions when built: the per-layer and
@@ -607,7 +616,7 @@ def build_time_push_actions(
     # on insecure-registry access. These actions both push (upload) and pull
     # (shallow base layers), so all three gateway env vars are set; the img tool
     # resolves push/pull precedence at runtime.
-    registry_env = _registry_env(gateway, push_gateway, pull_gateway, insecure)
+    registry_env = _registry_env(gateway, push_gateway, pull_gateway, insecure, registry_auth_file)
     prefix = "{}.push_at_build_time.{}".format(ctx.label.name, push_idx)
 
     if manifest_info != None:
@@ -955,6 +964,7 @@ def process_deploy_specs(
                     pull_info = pull_info,
                     exec_requirements = push_config.push_at_build_time_exec_properties,
                     destination_file = push_config.destination_file,
+                    registry_auth_file = push_config.registry_auth_file,
                 ),
                 push_config.push_at_build_time_output_group,
             )

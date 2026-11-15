@@ -35,6 +35,7 @@ FIELDS = dict(
     push_at_build_time_push_gateway = "Push OCI distribution gateway endpoint for the build-time push actions, or ''.",
     push_at_build_time_pull_gateway = "Pull OCI distribution gateway endpoint for the build-time push actions, or ''.",
     insecure = "Bool: when True, the build-time push actions address registries over plain HTTP and accept untrusted TLS certificates (IMG_INSECURE).",
+    registry_auth_file = "Path to a Docker-compatible registry auth config passed to the build-time push actions as REGISTRY_AUTH_FILE, or ''. The file is not an action input; it must exist where the actions run.",
 )
 
 PushConfigInfo = provider(

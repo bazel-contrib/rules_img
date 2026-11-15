@@ -47,6 +47,7 @@ def _image_push_spec_impl(ctx):
         push_at_build_time_push_gateway = pbt.push_gateway,
         push_at_build_time_pull_gateway = pbt.pull_gateway,
         insecure = ctx.attr._push_settings[PushSettingsInfo].insecure,
+        registry_auth_file = ctx.attr._docker_config_path[BuildSettingInfo].value,
     )]
 
 image_push_spec = rule(
@@ -106,6 +107,12 @@ multi_deploy(
 )
 ```
 """,
-    attrs = COMMON_PUSH_ATTRS,
+    attrs = dict(
+        COMMON_PUSH_ATTRS,
+        _docker_config_path = attr.label(
+            default = Label("//img/settings:docker_config_path"),
+            providers = [BuildSettingInfo],
+        ),
+    ),
     provides = [PushConfigInfo],
 )
