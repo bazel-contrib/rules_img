@@ -18,9 +18,10 @@ import (
 )
 
 type Recorder struct {
-	tf          api.TarCAS
-	deduplicate bool
-	metadata    MetadataProvider
+	tf           api.TarCAS
+	deduplicate  bool
+	metadata     MetadataProvider
+	explicitDirs map[string]bool
 }
 
 // MetadataProvider is an interface for applying metadata to tar headers
@@ -41,6 +42,18 @@ func NewRecorder(tf api.TarCAS) Recorder {
 // are not read an extra time to digest their entries.
 func (r Recorder) WithDeduplicate(deduplicate bool) Recorder {
 	r.deduplicate = deduplicate
+	return r
+}
+
+// WithEmptyDirectories keeps tree artifacts that contain an explicitly declared
+// directory from being replaced with symlinks to other copies of the source tree.
+func (r Recorder) WithEmptyDirectories(names []string) Recorder {
+	r.explicitDirs = make(map[string]bool)
+	for _, name := range names {
+		for dir := name; dir != "." && dir != "/"; dir = path.Dir(dir) {
+			r.explicitDirs[dir] = true
+		}
+	}
 	return r
 }
 
@@ -327,6 +340,10 @@ func (r Recorder) TreeFromPath(dirPath, target string) error {
 // Tree records a directory tree (including all files and subdirectories).
 // It creates a symlink in the tar file that points to the root of the tree.
 func (r Recorder) Tree(fsys fs.FS, target string) error {
+	if r.explicitDirs[target] {
+		_, err := r.tf.StoreTreeKnownHash(fsys, target, nil)
+		return err
+	}
 	linkPath, err := r.tf.StoreTree(fsys, target)
 	if err != nil {
 		return err

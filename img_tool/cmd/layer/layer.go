@@ -43,6 +43,7 @@ func LayerProcess(ctx context.Context, args []string) {
 	var emptyFilesFromFiles emptyFilesFromFileArgs
 	var contentManifestInputFlags contentManifests
 	var contentManifestCollection string
+	var base baseEntries
 	var baseMetadataFlags baseMetadataArgs
 	var baseMetadataFromFiles baseMetadataFromFileArgs
 	var formatFlag string
@@ -122,6 +123,7 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 	flagSet.Var(&symlinkFlags, "symlink", `Add a symlink to the image layer. The parameter is a string of the form <path_in_image>=<target> where <path_in_image> is the path in the image and <target> is the target of the symlink.`)
 	flagSet.Var(&symlinksFromFiles, "symlinks-from-file", `Add all symlinks listed in the parameter file to the image layer. The parameter file is usually written by Bazel.`)
 	flagSet.Var(&symlinkPairsFromFiles, "symlink-pairs-from-file", `Add symlinks from a parameter file where each line has three null-separated fields: source_prefix, dest_prefix, dir_name. Creates symlink source_prefix/dir_name -> dest_prefix/dir_name.`)
+	flagSet.Func("empty-dir", "Create a directory at this image path. Can be specified multiple times.", base.addEmptyDir)
 	flagSet.Var(&emptyFilesFromFiles, "empty-files-from-file", `Create zero-size regular files at paths listed in the parameter file (one path per line).`)
 	flagSet.Var(&baseMetadataFlags, "base-metadata", `Add every tar entry described by a base metadata stream (as written by "img base"). Can be specified multiple times; for a path described by several streams, the last one wins.`)
 	flagSet.Var(&baseMetadataFromFiles, "base-metadata-from-file", `Add the base metadata streams listed in the parameter file, one path per line, in order. The parameter file is usually written by Bazel.`)
@@ -479,14 +481,14 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 	// read the baseMetadataFromFile parameter files and collect stream paths.
 	// Streams named directly on the command line come first, then those listed
 	// in parameter files, in the order given.
-	baseMetadataPaths := []string(baseMetadataFlags)
+	base.streamPaths = baseMetadataFlags
 	for _, paramFile := range baseMetadataFromFiles {
 		paths, err := readBaseMetadataParamFile(paramFile)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error reading base metadata parameter file: %v\n", err)
 			os.Exit(1)
 		}
-		baseMetadataPaths = append(baseMetadataPaths, paths...)
+		base.streamPaths = append(base.streamPaths, paths...)
 	}
 
 	// first, due to the way Bazel attributes work, we need to find out if a pathInImage is used multiple times
@@ -548,7 +550,7 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 			deduplicateTrees: treeArtifactHandlingFlag == "deduplicate_symlink",
 		}
 		if err := handleImageLayer(
-			containerFormat, ext4Settings, fat32Settings, iso9660Settings, cpioSettings, outputOSFile, addFiles, importTarFlags, executableFlags, symlinkFlags, emptyFilePaths, baseMetadataPaths,
+			containerFormat, ext4Settings, fat32Settings, iso9660Settings, cpioSettings, outputOSFile, addFiles, importTarFlags, executableFlags, symlinkFlags, emptyFilePaths, base,
 			createParentDirectoriesFlag, layerMetadata, layerHistory, mediaTypeFlag, annotations, metadataOutputFlag,
 			compactStreamOutputFlag, compactStreamInlineThresholdFlag,
 		); err != nil {
@@ -573,7 +575,7 @@ The type is either 'f' for regular files, 'd' for directories. The parameter fil
 	compressorState, err := handleLayerState(
 		containerFormat, erofsSettings,
 		compressionAlgorithm, tarFormat, addFiles, importTarFlags, executableFlags, symlinkFlags, emptyFilePaths,
-		baseMetadataPaths,
+		base,
 		casImporter, casExporter, outputFile, layerMetadata,
 		compressorJobsFlag, compressionLevelFlag, zstdWindowLogFlag, createParentDirectoriesFlag,
 		treeArtifactHandlingFlag, tarEndOfArchiveFlag,
@@ -716,7 +718,7 @@ func compressOptions(compressionLevelFlag int, compressorJobsFlag string, zstdWi
 func handleLayerState(
 	containerFormat api.ContainerFormat, erofs erofsSettings,
 	compressionAlgorithm api.CompressionAlgorithm, tarFormat compress.TarFormat, addFiles addFiles, importTars importTars, addExecutables executables, addSymlinks symlinks, emptyFiles []string,
-	baseMetadataPaths []string,
+	base baseEntries,
 	casImporter api.CASStateSupplier, casExporter api.CASStateExporter, outputFile io.Writer, layerMetadata *LayerMetadata,
 	compressorJobsFlag string, compressionLevelFlag int, zstdWindowLog int, createParentDirectories bool,
 	treeArtifactHandling string, tarEndOfArchive bool,
@@ -827,6 +829,7 @@ func handleLayerState(
 
 		tarcasOpts := []tarcas.Option{
 			tarcas.CreateParentDirectories(createParentDirectories),
+			tarcas.ParentDirectoriesFirst(len(base.emptyDirs) > 0),
 			tarcas.DeduplicateTreeArtifacts(treeArtifactHandling == "deduplicate_symlink"),
 			// estargz layers end with their own TOC entry and archive end.
 			tarcas.EndOfArchive(tarEndOfArchive && tarFormat != compress.TarFormatEstargz),
@@ -889,20 +892,23 @@ func handleLayerState(
 	if layerMetadata != nil {
 		recorder = recorder.WithMetadata(layerMetadata)
 	}
-	if err := writeLayer(recorder, addFiles, importTars, addExecutables, addSymlinks, emptyFiles, baseMetadataPaths, createParentDirectories, layerMetadata); err != nil {
+	if err := writeLayer(recorder, addFiles, importTars, addExecutables, addSymlinks, emptyFiles, base, createParentDirectories, layerMetadata); err != nil {
 		return compressorState, err
 	}
 
 	return compressorState, tw.Export(casExporter)
 }
 
-func writeLayer(recorder tree.Recorder, addFiles addFiles, importTars importTars, addExecutables executables, addSymlinks symlinks, emptyFiles []string, baseMetadataPaths []string, createParentDirectories bool, layerMetadata *LayerMetadata) error {
+func writeLayer(recorder tree.Recorder, addFiles addFiles, importTars importTars, addExecutables executables, addSymlinks symlinks, emptyFiles []string, base baseEntries, createParentDirectories bool, layerMetadata *LayerMetadata) error {
 	// Base metadata comes first: it describes the scaffolding of the image (the
 	// directory skeleton, /etc, the trust store), and writing it ahead of
 	// everything else keeps parent directories in front of the files placed
 	// into them.
-	if len(baseMetadataPaths) > 0 {
-		if err := writeBaseEntries(recorder, baseMetadataPaths, createParentDirectories, layerMetadata); err != nil {
+	if len(base.emptyDirs) > 0 {
+		recorder = recorder.WithEmptyDirectories(base.emptyDirs)
+	}
+	if len(base.emptyDirs) > 0 || len(base.streamPaths) > 0 {
+		if err := writeBaseEntries(recorder, base, createParentDirectories, layerMetadata); err != nil {
 			return err
 		}
 	}

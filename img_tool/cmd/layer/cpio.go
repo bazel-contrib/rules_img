@@ -57,7 +57,7 @@ func (s cpioSettings) mediaType() string {
 // have no effect.
 func writeCpioLayer(
 	out *os.File, settings cpioSettings, addFiles addFiles, importTars importTars, addExecutables executables, addSymlinks symlinks, emptyFiles []string,
-	baseMetadataPaths []string, createParentDirectories bool, layerMetadata *LayerMetadata,
+	base baseEntries, createParentDirectories bool, layerMetadata *LayerMetadata,
 	compactStream io.Writer, compactStreamInlineThreshold uint64, compactStreamPath string,
 ) (imageLayer, error) {
 	var layer imageLayer
@@ -72,7 +72,7 @@ func writeCpioLayer(
 	if layerMetadata != nil {
 		recorder = recorder.WithMetadata(layerMetadata)
 	}
-	if err := writeLayer(recorder, addFiles, importTars, addExecutables, addSymlinks, emptyFiles, baseMetadataPaths, createParentDirectories, layerMetadata); err != nil {
+	if err := writeLayer(recorder, addFiles, importTars, addExecutables, addSymlinks, emptyFiles, base, createParentDirectories, layerMetadata); err != nil {
 		return layer, err
 	}
 	if layerMetadata != nil {

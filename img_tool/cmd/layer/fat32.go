@@ -36,7 +36,7 @@ func (s fat32Settings) options() fat32.Options {
 // FIFOs, so layers with such entries fail.
 func writeFat32Layer(
 	out *os.File, settings fat32Settings, addFiles addFiles, importTars importTars, addExecutables executables, addSymlinks symlinks, emptyFiles []string,
-	baseMetadataPaths []string, createParentDirectories bool, layerMetadata *LayerMetadata,
+	base baseEntries, createParentDirectories bool, layerMetadata *LayerMetadata,
 	compactStream io.Writer, compactStreamInlineThreshold uint64,
 ) (*fat32.Info, error) {
 	opts := settings.options()
@@ -57,7 +57,7 @@ func writeFat32Layer(
 	if layerMetadata != nil {
 		recorder = recorder.WithMetadata(layerMetadata)
 	}
-	if err := writeLayer(recorder, addFiles, importTars, addExecutables, addSymlinks, emptyFiles, baseMetadataPaths, createParentDirectories, layerMetadata); err != nil {
+	if err := writeLayer(recorder, addFiles, importTars, addExecutables, addSymlinks, emptyFiles, base, createParentDirectories, layerMetadata); err != nil {
 		return nil, err
 	}
 	if layerMetadata != nil {

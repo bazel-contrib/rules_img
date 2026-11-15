@@ -1,0 +1,41 @@
+load("@rules_img//img:layer.bzl", "file_metadata", "image_layer")
+load("//tests/layering:defs.bzl", "layer_contents_test")
+
+# gazelle:exclude_from_release
+
+image_layer(
+    name = "layer",
+    create_parent_directories = "disabled",
+    default_metadata = file_metadata(
+        gid = 2000,
+        mode = "0644",
+        mtime = "2023-01-01T00:00:00Z",
+        uid = 1000,
+    ),
+    empty_dirs = [
+        "/run/app",
+        "/srv/data/",
+        "/var/cache/app",
+        "var/cache/app",
+    ],
+    file_metadata = {
+        # A trailing slash in the key matches the normalized directory path.
+        "/srv/data/": file_metadata(
+            mode = "0700",
+            uid = 4244,
+        ),
+        "/var/cache/app": file_metadata(
+            gid = 4243,
+            mode = "0750",
+            mtime = "2024-01-01T00:00:00Z",
+            uid = 4242,
+        ),
+    },
+)
+
+layer_contents_test(
+    name = "test",
+    size = "small",
+    layer = ":layer",
+    manifests = ["expected.ndjson"],
+)

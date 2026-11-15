@@ -23,6 +23,7 @@ import (
 type CAS[HM hashHelper] struct {
 	buf            bytes.Buffer
 	deferredFiles  []*tar.Header
+	deferredDirs   map[string]*tar.Header
 	tarAppender    api.TarAppender
 	hashOrder      [][]byte
 	nodeOrder      [][]byte
@@ -123,6 +124,22 @@ func (c *CAS[HM]) notifyEntry(hdr *tar.Header, knownDigest []byte) error {
 }
 
 func (c *CAS[HM]) writeHeaderAndData(hdr *tar.Header, data io.Reader, contentDigest []byte) error {
+	// Flush explicitly declared parents before their first child in CASFirst mode.
+	if len(c.deferredDirs) > 0 {
+		parent := path.Dir(strings.TrimSuffix(hdr.Name, "/"))
+		var parents []*tar.Header
+		for ; parent != "." && parent != "/"; parent = path.Dir(parent) {
+			if dir := c.deferredDirs[dirKey(parent)]; dir != nil {
+				parents = append(parents, dir)
+				delete(c.deferredDirs, dirKey(parent))
+			}
+		}
+		for _, dir := range slices.Backward(parents) {
+			if err := c.writeHeaderAndData(dir, nil, nil); err != nil {
+				return err
+			}
+		}
+	}
 	var buf bytes.Buffer
 	tw := tar.NewWriter(&buf)
 
@@ -263,6 +280,13 @@ func (c *CAS[HM]) Close() error {
 
 	c.closed = true
 	for _, hdr := range c.deferredFiles {
+		if c.parentDirectoriesFirst && hdr.Typeflag == tar.TypeDir {
+			key := dirKey(hdr.Name)
+			if c.deferredDirs[key] != hdr {
+				continue
+			}
+			delete(c.deferredDirs, key)
+		}
 		if err := c.writeHeaderOrDefer(hdr, nil, nil); err != nil {
 			return fmt.Errorf("error writing deferred header: %w", err)
 		}
@@ -671,22 +695,25 @@ func (c *CAS[HM]) StoreTreeKnownHash(fsys fs.FS, intendedPath string, treeHash [
 
 func (c *CAS[HM]) storeTree(fsys fs.FS, intendedPath string, treeHash []byte, fileNode func(string) (merkle.FileNode, bool)) (linkPath string, err error) {
 	hashStr := string(treeHash)
-	if treeBase, exists := c.firstTreePaths[hashStr]; exists && c.deduplicateTreeArtifacts && c.generatedMetadata == nil {
+	if treeBase, exists := c.firstTreePaths[hashStr]; exists && treeHash != nil && c.deduplicateTreeArtifacts && c.generatedMetadata == nil {
 		return treeBase, nil
 	}
 
-	header := &tar.Header{
-		Typeflag: tar.TypeDir,
-		Name:     intendedPath + "/",
-		Mode:     0o755,
-	}
-	if c.generatedMetadata != nil {
-		if err := c.generatedMetadata(header); err != nil {
+	// An explicit directory or a synthesized parent may already name the tree root.
+	if _, exists := c.dirs[dirKey(intendedPath)]; !exists || !c.parentDirectoriesFirst {
+		header := &tar.Header{
+			Typeflag: tar.TypeDir,
+			Name:     intendedPath + "/",
+			Mode:     0o755,
+		}
+		if c.generatedMetadata != nil {
+			if err := c.generatedMetadata(header); err != nil {
+				return "", err
+			}
+		}
+		if err := c.writeHeaderAndData(header, nil, nil); err != nil {
 			return "", err
 		}
-	}
-	if err := c.writeHeaderAndData(header, nil, nil); err != nil {
-		return "", err
 	}
 
 	// Store the tree children in the tar file.
@@ -749,7 +776,7 @@ func (c *CAS[HM]) storeTree(fsys fs.FS, intendedPath string, treeHash []byte, fi
 		return "", fmt.Errorf("storing tree artifact %x in tar: %w", treeHash, err)
 	}
 
-	if c.generatedMetadata == nil {
+	if treeHash != nil && c.generatedMetadata == nil {
 		c.storedTrees[hashStr] = struct{}{}
 		c.firstTreePaths[hashStr] = intendedPath
 		c.treeOrder = append(c.treeOrder, treeHash)
@@ -794,6 +821,12 @@ func (c *CAS[HM]) writeHeaderOrDefer(hdr *tar.Header, data io.Reader, contentDig
 	if hdr.Typeflag != tar.TypeReg && c.structure == CASFirst && !c.closed {
 		// Defer writing the header for non-regular files
 		// until Close() is called.
+		if c.parentDirectoriesFirst && hdr.Typeflag == tar.TypeDir {
+			if c.deferredDirs == nil {
+				c.deferredDirs = make(map[string]*tar.Header)
+			}
+			c.deferredDirs[dirKey(hdr.Name)] = hdr
+		}
 		c.deferredFiles = append(c.deferredFiles, hdr)
 		return nil
 	}

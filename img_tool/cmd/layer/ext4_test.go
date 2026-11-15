@@ -69,7 +69,7 @@ func TestExt4Layer(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer treeOut.Close()
-	info, err := writeExt4Layer(treeOut, ext4Settings{deduplicate: true}, addTree, nil, nil, nil, nil, nil, false, nil, nil, 0)
+	info, err := writeExt4Layer(treeOut, ext4Settings{deduplicate: true}, addTree, nil, nil, nil, nil, baseEntries{}, false, nil, nil, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

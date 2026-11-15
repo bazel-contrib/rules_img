@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/basemeta"
 )
 
 // FileMetadata represents the metadata that can be set on files in a layer
@@ -52,6 +54,11 @@ func ParseLayerMetadata(defaultJSON string, fileMetadata map[string]string) (*La
 		}
 		if strings.HasPrefix(path, "/") {
 			return nil, fmt.Errorf("file path %s should not start with a slash", path)
+		}
+		original := path
+		path = basemeta.NormalizePath(path)
+		if _, exists := result.FileOverrides[path]; exists {
+			return nil, fmt.Errorf("file metadata for %s conflicts with another entry for the same path", original)
 		}
 		result.FileOverrides[path] = &metadata
 		result.usageCounts[path] = 0 // initialize usage counter
