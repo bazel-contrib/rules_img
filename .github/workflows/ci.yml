@@ -69,7 +69,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runner: [macos-15, ubuntu-22.04, windows-2025]
+        runner: [macos-latest, ubuntu-22.04, windows-2025]
     runs-on: ${{ matrix.runner }}
     steps:
     - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
@@ -92,12 +92,11 @@ jobs:
   signer_module_test_matrix:
     # The signer plugins under modules/ are standalone Bazel modules, so they are
     # not covered by the root `bazel test //...` above. Test each one in its own
-    # workspace, fanned out across a matrix so the runs happen in parallel.
+    # workspace; all modules run sequentially in one job per platform.
     strategy:
       fail-fast: false
       matrix:
-        runner: [macos-15, ubuntu-22.04, windows-2025]
-        module: [rules_img_signer_cosign, rules_img_signer_notation]
+        runner: [macos-latest, ubuntu-22.04, windows-2025]
     runs-on: ${{ matrix.runner }}
     steps:
     - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
@@ -105,40 +104,54 @@ jobs:
       uses: ./.github/actions/generate-buildbuddy-bazelrc
       with:
         template-path: .github/workflows/.bazelrc.buildbuddy
-        # Emit into the module workspace so it can be imported via %workspace%
-        # below; an absolute path would break Bazel's rc parser on Windows
-        # (backslashes are stripped, turning it into an invalid relative path).
-        output-path: modules/${{ matrix.module }}/buildbuddy.bazelrc
+        output-path: .github/workflows/.bazelrc.buildbuddy.generated
         api-key: ${{ secrets.BUILDBUDDY_API_KEY }}
     - name: Setup Bazel
       uses: bazel-contrib/setup-bazel@c5acdfb288317d0b5c0bbd7a396a3dc868bb0f86 # 0.19.0
       with:
         bazelisk-cache: true
         repository-cache: true
+        # Each module is its own workspace, so the generated rc is copied into
+        # every module directory below. An absolute path would break Bazel's rc
+        # parser on Windows (backslashes are stripped, turning it into an
+        # invalid relative path).
         bazelrc: import %workspace%/buildbuddy.bazelrc
     - name: Execute Tests
-      working-directory: modules/${{ matrix.module }}
       shell: bash
       run: |
-        # rules_img_signer_cosign needs gazelle proto generation disabled for two
-        # sigstore transitive deps. `gazelle_override` is a root-module-only tag,
-        # so it must NOT be committed to the module's MODULE.bazel — that breaks
-        # every consumer that builds it as a dependency (e.g. //e2e:sbom, which
-        # supplies the same override from its own root). For this standalone build
-        # the module IS the root, so append the overrides just for the CI run.
-        if [ "${{ matrix.module }}" = "rules_img_signer_cosign" ]; then
-          {
-            echo ''
-            echo 'go_deps.gazelle_override(directives = ["gazelle:go_generate_proto false"], path = "github.com/sigstore/rekor-tiles/v2")'
-            echo 'go_deps.gazelle_override(directives = ["gazelle:go_generate_proto false"], path = "github.com/google/certificate-transparency-go")'
-          } >> MODULE.bazel
+        failed=()
+        for module in rules_img_signer_cosign rules_img_signer_notation; do
+          echo "::group::bazel test ${module}"
+          cp .github/workflows/.bazelrc.buildbuddy.generated "modules/${module}/buildbuddy.bazelrc"
+          # rules_img_signer_cosign needs gazelle proto generation disabled for
+          # two sigstore transitive deps. `gazelle_override` is a
+          # root-module-only tag, so it must NOT be committed to the module's
+          # MODULE.bazel — that breaks every consumer that builds it as a
+          # dependency (e.g. //e2e:sbom, which supplies the same override from
+          # its own root). For this standalone build the module IS the root, so
+          # append the overrides just for the CI run.
+          if [ "${module}" = "rules_img_signer_cosign" ]; then
+            {
+              echo ''
+              echo 'go_deps.gazelle_override(directives = ["gazelle:go_generate_proto false"], path = "github.com/sigstore/rekor-tiles/v2")'
+              echo 'go_deps.gazelle_override(directives = ["gazelle:go_generate_proto false"], path = "github.com/google/certificate-transparency-go")'
+            } >> "modules/${module}/MODULE.bazel"
+          fi
+          if ! (cd "modules/${module}" && bazelisk test //...); then
+            failed+=("${module}")
+            echo "::error::bazel test failed for ${module}"
+          fi
+          echo "::endgroup::"
+        done
+        if [ "${#failed[@]}" -gt 0 ]; then
+          echo "Failed modules: ${failed[*]}"
+          exit 1
         fi
-        bazelisk test //...
   integration_test_matrix:
     strategy:
       fail-fast: false
       matrix:
-        runner: [macos-15, ubuntu-22.04, windows-2025]
+        runner: [macos-latest, ubuntu-22.04, windows-2025]
     runs-on: ${{ matrix.runner }}
     if: ${{ github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch' }}
     permissions:
