@@ -6,6 +6,7 @@ modules/rules_img_services/MODULE.bazel.lock
 bazel-*
 .bazelrc.user
 .github/workflows/.bazelrc.buildbuddy.generated
+.github/workflows/.bazelrc.buildbuddy.inner.generated
 .vscode
 .direnv
 .env

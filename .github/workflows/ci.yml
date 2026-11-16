@@ -178,7 +178,16 @@ jobs:
       shell: bash
       env:
         MSYS_NO_PATHCONV: 1
-      run: bazelisk test '//e2e:integration_tests' --test_env=BAZEL_INTEGRATION_TEST_INJECT_BAZELRC="${PWD}/.github/workflows/.bazelrc.buildbuddy.generated" --sandbox_add_mount_pair="${PWD}/.github/workflows/.bazelrc.buildbuddy.generated"
+      run: |
+        # Inject a copy of the outer rc without the startup lines (the nested
+        # runs cover Bazel 7 and 8, which reject the Bazel 9-only
+        # --experimental_remote_repo_contents_cache) and without
+        # --remote_download_minimal (the e2e tests read their inner build's
+        # outputs from disk).
+        inject="${PWD}/.github/workflows/.bazelrc.buildbuddy.inner.generated"
+        sed -e '/^startup /d' -e '/--remote_download_minimal/d' \
+          .github/workflows/.bazelrc.buildbuddy.generated > "${inject}"
+        bazelisk test '//e2e:integration_tests' --test_env=BAZEL_INTEGRATION_TEST_INJECT_BAZELRC="${inject}" --sandbox_add_mount_pair="${inject}"
   all-tests-passed:
     runs-on: ubuntu-latest
     needs: [buildifier_check, img_tool_go_build, tidy_and_test_matrix, signer_module_test_matrix, integration_test_matrix]

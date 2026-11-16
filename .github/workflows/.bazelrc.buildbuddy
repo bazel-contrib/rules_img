@@ -6,6 +6,8 @@ common --remote_header=x-buildbuddy-api-key=BUILDBUDDY_API_KEY
 common --bes_header=x-buildbuddy-api-key=BUILDBUDDY_API_KEY
 common --experimental_remote_downloader=grpcs://rules-img.buildbuddy.io
 common --experimental_remote_downloader_local_fallback
+common --remote_download_minimal
+startup --experimental_remote_repo_contents_cache
 
 # Build metadata for better tracking and organization
 common --build_metadata=ROLE=CI
