@@ -150,7 +150,9 @@ jobs:
       # every commit that leaves the module's sources alone, and so keeps the
       # registry from storing a copy of it per commit.
       run: |
+        # The next step reads the archive from bazel-bin, so download it.
         bazelisk build \
+          --remote_download_toplevel \
           --//img/private/release:prebuilt_lockfile_override=//:prebuilt_lockfile.json \
           //img/private/release:src_tar
     - name: Check out the registry branch
