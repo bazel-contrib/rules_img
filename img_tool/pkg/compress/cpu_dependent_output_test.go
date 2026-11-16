@@ -67,25 +67,27 @@ func TestCPUDependentOutputRegression(t *testing.T) {
 		factoryCase("gzip/level=6", 6, nil, "7249a47bc627eb07c009427aabb3c0640c9079bd28294b11b20d8d4c63c42aac"),
 		factoryCase("gzip/level=9", 9, nil, "7d1ca8d46c2837ffcc631c501732a0e95825f4230c34d1d4c5fd5d81f0f3063f"),
 		// jobs > 1: AppenderFactory selects the klauspost/pgzip appender.
-		factoryCase("pgzip/level=1,jobs=2", 1, jobs(2), "6551f4ed51656eb6a53fd4a0c7bbe2b86ca6445de75bb833746c3c1cdf3de388"),
-		factoryCase("pgzip/level=3,jobs=2", 3, jobs(2), "5b9cc20bb02558027778edf7d71d7ed6e4742f6215690ce0a69c8476345a2e98"),
-		factoryCase("pgzip/level=6,jobs=2", 6, jobs(2), "b57427314526306b9211ad4e52ffb9bc2a2d15a5c69d3056185d659bf36defa4"),
-		factoryCase("pgzip/level=9,jobs=2", 9, jobs(2), "2af2e0a8683845c4d3110969fa7500a903db12d43d1fa264effe6decc5ef4dcd"),
-		factoryCase("pgzip/level=3,jobs=4", 3, jobs(4), "5b9cc20bb02558027778edf7d71d7ed6e4742f6215690ce0a69c8476345a2e98"),
+		factoryCase("pgzip/level=1,jobs=2", 1, jobs(2), "9ff12c428f390e887d04e31b5d3f600566f9b51a0a369b53be42c73dc776ca86"),
+		factoryCase("pgzip/level=3,jobs=2", 3, jobs(2), "4d0f6f58a3e88d10f7faf3776269e63f313a4706db830136443c3970b3062b03"),
+		factoryCase("pgzip/level=6,jobs=2", 6, jobs(2), "982e2999fcde888f34fdfa6c9851132ab4b49b44a63efcffdea20059064477a8"),
+		factoryCase("pgzip/level=9,jobs=2", 9, jobs(2), "dd0814201fa7b3fe4dbb3638d02e3af37688243526ce97f0dbb19fffdb44959e"),
+		factoryCase("pgzip/level=3,jobs=4", 3, jobs(4), "4d0f6f58a3e88d10f7faf3776269e63f313a4706db830136443c3970b3062b03"),
 		{
 			// The exact scenario from the upstream repro: pgzip at level 3
 			// with SetConcurrency(1<<20, 1), constructed directly since
 			// AppenderFactory would otherwise route jobs=1 to plain gzip.
-			// This sha256 matches the amd64 value reported at
+			// With klauspost/compress <= v1.20.3 this sha256 matched the
+			// amd64 value reported at
 			// https://github.com/malt3/pgzip-cpu-dependent-output-repro for
-			// the same input and settings: the fix makes arm64 converge to
-			// amd64's (already portable) result rather than the other way
-			// around.
+			// the same input and settings. v1.20.4 changed the flate output
+			// on all architectures (Huffman tree construction, see
+			// https://github.com/klauspost/compress/pull/1219), so the pgzip
+			// hashes were regenerated; amd64 and arm64 still agree.
 			name: "pgzip/level=3,jobs=1",
 			newAppender: func(w *bytes.Buffer) (api.Appender, error) {
 				return NewSHA256PGzipAppender(w, CompressionLevel(3), CompressorJobs(1))
 			},
-			wantSHA256Hex: "5b9cc20bb02558027778edf7d71d7ed6e4742f6215690ce0a69c8476345a2e98",
+			wantSHA256Hex: "4d0f6f58a3e88d10f7faf3776269e63f313a4706db830136443c3970b3062b03",
 		},
 	}
 
