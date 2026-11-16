@@ -19,9 +19,15 @@ func readParamFile(paramFile string) (addFiles, error) {
 	scanner := bufio.NewScanner(file)
 
 	var files addFiles
+	var opts paramFileOptions
 	for scanner.Scan() {
 		line := scanner.Text()
 		if line == "" {
+			continue
+		}
+		if isDirective, err := applyParamFileDirective(line, &opts); err != nil {
+			return nil, fmt.Errorf("parsing parameter file: %w", err)
+		} else if isDirective {
 			continue
 		}
 		pathInImage, typeOfFile, file, err := splitParamFileLine(line)
@@ -33,9 +39,10 @@ func readParamFile(paramFile string) (addFiles, error) {
 			return nil, fmt.Errorf("parsing parameter file: %w", err)
 		}
 		files = append(files, addFile{
-			PathInImage: pathInImage,
-			File:        file,
-			FileType:    typ,
+			PathInImage:      pathInImage,
+			File:             file,
+			FileType:         typ,
+			DedupByContentOK: opts.dedupByContent,
 		})
 	}
 	if err := scanner.Err(); err != nil {
@@ -62,6 +69,50 @@ func parseFileType(typeOfFile, file string) (api.FileType, error) {
 	default:
 		return api.FileType{}, fmt.Errorf("invalid type %q", typeOfFile)
 	}
+}
+
+// paramFileOptions are the settings that directive lines change for the
+// entries that follow them in a parameter file.
+type paramFileOptions struct {
+	// dedupByContent is set by a "dedup=content" directive and cleared by a
+	// "dedup=exact" directive: the metadata of the entries in between does not
+	// matter, so they may be hardlinked to an earlier regular file with the
+	// same content even if their metadata differs. Such an entry is still
+	// written with its own metadata when there is no such file. Bazel brackets
+	// the files of a runfiles tree with these directives.
+	dedupByContent bool
+}
+
+// applyParamFileDirective applies a directive line of the form
+//
+//	\0<key>=<value>[\0<key>=<value>]...
+//
+// to opts and reports whether line is a directive at all. A path in the image
+// cannot be empty, so a line starting with NUL is never a file entry.
+func applyParamFileDirective(line string, opts *paramFileOptions) (bool, error) {
+	if !strings.HasPrefix(line, "\x00") {
+		return false, nil
+	}
+	for _, kv := range strings.Split(line[1:], "\x00") {
+		key, value, ok := strings.Cut(kv, "=")
+		if !ok {
+			return true, fmt.Errorf("invalid directive %q (want key=value)", kv)
+		}
+		switch key {
+		case "dedup":
+			switch value {
+			case "content":
+				opts.dedupByContent = true
+			case "exact":
+				opts.dedupByContent = false
+			default:
+				return true, fmt.Errorf("invalid value %q for directive dedup (want content or exact)", value)
+			}
+		default:
+			return true, fmt.Errorf("unknown directive %q", key)
+		}
+	}
+	return true, nil
 }
 
 func splitParamFileLine(line string) (string, string, string, error) {

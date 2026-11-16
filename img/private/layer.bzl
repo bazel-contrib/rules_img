@@ -5,6 +5,8 @@ load("//img/private/common:layer_attrs.bzl", "layer_attrs")
 load("//img/private/common:layer_helper.bzl", "history_attr")
 load(
     "//img/private/common:tar_layer.bzl",
+    "DEDUP_BY_CONTENT_END",
+    "DEDUP_BY_CONTENT_START",
     "create_tar_layer",
     "empty_runfile_short_path",
     "file_type",
@@ -68,9 +70,11 @@ def _image_layer_impl(ctx):
                 executable_runfiles_args = ctx.actions.args()
                 executable_runfiles_args.set_param_file_format("multiline")
                 executable_runfiles_args.use_param_file("--runfiles={}=%s".format(executable.path), use_always = True)
+                executable_runfiles_args.add(DEDUP_BY_CONTENT_START)
                 executable_runfiles_args.add_all(runfiles.files, map_each = to_short_path_pair, expand_directories = False, uniquify = True)
                 executable_runfiles_args.add_all(runfiles.symlinks, map_each = symlinks_arg)
                 executable_runfiles_args.add_all(runfiles.root_symlinks, map_each = root_symlinks_arg)
+                executable_runfiles_args.add(DEDUP_BY_CONTENT_END)
                 extra_args.append(executable_runfiles_args)
                 extra_inputs.append(runfiles.files)
                 symlink_inputs = []
@@ -87,7 +91,9 @@ def _image_layer_impl(ctx):
                 if repo_mapping_manifest != None:
                     extra_inputs.append(depset([repo_mapping_manifest]))
                     files_args.add_all([repo_mapping_manifest], map_each = files_arg, format_each = "{}.repo_mapping\0%s".format(path_in_image), expand_directories = False)
+                    files_args.add(DEDUP_BY_CONTENT_START)
                     files_args.add_all([repo_mapping_manifest], map_each = files_arg, format_each = "{}.runfiles/_repo_mapping\0%s".format(path_in_image), expand_directories = False)
+                    files_args.add(DEDUP_BY_CONTENT_END)
             else:
                 # Only the executable itself, without runfiles.
                 files_args.add_all(["{}\0{}{}".format(path_in_image, file_type(executable), executable.path)])

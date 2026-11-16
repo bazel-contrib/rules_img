@@ -73,6 +73,22 @@ type TarEntrySink interface {
 	WriteRegularFromTarEntry(hdr *tar.Header, archive TarArchive, index int, knownHash []byte) error
 }
 
+// ContentDeduplicatingSink is implemented by layer sinks that can deduplicate
+// a regular file by its content alone, disregarding its metadata. A file
+// written this way becomes a hardlink to any earlier file in the layer with the
+// same content -- taking on that file's metadata -- and is only written with
+// its own metadata when no such file exists. Sinks that do not implement it get
+// the regular, metadata-sensitive deduplication.
+type ContentDeduplicatingSink interface {
+	WriteRegularFromPathDeduplicatedByContent(hdr *tar.Header, filePath string) error
+}
+
+// DedupByContentNode is implemented by runfiles nodes that may be deduplicated
+// by content alone (see ContentDeduplicatingSink).
+type DedupByContentNode interface {
+	DedupByContent() bool
+}
+
 // tarOnDisk is a TarArchive on disk, possibly compressed.
 type tarOnDisk string
 
@@ -256,6 +272,20 @@ func openTarStream(tarFile string) (*tar.Reader, func(), error) {
 }
 
 func (r Recorder) RegularFileFromPath(filePath, target string) error {
+	return r.regularFileFromPath(filePath, target, false)
+}
+
+// RegularFileFromPathDedupByContent records a regular file like
+// RegularFileFromPath, but lets it be deduplicated against an earlier file with
+// the same content even if the two differ in metadata (see
+// ContentDeduplicatingSink). The file still gets its own metadata whenever it
+// is not deduplicated. This is meant for files whose metadata nothing depends
+// on, like the contents of a runfiles tree.
+func (r Recorder) RegularFileFromPathDedupByContent(filePath, target string) error {
+	return r.regularFileFromPath(filePath, target, true)
+}
+
+func (r Recorder) regularFileFromPath(filePath, target string, byContent bool) error {
 	file, err := os.Open(filePath)
 	if err != nil {
 		return fmt.Errorf("opening file %s: %w", filePath, err)
@@ -291,11 +321,15 @@ func (r Recorder) RegularFileFromPath(filePath, target string) error {
 	}
 
 	// Use optimized path-based methods
-	if r.deduplicate {
-		return r.tf.WriteRegularFromPathDeduplicated(hdr, filePath)
-	} else {
+	if !r.deduplicate {
 		return r.tf.WriteRegularFromPath(hdr, filePath)
 	}
+	if byContent {
+		if sink, ok := r.tf.(ContentDeduplicatingSink); ok {
+			return sink.WriteRegularFromPathDeduplicatedByContent(hdr, filePath)
+		}
+	}
+	return r.tf.WriteRegularFromPathDeduplicated(hdr, filePath)
 }
 
 func (r Recorder) RegularFile(f io.Reader, info fs.FileInfo, target string) error {
@@ -373,7 +407,11 @@ func (r Recorder) Executable(binaryPath, target string, accessor runfilesSupplie
 		case api.RegularFile:
 			// Try to use optimized path-based method if available
 			if pathNode, ok := node.(runfiles.PathNode); ok {
-				if err := r.RegularFileFromPath(pathNode.Path(), path.Join(target+".runfiles", p)); err != nil {
+				byContent := false
+				if n, ok := node.(DedupByContentNode); ok {
+					byContent = n.DedupByContent()
+				}
+				if err := r.regularFileFromPath(pathNode.Path(), path.Join(target+".runfiles", p), byContent); err != nil {
 					return err
 				}
 			} else {

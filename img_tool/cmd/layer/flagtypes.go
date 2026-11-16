@@ -15,6 +15,15 @@ type addFile struct {
 	PathInImage string
 	File        string
 	FileType    api.FileType
+	// DedupByContentOK lets a regular file be hardlinked to an earlier file
+	// with the same content even if their metadata differs (inside a dedup=content
+	// block of a parameter file).
+	DedupByContentOK bool
+}
+
+// DedupByContent implements tree.DedupByContentNode.
+func (a addFile) DedupByContent() bool {
+	return a.DedupByContentOK
 }
 
 func (a addFile) Type() api.FileType {
@@ -78,7 +87,7 @@ func (a *addFiles) Set(value string) error {
 		return fmt.Errorf("file %s does not exist: %w", parts[1], err)
 	}
 	var fileType api.FileType
-	if fInfo.Mode() & fs.ModeSymlink != 0 {
+	if fInfo.Mode()&fs.ModeSymlink != 0 {
 		fileType = api.Symlink
 	} else if fInfo.IsDir() {
 		fileType = api.Directory
