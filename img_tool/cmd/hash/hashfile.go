@@ -14,6 +14,7 @@ import (
 
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/api"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/fileopener"
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/metadata"
 )
 
 // layerMetadata holds precomputed layer information.
@@ -221,7 +222,14 @@ func writeHashOutput(hashBytes []byte, req *hashRequest, sandboxDir string, laye
 		if layerMeta == nil {
 			return fmt.Errorf("layer metadata encoding requires layer metadata to be computed")
 		}
-		return writeLayerMetadata(hashBytes, layerMeta, req, outputPath)
+		if err := writeLayerMetadata(hashBytes, layerMeta, req, outputPath); err != nil {
+			return err
+		}
+		inputPath := req.input
+		if sandboxDir != "" {
+			inputPath = filepath.Join(sandboxDir, req.input)
+		}
+		return metadata.RecordCASDigest(req.casDigest, inputPath, outputPath)
 	}
 
 	outputData, err := encodeHash(hashBytes, req.encoding, req.digest)

@@ -28,6 +28,7 @@ go_library(
 go_test(
     name = "deployvfs_test",
     srcs = [
+        "casdigest_test.go",
         "compactstream_multiblob_test.go",
         "compactstream_test.go",
         "crossmount_test.go",
@@ -36,6 +37,7 @@ go_test(
     embed = [":deployvfs"],
     deps = [
         "//pkg/api",
+        "//pkg/blake3sum",
         "//pkg/cas",
         "//pkg/compactstream",
         "@com_github_google_go_containerregistry//pkg/v1:pkg",

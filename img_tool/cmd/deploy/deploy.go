@@ -13,11 +13,13 @@ import (
 	"path"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
 
 	"golang.org/x/sync/errgroup"
+	"google.golang.org/grpc"
 
 	"github.com/google/go-containerregistry/pkg/name"
 	registryv1 "github.com/google/go-containerregistry/pkg/v1"
@@ -841,7 +843,7 @@ func configureBuilderFromEnv(ctx context.Context, builder *deployvfs.Builder, ne
 	if sources == nil {
 		return builder, nil, nil
 	}
-	return builder.WithCASReader(sources.reader()), sources, nil
+	return sources.configure(builder), sources, nil
 }
 
 // casSourcesFromEnv opens the connection pool to the remote CAS named by the
@@ -854,20 +856,37 @@ func casSourcesFromEnv(ctx context.Context, jobs int) (*casSources, error) {
 	}
 
 	reapiInstanceName := os.Getenv(envREAPIInstanceName)
+	digestFunctionSetting, err := digestFunctionSettingFromEnv()
+	if err != nil {
+		return nil, err
+	}
 	credHelper := credentialHelperInstance()
 	// A single gRPC connection multiplexes all CAS reads onto one TCP
 	// connection, which bottlenecks bulk downloads on high-latency
 	// links. Optionally open a pool of connections and round-robin
 	// reads across them (cf. Bazel's --remote_max_connections).
 	numConns := reapiMaxConnections(jobs)
-	members := make([]*cas.CAS, 0, numConns)
 	requestMetadata, _ := protohelper.RequestMetadataFromContext(ctx)
+	conns := make([]*grpc.ClientConn, 0, numConns)
 	for range numConns {
 		grpcConn, err := protohelper.ClientWithRequestMetadata(reapiEndpoint, credHelper, requestMetadata)
 		if err != nil {
 			return nil, fmt.Errorf("creating gRPC client for REAPI: %w", err)
 		}
-		member, err := cas.New(grpcConn, cas.WithInstanceName(reapiInstanceName))
+		conns = append(conns, grpcConn)
+	}
+	// Blobs are addressed in the cache by the digest function Bazel runs with,
+	// which is not necessarily the SHA256 the registry knows them by.
+	digestFunctions := resolveDigestFunctions(ctx, digestFunctionSetting, func(ctx context.Context) ([]string, error) {
+		return cas.ServerDigestFunctions(ctx, conns[0], reapiInstanceName)
+	}, os.Stderr)
+	members := make([]*cas.CAS, 0, numConns)
+	for _, grpcConn := range conns {
+		member, err := cas.New(grpcConn,
+			cas.WithInstanceName(reapiInstanceName),
+			cas.WithSHA256(slices.Contains(digestFunctions, digestFunctionSHA256)),
+			cas.WithBLAKE3(slices.Contains(digestFunctions, digestFunctionBLAKE3)),
+		)
 		if err != nil {
 			return nil, fmt.Errorf("creating CAS client: %w", err)
 		}
@@ -879,9 +898,9 @@ func casSourcesFromEnv(ctx context.Context, jobs int) (*casSources, error) {
 	if err != nil {
 		// Caching is an optimization: read straight from the remote cache instead.
 		fmt.Fprintf(os.Stderr, "WARNING: not caching remote cache blobs locally: %v\n", err)
-		return &casSources{pool: pool}, nil
+		return &casSources{pool: pool, digestFunctions: digestFunctions}, nil
 	}
-	return &casSources{pool: pool, cache: blobCache}, nil
+	return &casSources{pool: pool, cache: blobCache, digestFunctions: digestFunctions}, nil
 }
 
 // OpenCASFromEnv opens the remote CAS named by the environment (IMG_REAPI_ENDPOINT
@@ -913,6 +932,19 @@ func DiskCachePathFromEnv() string { return os.Getenv("IMG_DISK_CACHE") }
 type casSources struct {
 	pool  *cas.Pool
 	cache *cas.CachingReader
+	// digestFunctions are the digest functions blobs are looked up in the remote
+	// cache by, in the order to try them (see resolveDigestFunctions).
+	digestFunctions []string
+}
+
+// configure points a VFS builder at these sources: the blob source itself, and
+// the digest functions to address it by. It leaves the builder alone when there
+// is no remote cache.
+func (s *casSources) configure(builder *deployvfs.Builder) *deployvfs.Builder {
+	if s == nil {
+		return builder
+	}
+	return builder.WithCASReader(s.reader()).WithCASDigestFunctions(s.digestFunctions...)
 }
 
 // reader is the blob source the VFS reads from: the local blob cache when there

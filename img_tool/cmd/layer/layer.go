@@ -79,6 +79,7 @@ func LayerProcess(ctx context.Context, args []string) {
 	var zstdChunkedFlag bool
 	var mediaTypeFlag string
 	var metadataOutputFlag string
+	var casDigestFlag string
 	var contentManifestOutputFlag string
 	var defaultMetadataFlag string
 	var compressorJobsFlag string
@@ -168,6 +169,7 @@ A line starting with a null byte is a directive of null-separated key=value pair
 	flagSet.Var(&annotations, "annotation", `Add an annotation as key=value. Can be specified multiple times.`)
 	flagSet.StringVar(&annotationsFile, "annotations-file", "", `File containing annotations, as JSON ({"key":"value"}, {"key":["v1","v2"]}, or ["key=value"]) or newline-delimited KEY=VALUE text. Annotations from the file are merged with those specified via --annotation, which take precedence.`)
 	flagSet.StringVar(&metadataOutputFlag, "metadata", "", `Write the metadata to the specified file. The metadata is a JSON file containing info needed to use the layer as part of an OCI image.`)
+	flagSet.StringVar(&casDigestFlag, "cas-digest", "", `Also record the layer's digest in this digest function ("blake3") in the metadata, next to its SHA256. A Bazel remote cache that is not addressed by SHA256 (--digest_function=blake3) holds the layer under that digest, which a lazy push has to know without having the layer. Requires --metadata. Has no effect with --compact-stream-only, which writes no layer blob.`)
 	flagSet.StringVar(&contentManifestOutputFlag, "content-manifest", "", `Write a manifest of the contents of the layer to the specified file. The manifest uses a custom binary format listing all blobs, nodes, and trees in the layer after deduplication.`)
 	flagSet.StringVar(&defaultMetadataFlag, "default-metadata", "", `JSON-encoded default metadata to apply to all files in the layer. Can include fields like mode, uid, gid, uname, gname, mtime, and pax_records.`)
 	flagSet.Var(&fileMetadataFlags, "file-metadata", `Per-file metadata override in the format path=json. Can be specified multiple times. Overrides any defaults from --default-metadata.`)
@@ -273,6 +275,15 @@ A line starting with a null byte is a directive of null-separated key=value pair
 		os.Exit(1)
 	}
 
+	if err := metadata.ValidateCASDigest(casDigestFlag); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	if casDigestFlag != "" && metadataOutputFlag == "" {
+		fmt.Fprintf(os.Stderr, "Error: --cas-digest requires --metadata\n")
+		os.Exit(1)
+	}
+
 	if ztocOutputFlag != "" && compactStreamOnlyFlag {
 		fmt.Fprintf(os.Stderr, "Error: --ztoc cannot be combined with --compact-stream-only (there is no materialized layer blob to index)\n")
 		os.Exit(1)
@@ -290,6 +301,19 @@ A line starting with a null byte is a directive of null-separated key=value pair
 	var outputFilePath string
 	if !compactStreamOnlyFlag {
 		outputFilePath = flagSet.Arg(0)
+	}
+
+	// recordCASDigest adds the layer blob's digest in the remote cache's digest
+	// function to the metadata, once both have been written. A compact-stream-only
+	// layer has no blob to hash.
+	recordCASDigest := func() {
+		if casDigestFlag == "" || compactStreamOnlyFlag || metadataOutputFlag == "" {
+			return
+		}
+		if err := metadata.RecordCASDigest(casDigestFlag, outputFilePath, metadataOutputFlag); err != nil {
+			fmt.Fprintf(os.Stderr, "Recording %s digest: %v\n", casDigestFlag, err)
+			os.Exit(1)
+		}
 	}
 
 	// Read annotations from file if provided
@@ -558,6 +582,7 @@ A line starting with a null byte is a directive of null-separated key=value pair
 			fmt.Fprintf(os.Stderr, "Writing %s layer: %v\n", containerFormat, err)
 			os.Exit(1)
 		}
+		recordCASDigest()
 		return
 	}
 
@@ -598,22 +623,26 @@ A line starting with a null byte is a directive of null-separated key=value pair
 	}
 
 	if len(metadataOutputFlag) > 0 {
-		metadataOutputFile, err := os.OpenFile(metadataOutputFlag, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error opening metadata output file: %v\n", err)
-			os.Exit(1)
-		}
-		defer func() {
-			if err := metadataOutputFile.Close(); err != nil {
-				fmt.Fprintf(os.Stderr, "Error closing metadata output file: %v\n", err)
+		writeLayerMetadataFile := func() {
+			metadataOutputFile, err := os.OpenFile(metadataOutputFlag, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error opening metadata output file: %v\n", err)
 				os.Exit(1)
 			}
-		}()
+			defer func() {
+				if err := metadataOutputFile.Close(); err != nil {
+					fmt.Fprintf(os.Stderr, "Error closing metadata output file: %v\n", err)
+					os.Exit(1)
+				}
+			}()
 
-		if err := writeMetadata(layerHistory, containerFormat, compressionAlgorithm, mediaTypeFlag, annotations, compressorState, metadataOutputFile); err != nil {
-			fmt.Fprintf(os.Stderr, "Writing metadata: %v\n", err)
-			os.Exit(1)
+			if err := writeMetadata(layerHistory, containerFormat, compressionAlgorithm, mediaTypeFlag, annotations, compressorState, metadataOutputFile); err != nil {
+				fmt.Fprintf(os.Stderr, "Writing metadata: %v\n", err)
+				os.Exit(1)
+			}
 		}
+		writeLayerMetadataFile()
+		recordCASDigest()
 	}
 }
 

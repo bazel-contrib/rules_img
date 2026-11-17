@@ -230,6 +230,10 @@ def _multi_deploy_impl(ctx):
         environment["IMG_REAPI_INSTANCE_NAME"] = push_settings.remote_instance_name or load_settings.remote_instance_name
         inherited_environment.append("IMG_REAPI_INSTANCE_NAME")
 
+    if push_settings.digest_function or load_settings.digest_function:
+        environment["IMG_DIGEST_FUNCTION"] = push_settings.digest_function or load_settings.digest_function
+        inherited_environment.append("IMG_DIGEST_FUNCTION")
+
     if push_settings.credential_helper or load_settings.credential_helper:
         environment["IMG_CREDENTIAL_HELPER"] = push_settings.credential_helper or load_settings.credential_helper
         inherited_environment.append("IMG_CREDENTIAL_HELPER")

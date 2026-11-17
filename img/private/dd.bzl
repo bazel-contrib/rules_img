@@ -151,11 +151,13 @@ def _image_dd_impl(ctx):
     environment = {
         "IMG_REAPI_ENDPOINT": load_settings.remote_cache,
         "IMG_REAPI_INSTANCE_NAME": load_settings.remote_instance_name,
+        "IMG_DIGEST_FUNCTION": load_settings.digest_function,
         "IMG_CREDENTIAL_HELPER": load_settings.credential_helper,
         "IMG_CREDENTIAL_HELPER_REMOTE_CACHE": load_settings.credential_helper_remote_cache,
     }
     inherited_environment = [
         "IMG_REAPI_ENDPOINT",
+        "IMG_DIGEST_FUNCTION",
         "IMG_REAPI_INSTANCE_NAME",
         "IMG_CREDENTIAL_HELPER",
         "IMG_CREDENTIAL_HELPER_REMOTE_CACHE",

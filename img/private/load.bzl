@@ -184,12 +184,14 @@ def _image_load_impl(ctx):
     environment = {
         "IMG_REAPI_ENDPOINT": ctx.attr._load_settings[LoadSettingsInfo].remote_cache,
         "IMG_REAPI_INSTANCE_NAME": ctx.attr._load_settings[LoadSettingsInfo].remote_instance_name,
+        "IMG_DIGEST_FUNCTION": ctx.attr._load_settings[LoadSettingsInfo].digest_function,
         "IMG_CREDENTIAL_HELPER": ctx.attr._load_settings[LoadSettingsInfo].credential_helper,
         "IMG_CREDENTIAL_HELPER_OCI_REGISTRY": ctx.attr._load_settings[LoadSettingsInfo].credential_helper_oci_registry,
         "IMG_CREDENTIAL_HELPER_REMOTE_CACHE": ctx.attr._load_settings[LoadSettingsInfo].credential_helper_remote_cache,
     }
     inherited_environment = [
         "IMG_REAPI_ENDPOINT",
+        "IMG_DIGEST_FUNCTION",
         "IMG_REAPI_INSTANCE_NAME",
         "IMG_CREDENTIAL_HELPER",
         "IMG_CREDENTIAL_HELPER_OCI_REGISTRY",

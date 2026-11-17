@@ -12,7 +12,8 @@ import (
 
 // applyToolSettings applies the `img` tool settings a deploy manifest recorded
 // at build time (see [api.ToolSettings]): the remote cache the lazy push
-// strategy reads layers from, the credential helpers, the registry auth file and
+// strategy reads layers from and the digest function it addresses them by, the
+// credential helpers, the registry auth file and
 // insecure-registry access.
 //
 // They are the lowest-priority source of every setting. The environment is what
@@ -36,6 +37,7 @@ func applyToolSettings(settings *api.ToolSettings, warn io.Writer) {
 	}{
 		{env: envREAPIEndpoint, value: settings.RemoteCache},
 		{env: envREAPIInstanceName, value: settings.RemoteInstanceName},
+		{env: envDigestFunction, value: settings.DigestFunction},
 		{env: registry.EnvCredentialHelper, value: settings.CredentialHelper},
 		{env: registry.EnvCredentialHelperOCIRegistry, value: settings.CredentialHelperOCIRegistry},
 		{env: registry.EnvCredentialHelperRemoteCache, value: settings.CredentialHelperRemoteCache},
