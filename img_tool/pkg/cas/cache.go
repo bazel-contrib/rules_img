@@ -15,6 +15,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/blake3sum"
 )
 
 const (
@@ -778,6 +780,8 @@ func digestHasher(digest Digest) hash.Hash {
 		return sha256.New()
 	case "sha512":
 		return sha512.New()
+	case blake3sum.Name:
+		return blake3sum.New()
 	}
 	return nil
 }

@@ -4,11 +4,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"slices"
 
 	specv1 "github.com/opencontainers/image-spec/specs-go/v1"
 
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/api"
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/blake3sum"
 )
 
 // WriteLayerMetadata writes layer metadata in the format expected by SingleLayerInfo provider.
@@ -57,6 +59,73 @@ func WriteLayerMetadata(
 	encoder := json.NewEncoder(outputFile)
 	encoder.SetIndent("", "  ")
 	if err := encoder.Encode(metadata); err != nil {
+		return fmt.Errorf("encoding metadata: %w", err)
+	}
+	return nil
+}
+
+// ValidateCASDigest checks the value of a --cas-digest flag: the digest function
+// whose digest of the layer blob is recorded in its metadata (see
+// [api.Descriptor.CASDigests]), or "" for none.
+func ValidateCASDigest(function string) error {
+	switch function {
+	case "", api.DigestBLAKE3:
+		return nil
+	}
+	return fmt.Errorf("unsupported --cas-digest %q: only %q is supported", function, api.DigestBLAKE3)
+}
+
+// RecordCASDigest adds the digest of the layer blob at blobPath under the given
+// digest function to the layer metadata file at metadataPath, next to the SHA256
+// it already holds. A Bazel remote cache that does not use SHA256 addresses the
+// blob by that digest, so a lazy push needs to know it without having the blob.
+// An empty function does nothing.
+//
+// The metadata must describe the blob: a size that differs means the two files
+// do not belong together, and recording a digest for the wrong bytes would only
+// show up much later as a layer that cannot be found.
+func RecordCASDigest(function, blobPath, metadataPath string) error {
+	if function == "" {
+		return nil
+	}
+	if err := ValidateCASDigest(function); err != nil {
+		return err
+	}
+	digest, size, err := blake3sum.File(blobPath)
+	if err != nil {
+		return err
+	}
+	data, err := os.ReadFile(metadataPath)
+	if err != nil {
+		return fmt.Errorf("reading layer metadata: %w", err)
+	}
+	var descriptor api.Descriptor
+	if err := json.Unmarshal(data, &descriptor); err != nil {
+		return fmt.Errorf("decoding layer metadata %s: %w", metadataPath, err)
+	}
+	if descriptor.Size != size {
+		return fmt.Errorf("layer metadata %s describes a blob of %d bytes, but %s has %d", metadataPath, descriptor.Size, blobPath, size)
+	}
+	if descriptor.CASDigests == nil {
+		descriptor.CASDigests = map[string]string{}
+	}
+	descriptor.CASDigests[function] = fmt.Sprintf("%x", digest)
+	return writeDescriptor(metadataPath, descriptor)
+}
+
+func writeDescriptor(path string, descriptor api.Descriptor) (retErr error) {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+	if err != nil {
+		return fmt.Errorf("rewriting layer metadata: %w", err)
+	}
+	defer func() {
+		if err := f.Close(); retErr == nil && err != nil {
+			retErr = fmt.Errorf("closing layer metadata: %w", err)
+		}
+	}()
+	encoder := json.NewEncoder(f)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(descriptor); err != nil {
 		return fmt.Errorf("encoding metadata: %w", err)
 	}
 	return nil

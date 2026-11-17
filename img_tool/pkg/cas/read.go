@@ -15,6 +15,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/blake3sum"
 	remoteexecution_proto "github.com/bazel-contrib/rules_img/img_tool/pkg/proto/remote-apis/build/bazel/remote/execution/v2"
 )
 
@@ -59,8 +60,8 @@ func New(clientConn *grpc.ClientConn, opts ...casOption) (*CAS, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to learn capabilities: %w", err)
 		}
-		if !capabilities.DigestFunctionSHA256 {
-			return nil, errors.New("REAPI does not support SHA256 digest function")
+		if !capabilities.anyDigestFunction() {
+			return nil, errors.New("REAPI supports none of the digest functions rules_img can use (SHA256, SHA512, BLAKE3)")
 		}
 	}
 
@@ -204,7 +205,7 @@ func (c *CAS) batchReadOne(ctx context.Context, digest Digest) ([]byte, error) {
 }
 
 func (c *CAS) streamReadOne(ctx context.Context, digest Digest) (io.ReadCloser, error) {
-	resourceName := fmt.Sprintf("blobs/%x/%d", digest.Hash, digest.SizeBytes)
+	resourceName := digest.resourceName()
 	if c.instanceName != "" {
 		resourceName = c.instanceName + "/" + resourceName
 	}
@@ -244,6 +245,35 @@ func SHA512(hash []byte, sizeBytes int64) Digest {
 	}
 }
 
+// BLAKE3 returns a digest in the BLAKE3 digest function, which a Bazel remote
+// cache uses for every blob when Bazel runs with --digest_function=blake3.
+func BLAKE3(hash []byte, sizeBytes int64) Digest {
+	return Digest{
+		algorithm: blake3sum.Name,
+		Hash:      hash,
+		SizeBytes: sizeBytes,
+	}
+}
+
+// Algorithm returns the name of the digest function, as it appears in a
+// ByteStream resource name ("sha256", "sha512" or "blake3").
+func (d Digest) Algorithm() string {
+	return d.algorithm
+}
+
+// resourceName is the ByteStream resource name of the blob, without the
+// instance name. The REAPI spec spells a SHA256 blob blobs/{hash}/{size} and any
+// other digest function blobs/{digest_function}/{hash}/{size}. The function has
+// to be spelled out for BLAKE3, whose digests have the same length as SHA256's,
+// so the server cannot tell the two apart by looking at the hash. (SHA512
+// digests are told apart by their length, so they keep the bare form.)
+func (d Digest) resourceName() string {
+	if d.algorithm == blake3sum.Name {
+		return fmt.Sprintf("blobs/%s/%x/%d", d.algorithm, d.Hash, d.SizeBytes)
+	}
+	return fmt.Sprintf("blobs/%x/%d", d.Hash, d.SizeBytes)
+}
+
 func DigestFromProto(digest *remoteexecution_proto.Digest, digestFunction remoteexecution_proto.DigestFunction_Value) (Digest, error) {
 	hash, err := hex.DecodeString(digest.Hash)
 	if err != nil {
@@ -254,6 +284,8 @@ func DigestFromProto(digest *remoteexecution_proto.Digest, digestFunction remote
 		return SHA256(hash, digest.SizeBytes), nil
 	case remoteexecution_proto.DigestFunction_SHA512:
 		return SHA512(hash, digest.SizeBytes), nil
+	case remoteexecution_proto.DigestFunction_BLAKE3:
+		return BLAKE3(hash, digest.SizeBytes), nil
 	}
 	return Digest{}, fmt.Errorf("unsupported digest function: %s", digestFunction)
 }
@@ -271,6 +303,8 @@ func (d Digest) protoDigestFunction() remoteexecution_proto.DigestFunction_Value
 		return remoteexecution_proto.DigestFunction_SHA256
 	case "sha512":
 		return remoteexecution_proto.DigestFunction_SHA512
+	case blake3sum.Name:
+		return remoteexecution_proto.DigestFunction_BLAKE3
 	default:
 		return remoteexecution_proto.DigestFunction_UNKNOWN
 	}
@@ -302,7 +336,14 @@ const (
 type capabilities struct {
 	DigestFunctionSHA256   bool
 	DigestFunctionSHA512   bool
+	DigestFunctionBLAKE3   bool
 	MaxBatchTotalSizeBytes int64
+}
+
+// anyDigestFunction reports whether the server supports a digest function that
+// can address blobs here.
+func (c capabilities) anyDigestFunction() bool {
+	return c.DigestFunctionSHA256 || c.DigestFunctionSHA512 || c.DigestFunctionBLAKE3
 }
 
 func (c capabilities) supportedDigestFunction(algorithm string) bool {
@@ -311,6 +352,8 @@ func (c capabilities) supportedDigestFunction(algorithm string) bool {
 		return c.DigestFunctionSHA256
 	case "sha512":
 		return c.DigestFunctionSHA512
+	case blake3sum.Name:
+		return c.DigestFunctionBLAKE3
 	}
 	return false
 }
@@ -344,6 +387,9 @@ func learnCapabilities(ctx context.Context, capabilitiesClient remoteexecution_p
 		if f == remoteexecution_proto.DigestFunction_SHA512 {
 			caps.DigestFunctionSHA512 = true
 		}
+		if f == remoteexecution_proto.DigestFunction_BLAKE3 {
+			caps.DigestFunctionBLAKE3 = true
+		}
 	}
 	declared := resp.CacheCapabilities.MaxBatchTotalSizeBytes
 	if declared <= 0 {
@@ -352,6 +398,26 @@ func learnCapabilities(ctx context.Context, capabilitiesClient remoteexecution_p
 	}
 	caps.MaxBatchTotalSizeBytes = batchPayloadBudget(declared)
 	return caps, nil
+}
+
+// ServerDigestFunctions asks the server (GetCapabilities) which digest functions
+// its cache can address blobs by, as the names used by [Digest.Algorithm]. It
+// only reports the functions this package can use; the order is stable
+// (sha256, sha512, blake3). An error means the server could not say, which is
+// not the same as it supporting nothing: servers that predate the capabilities
+// API exist, and callers are expected to fall back to SHA256 then.
+func ServerDigestFunctions(ctx context.Context, clientConn grpc.ClientConnInterface, instanceName string) ([]string, error) {
+	caps, err := learnCapabilities(ctx, remoteexecution_proto.NewCapabilitiesClient(clientConn), instanceName, newRetryConfig(envRetryPolicy()))
+	if err != nil {
+		return nil, err
+	}
+	var functions []string
+	for _, algorithm := range []string{"sha256", "sha512", blake3sum.Name} {
+		if caps.supportedDigestFunction(algorithm) {
+			functions = append(functions, algorithm)
+		}
+	}
+	return functions, nil
 }
 
 // batchPayloadBudget turns a batch message limit into how much blob payload may go in
@@ -617,6 +683,12 @@ func WithSHA256(supprted bool) casOption {
 func WithSHA512(supported bool) casOption {
 	return func(opts *casOptions) {
 		opts.capabilities.DigestFunctionSHA512 = supported
+	}
+}
+
+func WithBLAKE3(supported bool) casOption {
+	return func(opts *casOptions) {
+		opts.capabilities.DigestFunctionBLAKE3 = supported
 	}
 }
 

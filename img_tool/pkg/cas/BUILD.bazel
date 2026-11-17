@@ -17,6 +17,7 @@ go_library(
     importpath = "github.com/bazel-contrib/rules_img/img_tool/pkg/cas",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/blake3sum",
         "//pkg/proto/remote-apis/build/bazel/remote/execution/v2",
         "@com_github_google_uuid//:uuid",
         "@org_golang_google_genproto_googleapis_bytestream//:bytestream",
@@ -31,6 +32,7 @@ go_test(
     name = "cas_test",
     size = "small",
     srcs = [
+        "blake3_test.go",
         "cache_test.go",
         "cachemultiread_test.go",
         "cachestore_test.go",

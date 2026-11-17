@@ -315,6 +315,10 @@ than the layer's own is a configuration error, since it would silently have no e
             default = Label("//img/settings:compression_level"),
             providers = [BuildSettingInfo],
         ),
+        "_digest_function": attr.label(
+            default = Label("//img/settings:digest_function"),
+            providers = [BuildSettingInfo],
+        ),
         "_zstd_window_log": attr.label(
             default = Label("//img/settings:zstd_window_log"),
             providers = [BuildSettingInfo],

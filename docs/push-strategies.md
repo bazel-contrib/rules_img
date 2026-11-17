@@ -62,7 +62,7 @@ The lazy push strategy optimizes uploads by checking the registry first and only
 - ❌ Requires a Bazel remote cache
 - ❌ Slightly more complex than eager push
 - ❌ Push fails if required blobs are evicted from the CAS before the push runs (see [Remote Cache Eviction](#remote-cache-eviction))
-- ❌ Requires `--digest_function=sha256` (the default; see [Digest Function](#digest-function))
+- ⚠️ With Bazel's `--digest_function` set to something other than sha256, only `blake3` is supported (see [Digest Function](#digest-function))
 
 ### Setup Guide
 1. Ensure you have a Bazel remote cache configured:
@@ -946,54 +946,91 @@ registry asking the cache about the blobs its live manifests name.
 
 ## Digest Function
 
-Every strategy that reads blobs from Bazel's cache requires Bazel's digest
-function to be **sha256** — which is the default. Do not set Bazel's
-`--digest_function` startup flag to anything else (`blake3`, `sha1`, …) when using
-one of those strategies.
+A container registry only knows a layer by its sha256 digest. Bazel's remote cache
+(CAS) knows it by whatever Bazel's `--digest_function` startup flag says. They agree
+while that flag is `sha256` (the default); with `--digest_function=blake3` the cache
+holds the very same layer under its BLAKE3 digest.
 
-The reason: Bazel's remote cache (CAS) and a container registry are both
-content-addressed stores, and rules_img looks a layer up in the CAS under the very
-same digest the registry knows it by. That only works while both sides hash with
-the same function. Both ecosystems default to sha256 — but OCI registries are
-effectively pinned to it, while Bazel's digest function is configurable, so
-changing it on the Bazel side breaks the mapping.
+The lazy strategy supports both. rules_img keeps sha256 for everything a registry
+sees (manifests, configs, layer descriptors) and uses the cache's digest function
+only to find and read the layer in the cache.
 
-| Strategy | Requires `--digest_function=sha256` |
-|----------|-------------------------------------|
-| Eager | No — all blobs travel in the push target's runfiles, the CAS is never consulted |
-| Lazy | **Yes** — missing blobs are streamed from the CAS by digest |
-| CAS Registry | **Yes** — the registry serves blobs straight out of the CAS |
-| BES | **Yes** — the BES backend assembles images from CAS blobs |
+| Strategy | `--digest_function=sha256` | `--digest_function=blake3` |
+|----------|----------------------------|----------------------------|
+| Eager | Works — all blobs travel in the push target's runfiles, the CAS is never consulted | Works, same reason |
+| Lazy | Works | Works — layers are looked up and streamed by their BLAKE3 digest |
+| CAS Registry | Works — the registry serves blobs straight out of the CAS | **Not supported** — it addresses the CAS by the registry's sha256 digest |
+| BES | Works — the BES backend assembles images from CAS blobs | **Not supported** — same |
 
-The same requirement applies to the other blob sources that are addressed by
-digest:
-- the [local blob cache](#local-blob-cache) and the local Bazel disk cache
-  (`IMG_DISK_CACHE`), which are looked up as `cas/<sha256>`, and
-- the CAS references inside [compact layers](compact-stream.md): during a lazy
-  push the layer's input files are fetched from the disk / remote cache by their
-  content digest.
+### How it works
 
-[Push at build time](#push-at-build-time) is *not* affected. Those actions receive
-the blobs — and, for compact layers, the content-addressed input directory — as
-regular action inputs, so they never look anything up in the CAS themselves.
+A layer's BLAKE3 digest cannot be computed at push time without downloading the
+layer, which is what a lazy push avoids. So it is computed **at build time**: the
+layer actions (`img layer`, `img hash`, `img compress`) record it next to the sha256
+digest in the layer's metadata (`cas_digests`), and the deploy manifest carries it
+from there. At push time the cache is asked for the layer (`FindMissingBlobs` with
+`digest_function = BLAKE3`, then a read of `blobs/blake3/<hash>/<size>`), and the
+bytes stream from the cache to the registry exactly as they do for sha256.
+
+### The setting
+
+The digest function the remote cache uses is the `digest_function` build setting:
+
+```
+# .bazelrc
+startup --digest_function=blake3                          # Bazel's own flag
+common --@rules_img//img/settings:digest_function=auto    # rules_img's (the default)
+```
+
+| Value | Build time | Push time |
+|-------|------------|-----------|
+| `auto` (default) | Records every layer's BLAKE3 digest | Asks the cache (`GetCapabilities`) which digest function it supports. A cache that supports only BLAKE3 is looked up by BLAKE3. A cache that supports both is tried by sha256 first, then BLAKE3. If the cache does not answer, falls back to sha256 |
+| `sha256` | Records nothing extra | Looks layers up by sha256 only. The previous behavior |
+| `blake3` | Records every layer's BLAKE3 digest | Looks layers up by BLAKE3 without asking the cache |
+
+At push time the setting reaches the deploy tool as `IMG_DIGEST_FUNCTION`
+(`sha256`, `blake3` or `auto`), and is recorded in the deploy manifest as a fallback
+like the other tool settings, so a launcher run outside `bazel run` keeps working.
+The environment wins over the manifest.
+
+Rules cannot see Bazel's startup flag, so `auto` records the BLAKE3 digest of every
+layer, whether or not your cache uses BLAKE3. Hashing is cheap (one extra read of
+each layer blob), but if you are sure the cache uses sha256, set `digest_function`
+to `sha256` to skip it.
+
+The same applies to the other blob sources that are addressed by digest: the
+[local blob cache](#local-blob-cache) verifies BLAKE3 content as it caches it, and
+the local Bazel disk cache (`IMG_DISK_CACHE`) is also searched for
+`cas/<blake3>` when BLAKE3 is configured.
+
+### Limitations
+
+- Only layers built by a rules_img layer rule record a BLAKE3 digest. Layers pulled
+  from a registry are served by the registry, not the CAS, so they need none.
+- The CAS references inside [compact layers](compact-stream.md) are still looked up
+  by sha256, so compact layers need `--digest_function=sha256`. A layer written
+  with `--compact-stream-only` has no blob to hash.
+- The CAS registry and BES strategies need `--digest_function=sha256`.
+- Referrers pushed alongside an image do not carry BLAKE3 digests.
+- [Push at build time](#push-at-build-time) is not affected. Those actions receive the blobs
+  as regular action inputs, so they never look anything up in the CAS themselves.
 
 ### Symptom
-With a non-sha256 digest function, the push fails while resolving a layer, and the
-remote CAS line of the blob-source report says the blob is not there:
+
+If the cache uses BLAKE3 but rules_img looks layers up by sha256 only (the
+`digest_function` is `sha256`, or the layers were built without a BLAKE3 digest),
+the push fails while resolving a layer, and the remote CAS line of the blob-source
+report says the blob is not there. When the layer did record a BLAKE3 digest, the message also says how to look it up by it:
 
 ```
 Error during deploy: building VFS: locating source for layer with digest sha256:eda6250a… …
 layer with digest sha256:eda6250a… not found in any source:
   …
-  - remote CAS: [blob missing] blob not found in remote CAS
+  - remote CAS: [blob missing] blob not found in remote CAS (looked up by its sha256 digest only; if the cache uses --digest_function=blake3, set IMG_DIGEST_FUNCTION=blake3 or --@rules_img//img/settings:digest_function=blake3 to look the layer up by blake3:6c48…)
 ```
 
-The blob *is* in the CAS — just under a different (e.g. BLAKE3) digest, so
-rules_img cannot find it. If you hit this, remove the `--digest_function`
-override, or switch the affected targets to the eager strategy.
-
-Supporting Bazel's other digest functions is tracked in
-[issue #690](https://github.com/bazel-contrib/rules_img/issues/690).
+The blob *is* in the CAS, just under its BLAKE3 digest. Set `digest_function` to
+`auto` or `blake3` and rebuild the layers, so that they record their BLAKE3 digest.
 
 ## Choosing the Right Strategy
 

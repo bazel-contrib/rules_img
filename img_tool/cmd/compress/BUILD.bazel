@@ -12,5 +12,6 @@ go_library(
         "//pkg/api",
         "//pkg/compress",
         "//pkg/fileopener",
+        "//pkg/metadata",
     ],
 )

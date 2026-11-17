@@ -191,6 +191,28 @@ def tar_format_args(tar_format):
         return ["--zstd-chunked"]
     return []
 
+def cas_digest_args(ctx):
+    """Flags that make a layer action record the layer's digest for a remote cache.
+
+    A Bazel remote cache that uses another digest function than SHA256
+    (startup option `--digest_function=blake3`) stores the layer blobs under
+    that digest. The layer's metadata then carries it next to its SHA256 (the
+    `cas_digests` field), so a lazy push can look the blob up. Rules cannot see
+    Bazel's own startup option, so unless `//img/settings:digest_function` is
+    `sha256` the BLAKE3 digest is always recorded.
+
+    Args:
+        ctx: Rule context. Rules without the `_digest_function` attribute record nothing.
+
+    Returns:
+        List of command line arguments of `img layer`, `img hash` and `img compress`.
+    """
+    if not hasattr(ctx.attr, "_digest_function") or ctx.attr._digest_function == None:
+        return []
+    if ctx.attr._digest_function[BuildSettingInfo].value == "sha256":
+        return []
+    return ["--cas-digest", "blake3"]
+
 def compression_tuning_args(ctx, compression, tar_format):
     """Compression tuning arguments for img tools based on build mode.
 
@@ -637,6 +659,7 @@ def calculate_layer_info(*, ctx, media_type, tar_file, metadata_file, estargz, z
     args.add("--encoding=layer-metadata")
     args.add("--history", layer_history(layer_name(ctx.label)))
     args.add("--media-type", media_type)
+    args.add_all(cas_digest_args(ctx))
     for mode in digest_modes:
         args.add("--digest-mode", mode)
     for key, value in annotations.items():
@@ -708,6 +731,7 @@ def recompress_layer(*, ctx, media_type, tar_file, metadata_file, output, target
     for key, value in annotations.items():
         args.add("--annotation", "{}={}".format(key, value))
     args.add("--metadata", metadata_file.path)
+    args.add_all(cas_digest_args(ctx))
     args.add_all(compression_tuning_args(ctx, target_compression, tar_format))
     args.add(tar_file.path)
     args.add(output)
@@ -963,6 +987,7 @@ def optimize_layer(*, ctx, media_type, tar_file, metadata_file, output, target_c
         args.add("--annotation", "{}={}".format(key, value))
     args.add("--metadata", metadata_file.path)
     args.add("--import-tar", tar_file.path)
+    args.add_all(cas_digest_args(ctx))
     args.add_all(compression_tuning_args(ctx, target_compression, tar_format))
     args.add(output)
     img_toolchain_info = ctx.toolchains[TOOLCHAIN].imgtoolchaininfo

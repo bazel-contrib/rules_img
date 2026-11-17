@@ -485,7 +485,7 @@ img compact-stream reconstruct \
 With the [lazy push strategy](push-strategies.md#lazy-push) that directory is not
 shipped: the referenced blobs are fetched from Bazel's disk / remote cache by
 their content digest instead. This requires Bazel's digest function to be sha256
-(the default) — see [Digest Function](push-strategies.md#digest-function).
+(the default); BLAKE3 is not supported for these references — see [Digest Function](push-strategies.md#digest-function).
 
 ## Inspecting a compact stream without reconstruction
 

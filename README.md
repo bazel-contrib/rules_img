@@ -157,6 +157,14 @@ common --@rules_img//img/settings:remote_cache=grpcs://remote.buildbuddy.io
 # Required by some RBE backends.
 common --@rules_img//img/settings:remote_instance_name=my-instance-name
 
+# Digest function of the remote cache, matching Bazel's startup option
+# --digest_function. "auto" (the default) records every layer's BLAKE3 digest at
+# build time and asks the cache which function it uses when pushing; "sha256"
+# skips the BLAKE3 digest; "blake3" always looks layers up by BLAKE3.
+# Registries only ever see sha256. See docs/push-strategies.md#digest-function.
+# Falls back to $IMG_DIGEST_FUNCTION env var.
+common --@rules_img//img/settings:digest_function=auto
+
 # Credential helper to use for registry requests and for authenticating gRPC
 # connections during some push strategies.
 # See docs/credential-helpers.md for exactly how rules_img uses it.

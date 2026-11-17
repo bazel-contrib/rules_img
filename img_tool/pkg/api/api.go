@@ -177,13 +177,32 @@ func LayerHistory(createdBy string) []History {
 	return []History{{CreatedBy: createdBy}}
 }
 
+// DigestBLAKE3 is the key of Descriptor.CASDigests that holds a blob's BLAKE3
+// digest, which is how a Bazel remote cache started with
+// --digest_function=blake3 addresses it.
+const DigestBLAKE3 = "blake3"
+
 type Descriptor struct {
-	DiffID      string            `json:"diff_id,omitempty"`
-	MediaType   string            `json:"mediaType"`
-	Digest      string            `json:"digest"`
-	Size        int64             `json:"size"`
+	DiffID    string `json:"diff_id,omitempty"`
+	MediaType string `json:"mediaType"`
+	// Digest is the blob's SHA256 digest. It is what OCI registries know the blob
+	// by, so manifests, configs and layer descriptors always carry it.
+	Digest string `json:"digest"`
+	Size   int64  `json:"size"`
+	// CASDigests are the digests under which a Bazel remote cache may hold the
+	// blob when it does not use SHA256: digest function name (see DigestBLAKE3)
+	// to the hash in hex. They only exist so that a lazy push can find a layer in
+	// the cache without downloading it first -- nothing a registry sees is ever
+	// derived from them. The same bytes hash to the same size under every digest
+	// function, so there is no size of their own.
+	CASDigests  map[string]string `json:"cas_digests,omitempty"`
 	Annotations map[string]string `json:"annotations,omitempty"`
 	History     []History         `json:"history,omitempty"`
+}
+
+// BLAKE3Hex returns the blob's BLAKE3 hash in hex, or "" if none was recorded.
+func (d Descriptor) BLAKE3Hex() string {
+	return d.CASDigests[DigestBLAKE3]
 }
 
 type AppenderState struct {

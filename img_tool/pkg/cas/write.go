@@ -138,7 +138,7 @@ type byteStreamUpload struct {
 }
 
 func (u *byteStreamUpload) newResourceName() {
-	name := fmt.Sprintf("uploads/%s/blobs/%x/%d", uuid.NewString(), u.digest.Hash, u.digest.SizeBytes)
+	name := fmt.Sprintf("uploads/%s/%s", uuid.NewString(), u.digest.resourceName())
 	if u.owner.instanceName != "" {
 		name = u.owner.instanceName + "/" + name
 	}

@@ -83,6 +83,33 @@ def _add_compact_stream_args(manifest_info, index_info, args, inputs):
         for i, manifest in enumerate(index_info.manifests):
             _add_manifest_compact_streams(i, manifest, args, inputs)
 
+def _add_manifest_layer_metadata(manifest_index, manifest_info, args, inputs):
+    """Pass each layer's metadata file to deploy-metadata, for its `cas_digests`."""
+    for layer_index, layer in enumerate(manifest_info.layers):
+        if layer.metadata == None:
+            continue
+        args.add_all(
+            "--layer-metadata",
+            [layer.metadata],
+            format_each = "{},{}=%s".format(manifest_index, layer_index),
+        )
+        inputs.append(layer.metadata)
+
+def _add_layer_metadata_args(strategy, tool_settings, manifest_info, index_info, args, inputs):
+    """Record the layers' digests in the remote cache's digest function.
+
+    Only a lazy deploy reads layer blobs from the remote cache by digest. The
+    layers carry the BLAKE3 digest (see `cas_digest_args`) unless the
+    digest_function setting is "sha256", in which case there is nothing to record.
+    """
+    if strategy != "lazy" or tool_settings == None or tool_settings.digest_function == "sha256":
+        return
+    if manifest_info != None:
+        _add_manifest_layer_metadata(0, manifest_info, args, inputs)
+    if index_info != None:
+        for i, manifest in enumerate(index_info.manifests):
+            _add_manifest_layer_metadata(i, manifest, args, inputs)
+
 def compute_push_metadata(
         ctx,
         *,
@@ -229,6 +256,10 @@ def compute_push_metadata(
     if layer_sources_file != None:
         inputs.append(layer_sources_file)
         args.add("--layer-sources-file", layer_sources_file)
+
+    # A lazy push reads layers from the remote cache, which may address them by
+    # another digest function than SHA256.
+    _add_layer_metadata_args(strategy, tool_settings, manifest_info, index_info, args, inputs)
 
     # For the bes strategy, compact-stream layers are reconstructed by the syncer
     # from the CAS, so record each .cstream and pull its input files into the CAS.
@@ -477,6 +508,8 @@ def compute_load_metadata(
     if layer_sources_file != None:
         inputs.append(layer_sources_file)
         args.add("--layer-sources-file", layer_sources_file)
+
+    _add_layer_metadata_args(strategy, tool_settings, manifest_info, index_info, args, inputs)
 
     outputs = []
     layer_hints_file = layer_hints_for_deploy_metadata(

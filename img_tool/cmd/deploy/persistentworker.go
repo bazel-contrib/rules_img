@@ -169,7 +169,7 @@ func (h *deployWorkerHandler) Close() error {
 //
 // The connections outlive the request that opened them, so they carry the
 // worker's own request metadata rather than that request's.
-func (h *deployWorkerHandler) casSource(ctx context.Context) deployvfs.CASReader {
+func (h *deployWorkerHandler) casSource(ctx context.Context) *casSources {
 	h.casMu.Lock()
 	defer h.casMu.Unlock()
 	if !h.casOpen {
@@ -180,7 +180,7 @@ func (h *deployWorkerHandler) casSource(ctx context.Context) deployvfs.CASReader
 		}
 		h.casBlobs = sources
 	}
-	return h.casBlobs.reader()
+	return h.casBlobs
 }
 
 func (h *deployWorkerHandler) HandleRequest(ctx context.Context, req persistentworker.WorkRequest) persistentworker.WorkResponse {
@@ -249,9 +249,7 @@ func (h *deployWorkerHandler) processRequest(ctx context.Context, req persistent
 	}
 
 	vfsBuilder := h.baseBuilder.Clone().WithDeployManifest(dm).WithContext(ctx)
-	if casReader := h.casSource(ctx); casReader != nil {
-		vfsBuilder = vfsBuilder.WithCASReader(casReader)
-	}
+	vfsBuilder = h.casSource(ctx).configure(vfsBuilder)
 	for _, layoutPath := range opts.ociLayouts {
 		vfsBuilder = vfsBuilder.WithOCILayout(layoutPath)
 	}

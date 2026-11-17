@@ -9,6 +9,7 @@ def _load_settings_impl(ctx):
         daemon = ctx.attr._load_daemon[BuildSettingInfo].value,
         remote_cache = ctx.attr._remote_cache[BuildSettingInfo].value,
         remote_instance_name = ctx.attr._remote_instance_name[BuildSettingInfo].value,
+        digest_function = ctx.attr._digest_function[BuildSettingInfo].value,
         credential_helper = ctx.attr._credential_helper[BuildSettingInfo].value,
         credential_helper_oci_registry = ctx.attr._credential_helper_oci_registry[BuildSettingInfo].value,
         credential_helper_remote_cache = ctx.attr._credential_helper_remote_cache[BuildSettingInfo].value,
@@ -33,6 +34,10 @@ load_settings = rule(
         ),
         "_remote_instance_name": attr.label(
             default = Label("//img/settings:remote_instance_name"),
+            providers = [BuildSettingInfo],
+        ),
+        "_digest_function": attr.label(
+            default = Label("//img/settings:digest_function"),
             providers = [BuildSettingInfo],
         ),
         "_credential_helper": attr.label(
