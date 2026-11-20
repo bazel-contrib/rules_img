@@ -15,6 +15,7 @@ import (
 	"strings"
 	"text/template"
 	"time"
+	"unicode"
 
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/kvfile"
 )
@@ -330,7 +331,7 @@ func extractKeysFromKVArray(kvArray any) []string {
 	for _, item := range arr {
 		if str, ok := item.(string); ok {
 			parts := strings.SplitN(str, "=", 2)
-			if len(parts) == 2 {
+			if len(parts) == 2 && isValidVariableName(parts[0]) {
 				keys = append(keys, parts[0])
 			}
 		}
@@ -338,6 +339,25 @@ func extractKeysFromKVArray(kvArray any) []string {
 
 	slices.Sort(keys)
 	return keys
+}
+
+// isValidVariableName reports whether name can be used as a text/template
+// variable name (after the leading "$").
+// Keys like "bootstrap.memory_lock" are not valid variable names and would
+// break the parsing of every template, so they are not exposed as variables.
+// Their values are still reachable with the getkv function.
+func isValidVariableName(name string) bool {
+	if name == "" {
+		return false
+	}
+
+	for _, r := range name {
+		if r != '_' && !unicode.IsLetter(r) && !unicode.IsDigit(r) {
+			return false
+		}
+	}
+
+	return true
 }
 
 func singleVariableDefinition(builder *strings.Builder, templateData map[string]any, exposeKV string) error {

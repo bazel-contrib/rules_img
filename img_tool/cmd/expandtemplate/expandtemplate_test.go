@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 )
 
@@ -168,5 +169,27 @@ func TestExpandTemplatesWithoutStamp(t *testing.T) {
 	}
 	if output.Created != "" {
 		t.Errorf("created = %q, want empty", output.Created)
+	}
+}
+
+// TestExtractKeysFromKVArraySkipsInvalidVariableNames asserts that keys which are
+// not valid text/template variable names are not exposed as template variables,
+// as they would break the parsing of every template.
+func TestExtractKeysFromKVArraySkipsInvalidVariableNames(t *testing.T) {
+	kvArray := []any{
+		"PATH=/usr/bin:/bin",
+		"_private=1",
+		"JAVA_HOME2=/opt/java",
+		"bootstrap.memory_lock=true",
+		"my-var=value",
+		"=empty",
+		"NO_VALUE",
+	}
+
+	got := extractKeysFromKVArray(kvArray)
+	want := []string{"JAVA_HOME2", "PATH", "_private"}
+
+	if !slices.Equal(got, want) {
+		t.Errorf("extractKeysFromKVArray() = %q, want %q", got, want)
 	}
 }
