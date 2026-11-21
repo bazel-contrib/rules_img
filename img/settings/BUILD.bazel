@@ -337,6 +337,19 @@ string_flag(
     visibility = ["//visibility:public"],
 )
 
+# Whether image_push (and push_specs) push an image's automatic referrers (such as
+# the SBOM an automatic referrers toolchain generates) along with it. A target's
+# `push_automatic_referrers` attribute defaults to "auto", which defers to this flag.
+string_flag(
+    name = "push_automatic_referrers",
+    build_setting_default = "enabled",
+    values = [
+        "enabled",
+        "disabled",
+    ],
+    visibility = ["//visibility:public"],
+)
+
 # Global default signing_config, used when a target enables signing without its
 # own `sign_setting`. Defaults to a sentinel meaning "no signing configured".
 label_flag(

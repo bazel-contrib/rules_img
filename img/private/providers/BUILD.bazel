@@ -7,6 +7,12 @@ filegroup(
 )
 
 bzl_library(
+    name = "automatic_referrers_info",
+    srcs = ["automatic_referrers_info.bzl"],
+    visibility = ["//img:__subpackages__"],
+)
+
+bzl_library(
     name = "base_image_content_info",
     srcs = ["base_image_content_info.bzl"],
     visibility = ["//img:__subpackages__"],

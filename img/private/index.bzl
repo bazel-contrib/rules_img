@@ -5,6 +5,8 @@ load("//img/private:oci_layout_action.bzl", "run_oci_layout_action")
 load("//img/private:push_metadata.bzl", "process_deploy_specs")
 load("//img/private:soci_deploy.bzl", "soci_deploy_children")
 load("//img/private:stamp.bzl", "expand_or_write")
+load("//img/private/automatic_referrers:aspects.bzl", "OPTIONAL_AUTOMATIC_REFERRERS_TOOLCHAIN")
+load("//img/private/automatic_referrers:automatic_referrers.bzl", "AUTOMATIC_REFERRERS_ATTRS", "automatic_referrers_wanted", "index_automatic_referrers")
 load("//img/private/common:build.bzl", "TOOLCHAIN", "TOOLCHAINS")
 load("//img/private/common:layout_blob.bzl", "blob_for_layout")
 load("//img/private/common:transitions.bzl", "image_index_transition", "multi_platform_image_transition")
@@ -223,6 +225,17 @@ def _image_index_impl(ctx):
     if pull_info != None:
         providers.append(pull_info)
 
+    # Automatic referrers: the index's own (a small SBOM that refers to those of its
+    # manifests), plus those of every child manifest, which are pushed along.
+    automatic_referrers = index_automatic_referrers(
+        ctx,
+        toolchain = automatic_referrers_wanted(ctx, is_artifact = ctx.attr.subject != None),
+        index_info = index_info_provider,
+        digest = digest_out,
+        manifests = manifests,
+    )
+    providers.extend(automatic_referrers.providers)
+
     deploy_info, push_output_groups = process_deploy_specs(
         ctx,
         manifest_info = None,
@@ -233,6 +246,7 @@ def _image_index_impl(ctx):
         load_specs = ctx.attr.load_specs,
         allow_manifest_tags = True,
         sparse_layout = sparse_layout,
+        automatic_referrers = automatic_referrers.referrers,
     )
 
     output_groups = dict(
@@ -243,6 +257,7 @@ def _image_index_impl(ctx):
         oci_tarball = depset([_build_oci_layout(ctx, "tar", index_out, manifest_infos)]),
         sparse_oci_layout = depset([sparse_layout]),
     )
+    output_groups.update(automatic_referrers.output_groups)
     if deploy_info != None:
         providers.append(deploy_info)
         output_groups["deploy_manifest"] = depset([deploy_info.deploy_manifest])
@@ -301,7 +316,7 @@ Output groups:
 - `oci_tarball`: OCI layout packaged as a tar file for downstream use
 - `sparse_oci_layout`: Sparse OCI layout directory (without layer blobs, only layer descriptors)
 """,
-    attrs = {
+    attrs = AUTOMATIC_REFERRERS_ATTRS | {
         "manifests": attr.label_list(
             providers = [ImageManifestInfo],
             doc = "List of manifests for specific platforms.",
@@ -441,6 +456,6 @@ When set (together with or without `push_specs`), this rule additionally returns
             providers = [LoadConfigInfo],
         ),
     },
-    toolchains = TOOLCHAINS,
+    toolchains = TOOLCHAINS + [OPTIONAL_AUTOMATIC_REFERRERS_TOOLCHAIN],
     cfg = image_index_transition,
 )

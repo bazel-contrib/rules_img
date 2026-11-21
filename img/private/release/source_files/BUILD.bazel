@@ -15,6 +15,7 @@ release_files = [
     "//img/deploy_tool/for_host:all_files",
     "//img/layer:all_files",
     "//img/private:all_files",
+    "//img/private/automatic_referrers:all_files",
     "//img/private/base_images:all_files",
     "//img/private/common:all_files",
     "//img/private/config:all_files",
@@ -25,6 +26,7 @@ release_files = [
     "//img/private/providers:all_files",
     "//img/private/repository_rules:all_files",
     "//img/private/settings:all_files",
+    "//img/private/supply_chain_tools/gather_metadata:all_files",
     "//img/pull:all_files",
     "//img/settings:all_files",
 ]

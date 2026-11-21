@@ -1,5 +1,6 @@
 """Provider definitions"""
 
+load("//img/private/providers:automatic_referrers_info.bzl", _AutomaticReferrersToolchainInfo = "AutomaticReferrersToolchainInfo", _ImageSbomInfo = "ImageSbomInfo", _ReferrersInfo = "ReferrersInfo")
 load("//img/private/providers:deploy_info.bzl", _DeployInfo = "DeployInfo")
 load("//img/private/providers:disk_image_info.bzl", _DiskImageInfo = "DiskImageInfo")
 load("//img/private/providers:index_info.bzl", _ImageIndexInfo = "ImageIndexInfo")
@@ -33,6 +34,11 @@ PullInfo = _PullInfo
 # providers describing the referrers (SBOMs, signatures, ...) of pulled images
 PulledReferrersInfo = _PulledReferrersInfo
 ReferrerInfo = _ReferrerInfo
+
+# providers for automatic referrers (SBOMs, ...) generated for built images
+ReferrersInfo = _ReferrersInfo
+AutomaticReferrersToolchainInfo = _AutomaticReferrersToolchainInfo
+ImageSbomInfo = _ImageSbomInfo
 
 # providers describing disk images and their partitions
 DiskImageInfo = _DiskImageInfo

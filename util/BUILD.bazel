@@ -13,6 +13,8 @@ load("@rules_go//go:def.bzl", "nogo")
 buildifier(
     name = "buildifier.fix",
     diff_command = "diff",
+    # Kept verbatim from @supply_chain_tools, so rules_img can switch to it.
+    exclude_patterns = ["./img/private/supply_chain_tools/*"],
     lint_mode = "fix",
     mode = "fix",
 )
@@ -21,6 +23,8 @@ buildifier_test(
     name = "buildifier.check",
     size = "small",
     diff_command = "diff",
+    # Kept verbatim from @supply_chain_tools, so rules_img can switch to it.
+    exclude_patterns = ["./img/private/supply_chain_tools/*"],
     lint_mode = "warn",
     mode = "diff",
     no_sandbox = True,

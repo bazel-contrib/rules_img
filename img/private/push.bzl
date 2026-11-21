@@ -10,11 +10,18 @@ load("//img/private:stamp.bzl", "expand_or_write")
 load("//img/private/common:build.bzl", "TOOLCHAINS")
 load("//img/private/common:default_deploy_tool.bzl", "default_deploy_tool")
 load("//img/private/common:deploy_attrs.bzl", "COMMON_PUSH_ATTRS")
-load("//img/private/common:deploy_helpers.bzl", "add_build_time_push_outputs", "content_tracking_json_vars", "cross_mount_blob_repository", "extract_cross_mount_from", "extract_referrers", "get_image_providers", "get_tags", "image_target_vars", "resolve_push_at_build_time", "resolve_push_registry", "resolve_push_strategy", "resolve_signing", "resolve_tool_settings")
+load("//img/private/common:deploy_helpers.bzl", "add_build_time_push_outputs", "automatic_referrers_of", "content_tracking_json_vars", "cross_mount_blob_repository", "extract_cross_mount_from", "extract_referrers", "get_image_providers", "get_tags", "image_target_vars", "push_automatic_referrers", "resolve_push_at_build_time", "resolve_push_registry", "resolve_push_strategy", "resolve_signing", "resolve_tool_settings")
 load("//img/private/providers:deploy_info.bzl", "DeployInfo")
 load("//img/private/providers:deploy_tool_info.bzl", "DeployToolInfo")
 load("//img/private/providers:pull_info.bzl", "PullInfo")
 load("//img/private/providers:push_settings_info.bzl", "PushSettingsInfo")
+
+def _push_referrers(ctx):
+    """The referrers pushed with the image: `referrers`, then its automatic ones."""
+    referrers = extract_referrers(ctx)
+    if push_automatic_referrers(ctx):
+        referrers = referrers + automatic_referrers_of(ctx.attr.image)
+    return referrers
 
 def _per_child_manifest_tag_file(*, ctx, child_index, child_info):
     extra = image_target_vars(ctx.attr.image.label)
@@ -52,7 +59,7 @@ def _compute_push_metadata(*, ctx, configuration_json, pbt, destination_file = N
         strategy = resolve_push_strategy(ctx),
         cross_mount_strategy = ctx.attr._push_settings[PushSettingsInfo].cross_mount,
         cross_mount_from = extract_cross_mount_from(ctx),
-        referrers = extract_referrers(ctx),
+        referrers = _push_referrers(ctx),
         manifest_tags_expanded = manifest_tags_expanded,
         pull_info = pull_info,
         destination_file = destination_file,
@@ -128,7 +135,7 @@ def _image_push_impl(ctx):
         symlink_name_prefix = root_symlinks_prefix,
     )
 
-    for referrer in extract_referrers(ctx):
+    for referrer in _push_referrers(ctx):
         root_symlinks.update(calculate_root_symlinks(
             referrer.index_info,
             referrer.manifest_info,
@@ -242,7 +249,7 @@ def _image_push_impl(ctx):
             deploy_manifest = deploy_metadata,
             images = [image_provider] + [
                 referrer.index_info if referrer.index_info != None else referrer.manifest_info
-                for referrer in extract_referrers(ctx)
+                for referrer in _push_referrers(ctx)
             ],
         )],
         enabled = ctx.attr._push_settings[PushSettingsInfo].validate_cas_blobs,
@@ -267,7 +274,7 @@ def _image_push_impl(ctx):
             layer_hints = layer_hints,
             include_layers = push_strategy == "eager",
             sign_settings = sign_settings,
-            referrers = extract_referrers(ctx),
+            referrers = _push_referrers(ctx),
         ),
     ]
 

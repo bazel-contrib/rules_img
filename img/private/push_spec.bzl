@@ -2,7 +2,7 @@
 
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("//img/private/common:deploy_attrs.bzl", "COMMON_PUSH_ATTRS")
-load("//img/private/common:deploy_helpers.bzl", "extract_cross_mount_from", "extract_referrers", "get_tags", "resolve_push_at_build_time", "resolve_push_registry", "resolve_push_strategy", "resolve_signing")
+load("//img/private/common:deploy_helpers.bzl", "extract_cross_mount_from", "extract_referrers", "get_tags", "push_automatic_referrers", "resolve_push_at_build_time", "resolve_push_registry", "resolve_push_strategy", "resolve_signing")
 load("//img/private/providers:push_config_info.bzl", "PushConfigInfo")
 load("//img/private/providers:push_settings_info.bzl", "PushSettingsInfo")
 load("//img/private/providers:stamp_setting_info.bzl", "StampSettingInfo")
@@ -25,6 +25,7 @@ def _image_push_spec_impl(ctx):
         tag_file = ctx.file.tag_file,
         destination_file = ctx.file.destination_file,
         referrers = extract_referrers(ctx),
+        push_automatic_referrers = push_automatic_referrers(ctx),
         cross_mount_from = extract_cross_mount_from(ctx),
         strategy = strategy,
         cross_mount_strategy = ctx.attr._push_settings[PushSettingsInfo].cross_mount,

@@ -5,6 +5,8 @@ load("//img/private:annotations_util.bzl", "extract_annotations_from_pull_info")
 load("//img/private:oci_layout_action.bzl", "run_oci_layout_action")
 load("//img/private:push_metadata.bzl", "process_deploy_specs")
 load("//img/private:stamp.bzl", "expand_or_write")
+load("//img/private/automatic_referrers:aspects.bzl", "OPTIONAL_AUTOMATIC_REFERRERS_TOOLCHAIN", "base_sbom_aspect", "metadata_aspect")
+load("//img/private/automatic_referrers:automatic_referrers.bzl", "AUTOMATIC_REFERRERS_ATTRS", "automatic_referrers_wanted", "manifest_automatic_referrers")
 load("//img/private/common:build.bzl", "TOOLCHAIN", "TOOLCHAINS")
 load("//img/private/common:inherit.bzl", "INHERIT_FROM_BASE")
 load("//img/private/common:layer_helper.bzl", "allow_tar_files", "build_image_mtree", "calculate_layer_info", "extension_to_compression", "image_layer_mtrees", "image_layer_ztocs")
@@ -719,6 +721,18 @@ def _image_manifest_impl(ctx):
         manifest_info_provider,
     ])
 
+    # Automatic referrers (SBOMs, ...), when a toolchain generates them. A manifest
+    # that is itself an artifact (a Helm chart, an SBOM, ...) gets none by default.
+    is_artifact = bool(ctx.attr.artifact_type) or ctx.attr.subject != None or bool(ctx.attr.config_media_type)
+    automatic_referrers = manifest_automatic_referrers(
+        ctx,
+        toolchain = automatic_referrers_wanted(ctx, is_artifact = is_artifact),
+        manifest_info = manifest_info_provider,
+        digest = digest_out,
+        base = base,
+    )
+    providers.extend(automatic_referrers.providers)
+
     deploy_info, push_output_groups = process_deploy_specs(
         ctx,
         manifest_info = manifest_info_provider,
@@ -729,6 +743,7 @@ def _image_manifest_impl(ctx):
         load_specs = ctx.attr.load_specs,
         allow_manifest_tags = False,
         sparse_layout = sparse_layout,
+        automatic_referrers = automatic_referrers.referrers,
     )
 
     output_groups = dict(
@@ -744,6 +759,7 @@ def _image_manifest_impl(ctx):
     # as the `mtree` output group, when at least one layer contributes one.
     if image_mtree != None:
         output_groups["mtree"] = depset([image_mtree])
+    output_groups.update(automatic_referrers.output_groups)
 
     if deploy_info != None:
         providers.append(deploy_info)
@@ -800,12 +816,14 @@ Output groups:
   or is not a tar (empty layers, non-tar artifact blobs), so a skipped layer means the merged mtree
   reflects only a subset of the image. Only produced when at least one layer contributes an `mtree`.
 """,
-    attrs = {
+    attrs = AUTOMATIC_REFERRERS_ATTRS | {
         "base": attr.label(
             doc = "Base image to inherit layers from. Should provide ImageManifestInfo or ImageIndexInfo.",
+            aspects = [base_sbom_aspect],
         ),
         "layers": attr.label_list(
             doc = "Layers to include in the image. Either a LayersInfo provider or a DefaultInfo with tar files.",
+            aspects = [metadata_aspect],
         ),
         "platform": attr.label(
             doc = """Optional target platform to build this manifest for.
@@ -1281,6 +1299,6 @@ multi_deploy(
         ),
     },
     provides = [ImageManifestInfo],
-    toolchains = TOOLCHAINS,
+    toolchains = TOOLCHAINS + [OPTIONAL_AUTOMATIC_REFERRERS_TOOLCHAIN],
     cfg = single_platform_transition,
 )

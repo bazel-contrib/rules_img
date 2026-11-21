@@ -818,7 +818,8 @@ def process_deploy_specs(
         push_specs,
         load_specs,
         allow_manifest_tags,
-        sparse_layout = None):
+        sparse_layout = None,
+        automatic_referrers = []):
     """Process push_specs and load_specs to produce a DeployInfo provider.
 
     Args:
@@ -832,6 +833,8 @@ def process_deploy_specs(
         allow_manifest_tags: If False, fail when a push spec has manifest_tags set.
         sparse_layout: The image's sparse OCI layout tree artifact (required when
             push_at_build_time is active; supplies manifest(s) + config to the push).
+        automatic_referrers: The image's automatic referrers (ReferrersInfo.referrers),
+            pushed by every push spec that pushes automatic referrers.
 
     Each push spec carries its own resolved push-at-build-time configuration
     (mode, content, blob/manifest repository, exec properties, gateways, output
@@ -864,6 +867,9 @@ def process_deploy_specs(
 
     for push_idx, deployment in enumerate(push_specs):
         push_config = deployment[PushConfigInfo]
+        spec_referrers = push_config.referrers
+        if push_config.push_automatic_referrers:
+            spec_referrers = spec_referrers + automatic_referrers
 
         if not allow_manifest_tags and push_config.manifest_tags:
             fail("'manifest_tags' in push spec '{}' cannot be used with image_manifest (single-platform). Use image_index instead.".format(deployment.label))
@@ -921,7 +927,7 @@ def process_deploy_specs(
             strategy = push_config.strategy,
             cross_mount_strategy = push_config.cross_mount_strategy,
             cross_mount_from = push_config.cross_mount_from,
-            referrers = push_config.referrers,
+            referrers = spec_referrers,
             manifest_tags_expanded = manifest_tags_expanded,
             pull_info = pull_info,
             destination_file = push_config.destination_file,
@@ -938,7 +944,7 @@ def process_deploy_specs(
             deduplicated_push_content = push_config.deduplicated_push_content,
         )
         deploy_infos.append(struct(metadata = deploy_metadata, layer_hints = layer_hints))
-        referrers.extend(push_config.referrers)
+        referrers.extend(spec_referrers)
         if push_config.signing != None:
             sign_config_infos.append(push_config.signing.config_info)
 

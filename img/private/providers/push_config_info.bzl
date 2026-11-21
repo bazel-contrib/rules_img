@@ -13,6 +13,7 @@ FIELDS = dict(
     tag_file = "File with newline-delimited tags, or None.",
     destination_file = "File containing {registry}/{repository}, or None.",
     referrers = "List of structs(manifest_info, index_info) for referrer pushes.",
+    push_automatic_referrers = "Whether the image's automatic referrers (see ReferrersInfo) are pushed along with it.",
     cross_mount_from = "Target providing DeployInfo for cross-mounting, or None.",
     strategy = "Resolved push strategy string (never 'auto').",
     cross_mount_strategy = "Resolved cross-mount strategy string.",

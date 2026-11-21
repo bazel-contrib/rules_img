@@ -1,0 +1,30 @@
+"""Metadata gathering aspect, copied from @supply_chain_tools//gather_metadata.
+
+rules_img uses this until supply_chain_tools is released to the BCR. The files
+keep the upstream shape, so switching means replacing the load prefix
+//img/private/supply_chain_tools/gather_metadata with @supply_chain_tools//gather_metadata.
+"""
+
+load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
+
+filegroup(
+    name = "all_files",
+    srcs = glob(["**"]),
+    visibility = ["//img/private/release:__subpackages__"],
+)
+
+bzl_library(
+    name = "gather_metadata",
+    srcs = [
+        "core.bzl",
+        "gather_metadata.bzl",
+        "providers.bzl",
+        "rule_filters.bzl",
+        "serialization.bzl",
+    ],
+    visibility = ["//img:__subpackages__"],
+    deps = [
+        "@bazel_features//:features",
+        "@package_metadata//:srcs",
+    ],
+)

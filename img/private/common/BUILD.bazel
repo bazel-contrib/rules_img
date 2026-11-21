@@ -61,6 +61,7 @@ bzl_library(
     srcs = ["deploy_helpers.bzl"],
     visibility = ["//img:__subpackages__"],
     deps = [
+        "//img/private/providers:automatic_referrers_info",
         "//img/private/providers:deploy_info",
         "//img/private/providers:index_info",
         "//img/private/providers:load_settings_info",
