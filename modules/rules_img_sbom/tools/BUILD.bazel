@@ -1,0 +1,6 @@
+load("@gazelle//:def.bzl", "gazelle")
+
+# Not part of the released module (which has no gazelle): regenerates the Go
+# BUILD files of this module (`bazel run //tools:gazelle`), with the prefix
+# declared in the root BUILD.bazel.
+gazelle(name = "gazelle")

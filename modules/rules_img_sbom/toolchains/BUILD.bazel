@@ -1,0 +1,49 @@
+load("//sbom:toolchain.bzl", "sbom_toolchain")
+
+# Register one of these in your root module:
+#
+#   register_toolchains("@rules_img_sbom//toolchains:cyclonedx")
+#
+# :cyclonedx_and_spdx attaches an SBOM in each format to every image.
+
+sbom_toolchain(
+    name = "cyclonedx_toolchain",
+    formats = ["cyclonedx"],
+    visibility = ["//visibility:public"],
+)
+
+toolchain(
+    name = "cyclonedx",
+    toolchain = ":cyclonedx_toolchain",
+    toolchain_type = "@rules_img//img:automatic_referrers_toolchain_type",
+    visibility = ["//visibility:public"],
+)
+
+sbom_toolchain(
+    name = "spdx_toolchain",
+    formats = ["spdx"],
+    visibility = ["//visibility:public"],
+)
+
+toolchain(
+    name = "spdx",
+    toolchain = ":spdx_toolchain",
+    toolchain_type = "@rules_img//img:automatic_referrers_toolchain_type",
+    visibility = ["//visibility:public"],
+)
+
+sbom_toolchain(
+    name = "cyclonedx_and_spdx_toolchain",
+    formats = [
+        "cyclonedx",
+        "spdx",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+toolchain(
+    name = "cyclonedx_and_spdx",
+    toolchain = ":cyclonedx_and_spdx_toolchain",
+    toolchain_type = "@rules_img//img:automatic_referrers_toolchain_type",
+    visibility = ["//visibility:public"],
+)

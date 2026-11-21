@@ -40,6 +40,28 @@ func (ck *checker) checkImage(img ImageAssertion) {
 	if len(img.Referrers) > 0 {
 		ck.checkReferrers(img.Repository, m.digest, img.Referrers)
 	}
+	if len(img.ChildReferrers) > 0 {
+		ck.checkChildReferrers(ref, img.Repository, m, img.ChildReferrers)
+	}
+}
+
+// checkChildReferrers checks the referrers of every platform manifest of an index.
+func (ck *checker) checkChildReferrers(ref, repo string, m *fetchedManifest, expected []ReferrerAssertion) {
+	if !m.isIndex() {
+		ck.errf("%s: child_referrers needs an index, got a manifest", ref)
+		return
+	}
+	idx, err := m.asIndex()
+	if err != nil {
+		ck.errf("%s: %v", ref, err)
+		return
+	}
+	for _, d := range idx.Manifests {
+		if d.Platform == nil || d.Platform.OS == "" || d.Platform.OS == "unknown" {
+			continue
+		}
+		ck.checkReferrers(repo, d.Digest.String(), expected)
+	}
 }
 
 func (ck *checker) checkStructure(ref, repo string, m *fetchedManifest, s *StructureAssertion) {

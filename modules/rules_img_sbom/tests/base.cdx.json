@@ -1,0 +1,12 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.6",
+  "serialNumber": "urn:uuid:5d4ec0f9-79a5-4f39-a0d2-6b0b6a0c0b11",
+  "version": 1,
+  "metadata": {"component": {"bom-ref": "base", "type": "container", "name": "example/base"}},
+  "components": [
+    {"bom-ref": "os-alpine", "type": "operating-system", "name": "alpine", "version": "3.21"},
+    {"bom-ref": "pkg:apk/alpine/musl@1.2.5-r9?arch=x86_64", "type": "library", "name": "musl", "version": "1.2.5-r9",
+     "purl": "pkg:apk/alpine/musl@1.2.5-r9?arch=x86_64", "licenses": [{"license": {"id": "MIT"}}]}
+  ]
+}

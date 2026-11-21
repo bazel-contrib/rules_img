@@ -1,0 +1,21 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "graph",
+    srcs = [
+        "classify.go",
+        "genconfig.go",
+    ],
+    importpath = "github.com/bazel-contrib/rules_img_sbom/internal/graph",
+    visibility = ["//:__subpackages__"],
+)
+
+go_test(
+    name = "graph_test",
+    srcs = ["classify_test.go"],
+    deps = [
+        ":graph",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+    ],
+)

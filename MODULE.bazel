@@ -118,11 +118,13 @@ go_sdk.nogo(
     nogo = "//util:nogo",
 )
 
-# The go_deps extension is used only to configure gazelle proto generation for a
-# couple of sigstore transitive deps so that the cosign signer *plugin* can be
-# built from source when producing its prebuilt binary for the e2e offline
-# bundle (see @rules_img_internal_tools//release). gazelle_override is
-# root-module-only, so it must live here even though the signer plugins are only
+# The go_deps extension is used only to configure gazelle for a few transitive
+# deps of the independently released modules, so their binaries can be built
+# from source when producing the prebuilt binaries for their releases and the e2e
+# offline bundle (see @rules_img_internal_tools//release): proto generation for
+# two sigstore deps of the cosign signer plugin, and regenerated BUILD files for
+# supplychain-go, a dep of rules_img_sbom's SBOM writer. gazelle_override is
+# root-module-only, so it must live here even though those modules are only
 # transitive deps. The signer modules themselves are resolved through
 # rules_img_internal_tools; the top-level module no longer has any Go module
 # dependencies of its own (see the emptied //:go.mod).
@@ -138,6 +140,10 @@ go_deps.gazelle_override(
 go_deps.gazelle_override(
     directives = ["gazelle:go_generate_proto false"],
     path = "github.com/google/certificate-transparency-go",
+)
+go_deps.gazelle_override(
+    build_file_generation = "clean",
+    path = "github.com/bazel-contrib/supply-chain/lib/supplychain-go",
 )
 
 http_file = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_file")

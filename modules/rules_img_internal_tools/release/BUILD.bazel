@@ -47,3 +47,15 @@ release_files(
     tags = ["manual"],
     version = "@rules_img//img/private/release:signer_notation_version",
 )
+
+# The SBOM writer of rules_img_sbom, prebuilt the same way for its releases and
+# the e2e offline bundle.
+release_files(
+    name = "sbom_prebuilt",
+    basename = "img-sbom",
+    executable = "@rules_img_sbom//cmd/img-sbom",
+    lockfile_name = "modules/rules_img_sbom/prebuilt_lockfile.json",
+    tag_template = "rules_img_sbom-v{version}",
+    tags = ["manual"],
+    version = "@rules_img//img/private/release:sbom_version",
+)

@@ -1,7 +1,5 @@
 load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
 load("@package_metadata//rules:package_metadata.bzl", "package_metadata")
-load("@supply_chain_tools//sbom:cyclonedx.bzl", "cyclonedx")
-load("@supply_chain_tools//sbom:sbom.bzl", "sbom")
 
 package(
     default_package_metadata = [":package_metadata"],
@@ -27,14 +25,4 @@ copy_file(
     is_executable = True,
     package_metadata = ["package_metadata"],
     visibility = ["//visibility:public"],
-)
-
-sbom(
-    name = "sbom",
-    target = ":app",
-)
-
-cyclonedx(
-    name = "sbomx_cdx",
-    sbom = ":sbom",
 )

@@ -38,9 +38,10 @@ filegroup(
     visibility = ["//img/private/release:__subpackages__"],
 )
 
-# Source files of the signer plugin modules, packaged into their release archives
-# and into the offline BCR the e2e tests consume (see //e2e/sbom). Allowlists: a
-# released plugin resolves to a prebuilt binary, so its archive must contain no Go
+# Source files of the independently released modules (the signer plugins and the
+# SBOM toolchain), packaged into their release archives and into the offline BCR
+# the e2e tests consume (see //e2e/sbom). Allowlists: a released module resolves
+# its Go binary to a prebuilt download, so its archive must contain no Go
 # sources and no BUILD file loading @rules_go/@gazelle — a published module has
 # only its own bazel_deps to resolve labels from.
 #
@@ -83,9 +84,28 @@ filegroup(
     visibility = ["//img/private/release:__subpackages__"],
 )
 
+# buildifier: disable=constant-glob
+filegroup(
+    name = "sbom_source_files",
+    srcs = glob(
+        [
+            "modules/rules_img_sbom/BUILD.bazel",
+            "modules/rules_img_sbom/MODULE.bazel",
+            "modules/rules_img_sbom/README.md",
+            "modules/rules_img_sbom/prebuilt_lockfile.json",
+            "modules/rules_img_sbom/prebuilt/**",
+            "modules/rules_img_sbom/sbom/**",
+            "modules/rules_img_sbom/toolchains/**",
+        ],
+        allow_empty = True,
+    ),
+    visibility = ["//img/private/release:__subpackages__"],
+)
+
 exports_files([
     ".bcr/metadata.template.json",
     "modules/rules_img_signer_cosign/MODULE.bazel",
+    "modules/rules_img_sbom/MODULE.bazel",
     "modules/rules_img_signer_notation/MODULE.bazel",
     "prebuilt_lockfile.json",
 ])

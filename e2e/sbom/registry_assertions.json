@@ -5,12 +5,32 @@
       "tag": "latest",
       "structure": {
         "kind": "index",
-        "platforms": ["linux/amd64", "linux/arm64/v8"]
+        "platforms": [
+          "linux/amd64",
+          "linux/arm64/v8"
+        ]
       },
       "closure_intact": true,
       "referrers": [
         {
           "artifact_type": "application/vnd.cyclonedx+json",
+          "count": 1,
+          "kind": "manifest"
+        },
+        {
+          "artifact_type": "application/spdx+json",
+          "count": 1,
+          "kind": "manifest"
+        }
+      ],
+      "child_referrers": [
+        {
+          "artifact_type": "application/vnd.cyclonedx+json",
+          "count": 1,
+          "kind": "manifest"
+        },
+        {
+          "artifact_type": "application/spdx+json",
           "count": 1,
           "kind": "manifest"
         }

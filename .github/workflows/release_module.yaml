@@ -1,0 +1,76 @@
+# Release a single independently versioned module when a per-module tag is
+# pushed: a signer plugin (e.g. `rules_img_signer_cosign-v0.0.1`,
+# `rules_img_signer_notation-v0.0.2`) or the SBOM toolchain (e.g.
+# `rules_img_sbom-v0.0.1`). Each of them ships a prebuilt Go binary per platform
+# and a Go-free module archive.
+#
+# Each module version lives in its own MODULE.bazel. The publish job strips the
+# `<module>-v` prefix from the tag to derive the module version and passes
+# module_roots so publish-to-bcr publishes only this module, leaving the other
+# modules (and their already-published versions) untouched.
+#
+# Building and releasing goes through the same reusable release workflow as the
+# main release (which dispatches on the tag in release_prep.sh). That is not just
+# for consistency: the BCR presubmit verifies the release archive's provenance
+# against a *hard-coded* builder id, namely the reusable workflow that produced
+# the attestation (see `_GH_RELEASE_BUILDER_ID` in tools/slsa.py of
+# bazelbuild/bazel-central-registry). Attesting the archive from a workflow of
+# our own makes slsa-verifier reject it as an "untrusted reusable workflow".
+name: Release module
+on:
+  push:
+    tags:
+      - "rules_img_signer_cosign-v*.*.*"
+      - "rules_img_signer_notation-v*.*.*"
+      - "rules_img_sbom-v*.*.*"
+permissions:
+  id-token: write
+  attestations: write
+  contents: write
+jobs:
+  meta:
+    runs-on: ubuntu-latest
+    outputs:
+      module: ${{ steps.meta.outputs.module }}
+      binary: ${{ steps.meta.outputs.binary }}
+    steps:
+      - name: Resolve module from tag
+        id: meta
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        # Keep in sync with release_prep.sh: the module, and the basename of its
+        # prebuilt binaries (<binary>_<os>_<cpu>[.exe]).
+        run: |
+          case "${TAG_NAME}" in
+            rules_img_signer_cosign-v*)   module=rules_img_signer_cosign;   binary=cosign ;;
+            rules_img_signer_notation-v*) module=rules_img_signer_notation; binary=notation ;;
+            rules_img_sbom-v*)            module=rules_img_sbom;            binary=img-sbom ;;
+            *) echo "unrecognized tag ${TAG_NAME}"; exit 1 ;;
+          esac
+          echo "module=${module}" >> "$GITHUB_OUTPUT"
+          echo "binary=${binary}" >> "$GITHUB_OUTPUT"
+  release:
+    needs: meta
+    uses: bazel-contrib/.github/.github/workflows/release_ruleset.yaml@v7.4.0
+    with:
+      # release_prep.sh builds the module's dist bundle: the versioned BCR source
+      # archive plus the prebuilt per-platform binaries.
+      release_files: |
+        dist/${{ needs.meta.outputs.module }}-*.tar.gz
+        dist/${{ needs.meta.outputs.binary }}_*
+      prerelease: false
+      tag_name: ${{ github.ref_name }}
+    secrets:
+      inherit
+  publish:
+    needs: [meta, release]
+    uses: ./.github/workflows/publish.yaml
+    with:
+      tag_name: ${{ github.ref_name }}
+      # The tag is <module>-v<version>; strip that prefix so publish-to-bcr
+      # derives the module version (e.g. 0.0.1), and publish only this module's
+      # root (not the co-versioned rules_img/img_tool set).
+      tag_prefix: ${{ needs.meta.outputs.module }}-v
+      module_roots: modules/${{ needs.meta.outputs.module }}
+    secrets:
+      publish_token: ${{ secrets.BCR_PUBLISH_TOKEN }}

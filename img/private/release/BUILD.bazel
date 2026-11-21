@@ -53,6 +53,8 @@ offline_bundle(
         # them from the distdir instead of building the plugin from source.
         "@rules_img_internal_tools//release:signer_cosign_prebuilt",
         "@rules_img_internal_tools//release:signer_notation_prebuilt",
+        # Likewise the SBOM writer of rules_img_sbom.
+        "@rules_img_internal_tools//release:sbom_prebuilt",
     ],
 )
 
@@ -93,8 +95,8 @@ versioned_filename_info(
 
 # Signer plugin modules, packaged into the offline BCR used by the e2e
 # integration tests (see //e2e/sbom) and released for real via the
-# signer_{cosign,notation}_dist_tar targets below (built by the "Release signer
-# plugin" GitHub workflow). We prebuild the plugin the same way as the img tool:
+# signer_{cosign,notation}_dist_tar targets below (built by the "Release module"
+# GitHub workflow). We prebuild the plugin the same way as the img tool:
 # source_bundle injects the populated prebuilt_lockfile.json (produced by
 # @rules_img_internal_tools//release:signer_*_prebuilt) into the packaged module
 # source, so a consumer (the e2e scratch workspace, or a real user of the
@@ -187,6 +189,55 @@ versioned_filename_info(
     version = ":signer_notation_version",
 )
 
+# The SBOM toolchain module, packaged and released like the signer plugins (see
+# above): its SBOM writer (img-sbom) is prebuilt by
+# @rules_img_internal_tools//release:sbom_prebuilt, and the released module is
+# prebuilt-only. Pin its BCR version to match module(version = ...) in
+# modules/rules_img_sbom/MODULE.bazel.
+version(
+    name = "sbom_version",
+    tags = ["manual"],
+    version = "0.0.1",
+)
+
+source_bundle(
+    name = "sbom_srcs",
+    srcs = ["//:sbom_source_files"],
+    module_bazel = "//img/private/release/module_bazel_release_prep:cleaned_sbom_module",
+    overrides = ["@rules_img_internal_tools//release:sbom_prebuilt"],
+    required_files = [
+        "BUILD.bazel",
+        "MODULE.bazel",
+        "README.md",
+        "prebuilt_lockfile.json",
+        "prebuilt/BUILD.bazel",
+        "prebuilt/prebuilt.bzl",
+        "sbom/BUILD.bazel",
+        "sbom/toolchain.bzl",
+        "toolchains/BUILD.bazel",
+    ],
+    strip_prefix = "modules/rules_img_sbom/",
+    tags = ["manual"],
+)
+
+pkg_tar(
+    name = "sbom_src_tar",
+    srcs = [":sbom_srcs"],
+    out = "rules_img_sbom.tar.gz",
+    extension = "tar.gz",
+    mode = "0755",
+    tags = ["manual"],
+)
+
+versioned_filename_info(
+    name = "versioned_sbom_tar",
+    src = ":sbom_src_tar",
+    extension = "tar.gz",
+    module_name = "rules_img_sbom",
+    tags = ["manual"],
+    version = ":sbom_version",
+)
+
 offline_bcr(
     name = "bcr",
     src_tars = [
@@ -194,6 +245,7 @@ offline_bcr(
         ":versioned_tool_tar",
         ":versioned_signer_cosign_tar",
         ":versioned_signer_notation_tar",
+        ":versioned_sbom_tar",
     ],
 )
 
@@ -212,8 +264,8 @@ pkg_tar(
 # Per-plugin release bundles, mirroring dist_tar for the img tool: the prebuilt
 # per-platform binaries (release assets, named <basename>_<os>_<cpu>[.exe]) plus
 # the versioned BCR source archive (rules_img_signer_<basename>-v<version>.tar.gz
-# with the populated prebuilt_lockfile.json baked in). The "Release signer
-# plugin" workflow builds one of these, extracts it into dist/, and uploads the
+# with the populated prebuilt_lockfile.json baked in). The "Release module"
+# workflow builds one of these, extracts it into dist/, and uploads the
 # contents as the GitHub release assets that publish-to-bcr then consumes.
 pkg_tar(
     name = "signer_cosign_dist_tar",
@@ -233,6 +285,19 @@ pkg_tar(
         "@rules_img_internal_tools//release:signer_notation_prebuilt",
     ],
     out = "rules_img_signer_notation-dist.tar",
+    mode = "0755",
+    tags = ["manual"],
+)
+
+# The same release bundle for rules_img_sbom: rules_img_sbom-v<version>.tar.gz and
+# the prebuilt img-sbom_<os>_<cpu>[.exe] binaries.
+pkg_tar(
+    name = "sbom_dist_tar",
+    srcs = [
+        ":versioned_sbom_tar",
+        "@rules_img_internal_tools//release:sbom_prebuilt",
+    ],
+    out = "rules_img_sbom-dist.tar",
     mode = "0755",
     tags = ["manual"],
 )

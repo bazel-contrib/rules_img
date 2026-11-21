@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 
 # This script is invoked by release.yaml (the main, co-versioned rules_img +
-# img_tool release) and by release_signer_plugins.yaml (one independently
-# versioned signer plugin), both through the same reusable release workflow. The
-# tag decides which release to prepare.
+# img_tool release) and by release_module.yaml (one independently versioned
+# module: a signer plugin, or rules_img_sbom), both through the same reusable
+# release workflow. The tag decides which release to prepare.
 
 set -euo pipefail
 
@@ -11,18 +11,21 @@ set -euo pipefail
 # https://github.com/bazel-contrib/.github/blob/d197a6427c5435ac22e56e33340dff912bc9334e/.github/workflows/release_ruleset.yaml#L72
 TAG=$1
 
-# Prepare a signer plugin release from tag `rules_img_signer_<basename>-v<version>`:
-# the prebuilt per-platform plugin binaries and the versioned BCR source archive
-# (with the populated prebuilt_lockfile.json), all produced hermetically by
-# Bazel. We only extract the resulting tarball into dist/ with plain `tar -xf`
-# (portable across platforms; no awk/sed/tar --transform). Building from the repo
-# root is what lets the cosign plugin compile without rewriting its MODULE.bazel.
-release_prep_signer_plugin() {
-  local basename="$1"
-  local target="//img/private/release:signer_${basename}_dist_tar"
+# Prepare the release of an independently versioned module from tag
+# `<module>-v<version>`: the module's prebuilt per-platform binaries
+# (<binary>_<os>_<cpu>[.exe]) and its versioned BCR source archive (with the
+# populated prebuilt_lockfile.json), all produced hermetically by Bazel from the
+# dist tar `target`. We only extract the resulting tarball into dist/ with plain
+# `tar -xf` (portable across platforms; no awk/sed/tar --transform). Building from
+# the repo root is what lets the modules compile without rewriting their
+# MODULE.bazel (the root carries the root-only gazelle_overrides they need).
+release_prep_module() {
+  local module="$1"
+  local binary="$2"
+  local target="$3"
   local tarball
 
-  echo "Building signer plugin release bundle ${target}..." 1>&2
+  echo "Building ${module} release bundle ${target}..." 1>&2
   bazel build "${target}" 1>&2
   tarball="$(bazel cquery --output=files "${target}")"
 
@@ -40,14 +43,17 @@ release_prep_signer_plugin() {
   fi
 
   # The per-platform binaries the packaged prebuilt_lockfile.json points at.
-  local binaries=(dist/"${basename}"_*)
+  local binaries=(dist/"${binary}"_*)
   if [[ ! -e "${binaries[0]}" ]]; then
-    echo "expected prebuilt ${basename} binaries in dist/, found:" 1>&2
+    echo "expected prebuilt ${binary} binaries in dist/, found:" 1>&2
     ls dist 1>&2
     exit 1
   fi
+}
 
-  # Release notes, on stdout.
+# Release notes of a signer plugin release, on stdout.
+signer_plugin_release_notes() {
+  local basename="$1"
   cat <<EOF
 ## Using Bzlmod
 
@@ -66,15 +72,44 @@ for the full signing guide.
 EOF
 }
 
+# Release notes of a rules_img_sbom release, on stdout.
+sbom_release_notes() {
+  cat <<EOF
+## Using Bzlmod
+
+Add the following to your \`MODULE.bazel\` file:
+
+\`\`\`starlark
+bazel_dep(name = "rules_img_sbom", version = "${TAG##*-v}")
+
+register_toolchains("@rules_img_sbom//toolchains:cyclonedx")  # or :spdx, or :cyclonedx_and_spdx
+\`\`\`
+
+Every \`image_manifest\` and \`image_index\` then gets an SBOM, attached as an OCI
+referrer. The toolchains run the prebuilt SBOM writer published with this
+release. See the
+[\`rules_img_sbom\` README](https://github.com/bazel-contrib/rules_img/blob/${TAG}/modules/rules_img_sbom/README.md)
+and [automatic referrers](https://github.com/bazel-contrib/rules_img/blob/${TAG}/docs/automatic-referrers.md).
+EOF
+}
+
 rm -rf dist
 
+# Keep in sync with the tag patterns and the module table in release_module.yaml.
 case "${TAG}" in
   rules_img_signer_cosign-v*)
-    release_prep_signer_plugin cosign
+    release_prep_module rules_img_signer_cosign cosign //img/private/release:signer_cosign_dist_tar
+    signer_plugin_release_notes cosign
     exit 0
     ;;
   rules_img_signer_notation-v*)
-    release_prep_signer_plugin notation
+    release_prep_module rules_img_signer_notation notation //img/private/release:signer_notation_dist_tar
+    signer_plugin_release_notes notation
+    exit 0
+    ;;
+  rules_img_sbom-v*)
+    release_prep_module rules_img_sbom img-sbom //img/private/release:sbom_dist_tar
+    sbom_release_notes
     exit 0
     ;;
 esac

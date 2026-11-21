@@ -1,0 +1,25 @@
+# gazelle:prefix github.com/bazel-contrib/rules_img_sbom
+
+# This BUILD file is part of the released module, which has no Go sources and no
+# rules_go/gazelle: keep anything that loads them out of it (the gazelle target
+# lives in //tools, which isn't released).
+load("@bazel_skylib//rules:build_test.bzl", "build_test")
+
+# The SBOM writer the toolchains run (sbom/toolchain.bzl uses it for the exec
+# platform): a prebuilt download for released versions, or the source-built
+# go_binary for any other commit / local / git_override build.
+alias(
+    name = "img-sbom",
+    actual = "@rules_img_sbom_resolved//:binary",
+    visibility = ["//visibility:public"],
+)
+
+exports_files(["prebuilt_lockfile.json"])
+
+# The only test target in the released module, and the one the BCR presubmit runs
+# (`//:all`) — so it must go through the alias rather than reference
+# //cmd/img-sbom directly, which is not part of the release archive.
+build_test(
+    name = "build_test",
+    targets = [":img-sbom"],
+)

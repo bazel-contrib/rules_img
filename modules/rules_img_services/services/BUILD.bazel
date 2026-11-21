@@ -18,11 +18,13 @@ image_push_spec(
     visibility = ["//services:__subpackages__"],
 )
 
+# Also signs the images' SBOMs (their automatic referrers).
 signing_config(
     name = "cosign_keyless",
     targets = [
         "roots",
         "child_manifests",
+        "referrers",
     ],
     tool = "@rules_img_signer_cosign",
     visibility = ["//visibility:public"],

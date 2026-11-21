@@ -1,0 +1,42 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "bom",
+    srcs = [
+        "bazel.go",
+        "compose.go",
+        "created.go",
+        "cyclonedx.go",
+        "license_spdx.go",
+        "model.go",
+        "read.go",
+        "spdx.go",
+    ],
+    importpath = "github.com/bazel-contrib/rules_img_sbom/internal/bom",
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//internal/graph",
+        "@com_github_bazel_contrib_supply_chain_lib_supplychain_go//:supplychain-go",
+        "@com_github_cyclonedx_cyclonedx_go//:cyclonedx-go",
+        "@com_github_package_url_packageurl_go//:packageurl-go",
+        "@com_github_spdx_tools_golang//json",
+        "@com_github_spdx_tools_golang//spdx",
+        "@com_github_spdx_tools_golang//spdx/v2/common",
+    ],
+)
+
+go_test(
+    name = "bom_test",
+    srcs = [
+        "bom_test.go",
+        "created_test.go",
+    ],
+    deps = [
+        ":bom",
+        "//internal/graph",
+        "@com_github_cyclonedx_cyclonedx_go//:cyclonedx-go",
+        "@com_github_spdx_tools_golang//json",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+    ],
+)

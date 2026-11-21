@@ -10,6 +10,12 @@ module(name = "sbom_e2e")
 bazel_dep(name = "rules_img_signer_cosign", version = "0.0.1")
 bazel_dep(name = "rules_img_signer_notation", version = "0.0.1")
 
+# The SBOM toolchain, which attaches CycloneDX and SPDX SBOMs to every image (see
+# register_toolchains below). Like the signer plugins, it resolves from the
+# offline BCR in released/scratch mode (downloading its prebuilt SBOM writer), and
+# from source in local dev mode.
+bazel_dep(name = "rules_img_sbom", version = "0.0.1")
+
 # BEGIN BAZEL_DEP
 bazel_dep(name = "rules_img")
 local_path_override(
@@ -33,11 +39,21 @@ local_path_override(
     path = "../../modules/rules_img_signer_notation",
 )
 
-# Required when building rules_img_signer_cosign from source: gazelle_override is
-# root-module-only and cannot be declared in the cosign module itself.
+local_path_override(
+    module_name = "rules_img_sbom",
+    path = "../../modules/rules_img_sbom",
+)
+
+# Required when building the signer plugins and rules_img_sbom from source (local
+# dev mode only: released modules are prebuilt): gazelle_override is
+# root-module-only and cannot be declared in those modules themselves.
 bazel_dep(name = "gazelle", version = "0.54.0")
 
 go_deps = use_extension("@gazelle//:extensions.bzl", "go_deps")
+go_deps.gazelle_override(
+    build_file_generation = "clean",
+    path = "github.com/bazel-contrib/supply-chain/lib/supplychain-go",
+)
 go_deps.gazelle_override(
     directives = ["gazelle:go_generate_proto false"],
     path = "github.com/sigstore/rekor-tiles/v2",
@@ -53,30 +69,51 @@ register_toolchains("@rules_img_tool//toolchain:all")
 bazel_dep(name = "bazel_skylib", version = "1.9.2")
 bazel_dep(name = "package_metadata", version = "0.0.13")
 bazel_dep(name = "platforms", version = "1.1.0")
-bazel_dep(name = "supply_chain_tools", version = "0.0.1")
 
-# FIXME: drop archive_override after https://github.com/bazel-contrib/supply-chain/pull/158 is merged and released
-archive_override(
-    module_name = "supply_chain_tools",
-    integrity = "sha256-n934H5t5lmrAN/Dhq6jf59B02FpEJIYyC4YmVEf9obU=",
-    strip_prefix = "supply-chain-19778b53bab50d308dea6dd46ee9f6cc7b5a4da2/tools",
-    urls = ["https://github.com/bazel-contrib/supply-chain/archive/19778b53bab50d308dea6dd46ee9f6cc7b5a4da2.tar.gz"],
-)
-
-# FIXME: drop archive_override after https://github.com/bazel-contrib/supply-chain/pull/158 is merged and released
-archive_override(
-    module_name = "supply-chain-go",
-    integrity = "sha256-n934H5t5lmrAN/Dhq6jf59B02FpEJIYyC4YmVEf9obU=",
-    strip_prefix = "supply-chain-19778b53bab50d308dea6dd46ee9f6cc7b5a4da2/lib/supplychain-go",
-    urls = ["https://github.com/bazel-contrib/supply-chain/archive/19778b53bab50d308dea6dd46ee9f6cc7b5a4da2.tar.gz"],
-)
+# Attach a CycloneDX and an SPDX SBOM to every image.
+register_toolchains("@rules_img_sbom//toolchains:cyclonedx_and_spdx")
 
 pull = use_repo_rule("@rules_img//img:pull.bzl", "pull")
 
+# distroless publishes an SBOM of every image as a cosign attestation, under the
+# tag sha256-<digest>.att (cosign's tag scheme, not an OCI referrer). Pulling it
+# along makes the SBOMs of the images built on it contain distroless's packages.
+#
+# The attestations are pinned by digest, so the repository is reproducible (it
+# takes part in the repository contents cache). `referrer_cosign_tags = ["att"]`
+# would find them by tag instead, asking the registry on every fetch. To find the
+# digests: crane digest gcr.io/distroless/static-debian13:sha256-<hex>.att
 pull(
-    name = "alpine",
-    digest = "sha256:51183f2cfa6320055da30872f211093f9ff1d3cf06f39a0bdb212314c5dc7375",
-    registry = "mirror.gcr.io",
-    repository = "library/alpine",
-    tag = "3.23",
+    name = "distroless",
+    digest = "sha256:1a64f46364620465ef9e9a8f5413757dfdf22695e050bbfd7303eeaf17a59383",
+    referrer_digests = [
+        # SBOM attestation of the index (all platforms)
+        "sha256:979aa44e15dd651f8be4efdf83319ea47e62914abff8f9f4397db26538c052d7",
+        # SBOM attestation of the linux/amd64 manifest
+        "sha256:f8945d22e9a7ba70fc282127de007a369df107f8bad8915bdebab344a3075251",
+        # SBOM attestation of the linux/arm64/v8 manifest
+        "sha256:5a977507aa23ab2eec49e7a25c73c6402ca5ecaf3dd01ae98618f535c7194f78",
+    ],
+    registry = "gcr.io",
+    repository = "distroless/static-debian13",
+    tag = "latest",
+)
+
+# An image built with `docker buildx build --sbom=true` (diun, which is Alpine based).
+# BuildKit stores its SPDX SBOMs (and SLSA provenance) in the image index: an
+# attestation manifest per platform manifest, with the platform unknown/unknown.
+# `referrer_buildkit_attestations` pulls those of the selected platforms as
+# referrers of their manifests, so the SBOMs of the images built on it contain the
+# base's packages. They are listed by the index, which the digest pins, so the
+# repository stays reproducible.
+pull(
+    name = "buildkit_base",
+    digest = "sha256:f350e8e7cc0e3b33d500e2fc462ac9273d8954327f32e2501b34b6bef5a0de3e",
+    platforms = [
+        "linux/amd64",
+        "linux/arm64",
+    ],
+    referrer_buildkit_attestations = True,
+    registry = "ghcr.io",
+    repository = "crazy-max/diun",
 )

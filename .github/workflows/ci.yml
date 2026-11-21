@@ -89,10 +89,12 @@ jobs:
           import %workspace%/.github/workflows/.bazelrc.buildbuddy.generated
     - name: Execute Tests
       run: bazelisk test //... @rules_img_tool//... @rules_img_internal_tools//...
-  signer_module_test_matrix:
-    # The signer plugins under modules/ are standalone Bazel modules, so they are
-    # not covered by the root `bazel test //...` above. Test each one in its own
-    # workspace; all modules run sequentially in one job per platform.
+  module_test_matrix:
+    # The independently released modules under modules/ (the signer plugins and
+    # rules_img_sbom) are standalone Bazel modules, so they are not covered by the
+    # root `bazel test //...` above. Test each one in its own workspace (building
+    # its binary from source); all modules run sequentially in one job per
+    # platform.
     strategy:
       fail-fast: false
       matrix:
@@ -120,7 +122,7 @@ jobs:
       shell: bash
       run: |
         failed=()
-        for module in rules_img_signer_cosign rules_img_signer_notation; do
+        for module in rules_img_signer_cosign rules_img_signer_notation rules_img_sbom; do
           echo "::group::bazel test ${module}"
           cp .github/workflows/.bazelrc.buildbuddy.generated "modules/${module}/buildbuddy.bazelrc"
           # rules_img_signer_cosign needs gazelle proto generation disabled for
@@ -190,7 +192,7 @@ jobs:
         bazelisk test '//e2e:integration_tests' --test_env=BAZEL_INTEGRATION_TEST_INJECT_BAZELRC="${inject}" --sandbox_add_mount_pair="${inject}"
   all-tests-passed:
     runs-on: ubuntu-latest
-    needs: [buildifier_check, img_tool_go_build, tidy_and_test_matrix, signer_module_test_matrix, integration_test_matrix]
+    needs: [buildifier_check, img_tool_go_build, tidy_and_test_matrix, module_test_matrix, integration_test_matrix]
     if: always()
     steps:
       - name: Check all jobs succeeded

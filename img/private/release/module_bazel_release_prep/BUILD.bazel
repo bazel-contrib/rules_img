@@ -18,6 +18,12 @@ clean_module_bazel(
 )
 
 clean_module_bazel(
+    name = "cleaned_sbom_module",
+    src = "//:modules/rules_img_sbom/MODULE.bazel",
+    visibility = ["//img/private/release:__subpackages__"],
+)
+
+clean_module_bazel(
     name = "cleaned_notation_module",
     src = "//:modules/rules_img_signer_notation/MODULE.bazel",
     visibility = ["//img/private/release:__subpackages__"],

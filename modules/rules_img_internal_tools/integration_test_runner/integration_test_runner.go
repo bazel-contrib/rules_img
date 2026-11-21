@@ -24,9 +24,10 @@ var (
 
 const signingEnvMarker = "RULES_IMG_E2E_SIGNING"
 
-// signerModules are the independently released signer plugin modules that the
-// signing-capable e2e workspaces depend on.
-var signerModules = []string{"rules_img_signer_cosign", "rules_img_signer_notation"}
+// releasedModules are the independently released modules (the signer plugins and
+// the SBOM toolchain) that the signing-capable e2e workspaces depend on. Each
+// ships prebuilt binaries and no Go sources.
+var releasedModules = []string{"rules_img_signer_cosign", "rules_img_signer_notation", "rules_img_sbom"}
 
 type commandLine struct {
 	name string
@@ -281,11 +282,11 @@ func runBazelCommands(bazel, workspaceDir string, startup []string) error {
 	if err := runBazel(bazel, workspaceDir, startup, nil, "query", "query", "@rules_img//..."); err != nil {
 		return err
 	}
-	// Same check for the released signer plugin modules: they ship prebuilt
+	// Same check for the independently released modules: they ship prebuilt
 	// binaries and no Go sources, and neither this workspace (in released mode)
 	// nor a real consumer provides rules_go/gazelle.
 	if os.Getenv(signingEnvMarker) == "1" {
-		for _, module := range signerModules {
+		for _, module := range releasedModules {
 			label := "@" + module + "//..."
 			if err := runBazel(bazel, workspaceDir, startup, nil, "query "+module, "query", label); err != nil {
 				return err
@@ -420,11 +421,11 @@ func run() int {
 }
 
 // bcrPresubmitPhase reproduces the Bazel Central Registry presubmit for each
-// signer plugin module, running it against the released module source extracted
-// into the offline BCR. Every other build in this repository sees the plugin
-// through its in-repo MODULE.bazel (with the rules_go/gazelle setup the release
-// strips) and as a dependency rather than as the root module, so this is the
-// only place a broken release archive shows up before the tag is pushed.
+// independently released module, running it against the released module source
+// extracted into the offline BCR. Every other build in this repository sees the
+// module through its in-repo MODULE.bazel (with the rules_go/gazelle setup the
+// release strips) and as a dependency rather than as the root module, so this is
+// the only place a broken release archive shows up before the tag is pushed.
 func bcrPresubmitPhase(bazel string) error {
 	if os.Getenv(signingEnvMarker) != "1" {
 		return nil
@@ -433,7 +434,7 @@ func bcrPresubmitPhase(bazel string) error {
 	if err != nil {
 		return err
 	}
-	for _, module := range signerModules {
+	for _, module := range releasedModules {
 		source, err := releasedModuleSource(localBCR, module)
 		if err != nil {
 			return err
@@ -478,8 +479,7 @@ func runBCRPresubmit(bazel, module, source, localBCR, distdir string) error {
 		return fmt.Errorf("copying released %s source: %v", module, err)
 	}
 
-	// The distdir serves the prebuilt plugin binary the released module
-	// downloads, so this runs before the GitHub release exists.
+	// The distdir serves the prebuilt binary the released module downloads, so this runs before the GitHub release exists.
 	bazelrc := fmt.Sprintf(`common --registry=%s --registry=https://bcr.bazel.build/
 common --distdir=%s
 `, localBCRURL(localBCR), filepath.ToSlash(distdir))

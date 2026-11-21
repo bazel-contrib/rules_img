@@ -37,6 +37,10 @@ type ImageAssertion struct {
 	ClosureIntact bool `json:"closure_intact,omitempty"`
 	// Referrers are the referring manifests expected to be attached to Tag.
 	Referrers []ReferrerAssertion `json:"referrers,omitempty"`
+	// ChildReferrers are the referring manifests expected to be attached to
+	// every platform manifest of the index Tag resolves to (such as the SBOM of
+	// each platform). Children without a platform (attestations) are ignored.
+	ChildReferrers []ReferrerAssertion `json:"child_referrers,omitempty"`
 }
 
 // StructureAssertion describes the shape of a manifest. Empty/omitted fields

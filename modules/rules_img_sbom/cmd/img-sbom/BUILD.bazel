@@ -1,0 +1,19 @@
+load("@rules_go//go:def.bzl", "go_binary", "go_library")
+
+go_library(
+    name = "img-sbom_lib",
+    srcs = ["main.go"],
+    importpath = "github.com/bazel-contrib/rules_img_sbom/cmd/img-sbom",
+    visibility = ["//visibility:private"],
+    deps = [
+        "//internal/bom",
+        "//internal/graph",
+        "@com_github_google_uuid//:uuid",
+    ],
+)
+
+go_binary(
+    name = "img-sbom",
+    embed = [":img-sbom_lib"],
+    visibility = ["//visibility:public"],
+)
