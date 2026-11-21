@@ -7,18 +7,22 @@ attestations that refer to the image through the `subject` field of their own ma
 [`PulledReferrersInfo`](#providers) provider of the pulled image, so later rules (for example, an aspect
 walking from a final image up to its base) can find and verify them.
 
-Referrers come from three sources, which can be combined:
+Referrers come from four sources, which can be combined:
 
 - **Pinned digests** of trusted referrers, fetched from the image's registry.
 - **Discovery by artifact type**, for artifacts whose digests can't be known in advance, such as
   every signature of an image.
+- **Cosign's tag scheme**, for the signatures and attestations cosign pushes under tags named after
+  the image's digest (`sha256-<hex>.sig`, `sha256-<hex>.att`) rather than as referrers.
 - **Artifact specs**, for artifacts that come from somewhere other than an OCI registry, such as an
   SBOM database behind an HTTP endpoint.
 
 Every referrer is attributed to the manifest named by its own `subject`: the pulled manifest or
 index, or one of the child manifests of a pulled index. Fetching fails if a referrer has no
 subject, or if its subject is not part of the pulled image. Only image manifests are supported as
-referrers (not indexes).
+referrers (not indexes): a pinned index fails the fetch, and a discovered one (see
+[below](#discovery-by-artifact-type)) is skipped. Cosign's tag-scheme artifacts have no subject; they are attributed to the
+manifest their tag is named after (see [below](#cosigns-tag-scheme)).
 
 Referrers are always fetched in full, regardless of the image's `layer_handling`: an SBOM or a
 signature is meant to be read during the build even if the image's layers are not. The empty
@@ -87,7 +91,7 @@ pull(
 ```
 
 `"*"` stands for any artifact type: `referrer_artifact_types = ["*"]` pulls every referrer of the
-image, whatever it is.
+image, whatever it is, and its [cosign tag-scheme artifacts](#cosigns-tag-scheme) too.
 
 Listing follows the [distribution spec](https://github.com/opencontainers/distribution-spec/blob/main/spec.md#listing-referrers):
 
@@ -119,6 +123,70 @@ What a registry lists can change at any time, so:
   querying the registry again. To pick up new referrers, delete those facts from
   `MODULE.bazel.lock`. On Bazel versions without facts, the extension is reported as not
   reproducible instead.
+
+## Cosign's tag scheme
+
+Unless told to use OCI referrers (`--registry-referrers-mode=oci-1-1`), cosign doesn't attach
+signatures and attestations as referrers. It pushes them as image manifests without a `subject`,
+tagged after the digest of the image they're about: its signatures are the layers of
+`sha256-<hex>.sig`, its attestations those of `sha256-<hex>.att`. Many images are published this
+way; [distroless](https://github.com/GoogleContainerTools/distroless), for example, attests an SPDX
+SBOM of every image (and of each of its platform manifests).
+
+`referrer_cosign_tags` (on `pull`, `images.pull` and `images.referrers`) pulls them, for the pulled
+manifest or index and, for an index, every child manifest (for `pull`, every child that the
+`platforms` filter keeps): `"sig"` for signatures, `"att"` for attestations.
+
+```starlark
+pull(
+    name = "distroless",
+    digest = "sha256:...",
+    registry = "gcr.io",
+    repository = "distroless/static-debian13",
+    referrer_cosign_tags = ["att"],
+)
+```
+
+Each manifest found is attributed to the manifest whose tag it was found under. The tag is only a
+naming convention, so every layer is checked to name that manifest in its signed payload, as
+`cosign verify` would: the `docker-manifest-digest` of a signature's simple signing payload
+(`application/vnd.dev.cosign.simplesigning.v1+json`), or the subject of the in-toto statement in an
+attestation's DSSE envelope (`application/vnd.dsse.envelope.v1+json`). Any other layer fails the
+fetch. Signatures are not verified: that is up to the policy that consumes them.
+
+These artifacts are exposed through `PulledReferrersInfo` like other referrers, with `cosign_tag` set to
+`"sig"` or `"att"`. Their `artifact_type` is their config's media type
+(`application/vnd.oci.image.config.v1+json`); the predicate type of each attestation is in the
+`predicateType` entry of its layer's annotations (`layer_annotations`). With the
+[SBOM toolchain](/modules/rules_img_sbom/README.md), an image built on a base with an SBOM
+attestation inherits the SBOM's packages (see [automatic referrers](automatic-referrers.md)).
+
+Like discovery by artifact type, this queries the registry at fetch time: a `pull` repository that
+sets it is not reproducible, and the `images` extension records the digests found in the lockfile
+facts (as the artifact types `cosign:sig` and `cosign:att`).
+
+To keep a `pull` reproducible (so it takes part in the repository contents cache), pin the cosign
+artifacts in `referrer_digests` instead:
+
+```starlark
+pull(
+    name = "distroless",
+    digest = "sha256:1a64f46364620465ef9e9a8f5413757dfdf22695e050bbfd7303eeaf17a59383",
+    registry = "gcr.io",
+    repository = "distroless/static-debian13",
+    referrer_digests = [
+        "sha256:979aa44e15dd651f8be4efdf83319ea47e62914abff8f9f4397db26538c052d7",  # .att of the index
+        "sha256:f8945d22e9a7ba70fc282127de007a369df107f8bad8915bdebab344a3075251",  # .att of linux/amd64
+    ],
+)
+```
+
+Without a tag to go by, a pinned cosign artifact is attributed to the manifest of the image that
+its signed payloads name (every layer must name the same one, and it must be part of the image).
+Find the digests with `crane digest <repository>:sha256-<hex>.att`, or `cosign triangulate --type
+attestation <repository>@sha256:<hex>` for the tag. Cosign appends to these manifests when an
+image is signed or attested again, which gives them a new digest: a pinned one stays valid as long
+as the registry keeps the manifest, but new signatures and attestations need new pins.
 
 ## Artifacts from other sources
 
@@ -192,8 +260,10 @@ Every pulled image provides `PulledReferrersInfo` (with no referrers unless some
   `referrers.get(digest, [])`.
 
 Each `ReferrerInfo` has the fields of a referrers API entry (`digest`, `media_type`, `size`,
-`artifact_type`, `annotations`), the `subject` digest, and `manifest`: the referrer's
-`ImageManifestInfo`, whose `manifest`, `config` and layer `blob`s are always available.
+`artifact_type`, `annotations`), the annotations of each layer (`layer_annotations`), the
+`subject` digest, `cosign_tag` (`"sig"` or `"att"` for an artifact of cosign's tag scheme, else
+`None`), and `manifest`: the referrer's `ImageManifestInfo`, whose `manifest`, `config` and layer
+`blob`s are always available.
 
 For example, to collect the cosign signatures of the `linux/amd64` manifest of a pulled index:
 

@@ -84,7 +84,7 @@ def _image_repo_impl(rctx):
         if referrer not in rctx.attr.files:
             fail("Referrer manifest {} not found in files.".format(referrer))
         data[referrer] = rctx.read(rctx.path(rctx.attr.files[referrer]))
-        referrer_subject(referrer, json.decode(data[referrer]), subjects, image_name)
+        referrer_subject(referrer, json.decode(data[referrer]), subjects, image_name, rctx.attr.referrer_subjects)
 
     # Referrers from artifact specs, built locally into blobs/ and bound to the
     # anchor manifest (or a manifest of its tree that the spec names).
@@ -137,6 +137,7 @@ image_import(
     data = {data},
     files = {files},
     referrers = {referrers},
+    referrer_subjects = {referrer_subjects},
     local_referrers = {local_referrers},
     registries = {registries},
     repository = {repository},
@@ -154,6 +155,7 @@ image_import(
             tag = repr(rctx.attr.tag) if rctx.attr.tag else "None",
             target_compatible_with = target_compatible_with,
             referrers = json.encode(rctx.attr.referrers),
+            referrer_subjects = json.encode(rctx.attr.referrer_subjects),
             local_referrers = json.encode(local_referrers),
         ),
     )
@@ -195,6 +197,9 @@ and layers.""",
         ),
         "referrer_artifacts": attr.string_list_dict(
             doc = "Maps the digest of a manifest in the image's tree to the labels of referrer artifact specs that apply to it.",
+        ),
+        "referrer_subjects": attr.string_dict(
+            doc = "The subjects the extension attributed the referrers to. Only used for referrers without a `subject` field: cosign's tag-scheme artifacts, attributed to the manifest their tag or signed payloads name.",
         ),
     },
 )

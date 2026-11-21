@@ -297,6 +297,16 @@ def _build_manifest_info(ctx, blobs, digest, descriptor = None, index_position =
         soci_ztocs = [],
     )
 
+_COSIGN_TAGS_BY_LAYER_MEDIA_TYPE = {
+    "application/vnd.dev.cosign.simplesigning.v1+json": "sig",
+    "application/vnd.dsse.envelope.v1+json": "att",
+}
+
+def _cosign_tag(manifest):
+    """The cosign tag suffix of an artifact of cosign's tag scheme, from its layers."""
+    tags = {_COSIGN_TAGS_BY_LAYER_MEDIA_TYPE.get(layer.get("mediaType")): True for layer in manifest.get("layers", [])}
+    return tags.keys()[0] if len(tags) == 1 else None
+
 def _build_pulled_referrers_info(ctx, blobs, root_blob, media_type):
     """Build the PulledReferrersInfo of the pulled image.
 
@@ -321,9 +331,12 @@ def _build_pulled_referrers_info(ctx, blobs, root_blob, media_type):
             fail("missing manifest for referrer: " + digest)
         manifest = json.decode(ctx.attr.data[digest])
         referrer_media_type = get_media_type(manifest)
-        if referrer_media_type != MEDIA_TYPE_MANIFEST:
+        attributed = ctx.attr.referrer_subjects.get(digest)
+        allowed = [MEDIA_TYPE_MANIFEST, DOCKER_MANIFEST_V2] if attributed != None else [MEDIA_TYPE_MANIFEST]
+        if referrer_media_type not in allowed:
             fail("referrer {} has media type {}; only image manifests are supported as referrers".format(digest, referrer_media_type))
-        subject = manifest.get("subject", {}).get("digest")
+        own_subject = manifest.get("subject", {}).get("digest")
+        subject = own_subject or attributed
         if subject == None:
             fail("referrer {} has no subject".format(digest))
         if subject not in subjects:
@@ -346,7 +359,9 @@ def _build_pulled_referrers_info(ctx, blobs, root_blob, media_type):
             size = descriptor["size"],
             artifact_type = artifact_type,
             annotations = annotations,
+            layer_annotations = [layer.get("annotations", {}) for layer in manifest.get("layers", [])],
             subject = subject,
+            cosign_tag = _cosign_tag(manifest) if own_subject == None and attributed != None else None,
             manifest = _build_manifest_info(
                 ctx,
                 blobs,
@@ -429,6 +444,13 @@ makes them be ignored; any other missing blob is still an error.""",
             doc = """Digests of referrer manifests fetched from the image's registries.
 
 Their manifests are in `data`, their configs and layers in `files`.""",
+        ),
+        "referrer_subjects": attr.string_dict(
+            doc = """The subjects of the referrers in `referrers` that have no `subject` field.
+
+These are cosign's tag-scheme artifacts (`sha256-<hex>.sig` and `.att`), about the manifest their
+tag or their signed payloads name. The repository rules record it after the img tool checked
+that the artifact's signed payloads name it.""",
         ),
         "local_referrers": attr.string_list(
             doc = """Digests of referrer manifests built at fetch time from referrer artifact specs.

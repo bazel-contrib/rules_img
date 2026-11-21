@@ -79,6 +79,7 @@ Commands:
   optimize                 rewrites image metadata after layer optimization
   pull                     pulls an image from a registry
   discover-referrers       lists the referrers of manifests by artifact type (referrers API or tag schema)
+  cosign-subjects          attributes cosign's tag-scheme signatures and attestations to the manifests they name
   referrer-artifacts       builds OCI artifact manifests that refer to a pulled image from referrer artifact specs
   sparse-oci-layout        assembles a sparse OCI layout (without layer blobs) from manifest and layers
   soci-index               creates a SOCI Index Manifest v2 from per-layer ztoc blobs
@@ -178,6 +179,8 @@ func Run(ctx context.Context, args []string) {
 		pull.PullProcess(ctx, args[2:])
 	case "discover-referrers":
 		pull.DiscoverReferrersProcess(ctx, args[2:])
+	case "cosign-subjects":
+		pull.CosignSubjectsProcess(ctx, args[2:])
 	case "referrer-artifacts":
 		referrerartifacts.ReferrerArtifactsProcess(args[2:])
 	case "sync-oci-ref-graph":

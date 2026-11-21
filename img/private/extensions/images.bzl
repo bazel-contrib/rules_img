@@ -268,6 +268,7 @@ def _images_impl(ctx):
             tag = img.tag if hasattr(img, "tag") else None,
             referrers = image_referrers.referrers,
             referrer_artifacts = image_referrers.artifacts,
+            referrer_subjects = {referrer: oci_ref_graph[referrer]["subject"] for referrer in image_referrers.referrers if oci_ref_graph[referrer].get("subject")},
         )
 
     # Create hub repository for convenient image access
@@ -386,6 +387,8 @@ config most artifacts use is never fetched.
 A referrer is attributed to the manifest named by its own `subject` field, which must be {anchor}
 or, if that is an index, one of its child manifests. Evaluating the extension fails if a referrer
 has no subject, or applies to any other manifest. Only image manifests are supported as referrers.
+Cosign's tag-scheme signatures and attestations (see `referrer_cosign_tags`) have no subject: they
+are attributed to the manifest that their signed payloads name.
 
 The referrers are exposed through the `PulledReferrersInfo` provider of every pulled image containing the
 manifest they apply to."""
@@ -403,12 +406,27 @@ matches and its `subject` is the manifest. Discovery always uses the `img` tool,
 This is meant for artifacts whose digests can't be known in advance, such as every signature of an
 image, which a policy can then verify downstream. For example:
 `["application/vnd.cncf.notary.signature", "application/vnd.dev.sigstore.bundle.v0.3+json"]`.
-`"*"` stands for any artifact type: `["*"]` pulls every referrer.
+`"*"` stands for any artifact type: `["*"]` pulls every referrer, and cosign's tag-scheme
+signatures and attestations too (as `referrer_cosign_tags = ["sig", "att"]` does).
 
 The discovered digests are recorded in the lockfile facts, per manifest and artifact type, so later
 evaluations reuse them instead of querying the registry again. To pick up new referrers, drop the
 `referrer_discovery@` facts of the manifest (or remove and re-add the artifact type). Without facts
 support, the extension is not reproducible when this is set."""
+
+_REFERRER_COSIGN_TAGS_DOC = """Cosign tag-scheme artifacts to discover and pull: `"sig"` for signatures, `"att"` for attestations.
+
+Unless told to use OCI referrers, cosign doesn't attach signatures and attestations as referrers:
+it pushes them as manifests tagged after the digest of the image, `sha256-<hex>.sig` and
+`sha256-<hex>.att`, without a `subject`. For {anchor} and, if that is an index, every child
+manifest, the manifests under these tags are pulled like referrers, and attributed to the manifest
+they are tagged after. As the tag is only a naming convention, every layer of such a manifest is
+checked to name that manifest in its signed payload: the `docker-manifest-digest` of a signature's
+simple signing payload, or the subject of an attestation's in-toto statement. Any other content
+fails the evaluation. Signatures are not verified.
+
+The discovered digests are recorded in the lockfile facts like those of `referrer_artifact_types`
+(as the artifact types `cosign:sig` and `cosign:att`)."""
 
 _REFERRER_ARTIFACTS_DOC = """Referrer artifact spec files describing artifacts from other sources, such as an SBOM database.
 
@@ -460,6 +478,9 @@ The digest must be a full SHA256 digest starting with "sha256:".""",
         ),
         "referrer_artifact_types": attr.string_list(
             doc = _REFERRER_ARTIFACT_TYPES_DOC.format(anchor = "the pulled manifest or index"),
+        ),
+        "referrer_cosign_tags": attr.string_list(
+            doc = _REFERRER_COSIGN_TAGS_DOC.format(anchor = "the pulled manifest or index"),
         ),
         "referrer_artifacts": attr.label_list(
             doc = _REFERRER_ARTIFACTS_DOC.format(anchor = "the pulled manifest or index"),
@@ -526,6 +547,9 @@ ignored then, so a module can annotate images that only some of its users pull."
         ),
         "referrer_artifact_types": attr.string_list(
             doc = _REFERRER_ARTIFACT_TYPES_DOC.format(anchor = "`manifest`"),
+        ),
+        "referrer_cosign_tags": attr.string_list(
+            doc = _REFERRER_COSIGN_TAGS_DOC.format(anchor = "`manifest`"),
         ),
         "referrer_artifacts": attr.label_list(
             doc = _REFERRER_ARTIFACTS_DOC.format(anchor = "`manifest`"),

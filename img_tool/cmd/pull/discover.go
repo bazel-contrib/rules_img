@@ -34,7 +34,7 @@ func DiscoverReferrersProcess(ctx context.Context, args []string) {
 		fmt.Fprintf(flagSet.Output(), "  $ img discover-referrers --subject sha256:... --artifact-type application/vnd.cncf.notary.signature --source library/ubuntu@index.docker.io --output referrers.json\n")
 	}
 	flagSet.Var(&subjects, "subject", "Digest of a manifest whose referrers to list (can be specified multiple times)")
-	flagSet.Var(&artifactTypes, "artifact-type", "Artifact type of referrers to keep, * for any (can be specified multiple times)")
+	flagSet.Var(&artifactTypes, "artifact-type", "Artifact type of referrers to keep, * for referrers of any type, or cosign:sig / cosign:att for cosign's tag-scheme signatures / attestations (can be specified multiple times)")
 	flagSet.Var(&sources, "source", "Source in the format repository@registry, tried in order until one answers (can be specified multiple times)")
 	flagSet.StringVar(&outputPath, "output", "", "Path to write the result to, as JSON mapping each subject to an object of artifact type to referrer digests (required)")
 	if err := flagSet.Parse(args); err != nil {

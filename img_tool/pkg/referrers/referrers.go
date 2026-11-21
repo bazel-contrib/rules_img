@@ -311,16 +311,35 @@ const AnyArtifactType = "*"
 // index (a tag that happens to be named after the digest). So every manifest it
 // lists is fetched, and kept only if its own artifact type (artifactType, or
 // the config's media type) is requested and its subject is the manifest.
+//
+// The pseudo artifact types made by CosignTagType find cosign's tag-scheme
+// artifacts instead (see discoverCosign), which aren't referrers in the OCI
+// sense: they're found by a tag named after subject, and only their signed
+// payloads tie them to it. AnyArtifactType doesn't select them: request them
+// next to it.
 func Discover(ctx context.Context, repo name.Repository, subject string, artifactTypes []string, options Options) (map[string][]string, error) {
 	found := make(map[string][]string, len(artifactTypes))
+	var ociTypes []string
 	for _, artifactType := range artifactTypes {
 		found[artifactType] = []string{}
+		suffix, ok := cosignTagSuffix(artifactType)
+		if !ok {
+			ociTypes = append(ociTypes, artifactType)
+			continue
+		}
+		digest, err := discoverCosign(ctx, repo, subject, suffix, options)
+		if err != nil {
+			return nil, err
+		}
+		if digest != "" {
+			found[artifactType] = []string{digest}
+		}
 	}
-	if len(artifactTypes) == 0 {
+	if len(ociTypes) == 0 {
 		return found, nil
 	}
-	filter := artifactTypes
-	if slices.Contains(artifactTypes, AnyArtifactType) {
+	filter := ociTypes
+	if slices.Contains(ociTypes, AnyArtifactType) {
 		// Nothing to filter on: the registry must list them all.
 		filter = nil
 	}

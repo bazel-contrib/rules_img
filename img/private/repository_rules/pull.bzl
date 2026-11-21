@@ -16,7 +16,7 @@ load(
     _learn_digest_from_tag = "learn_digest_from_tag",
     _resolve_docker_config_path = "resolve_docker_config_path",
 )
-load(":referrers.bzl", "build_referrer_artifacts", "check_digests", "discover_referrers_with_tool", "flatten_discovered", "referrer_blob_digests", "referrer_subject", "subject_descriptors")
+load(":referrers.bzl", "build_referrer_artifacts", "check_digests", "cosign_attribution", "cosign_subjects_with_tool", "discover_referrers_with_tool", "discovery_types", "flatten_discovered", "has_subject", "referrer_blob_digests", "referrer_subject", "subject_descriptors")
 load(":registry.bzl", "get_registries", "image_purl")
 
 def _pull_impl(rctx):
@@ -25,6 +25,9 @@ def _pull_impl(rctx):
     # Parse the platform filter before any network access, so a typo fails fast.
     platform_specs = [parse_platform_spec(spec) for spec in rctx.attr.platforms]
     check_digests(rctx.attr.referrer_digests, "referrer_digests of {}".format(rctx.attr.repository))
+
+    # The img tool discovers cosign's tag-scheme artifacts for pseudo artifact types.
+    referrer_discovery_types = discovery_types(rctx.attr.referrer_artifact_types, rctx.attr.referrer_cosign_tags, rctx.attr.repository)
     _resolve_docker_config_path(rctx, rctx.attr.docker_config_path, rctx.attr.config)
 
     have_valid_digest = True
@@ -61,8 +64,8 @@ def _pull_impl(rctx):
             reference = reference,
             platforms = rctx.attr.platforms,
             referrers = rctx.attr.referrer_digests,
-            referrer_artifact_types = rctx.attr.referrer_artifact_types,
-            discovered_referrers = _DISCOVERED_REFERRERS if rctx.attr.referrer_artifact_types else None,
+            referrer_artifact_types = referrer_discovery_types,
+            discovered_referrers = _DISCOVERED_REFERRERS if referrer_discovery_types else None,
         )
 
     manifest_kwargs = dict(
@@ -152,7 +155,8 @@ Available platforms: {available}""".format(
     referrer_digests = list(rctx.attr.referrer_digests)
 
     # Discover referrers by artifact type, for the root and the downloaded children.
-    if rctx.attr.referrer_artifact_types:
+    attributed = {}
+    if referrer_discovery_types:
         if rctx.attr.downloader == "img_tool":
             discovered = json.decode(rctx.read(_DISCOVERED_REFERRERS))
             rctx.delete(_DISCOVERED_REFERRERS)
@@ -160,9 +164,10 @@ Available platforms: {available}""".format(
             discovered = discover_referrers_with_tool(
                 rctx,
                 subjects = [digest] + ([child["digest"] for child in manifests] if is_index else []),
-                artifact_types = rctx.attr.referrer_artifact_types,
+                artifact_types = referrer_discovery_types,
                 sources = sources,
             )
+        attributed = cosign_attribution(discovered)
         for found in discovered.values():
             for referrer_digest in flatten_discovered(found):
                 if referrer_digest not in referrer_digests:
@@ -170,18 +175,41 @@ Available platforms: {available}""".format(
 
     referrers = []
     referrer_blobs = {}
+    unattributed = []
     for referrer_digest in referrer_digests:
         if referrer_digest in data:
             continue
         referrer_info = _download_manifest_rctx(rctx, downloader = rctx.attr.downloader, reference = referrer_digest)
         referrer_manifest = json.decode(referrer_info.data)
-        referrer_subject(referrer_digest, referrer_manifest, subjects, image_name)
+        if has_subject(referrer_manifest) or referrer_digest in attributed:
+            referrer_subject(referrer_digest, referrer_manifest, subjects, image_name, attributed)
+        else:
+            unattributed.append(referrer_digest)
         data[referrer_digest] = referrer_info.data
         referrers.append(referrer_digest)
         for blob_digest in referrer_blob_digests(referrer_manifest):
             referrer_blobs[blob_digest] = True
+    blob_paths = {}
     for blob in _download_layers(rctx, downloader = rctx.attr.downloader, digests = referrer_blobs.keys(), sources = sources):
         referrer_blobs[blob.digest] = "//:{}".format(blob.path)
+        blob_paths[blob.digest] = str(rctx.path(blob.path))
+
+    # Pinned referrers without a subject: cosign's tag-scheme artifacts, which
+    # their (downloaded) signed payloads attribute.
+    attributed.update(cosign_subjects_with_tool(
+        rctx,
+        tree = subjects.keys(),
+        artifacts = [
+            dict(
+                digest = referrer_digest,
+                manifest = str(rctx.path("blobs/sha256/" + referrer_digest.removeprefix("sha256:"))),
+                blobs = {blob: blob_paths[blob] for blob in referrer_blob_digests(json.decode(data[referrer_digest])) if blob in blob_paths},
+            )
+            for referrer_digest in unattributed
+        ],
+    ))
+    for referrer_digest in unattributed:
+        referrer_subject(referrer_digest, json.decode(data[referrer_digest]), subjects, image_name, attributed)
 
     # Artifacts from other sources, built locally into blobs/ and bound to their subject.
     local_referrers = []
@@ -283,6 +311,7 @@ image_import(
     files = {files},
     omitted_manifests = {omitted_manifests},
     referrers = {referrers},
+    referrer_subjects = {referrer_subjects},
     local_referrers = {local_referrers},
     registries = {registries},
     repository = {repository},
@@ -345,6 +374,11 @@ image_load(
                 prefix = "    ",
                 indent = "    ",
             ),
+            referrer_subjects = json.encode_indent(
+                {referrer: attributed[referrer] for referrer in referrers if referrer in attributed},
+                prefix = "    ",
+                indent = "    ",
+            ),
             local_referrers = json.encode_indent(
                 local_referrers,
                 prefix = "    ",
@@ -369,7 +403,7 @@ repo(
     if len(rctx.attr.digest) > 0 and hasattr(rctx, "repo_metadata"):
         # allows participating in repo contents cache, unless the referrers depend on
         # what the registry lists right now
-        return rctx.repo_metadata(reproducible = len(rctx.attr.referrer_artifact_types) == 0)
+        return rctx.repo_metadata(reproducible = len(referrer_discovery_types) == 0)
 
     # only to make buildifier happy
     return None
@@ -468,6 +502,12 @@ A referrer is attributed to the manifest named by its own `subject` field: the p
 index, or one of the child manifests of the index. Fetching fails if a referrer has no subject, or
 if its subject is not part of the pulled image. Only image manifests are supported as referrers.
 
+Cosign's tag-scheme signatures and attestations (the manifests tagged `sha256-<hex>.sig` and
+`.att`, see `referrer_cosign_tags`) have no subject. Pinned here, one is attributed to the manifest
+of the image that its signed payloads name: the `docker-manifest-digest` of a signature's simple
+signing payload, or the subject of an attestation's in-toto statement. Unlike discovering them by
+tag, pinning them keeps the repository reproducible.
+
 The referrers are exposed through the image's `PulledReferrersInfo` provider. Use, for example,
 `oras discover` or `crane manifest` on the referrers API to find the digests to list.""",
         ),
@@ -482,7 +522,8 @@ schema (`sha256-<hex>`) on registries that don't support it.
 This is meant for artifacts whose digests can't be known in advance, such as every signature of an
 image, which a policy can then verify downstream. For example:
 `["application/vnd.cncf.notary.signature", "application/vnd.dev.sigstore.bundle.v0.3+json"]`.
-`"*"` stands for any artifact type: `["*"]` pulls every referrer.
+`"*"` stands for any artifact type: `["*"]` pulls every referrer, and cosign's tag-scheme
+signatures and attestations too (as `referrer_cosign_tags = ["sig", "att"]` does).
 
 Listing follows the distribution spec: only a `404` from the referrers API falls back to the tag
 schema, paginated responses are followed, and a referrers tag that is not an image index means
@@ -493,6 +534,21 @@ because Bazel's downloader exposes neither response status nor headers.
 
 Because the result depends on what the registry lists at fetch time, the repository is not
 reproducible when this is set (it does not participate in the repository contents cache).""",
+        ),
+        "referrer_cosign_tags": attr.string_list(
+            doc = """Cosign tag-scheme artifacts to discover and pull: `"sig"` for signatures, `"att"` for attestations.
+
+Unless told to use OCI referrers, cosign doesn't attach signatures and attestations as referrers:
+it pushes them as manifests tagged after the digest of the image, `sha256-<hex>.sig` and
+`sha256-<hex>.att`, without a `subject`. For the pulled manifest or index and, for an index, every
+child manifest that is downloaded (see `platforms`), the manifests under these tags are pulled
+like referrers, and attributed to the manifest they are tagged after. As the tag is only a
+naming convention, every layer of such a manifest is checked to name that manifest in its signed
+payload: the `docker-manifest-digest` of a signature's simple signing payload, or the subject of
+an attestation's in-toto statement. Any other content fails the fetch. Signatures are not verified.
+
+Like `referrer_artifact_types`, this queries the registry at fetch time, so the repository is not
+reproducible when it is set.""",
         ),
         "referrer_artifacts": attr.label_list(
             doc = """Referrer artifact spec files describing artifacts from other sources, such as an SBOM database.

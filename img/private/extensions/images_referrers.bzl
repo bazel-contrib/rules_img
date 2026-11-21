@@ -6,12 +6,17 @@ image or a child of a pulled index; its tree is the anchor and, for an index, it
 children. A referrer is attributed to the manifest its own `subject` names, which
 must be in the tree of the anchor it was requested for.
 
+Cosign's tag-scheme artifacts (`sha256-<hex>.sig` and `.att`) have no subject
+field: the img tool records the manifest whose tag they were found under as their
+subject, after checking that their signed payloads name it.
+
 The facts record, per manifest, the referrers discovered for it by artifact type
-(`referrer_discovery@`), next to the structure of every referrer manifest
-(`oci_ref_graph@`, including its subject).
+(`referrer_discovery@`, where `cosign:sig` and `cosign:att` stand for cosign's
+tags), next to the structure of every referrer manifest (`oci_ref_graph@`,
+including its subject).
 """
 
-load("//img/private/repository_rules:referrers.bzl", "check_digests", "is_valid_digest")
+load("//img/private/repository_rules:referrers.bzl", "check_digests", "discovery_types", "is_valid_digest")
 
 DISCOVERY_FACT_PREFIX = "referrer_discovery@"
 
@@ -27,7 +32,7 @@ def referrer_request(*, anchor, tag, is_root, where):
     Returns:
         A struct, or None if the tag requests no referrers.
     """
-    if not tag.referrer_digests and not tag.referrer_artifact_types and not tag.referrer_artifacts:
+    if not tag.referrer_digests and not tag.referrer_artifact_types and not tag.referrer_cosign_tags and not tag.referrer_artifacts:
         return None
     if not is_valid_digest(anchor):
         fail("Invalid manifest digest '{}' in {}. Must be of the form 'sha256:<64-hex-chars>'.".format(anchor, where))
@@ -35,7 +40,8 @@ def referrer_request(*, anchor, tag, is_root, where):
     return struct(
         anchor = anchor,
         digests = list(tag.referrer_digests),
-        artifact_types = list(tag.referrer_artifact_types),
+        # The img tool discovers cosign's tag-scheme artifacts for pseudo artifact types.
+        artifact_types = discovery_types(tag.referrer_artifact_types, tag.referrer_cosign_tags, where),
         artifacts = [str(label) for label in tag.referrer_artifacts],
         is_root = is_root,
         where = where,

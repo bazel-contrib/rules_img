@@ -60,7 +60,7 @@ func PullProcess(ctx context.Context, args []string) {
 	flagSet.Var(&registries, "registry", "Registry to use (can be specified multiple times, defaults to docker.io)")
 	flagSet.Var(&requestedPlatforms, "platform", "Platform to download from an image index as os/arch[/variant] (can be specified multiple times, defaults to all platforms)")
 	flagSet.Var(&referrers, "referrer", "Digest of a referrer manifest to download along with its config and layers, regardless of --layer-handling (can be specified multiple times)")
-	flagSet.Var(&referrerArtifactTypes, "referrer-artifact-type", "Discover the referrers of this artifact type (* for any) of the root and of every downloaded child manifest, and download them like --referrer (can be specified multiple times)")
+	flagSet.Var(&referrerArtifactTypes, "referrer-artifact-type", "Discover the referrers of this artifact type (* for referrers of any type, or cosign:sig / cosign:att for cosign's tag-scheme signatures / attestations) of the root and of every downloaded child manifest, and download them like --referrer (can be specified multiple times)")
 	flagSet.StringVar(&discoveredReferrersPath, "discovered-referrers", "", "Path to write the discovered referrers to, as JSON mapping each manifest digest to an object of artifact type to referrer digests")
 	flagSet.StringVar(&layerHandling, "layer-handling", "shallow", "Method used for handling layer data. \"eager\" causes layer data to be materialized.")
 	flagSet.IntVar(&concurrency, "j", 10, "Number of concurrent download workers")

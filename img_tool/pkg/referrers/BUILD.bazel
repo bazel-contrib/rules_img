@@ -3,6 +3,7 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "referrers",
     srcs = [
+        "cosign.go",
         "push.go",
         "referrers.go",
     ],
@@ -23,6 +24,7 @@ go_library(
 go_test(
     name = "referrers_test",
     srcs = [
+        "cosign_test.go",
         "push_test.go",
         "referrers_test.go",
     ],

@@ -4,10 +4,15 @@ A referrer is attributed to the manifest named by the `subject` field of its own
 manifest. That subject has to be part of the pulled image's tree -- the root
 manifest or index, or one of the children an index lists. Anything else (no
 subject, or a subject outside the tree) is an error.
+
+Cosign's tag-scheme artifacts (`sha256-<hex>.sig` and `.att`) have no subject
+field. Discovered by their tag, they are attributed to the manifest the tag names,
+which the img tool checks their signed payloads to name; pinned by digest, to the
+manifest of the tree their signed payloads name.
 """
 
 load("@img_toolchain//:defs.bzl", "tool_for_repository_os")
-load("//img/private:manifest_media_type.bzl", "MEDIA_TYPE_MANIFEST", "get_media_type", manifest_kind = "kind")
+load("//img/private:manifest_media_type.bzl", "DOCKER_MANIFEST_V2", "MEDIA_TYPE_MANIFEST", "get_media_type", manifest_kind = "kind")
 load(":download.bzl", "auth_environment", "execute_kwargs")
 load(":registry.bzl", "get_sources_list")
 
@@ -48,7 +53,117 @@ def subject_descriptors(root_digest, root_data):
             )
     return subjects
 
-def referrer_subject(digest, manifest, subjects, image):
+COSIGN_TAGS = ["sig", "att"]
+
+def cosign_tag_types(tags, what):
+    """Return the pseudo artifact types with which the img tool discovers cosign's tag-scheme artifacts.
+
+    Args:
+        tags: List of cosign tag suffixes ("sig", "att").
+        what: Description of where the tags come from, for the error message.
+
+    Returns:
+        List of pseudo artifact types ("cosign:sig", "cosign:att").
+    """
+    for tag in tags:
+        if tag not in COSIGN_TAGS:
+            fail("Invalid cosign tag '{}' in {}. Must be one of {}.".format(tag, what, COSIGN_TAGS))
+    return ["cosign:" + tag for tag in tags]
+
+def discovery_types(artifact_types, cosign_tags, where):
+    """Return the (pseudo) artifact types with which the img tool discovers the referrers a rule or tag asks for.
+
+    `"*"` among the artifact types stands for every referrer: those of any artifact type, and
+    cosign's tag-scheme artifacts.
+
+    Args:
+        artifact_types: The `referrer_artifact_types` attribute.
+        cosign_tags: The `referrer_cosign_tags` attribute.
+        where: Description of the rule or tag, for error messages.
+
+    Returns:
+        List of artifact types and cosign pseudo artifact types, without duplicates.
+    """
+    types = list(artifact_types)
+    tags = list(cosign_tags)
+    if "*" in artifact_types:
+        tags.extend([tag for tag in COSIGN_TAGS if tag not in tags])
+    for artifact_type in cosign_tag_types(tags, "referrer_cosign_tags of " + where):
+        if artifact_type not in types:
+            types.append(artifact_type)
+    return types
+
+def cosign_attribution(discovered):
+    """Attribute the cosign tag-scheme artifacts of a discovery result to the manifests they were found for.
+
+    Args:
+        discovered: Dict mapping manifest digests to (pseudo) artifact types to referrer digests.
+
+    Returns:
+        Dict of referrer digest to subject digest.
+    """
+    subjects = {}
+    for subject, found in discovered.items():
+        for artifact_type, digests in found.items():
+            if artifact_type.startswith("cosign:"):
+                for digest in digests:
+                    subjects[digest] = subject
+    return subjects
+
+def has_subject(manifest):
+    """Whether a decoded manifest has a subject field.
+
+    Args:
+        manifest: The decoded manifest.
+
+    Returns:
+        True if it names a subject.
+    """
+    subject = manifest.get("subject")
+    return type(subject) == type({}) and bool(subject.get("digest"))
+
+def cosign_subjects_with_tool(ctx, *, tree, artifacts, sources = {}, credential_helper = None, docker_config_path = None, timeout = None):
+    """Attribute pinned referrers without a subject field, with `img cosign-subjects`.
+
+    Such a referrer must be one of cosign's tag-scheme signatures or attestations,
+    whose signed payloads name the manifest it is about. Starlark can't decode
+    a DSSE payload, so the img tool reads them.
+
+    Args:
+        ctx: Repository or module context.
+        tree: Digests of the manifests the referrers may apply to.
+        artifacts: List of dict(digest, manifest, blobs): the referrer's digest, the
+            path of its manifest, and a dict of the paths of its downloaded layers.
+        sources: Sources dict mapping repositories to registries, to fetch layers
+            that weren't downloaded from.
+        credential_helper: Optional credential helper, as in auth_environment.
+        docker_config_path: Optional Docker-compatible auth config path, as in auth_environment.
+        timeout: Optional timeout in seconds, as in execute_kwargs.
+
+    Returns:
+        Dict of referrer digest to subject digest.
+    """
+    if len(artifacts) == 0:
+        return {}
+    name = "cosign_subjects_{}".format(artifacts[0]["digest"].removeprefix("sha256:"))
+    ctx.file(name + ".in.json", json.encode(dict(
+        tree = tree,
+        artifacts = artifacts,
+        sources = get_sources_list(sources) if sources else [],
+    )), executable = False)
+    result = ctx.execute(
+        [ctx.path(tool_for_repository_os(ctx)), "cosign-subjects", "--input=" + name + ".in.json", "--output=" + name + ".out.json"],
+        environment = auth_environment(ctx, credential_helper = credential_helper, docker_config_path = docker_config_path),
+        **execute_kwargs(ctx, timeout)
+    )
+    if result.return_code != 0:
+        fail("Failed to attribute referrers without a subject: {}{}".format(result.stdout, result.stderr))
+    output = json.decode(ctx.read(name + ".out.json"))
+    ctx.delete(name + ".in.json")
+    ctx.delete(name + ".out.json")
+    return {digest: found["subject"] for digest, found in output.items()}
+
+def referrer_subject(digest, manifest, subjects, image, attributed = {}):
     """Return the digest of the manifest a referrer applies to, or fail.
 
     Args:
@@ -56,20 +171,23 @@ def referrer_subject(digest, manifest, subjects, image):
         manifest: The decoded referrer manifest.
         subjects: The manifests the referrer may apply to, as returned by subject_descriptors.
         image: Human-readable name of the pulled image, for error messages.
+        attributed: Dict of referrer digest to subject for the referrers that have
+            no subject field: cosign's tag-scheme artifacts (see cosign_attribution
+            and cosign_subjects_with_tool).
 
     Returns:
         The digest of the referrer's subject.
     """
     media_type = get_media_type(manifest)
-    if media_type != MEDIA_TYPE_MANIFEST:
+    allowed = [MEDIA_TYPE_MANIFEST] if has_subject(manifest) or digest not in attributed else [MEDIA_TYPE_MANIFEST, DOCKER_MANIFEST_V2]
+    if media_type not in allowed:
         fail("Referrer {} of {} has media type '{}'; only image manifests ({}) are supported as referrers.".format(
             digest,
             image,
             media_type,
             MEDIA_TYPE_MANIFEST,
         ))
-    subject = manifest.get("subject")
-    subject_digest = subject.get("digest") if type(subject) == type({}) else None
+    subject_digest = manifest["subject"]["digest"] if has_subject(manifest) else attributed.get(digest)
     if not subject_digest:
         fail("Referrer {} of {} has no subject, so it is not attributed to any manifest of the image.".format(digest, image))
     if subject_digest not in subjects:

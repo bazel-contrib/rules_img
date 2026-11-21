@@ -5,7 +5,7 @@ load("@img_toolchain//:defs.bzl", "tool_for_repository_os")
 load("//img/private:manifest_media_type.bzl", "get_media_type", manifest_kind = "kind")
 load("//img/private/extensions:images_referrers.bzl", "DISCOVERY_FACT_PREFIX", "images_containing", "referrers_tool_input", "tree_of")
 load("//img/private/repository_rules:download.bzl", "auth_environment", "download_manifest", "execute_kwargs")
-load("//img/private/repository_rules:referrers.bzl", "discover_referrers_with_tool")
+load("//img/private/repository_rules:referrers.bzl", "cosign_attribution", "cosign_subjects_with_tool", "discover_referrers_with_tool")
 
 def pull_tag_to_struct(tag, digest = None):
     """Convert a pull tag to a struct for easier attribute access.
@@ -775,8 +775,9 @@ def sync_oci_ref_graph(ctx, images_by_digest, facts, downloader, credential_help
     discovered = {manifest: found for manifest, found in discovered.items() if found}
 
     # Download the referrer manifests from the sources of the images they apply to.
+    referrer_manifests = {}
     for digest, sources in referrer_sources.items():
-        ref_graph_entry, _manifest_data = download_and_parse_manifest(
+        ref_graph_entry, manifest_data = download_and_parse_manifest(
             ctx,
             digest,
             None,
@@ -789,6 +790,36 @@ def sync_oci_ref_graph(ctx, images_by_digest, facts, downloader, credential_help
             require_subject = True,
         )
         oci_ref_graph[digest] = ref_graph_entry
+        referrer_manifests[digest] = manifest_data
+
+    # Cosign's tag-scheme artifacts have no subject field. They apply to the manifest
+    # whose tag they were found under, which the img tool checked their signed
+    # payloads to name when discovering them.
+    for digest, subject in cosign_attribution(discovered).items():
+        entry = oci_ref_graph.get(digest)
+        if entry != None and not entry.get("subject"):
+            oci_ref_graph[digest] = dict(entry, subject = subject)
+
+    # Pinned referrers without a subject field: cosign's tag-scheme artifacts,
+    # about the manifest of their anchor's tree that their signed payloads name.
+    for request in referrer_requests:
+        for digest in request.digests:
+            entry = oci_ref_graph.get(digest)
+            if entry == None or entry.get("subject") or entry["kind"] != "manifest" or referrer_manifests.get(digest) == None:
+                continue
+            manifest_path = "cosign_subject_manifest_{}.json".format(digest.removeprefix("sha256:"))
+            ctx.file(manifest_path, referrer_manifests[digest], executable = False)
+            attributed = cosign_subjects_with_tool(
+                ctx,
+                tree = tree_of(request.anchor, oci_ref_graph),
+                artifacts = [dict(digest = digest, manifest = str(ctx.path(manifest_path)), blobs = {})],
+                sources = referrer_sources[digest],
+                credential_helper = credential_helper,
+                docker_config_path = docker_config_path,
+                timeout = timeout,
+            )
+            ctx.delete(manifest_path)
+            oci_ref_graph[digest] = dict(entry, subject = attributed[digest])
 
     ctx.report_progress("OCI reference graph synced with {} entries.".format(len(oci_ref_graph)))
     return struct(graph = oci_ref_graph, discovered = discovered)

@@ -2,7 +2,9 @@
 
 REFERRER_DOC = """\
 A referrer of a manifest: an artifact (an SBOM, a signature, an attestation, ...)
-whose `subject` is that manifest.
+whose `subject` is that manifest, or one of cosign's tag-scheme signatures and attestations
+(tagged `sha256-<hex>.sig` and `.att`), which have no `subject` and are attributed to the
+manifest their tag names.
 
 The descriptor-level fields mirror an entry of the
 [referrers API](https://github.com/opencontainers/distribution-spec/blob/main/spec.md#listing-referrers)
@@ -12,13 +14,21 @@ response, so they are known during analysis and can be used to pick artifacts
 
 REFERRER_FIELDS = dict(
     digest = "Digest of the referrer manifest.",
-    media_type = "Media type of the referrer manifest (`application/vnd.oci.image.manifest.v1+json`).",
+    media_type = """\
+Media type of the referrer manifest (`application/vnd.oci.image.manifest.v1+json`, or for a cosign
+tag-scheme artifact, possibly `application/vnd.docker.distribution.manifest.v2+json`).""",
     size = "Size of the referrer manifest in bytes.",
     artifact_type = """\
 Artifact type of the referrer: the manifest's `artifactType`, or the media type of its config
 when that is unset, as the referrers API reports it.""",
     annotations = "Dict of the referrer manifest's annotations.",
+    layer_annotations = """\
+List of the annotations (a dict) of each layer of the referrer, in the order of `manifest.layers`.
+Cosign records the predicate type of an attestation on its layer (`predicateType`).""",
     subject = "Digest of the manifest this referrer applies to.",
+    cosign_tag = """\
+For one of cosign's tag-scheme artifacts, the suffix of the tag it was found under: `"sig"` or
+`"att"`. Otherwise `None`.""",
     manifest = """\
 ImageManifestInfo of the referrer. Its `manifest`, `config` and the `blob` of each layer are
 always available: referrers are fetched regardless of the image's `layer_handling`.

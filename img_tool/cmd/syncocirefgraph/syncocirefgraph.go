@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	"github.com/google/go-containerregistry/pkg/name"
+	registryv1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/pull"
@@ -227,12 +228,19 @@ func SyncOCIRefGraphProcess(ctx context.Context, args []string) {
 			}
 		}
 		referrerJobs := referrerJobs(requests, imagesByDigest, ociRefGraph)
+		manifests := map[string][]byte{}
 		for _, result := range downloadManifestsParallel(referrerJobs, facts) {
 			if result.Error != nil {
 				fmt.Fprintf(os.Stderr, "Error: Failed to download referrer manifest %s: %v\n", result.Digest, result.Error)
 				os.Exit(1)
 			}
 			ociRefGraph[result.Digest] = result.RefGraphEntry
+			manifests[result.Digest] = result.ManifestData
+		}
+		attributeCosignArtifacts(input.Discover, discovered, ociRefGraph)
+		if err := attributePinnedCosignArtifacts(input.Referrers, manifests, imagesByDigest, ociRefGraph); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
 		}
 	}
 
@@ -334,6 +342,70 @@ func referrerJobs(requests []ReferrerRequest, imagesByDigest map[string]ImageInf
 		})
 	}
 	return jobs
+}
+
+// attributeCosignArtifacts records the subject of the cosign tag-scheme
+// artifacts that were discovered: the manifest whose cosign tag they were found
+// under, which their signed payloads were checked to name (their manifests have
+// no subject field to record).
+func attributeCosignArtifacts(requests []DiscoveryRequest, discovered map[string]map[string][]string, ociRefGraph map[string]RefGraphEntry) {
+	for _, discovery := range requests {
+		for _, manifest := range treeOf(discovery.Anchor, ociRefGraph) {
+			for _, artifactType := range discovery.ArtifactTypes {
+				if !imgreferrers.IsCosignTagType(artifactType) {
+					continue
+				}
+				for _, referrer := range discovered[manifest][artifactType] {
+					if entry, ok := ociRefGraph[referrer]; ok && entry.Subject == "" {
+						entry.Subject = manifest
+						ociRefGraph[referrer] = entry
+					}
+				}
+			}
+		}
+	}
+}
+
+// attributePinnedCosignArtifacts records the subject of the pinned referrers
+// without a subject field: cosign's tag-scheme artifacts, about the manifest of
+// their anchor's tree that their signed payloads name. Their layers are read
+// from the sources of the images containing the anchor.
+func attributePinnedCosignArtifacts(requests []ReferrerRequest, manifests map[string][]byte, imagesByDigest map[string]ImageInfo, ociRefGraph map[string]RefGraphEntry) error {
+	for _, request := range requests {
+		entry, ok := ociRefGraph[request.Digest]
+		raw := manifests[request.Digest]
+		if !ok || entry.Subject != "" || entry.Kind != "manifest" || raw == nil {
+			continue
+		}
+		sources := mergedSources(request.Anchor, imagesByDigest, ociRefGraph)
+		if sources == nil {
+			continue
+		}
+		read := func(layer registryv1.Descriptor) ([]byte, error) {
+			var lastErr error
+			for repository, registries := range sources {
+				for _, registry := range registries {
+					repo, err := name.NewRepository(fmt.Sprintf("%s/%s", registry, repository), registryopts.NameOptions()...)
+					if err != nil {
+						return nil, err
+					}
+					data, err := imgreferrers.RemoteLayers(context.Background(), repo, pull.ReferrersOptions(registryopts.DirectTransport()))(layer)
+					if err == nil {
+						return data, nil
+					}
+					lastErr = err
+				}
+			}
+			return nil, lastErr
+		}
+		_, subject, err := imgreferrers.AttributeCosignArtifact(raw, read, treeOf(request.Anchor, ociRefGraph))
+		if err != nil {
+			return fmt.Errorf("referrer %s has no subject, and is not one of cosign's signatures or attestations of %s: %w", request.Digest, request.Anchor, err)
+		}
+		entry.Subject = subject
+		ociRefGraph[request.Digest] = entry
+	}
+	return nil
 }
 
 // treeOf returns the anchor and, if it is an index, its children.
