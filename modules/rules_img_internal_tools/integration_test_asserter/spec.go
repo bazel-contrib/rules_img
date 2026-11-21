@@ -88,6 +88,10 @@ type SignatureAssertion struct {
 	Repository   string `json:"repository"`
 	Tag          string `json:"tag"`
 	ArtifactType string `json:"artifact_type,omitempty"`
+	// AttestationPredicateTypes are the predicate types of further attestations
+	// (such as of SBOMs) to verify about the image, besides its signature
+	// (cosign only).
+	AttestationPredicateTypes []string `json:"attestation_predicate_types,omitempty"`
 }
 
 func loadSpec(path string) (*Spec, error) {

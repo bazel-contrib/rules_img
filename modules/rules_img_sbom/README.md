@@ -13,8 +13,8 @@ register_toolchains("@rules_img_sbom//toolchains:cyclonedx")  # or :spdx, or :cy
 
 That's all: every `image_manifest` and `image_index` now has an SBOM (with
 `:cyclonedx_and_spdx`, one in each format, each a referrer of its own). It's exposed as the `sbom`
-output group and the `ImageSbomInfo` provider, and pushed (and optionally signed) along with the
-image.
+output group and the `ImageSbomInfo` provider, and pushed (and optionally signed, or attested:
+see [image signing](/docs/image-signing.md)) along with the image.
 
 ## What's in the SBOM
 

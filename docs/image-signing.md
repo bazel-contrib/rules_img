@@ -163,6 +163,37 @@ signature: `roots` (the pushed image or index — the default), `child_manifests
 (each per-platform child of an index), and `referrers` (referrer artifacts such
 as SBOMs).
 
+One more target makes attestations instead of signatures: `sbom_attestations`.
+For each SBOM among the referrers (a CycloneDX or SPDX JSON document, such as
+the [automatic SBOMs](automatic-referrers.md)), the plugin makes a signed
+[in-toto attestation][in-toto] whose subject is the image the SBOM describes and
+whose predicate is the SBOM, with the predicate type `https://cyclonedx.org/bom`
+or `https://spdx.dev/Document/v<version>` (as GitHub's `attest-sbom` does). It's
+pushed as another referrer of the image, next to the SBOM referrer itself.
+Signing the SBOM referrer (`referrers`) proves who published the referrer; an
+attestation binds the SBOM to the image's digest inside the signed statement,
+which is what `cosign verify-attestation` and attestation-based admission
+policies check:
+
+```starlark
+signing_config(
+    name = "cosign",
+    tool = "@rules_img_signer_cosign",
+    targets = ["roots", "child_manifests", "sbom_attestations"],
+)
+```
+
+```bash
+cosign verify-attestation --new-bundle-format --type https://cyclonedx.org/bom \
+  --key cosign.pub <image>@<digest>
+```
+
+Only plugins that can attest support it: the cosign plugin makes the same
+Sigstore bundle as `cosign attest --new-bundle-format`; the Notation plugin
+can't (Notary Project signatures sign descriptors, not statements), and fails a
+deploy that asks for attestations. `all` covers the three signing targets, not
+`sbom_attestations`.
+
 ### Deploy-time overrides
 
 Because signing runs inside `img deploy`, a few things can be overridden at
@@ -170,7 +201,7 @@ Because signing runs inside `img deploy`, a few things can be overridden at
 
 | Flag | Effect |
 | --- | --- |
-| `--sign_targets=roots,child_manifests,referrers` (or `all`) | Override which descriptors are signed. |
+| `--sign_targets=roots,child_manifests,referrers,sbom_attestations` (or `all`) | Override which descriptors are signed (and which SBOMs attested). Referrers are only signed if the list includes `referrers`. |
 | `--sign_force` | Sign every pushed image with the default signer, even targets not configured to sign at build time. |
 | `--default_sign_setting=<path\|sha256:...>` | Provide the default signer at deploy time. |
 | `--sign_setting_file=<path>` | Ingest an extra signer config file. |
@@ -284,6 +315,22 @@ A plugin is any executable that:
 5. Never contacts the container registry — that is `img`'s job. The plugin may
    reach its *own* signing infrastructure (KMS, HSM, transparency log).
 
+A plugin that can make attestations (for the `sbom_attestations` target) also
+accepts the subcommand `attest-oci-artifact`, with the same flags. It reads a
+JSON request from **stdin**:
+
+```json
+{
+  "subject": {"mediaType": "...", "digest": "sha256:...", "size": 1234},
+  "predicate_type": "https://cyclonedx.org/bom",
+  "predicate": {"bomFormat": "CycloneDX", "...": "..."}
+}
+```
+
+and writes an OCI image layout tar with the attestation artifact, whose manifest
+sets `subject` to the request's subject (the image, not the SBOM referrer). A
+plugin that can't attest should fail with a clear message.
+
 In Go, the bundled plugins share a small helper package that implements the
 stdin/stdout framing and the OCI-layout writing for you; you only implement the
 signing itself:
@@ -293,6 +340,13 @@ signing itself:
 type OCIArtifactSigner interface {
     // Sign returns a v1.Image (the signature artifact) whose subject is `subject`.
     Sign(ctx context.Context, subject v1.Descriptor) (v1.Image, error)
+}
+
+// OCIArtifactAttester is optional: implement it to support attest-oci-artifact.
+type OCIArtifactAttester interface {
+    // Attest returns a v1.Image (the attestation artifact) whose subject is
+    // `subject`, attesting `predicate` of `predicateType` about it.
+    Attest(ctx context.Context, subject v1.Descriptor, predicateType string, predicate json.RawMessage) (v1.Image, error)
 }
 ```
 
@@ -308,6 +362,7 @@ anything that speaks the stdin/stdout protocol above works.
 [policy-controller]: https://docs.sigstore.dev/policy-controller/overview/
 [ratify]: https://ratify.dev/
 [oci-referrers]: https://github.com/opencontainers/distribution-spec/blob/main/spec.md#listing-referrers
+[in-toto]: https://github.com/in-toto/attestation/blob/main/spec/README.md
 [oci-descriptor]: https://github.com/opencontainers/image-spec/blob/main/descriptor.md
 [notary]: https://notaryproject.dev/
 [sigstore]: https://www.sigstore.dev/

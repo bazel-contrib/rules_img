@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "layout.go",
         "push.go",
+        "sbom.go",
         "settings.go",
         "subprocess.go",
     ],
@@ -26,6 +27,7 @@ go_test(
     srcs = [
         "artifact_test.go",
         "layout_test.go",
+        "sbom_test.go",
         "settings_test.go",
         "subprocess_test.go",
     ],

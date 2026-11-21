@@ -41,7 +41,11 @@
     "cosign": {
       "repository": "malt3/supply-chain-example",
       "tag": "latest",
-      "artifact_type": "application/vnd.dev.sigstore.bundle.v0.3+json"
+      "artifact_type": "application/vnd.dev.sigstore.bundle.v0.3+json",
+      "attestation_predicate_types": [
+        "https://cyclonedx.org/bom",
+        "https://spdx.dev/Document/v2.3"
+      ]
     },
     "notation": {
       "repository": "malt3/supply-chain-example",

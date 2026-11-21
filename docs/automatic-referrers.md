@@ -85,6 +85,19 @@ signing_config(
 )
 ```
 
+With `"sbom_attestations"` in its `targets`, a signing config whose plugin can attest (cosign's)
+also attests each SBOM: a signed in-toto statement about the image with the SBOM as its predicate,
+pushed as another referrer of the image (see [image signing](/docs/image-signing.md)). That's what
+`cosign verify-attestation` and attestation-based admission policies check:
+
+```starlark
+signing_config(
+    name = "sign",
+    tool = "@rules_img_signer_cosign",
+    targets = ["roots", "child_manifests", "sbom_attestations"],
+)
+```
+
 A signed SBOM referrer is what a policy engine verifies before trusting the SBOM. For example,
 Kyverno's image validating policies look up an image's referrers by artifact type, require a valid
 Notary signature on them, and read the SBOM from the referrer's layer. Kyverno's examples use the

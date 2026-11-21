@@ -175,6 +175,24 @@ subject is the signed image's manifest digest, with predicate type
 --new-bundle-format` produces, so a released `cosign verify` accepts it (cosign
 has no verification path for a bare message-signature in a bundle).
 
+### ATTESTATIONS
+
+`cosign attest-oci-artifact` takes the same options. It reads a JSON request on
+stdin, `{"subject": <descriptor>, "predicate_type": "...", "predicate": {...}}`,
+and writes the bundle of a DSSE-wrapped in-toto Statement about the subject with
+that predicate, as `cosign attest --new-bundle-format --type <predicate type>
+--predicate <file>` does. Its referrer carries the annotations
+`dev.sigstore.bundle.content=dsse-envelope` and
+`dev.sigstore.bundle.predicateType=<predicate type>`. `img deploy` runs it for
+the `sbom_attestations` target of a `signing_config`, attesting each SBOM among
+the referrers about the image it describes (predicate type
+`https://cyclonedx.org/bom` or `https://spdx.dev/Document/v<version>`):
+
+```
+cosign verify-attestation --new-bundle-format --type https://cyclonedx.org/bom \
+  --key cosign.pub ghcr.io/you/image@sha256:<image-digest>
+```
+
 ### OPTIONS
 
 ```

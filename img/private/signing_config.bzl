@@ -2,7 +2,7 @@
 
 load("//img/private/providers:signing_config_info.bzl", "SigningConfigInfo")
 
-_SIGN_TARGETS = ["roots", "child_manifests", "referrers"]
+_SIGN_TARGETS = ["roots", "child_manifests", "referrers", "sbom_attestations"]
 
 def rlocationpath(file, workspace_name):
     """Return the runfiles rlocation path of a file (as accepted by runfiles.Rlocation)."""
@@ -103,7 +103,7 @@ Signing is enabled with the `sign` attribute or the `//img/settings:sign` flag.
             doc = "Additional (non-secret) environment variables set for the plugin. Secrets should come from the deploy-time environment instead.",
         ),
         "targets": attr.string_list(
-            doc = "Default set of descriptors to sign: any of \"roots\" (the pushed root, the default), \"child_manifests\" (each child of an index), and \"referrers\" (referrer artifacts such as SBOMs). Overridable at deploy time via `--sign_targets`.",
+            doc = "Default set of descriptors to sign: any of \"roots\" (the pushed root, the default), \"child_manifests\" (each child of an index), \"referrers\" (referrer artifacts such as SBOMs), and \"sbom_attestations\" (an in-toto attestation of each SBOM among the referrers, about the image it describes, for signer plugins that can attest, such as cosign's). Overridable at deploy time via `--sign_targets`.",
             default = ["roots"],
             allow_empty = False,
         ),

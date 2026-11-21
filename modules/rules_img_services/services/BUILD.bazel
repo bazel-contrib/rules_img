@@ -25,6 +25,7 @@ signing_config(
         "roots",
         "child_manifests",
         "referrers",
+        "sbom_attestations",
     ],
     tool = "@rules_img_signer_cosign",
     visibility = ["//visibility:public"],

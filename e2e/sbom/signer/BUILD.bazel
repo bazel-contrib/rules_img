@@ -1,6 +1,8 @@
 load("@rules_img//img:signing.bzl", "signing_config")
 
 # Cosign signer: keyless by default; supply SIGSTORE_ID_TOKEN at deploy time.
+# Besides signing the image and its SBOMs, it attests each SBOM (an in-toto
+# attestation about the image, with the SBOM as its predicate).
 # You can also specify a signing key via $RULES_IMG_COSIGN_KEY.
 # Enable with --config=cosign (see .bazelrc).
 signing_config(
@@ -9,6 +11,7 @@ signing_config(
         "roots",
         "child_manifests",
         "referrers",
+        "sbom_attestations",
     ],
     tool = "@rules_img_signer_cosign",
 )
@@ -24,6 +27,7 @@ signing_config(
         "roots",
         "child_manifests",
         "referrers",
+        "sbom_attestations",
     ],
     tool = "@rules_img_signer_cosign",
 )

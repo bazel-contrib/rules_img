@@ -118,7 +118,7 @@ func DeployProcess(ctx context.Context, args []string) {
 	flagSet.Var(&signSettingFiles, "sign_setting_file", "Additional sign_setting config file to ingest for signing (can be used multiple times)")
 	flagSet.StringVar(&defaultSignSetting, "default_sign_setting", "", "Default sign_setting for operations without one: a path to a config file, or sha256:<hex> referencing a discovered setting")
 	flagSet.BoolVar(&signForce, "sign_force", false, "Sign every push operation using the default sign_setting, even operations not configured to sign at build time")
-	flagSet.StringVar(&signTargetsFlag, "sign_targets", "", "Override which descriptors are signed: a comma-separated list of roots,child_manifests,referrers or 'all'")
+	flagSet.StringVar(&signTargetsFlag, "sign_targets", "", "Override which descriptors are signed: a comma-separated list of roots,child_manifests,referrers,sbom_attestations or 'all' (the first three)")
 	flagSet.StringVar(&deduplicatedPush, "deduplicated-push", "", "Override the deploy manifest's deduplicated_push setting: 'enabled' checks which manifests the registry already has, uploads each blob several repositories need to just one of them, and cross-mounts it into the others; 'best_effort' does the same but uploads a layer's bytes the ordinary way where the registry refuses to mount it; 'disabled' pushes each manifest independently. 'enabled' requires a registry that supports cross-repository blob mounting: where mounting is refused, an opted-in push fails rather than uploading the blob into every repository. Empty (default) uses the deploy manifest's setting. Ignored when --sink is set.")
 	flagSet.StringVar(&deduplicatedPushBlobRepository, "deduplicated-push-blob-repository", "", "Override the deploy manifest's deduplicated_push_blob_repository setting: the repository within each destination registry that every shared blob is uploaded to and cross-mounted from. Empty (default) uses the deploy manifest's setting, where empty in turn lets the deploy pick a home repository per blob.")
 	flagSet.StringVar(&deduplicatedPushContent, "deduplicated-push-content", "", "Override the deploy manifest's deduplicated_push_content setting: 'blobs' uploads a shared blob to its home repository and nothing else; 'blobs_and_artificial_manifests' also uploads a config blob and creates a manifest referencing the blob there, for registries that only expose a blob to other repositories once a manifest references it. Empty (default) uses the deploy manifest's setting.")
@@ -598,6 +598,7 @@ func DeployWithExtras(ctx context.Context, rawRequest []byte, opts DeployOptions
 			overrideRepository: opts.OverrideRepository,
 			pushTransport:      pushTransport,
 			jobs:               opts.Jobs,
+			artifacts:          vfs,
 		}); err != nil {
 			return err
 		}
@@ -1158,6 +1159,7 @@ func deployToSink(ctx context.Context, spec string, vfs *deployvfs.VFS, casBlobs
 		targetOverride:     opts.SignTargets,
 		overrideRegistry:   opts.OverrideRegistry,
 		overrideRepository: opts.OverrideRepository,
+		artifacts:          vfs,
 	}); err != nil {
 		s.Close()
 		return err

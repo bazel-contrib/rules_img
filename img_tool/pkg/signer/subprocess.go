@@ -17,11 +17,27 @@ import (
 // Subprocess is the single api.OCIArtifactSigner implementation used by
 // `img deploy`. It delegates signing to an external plugin invoked as
 // `<tool> sign-oci-artifact [args...]`, feeding the subject descriptor JSON on
-// stdin and reading an OCI image layout tar on stdout.
+// stdin and reading an OCI image layout tar on stdout. Attestations work the
+// same way, with `<tool> attest-oci-artifact [args...]` and an AttestRequest.
 type Subprocess struct {
 	toolPath string
-	args     []string // ["sign-oci-artifact", <plugin args>...]
+	args     []string // the plugin args, without the subcommand
 	env      []string
+}
+
+// Subcommands of the signer plugin protocol.
+const (
+	SignSubcommand   = "sign-oci-artifact"
+	AttestSubcommand = "attest-oci-artifact"
+)
+
+// AttestRequest is what `<tool> attest-oci-artifact` reads from stdin: the
+// plugin makes an in-toto attestation about Subject with the given predicate,
+// and writes the artifact (a referrer of Subject) as an OCI image layout tar.
+type AttestRequest struct {
+	Subject       v1.Descriptor   `json:"subject"`
+	PredicateType string          `json:"predicate_type"`
+	Predicate     json.RawMessage `json:"predicate"`
 }
 
 var _ api.OCIArtifactSigner = (*Subprocess)(nil)
@@ -68,7 +84,7 @@ func NewSubprocess(cfg SignSettingConfig, rf *runfiles.Runfiles) (*Subprocess, e
 
 	return &Subprocess{
 		toolPath: toolPath,
-		args:     append([]string{"sign-oci-artifact"}, cfg.Args...),
+		args:     cfg.Args,
 		env:      env,
 	}, nil
 }
@@ -81,9 +97,24 @@ func (s *Subprocess) SignArtifacts(ctx context.Context, subject v1.Descriptor) (
 	if err != nil {
 		return nil, fmt.Errorf("marshalling subject descriptor: %w", err)
 	}
+	return s.run(ctx, SignSubcommand, subjJSON)
+}
 
-	cmd := exec.CommandContext(ctx, s.toolPath, s.args...)
-	cmd.Stdin = bytes.NewReader(subjJSON) // os/exec closes the write end at EOF
+// AttestArtifacts runs the plugin to attest predicate (of predicateType) about
+// subject, and returns every artifact image in its OCI-layout output.
+func (s *Subprocess) AttestArtifacts(ctx context.Context, subject v1.Descriptor, predicateType string, predicate json.RawMessage) ([]v1.Image, error) {
+	request, err := json.Marshal(AttestRequest{Subject: subject, PredicateType: predicateType, Predicate: predicate})
+	if err != nil {
+		return nil, fmt.Errorf("marshalling the attestation request: %w", err)
+	}
+	return s.run(ctx, AttestSubcommand, request)
+}
+
+// run runs the plugin's subcommand with stdin, and reads the artifacts it
+// writes to stdout.
+func (s *Subprocess) run(ctx context.Context, subcommand string, stdin []byte) ([]v1.Image, error) {
+	cmd := exec.CommandContext(ctx, s.toolPath, append([]string{subcommand}, s.args...)...)
+	cmd.Stdin = bytes.NewReader(stdin) // os/exec closes the write end at EOF
 	cmd.Env = s.env
 	// Stream stderr to the user so interactive prompts (security-key touch, PIN,
 	// OIDC device flow) are visible.
@@ -95,7 +126,7 @@ func (s *Subprocess) SignArtifacts(ctx context.Context, subject v1.Descriptor) (
 		if stdout.over {
 			return nil, fmt.Errorf("signer plugin %q produced more than %d bytes of output", s.toolPath, maxSignerStdout)
 		}
-		return nil, fmt.Errorf("signer plugin %q failed: %w", s.toolPath, err)
+		return nil, fmt.Errorf("signer plugin %q failed (%s): %w", s.toolPath, subcommand, err)
 	}
 
 	imgs, err := ReadArtifactLayout(stdout.buf.Bytes())

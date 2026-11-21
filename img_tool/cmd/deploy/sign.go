@@ -2,6 +2,7 @@ package deploy
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -34,6 +35,20 @@ type signOptions struct {
 	// captures signatures locally instead of pushing.
 	pushTransport http.RoundTripper
 	jobs          int
+
+	// artifacts serves the referrers that are pushed, so their SBOMs can be
+	// attested (the sbom_attestations target).
+	artifacts artifactSource
+}
+
+// attester makes attestations, as signer.Subprocess does.
+type attester interface {
+	AttestArtifacts(ctx context.Context, subject registryv1.Descriptor, predicateType string, predicate json.RawMessage) ([]registryv1.Image, error)
+}
+
+// artifactSource serves the images of a deploy, as deployvfs.VFS does.
+type artifactSource interface {
+	Image(digest registryv1.Hash) (registryv1.Image, error)
 }
 
 // signDecision is the outcome of deciding whether and how a push operation is
@@ -42,7 +57,9 @@ type signDecision struct {
 	sign       bool
 	bestEffort bool
 	setting    *api.Descriptor // explicit op setting, or nil to use the default
-	targets    map[string]bool // effective subject targets (roots/child_manifests)
+	// targets are the effective targets: roots/child_manifests of an image, or
+	// referrers/sbom_attestations of a referrer.
+	targets map[string]bool
 }
 
 // signEmitter attaches the signature artifacts produced for one subject of a
@@ -196,7 +213,7 @@ func forEachSignature(ctx context.Context, pushOps []api.IndexedPushDeployOperat
 				return err
 			}
 		}
-		if err := signOneEmit(ctx, op, decision, store, settings.DefaultSignSetting, rfHandle, emit); err != nil {
+		if err := signOneEmit(ctx, op, decision, store, settings.DefaultSignSetting, rfHandle, opts.artifacts, emit); err != nil {
 			if decision.bestEffort {
 				fmt.Fprintf(os.Stderr, "warning: signing %s/%s@%s skipped: %v\n", reg, repo, op.Root.Digest, err)
 				continue
@@ -207,9 +224,9 @@ func forEachSignature(ctx context.Context, pushOps []api.IndexedPushDeployOperat
 	return nil
 }
 
-// signOneEmit signs every selected subject of op and hands the resulting
-// artifacts to emit.
-func signOneEmit(ctx context.Context, op api.IndexedPushDeployOperation, decision signDecision, store *signer.SettingStore, manifestDefault *api.Descriptor, rf *runfiles.Runfiles, emit signEmitter) error {
+// signOneEmit signs every selected subject of op (or, for a referrer, attests
+// its SBOMs) and hands the resulting artifacts to emit.
+func signOneEmit(ctx context.Context, op api.IndexedPushDeployOperation, decision signDecision, store *signer.SettingStore, manifestDefault *api.Descriptor, rf *runfiles.Runfiles, artifacts artifactSource, emit signEmitter) error {
 	cfg, err := store.Resolve(decision.setting, manifestDefault)
 	if err != nil {
 		return err
@@ -232,7 +249,97 @@ func signOneEmit(ctx context.Context, op api.IndexedPushDeployOperation, decisio
 			return err
 		}
 	}
+	if op.Referrer && decision.targets[api.SignTargetSBOMAttestations] {
+		return attestSBOMs(ctx, op, sub, artifacts, emit)
+	}
 	return nil
+}
+
+// attestSBOMs has the plugin attest the SBOMs that the referrer op carries,
+// each about the image the referrer refers to (its subject). A referrer that
+// carries no SBOM (such as an index, whose children are what carry layers)
+// isn't attested.
+func attestSBOMs(ctx context.Context, op api.IndexedPushDeployOperation, sub attester, artifacts artifactSource, emit signEmitter) error {
+	if op.RootKind == "index" {
+		return nil
+	}
+	if artifacts == nil {
+		return fmt.Errorf("attesting the SBOMs of %s: the referrer's contents are unavailable", op.Root.Digest)
+	}
+	digest, err := registryv1.NewHash(op.Root.Digest)
+	if err != nil {
+		return err
+	}
+	referrer, err := artifacts.Image(digest)
+	if err != nil {
+		return fmt.Errorf("reading the referrer %s: %w", op.Root.Digest, err)
+	}
+	manifest, err := referrer.Manifest()
+	if err != nil {
+		return fmt.Errorf("reading the referrer %s: %w", op.Root.Digest, err)
+	}
+	if manifest.Subject == nil {
+		return fmt.Errorf("the referrer %s has no subject", op.Root.Digest)
+	}
+	subject := *manifest.Subject
+	layers, err := referrer.Layers()
+	if err != nil {
+		return fmt.Errorf("reading the referrer %s: %w", op.Root.Digest, err)
+	}
+	for i, layer := range layers {
+		descriptor := manifest.Layers[i]
+		// Only read the blobs that can be SBOMs: the others may be large, or
+		// not even available locally.
+		if !signer.MaybeSBOM(string(descriptor.MediaType)) || descriptor.Size > signer.MaxSBOMPredicateSize {
+			continue
+		}
+		data, err := readBlob(layer, descriptor.Size)
+		if err != nil {
+			return fmt.Errorf("reading the blob %s of the referrer %s: %w", descriptor.Digest, op.Root.Digest, err)
+		}
+		predicateType, ok, err := signer.SBOMPredicateType(string(descriptor.MediaType), data)
+		if err != nil {
+			return fmt.Errorf("the referrer %s: %w", op.Root.Digest, err)
+		}
+		if !ok {
+			continue
+		}
+		imgs, err := sub.AttestArtifacts(ctx, registryv1.Descriptor{MediaType: subject.MediaType, Digest: subject.Digest, Size: subject.Size}, predicateType, data)
+		if err != nil {
+			return fmt.Errorf("attesting the SBOM %s about %s: %w", descriptor.Digest, subject.Digest, err)
+		}
+		for _, img := range imgs {
+			attestation, err := img.Manifest()
+			if err != nil {
+				return fmt.Errorf("reading the attestation of the SBOM %s: %w", descriptor.Digest, err)
+			}
+			if attestation.Subject == nil || attestation.Subject.Digest != subject.Digest {
+				return fmt.Errorf("the signer plugin's attestation of the SBOM %s doesn't refer to %s", descriptor.Digest, subject.Digest)
+			}
+		}
+		if err := emit(ctx, op, api.Descriptor{MediaType: string(subject.MediaType), Digest: subject.Digest.String(), Size: subject.Size}, imgs); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func readBlob(layer registryv1.Layer, size int64) ([]byte, error) {
+	rc, err := layer.Compressed()
+	if err != nil {
+		return nil, err
+	}
+	defer rc.Close()
+	data, err := io.ReadAll(io.LimitReader(rc, signer.MaxSBOMPredicateSize+1))
+	if err != nil {
+		return nil, err
+	}
+	// The read stops at the limit, before the digest is verified: a blob
+	// larger than its descriptor says must be caught here.
+	if int64(len(data)) != size {
+		return nil, fmt.Errorf("the blob doesn't have the %d bytes its descriptor says", size)
+	}
+	return data, nil
 }
 
 // signatureSinkImage converts a signature artifact image (produced by a signer
@@ -299,29 +406,46 @@ func signatureSinkImage(img registryv1.Image, registry, repository string) (sink
 // decideSigning determines whether op should be signed and with which effective
 // targets. Precedence: an operation with an explicit Sign config is always
 // signed; --sign_force signs any op using the default; and a --sign_targets
-// override that includes "referrers" signs referrer ops using the default.
+// override that includes "referrers" (or "sbom_attestations") signs referrer
+// ops using the default.
+//
+// A referrer op is only signed if its targets select something for it to sign:
+// the referrer itself ("referrers"), or its SBOMs ("sbom_attestations").
 func decideSigning(op api.IndexedPushDeployOperation, store *signer.SettingStore, force bool, override map[string]bool) signDecision {
+	choose := chooseTargets
+	if op.Referrer {
+		choose = chooseReferrerTargets
+	}
+	var decision signDecision
 	switch {
 	case op.Sign != nil:
-		return signDecision{
+		decision = signDecision{
 			sign:       true,
 			bestEffort: op.Sign.BestEffort,
 			setting:    op.Sign.Setting,
-			targets:    chooseTargets(op.Sign.Targets, override),
+			targets:    choose(op.Sign.Targets, override),
 		}
 	case force && store.HasDefault():
-		return signDecision{sign: true, targets: chooseTargets(nil, override)}
-	case op.Referrer && override[api.SignTargetReferrers] && store.HasDefault():
-		return signDecision{sign: true, targets: chooseTargets(nil, override)}
+		decision = signDecision{sign: true, targets: choose(nil, override)}
+	case op.Referrer && (override[api.SignTargetReferrers] || override[api.SignTargetSBOMAttestations]) && store.HasDefault():
+		decision = signDecision{sign: true, targets: choose(nil, override)}
 	default:
 		return signDecision{}
 	}
+	if op.Referrer && !decision.targets[api.SignTargetReferrers] && !decision.targets[api.SignTargetSBOMAttestations] {
+		return signDecision{}
+	}
+	return decision
 }
 
 // collectSubjects returns the descriptors of op to sign, honoring the effective
-// target selection. Roots are always included; index children are added when
-// the child_manifests target is selected.
+// target selection. Roots are always included (a referrer's only with the
+// referrers target); index children are added when the child_manifests target
+// is selected.
 func collectSubjects(op api.IndexedPushDeployOperation, targets map[string]bool) []api.Descriptor {
+	if op.Referrer && !targets[api.SignTargetReferrers] {
+		return nil
+	}
 	var subjects []api.Descriptor
 	seen := map[string]bool{}
 	add := func(d api.Descriptor) {
@@ -352,6 +476,19 @@ func chooseTargets(opTargets []string, override map[string]bool) map[string]bool
 		return t
 	}
 	return map[string]bool{api.SignTargetRoots: true}
+}
+
+// chooseReferrerTargets is chooseTargets for a referrer op, whose default is
+// the referrers target: before there were attestations, a referrer op was
+// recorded with a sign config but no targets if referrers were to be signed.
+func chooseReferrerTargets(opTargets []string, override map[string]bool) map[string]bool {
+	if override != nil {
+		return override
+	}
+	if t := normalizeTargets(opTargets); t != nil {
+		return t
+	}
+	return map[string]bool{api.SignTargetReferrers: true}
 }
 
 // normalizeTargets converts a raw target list into a set, expanding "all". It

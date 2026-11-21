@@ -1,7 +1,9 @@
 // Command cosign is a rules_img signer plugin that produces Sigstore signatures
 // using sigstore-go. It implements the `sign-oci-artifact` protocol: it reads
 // the subject descriptor from stdin and writes an OCI image layout tar (a
-// Sigstore-bundle signature artifact) to stdout. It never contacts a container
+// Sigstore-bundle signature artifact) to stdout. It also implements
+// `attest-oci-artifact`, which makes an attestation (such as of an SBOM) about
+// the subject, like `cosign attest --new-bundle-format` does. It never contacts a container
 // registry (it may contact Fulcio/Rekor and an RFC3161 timestamp authority,
 // which are signing infrastructure).
 //
@@ -203,7 +205,22 @@ func newSigner(args []string) (signerapi.OCIArtifactSigner, error) {
 }
 
 func (s *cosignSigner) Sign(ctx context.Context, subject v1.Descriptor) (v1.Image, error) {
-	statement, err := inTotoStatement(subject, s.annotations)
+	return s.attestation(ctx, subject, cosignSignPredicateType, json.RawMessage("{}"))
+}
+
+// Attest makes the attestation `cosign attest --new-bundle-format
+// --type <predicateType> --predicate <file>` would: a Sigstore bundle whose
+// DSSE envelope signs an in-toto Statement about subject with the predicate.
+// `cosign verify-attestation --new-bundle-format --type <predicateType>`
+// verifies it.
+func (s *cosignSigner) Attest(ctx context.Context, subject v1.Descriptor, predicateType string, predicate json.RawMessage) (v1.Image, error) {
+	return s.attestation(ctx, subject, predicateType, predicate)
+}
+
+// attestation signs an in-toto Statement about subject (as DSSE) into a
+// Sigstore bundle, and wraps it as an OCI artifact that refers to subject.
+func (s *cosignSigner) attestation(ctx context.Context, subject v1.Descriptor, predicateType string, predicate json.RawMessage) (v1.Image, error) {
+	statement, err := inTotoStatement(subject, s.annotations, predicateType, predicate)
 	if err != nil {
 		return nil, err
 	}
@@ -225,7 +242,7 @@ func (s *cosignSigner) Sign(ctx context.Context, subject v1.Descriptor) (v1.Imag
 
 	annotations := map[string]string{
 		annotationBundleContent:       "dsse-envelope",
-		annotationBundlePredicateType: cosignSignPredicateType,
+		annotationBundlePredicateType: predicateType,
 	}
 	// Reproducible by default: only stamp a creation time when explicitly asked,
 	// matching cosign's --record-creation-timestamp (default false).
@@ -244,12 +261,13 @@ func (s *cosignSigner) Sign(ctx context.Context, subject v1.Descriptor) (v1.Imag
 	)
 }
 
-// inTotoStatement builds the in-toto Statement that cosign's new bundle format
-// signs: the subject is the image manifest digest, tagged with cosign's sign
-// predicate type. Signing this (as DSSE) is exactly what `cosign sign
-// --new-bundle-format` does, so `cosign verify` accepts the result. Optional
-// --annotations are recorded on the subject (matching cosign's -a behavior).
-func inTotoStatement(subject v1.Descriptor, annotations map[string]string) ([]byte, error) {
+// inTotoStatement builds an in-toto Statement about the image manifest
+// subject. With cosign's sign predicate type (and an empty predicate), signing
+// it (as DSSE) is exactly what `cosign sign --new-bundle-format` does, so
+// `cosign verify` accepts the result; with another predicate, it's what `cosign
+// attest` does. Optional --annotations are recorded on the subject (matching
+// cosign's -a behavior).
+func inTotoStatement(subject v1.Descriptor, annotations map[string]string, predicateType string, predicate json.RawMessage) ([]byte, error) {
 	type resourceDescriptor struct {
 		Digest      map[string]string `json:"digest"`
 		Annotations map[string]string `json:"annotations,omitempty"`
@@ -258,14 +276,15 @@ func inTotoStatement(subject v1.Descriptor, annotations map[string]string) ([]by
 		Type          string               `json:"_type"`
 		PredicateType string               `json:"predicateType"`
 		Subject       []resourceDescriptor `json:"subject"`
-		Predicate     struct{}             `json:"predicate"`
+		Predicate     json.RawMessage      `json:"predicate"`
 	}{
 		Type:          inTotoStatementType,
-		PredicateType: cosignSignPredicateType,
+		PredicateType: predicateType,
 		Subject: []resourceDescriptor{{
 			Digest:      map[string]string{subject.Digest.Algorithm: subject.Digest.Hex},
 			Annotations: annotations,
 		}},
+		Predicate: predicate,
 	}
 	return json.Marshal(statement)
 }

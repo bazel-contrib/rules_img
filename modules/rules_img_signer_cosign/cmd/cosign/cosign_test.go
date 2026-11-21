@@ -26,6 +26,8 @@ import (
 	"github.com/sigstore/sigstore-go/pkg/bundle"
 	"github.com/sigstore/sigstore/pkg/cryptoutils"
 
+	"github.com/bazel-contrib/rules_img_signer_cosign/pkg/signerapi"
+
 	// Registers the fakekms:// provider so the KMS --key path can be tested
 	// end-to-end without a real cloud KMS.
 	_ "github.com/sigstore/sigstore/pkg/signature/kms/fake"
@@ -208,6 +210,69 @@ func TestCosignKeyBasedSign(t *testing.T) {
 	}
 }
 
+// TestCosignAttest makes an attestation of an SBOM, as `cosign attest
+// --new-bundle-format` does: the DSSE envelope signs an in-toto statement about
+// the image with the SBOM as its predicate, and the referrer's annotations name
+// the predicate type.
+func TestCosignAttest(t *testing.T) {
+	keyPath, pub := writeECDSAKeyPair(t)
+	signer, err := newSigner([]string{"--key", keyPath, "--tlog-upload=false"})
+	if err != nil {
+		t.Fatalf("newSigner: %v", err)
+	}
+	attester, ok := signer.(signerapi.OCIArtifactAttester)
+	if !ok {
+		t.Fatal("the cosign signer doesn't attest")
+	}
+
+	subject := testSubject()
+	sbom := json.RawMessage(`{"bomFormat": "CycloneDX", "specVersion": "1.6", "components": [{"name": "app"}]}`)
+	img, err := attester.Attest(context.Background(), subject, "https://cyclonedx.org/bom", sbom)
+	if err != nil {
+		t.Fatalf("Attest: %v", err)
+	}
+
+	manifest, err := img.Manifest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manifest.ArtifactType != bundleMediaType || manifest.Subject == nil || manifest.Subject.Digest != subject.Digest {
+		t.Errorf("the attestation is a %q referrer of %+v, want a %q referrer of %s", manifest.ArtifactType, manifest.Subject, bundleMediaType, subject.Digest)
+	}
+	if got := manifest.Annotations[annotationBundlePredicateType]; got != "https://cyclonedx.org/bom" {
+		t.Errorf("%s = %q, want https://cyclonedx.org/bom", annotationBundlePredicateType, got)
+	}
+	if got := manifest.Annotations[annotationBundleContent]; got != "dsse-envelope" {
+		t.Errorf("%s = %q, want dsse-envelope", annotationBundleContent, got)
+	}
+
+	payloadType, payload, sig := dsseParts(t, img)
+	var statement struct {
+		parsedStatement
+		Predicate json.RawMessage `json:"predicate"`
+	}
+	if err := json.Unmarshal(payload, &statement); err != nil {
+		t.Fatal(err)
+	}
+	if statement.PredicateType != "https://cyclonedx.org/bom" {
+		t.Errorf("predicateType = %q, want https://cyclonedx.org/bom", statement.PredicateType)
+	}
+	if len(statement.Subject) != 1 || statement.Subject[0].Digest["sha256"] != subject.Digest.Hex {
+		t.Errorf("statement subject = %+v, want sha256=%s", statement.Subject, subject.Digest.Hex)
+	}
+	var compact bytes.Buffer
+	if err := json.Compact(&compact, sbom); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(statement.Predicate, compact.Bytes()) {
+		t.Errorf("predicate = %s, want the SBOM %s", statement.Predicate, compact.Bytes())
+	}
+	sum := sha256.Sum256(dssePAE(payloadType, payload))
+	if !ecdsa.VerifyASN1(pub, sum[:], sig) {
+		t.Error("DSSE signature does not verify against the signing public key")
+	}
+}
+
 // dssePAE reconstructs the DSSE v1 pre-authentication encoding.
 func dssePAE(payloadType string, payload []byte) []byte {
 	return []byte(fmt.Sprintf("DSSEv1 %d %s %d %s", len(payloadType), payloadType, len(payload), payload))
@@ -242,7 +307,7 @@ func TestRecordCreationTimestamp(t *testing.T) {
 // records --annotations on the subject; annotations are absent when none given.
 func TestInTotoStatement(t *testing.T) {
 	subject := testSubject()
-	payload, err := inTotoStatement(subject, map[string]string{"foo": "bar"})
+	payload, err := inTotoStatement(subject, map[string]string{"foo": "bar"}, cosignSignPredicateType, json.RawMessage("{}"))
 	if err != nil {
 		t.Fatalf("inTotoStatement: %v", err)
 	}
@@ -264,7 +329,7 @@ func TestInTotoStatement(t *testing.T) {
 	}
 
 	// No annotations -> the subject omits the annotations field.
-	empty, err := inTotoStatement(subject, nil)
+	empty, err := inTotoStatement(subject, nil, cosignSignPredicateType, json.RawMessage("{}"))
 	if err != nil {
 		t.Fatalf("inTotoStatement empty: %v", err)
 	}

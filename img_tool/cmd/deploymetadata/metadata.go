@@ -168,9 +168,9 @@ func DeployMetadataProcess(ctx context.Context, args []string) {
 	flagSet.Var(layerCompactStreams, "layer-compact-stream", `(Optional) compact-stream (.cstream) file for a layer. Format: manifest_idx,layer_idx=path. The file's CAS digest is recorded so the layer can be reconstructed from it (used by the bes strategy). Can be specified multiple times.`)
 	flagSet.StringVar(&signSettingFile, "sign-setting-file", "", `(Optional) path to the sign_setting config file for this push operation. Its content descriptor is recorded so the deploy tool can match it against the sign_settings shipped in runfiles.`)
 	flagSet.BoolVar(&signBestEffort, "sign-best-effort", false, `(Optional) when set, signing failures for this operation are warnings instead of hard errors.`)
-	flagSet.Func("sign-target", `(Optional) a descriptor selection to sign for this operation: "roots" (default), "child_manifests", "referrers", or "all". Can be specified multiple times.`, func(value string) error {
+	flagSet.Func("sign-target", `(Optional) a descriptor selection to sign for this operation: "roots" (default), "child_manifests", "referrers", "sbom_attestations", or "all" (the first three). Can be specified multiple times.`, func(value string) error {
 		switch value {
-		case api.SignTargetRoots, api.SignTargetChildManifests, api.SignTargetReferrers, "all":
+		case api.SignTargetRoots, api.SignTargetChildManifests, api.SignTargetReferrers, api.SignTargetSBOMAttestations, "all":
 			signTargets = append(signTargets, value)
 			return nil
 		default:
@@ -499,13 +499,14 @@ func WriteMetadata(ctx context.Context, outputPath string) error {
 		// Collect all known digests from the main image for subject validation
 		knownDigests := collectKnownDigests(rootDescriptor, manifests)
 
-		// When the main image's sign targets include referrers, propagate the
-		// signing intent to the referrer push operations so they are signed too.
+		// When the main image's sign targets include referrers (or the
+		// attestation of SBOMs), propagate the signing intent to the referrer
+		// push operations so they are signed (or attested) too.
 		var referrerSign *api.SignConfig
 		if signSetting, err := signConfigDescriptor(signSettingFile); err != nil {
 			return err
-		} else if signSetting != nil && targetsIncludeReferrers(signTargets) {
-			referrerSign = &api.SignConfig{Setting: signSetting, BestEffort: signBestEffort}
+		} else if targets := referrerSignTargets(signTargets); signSetting != nil && len(targets) > 0 {
+			referrerSign = &api.SignConfig{Setting: signSetting, BestEffort: signBestEffort, Targets: targets}
 		}
 
 		referrerOps, err := processReferrers(knownDigests, config, referrerSign)
@@ -757,15 +758,28 @@ func signConfigDescriptor(path string) (*api.Descriptor, error) {
 	}, nil
 }
 
-// targetsIncludeReferrers reports whether the sign-target selection covers
-// referrer artifacts (either explicitly or via "all").
-func targetsIncludeReferrers(targets []string) bool {
+// referrerSignTargets returns the targets of the referrer operations, given the
+// sign-target selection of the operation they refer to: "referrers" (either
+// explicitly or via "all") to sign them, "sbom_attestations" to attest those
+// that are SBOMs.
+func referrerSignTargets(targets []string) []string {
+	var referrers, attestations bool
 	for _, t := range targets {
-		if t == api.SignTargetReferrers || t == "all" {
-			return true
+		switch t {
+		case api.SignTargetReferrers, "all":
+			referrers = true
+		case api.SignTargetSBOMAttestations:
+			attestations = true
 		}
 	}
-	return false
+	var out []string
+	if referrers {
+		out = append(out, api.SignTargetReferrers)
+	}
+	if attestations {
+		out = append(out, api.SignTargetSBOMAttestations)
+	}
+	return out
 }
 
 func checkCrossMountSource(targetRegistry string, sourceRegistry string, sourceRepository string) *api.CrossMountSource {

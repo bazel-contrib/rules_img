@@ -5,6 +5,7 @@ package signerapi
 
 import (
 	"context"
+	"encoding/json"
 
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 )
@@ -17,4 +18,14 @@ import (
 // subject field, ready to be pushed to a registry as a referrer.
 type OCIArtifactSigner interface {
 	Sign(ctx context.Context, subject v1.Descriptor) (v1.Image, error)
+}
+
+// OCIArtifactAttester is implemented by signers that can also make in-toto
+// attestations (the attest-oci-artifact subcommand).
+//
+// Attest attests predicate, of predicateType, about subject. It returns a
+// v1.Image representing the attestation artifact, linked to subject via the OCI
+// 1.1 subject field, ready to be pushed to a registry as a referrer.
+type OCIArtifactAttester interface {
+	Attest(ctx context.Context, subject v1.Descriptor, predicateType string, predicate json.RawMessage) (v1.Image, error)
 }

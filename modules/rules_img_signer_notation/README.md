@@ -141,6 +141,10 @@ image layout **tar** to **stdout**. The output manifest has artifactType
 `application/vnd.cncf.notary.signature`, a single envelope layer, an empty
 config, and the subject descriptor set as its OCI 1.1 `subject`.
 
+It doesn't make attestations: `attest-oci-artifact` (the `sbom_attestations`
+target of a `signing_config`) fails. Sign the SBOM referrers with the
+`referrers` target instead, or attest them with the cosign plugin.
+
 Signing happens locally with the private key and certificate chain named by the
 options below; no network connection is made except an optional RFC 3161
 timestamping request to the TSA given by `--timestamp-url`.

@@ -191,6 +191,11 @@ const (
 	SignTargetRoots          = "roots"
 	SignTargetChildManifests = "child_manifests"
 	SignTargetReferrers      = "referrers"
+	// SignTargetSBOMAttestations attests the SBOMs among the referrers: the
+	// signer plugin makes an in-toto attestation of each, whose subject is the
+	// image the SBOM describes and whose predicate is the SBOM. It's not part of
+	// "all", since not every plugin can attest.
+	SignTargetSBOMAttestations = "sbom_attestations"
 )
 
 // SignConfig captures, per push operation, whether and how the pushed artifact
@@ -208,6 +213,9 @@ type SignConfig struct {
 	// Targets selects which descriptors of the operation to sign (see the
 	// SignTarget* constants). Empty means the default (roots only). The runtime
 	// --sign_targets flag overrides this value.
+	//
+	// On a referrer operation, "referrers" signs the referrer itself and
+	// "sbom_attestations" attests it if it is an SBOM. Empty means "referrers".
 	Targets []string `json:"targets,omitempty"`
 }
 

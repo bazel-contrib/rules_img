@@ -102,18 +102,20 @@ func (sc *signatureChecker) verifyCosign(reg *registryClient, hostPort string, a
 	defer os.RemoveAll(tuf)
 
 	ref := fmt.Sprintf("%s/%s:%s", hostPort, a.Repository, a.Tag)
-	cmd := exec.Command(cosignCLI, "verify-attestation",
-		"--key", pubKey,
-		"--type", cosignSignPredicateType,
-		"--insecure-ignore-tlog",
-		"--insecure-ignore-sct",
-		"--allow-http-registry",
-		"--allow-insecure-registry",
-		ref,
-	)
-	cmd.Env = append(os.Environ(), "TUF_ROOT="+tuf)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		sc.errf("cosign verify-attestation failed for %s: %v\n%s", ref, err, indent(out))
+	for _, predicateType := range append([]string{cosignSignPredicateType}, a.AttestationPredicateTypes...) {
+		cmd := exec.Command(cosignCLI, "verify-attestation",
+			"--key", pubKey,
+			"--type", predicateType,
+			"--insecure-ignore-tlog",
+			"--insecure-ignore-sct",
+			"--allow-http-registry",
+			"--allow-insecure-registry",
+			ref,
+		)
+		cmd.Env = append(os.Environ(), "TUF_ROOT="+tuf)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			sc.errf("cosign verify-attestation --type %s failed for %s: %v\n%s", predicateType, ref, err, indent(out))
+		}
 	}
 }
 
