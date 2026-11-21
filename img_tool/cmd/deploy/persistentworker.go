@@ -475,7 +475,8 @@ func (h *deployWorkerHandler) pushOps(ctx context.Context, vfs *deployvfs.VFS, v
 		}).
 		WithPusher(h.pusher).
 		WithJobs(h.jobs).
-		WithRemoteOptions(registryopts.Default().WithTransport(h.pushTransport).Remote()...)
+		WithRemoteOptions(registryopts.Default().WithTransport(h.pushTransport).Remote()...).
+		WithReferrerOptions(registryopts.Referrers(h.pushTransport))
 	if opts.overrideRegistry != "" {
 		uploadBuilder = uploadBuilder.WithOverrideRegistry(opts.overrideRegistry)
 	}

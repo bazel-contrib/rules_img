@@ -36,7 +36,7 @@ type rawManifest struct {
 	mediaType types.MediaType
 }
 
-func (m rawManifest) RawManifest() ([]byte, error)       { return m.raw, nil }
+func (m rawManifest) RawManifest() ([]byte, error)        { return m.raw, nil }
 func (m rawManifest) MediaType() (types.MediaType, error) { return m.mediaType, nil }
 
 func put(t *testing.T, ref name.Reference, manifest map[string]any, options []remote.Option) v1.Hash {

@@ -14,8 +14,10 @@ import (
 	"testing"
 
 	"github.com/google/go-containerregistry/pkg/logs"
+	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/registry"
 	registryv1 "github.com/google/go-containerregistry/pkg/v1"
+	"github.com/google/go-containerregistry/pkg/v1/empty"
 	"github.com/google/go-containerregistry/pkg/v1/mutate"
 	"github.com/google/go-containerregistry/pkg/v1/random"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
@@ -23,6 +25,7 @@ import (
 
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/api"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/progress"
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/referrers"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/registryopts"
 )
 
@@ -403,8 +406,16 @@ func (c *stderrCapture) Reset() {
 // these tests run in don't allow binding a loopback port.
 func newTestRegistry(t *testing.T) (string, remote.Option) {
 	t.Helper()
+	host, option, _ := newTestRegistryTransport(t)
+	return host, option
+}
+
+// newTestRegistryTransport is newTestRegistry, and also returns the transport.
+func newTestRegistryTransport(t *testing.T) (string, remote.Option, http.RoundTripper) {
+	t.Helper()
 	handler := registry.New(registry.Logger(log.New(io.Discard, "", 0)))
-	return "localhost:1234", remote.WithTransport(&handlerTransport{handler: handler})
+	rt := &handlerTransport{handler: handler}
+	return "localhost:1234", remote.WithTransport(rt), rt
 }
 
 // handlerTransport serves HTTP requests from an in-process handler.
@@ -429,4 +440,171 @@ func (t *handlerTransport) RoundTrip(request *http.Request) (*http.Response, err
 	response := recorder.Result()
 	response.Request = request
 	return response, nil
+}
+
+// TestPushAllKeepsEveryReferrerOfASubject pushes several referrers of one image
+// to a registry without the referrers API, where each push adds the referrer to
+// the index under the image's referrers tag (sha256-<hex>). Pushed at once, the
+// updates of that index would overwrite each other.
+func TestPushAllKeepsEveryReferrerOfASubject(t *testing.T) {
+	for _, writer := range []bool{false, true} {
+		t.Run(fmt.Sprintf("writer=%v", writer), func(t *testing.T) {
+			testPushAllKeepsEveryReferrerOfASubject(t, writer)
+		})
+	}
+}
+
+func testPushAllKeepsEveryReferrerOfASubject(t *testing.T, writer bool) {
+	host, transport, rt := newTestRegistryTransport(t)
+
+	image, err := random.Image(256, 1)
+	if err != nil {
+		t.Fatalf("creating test image: %v", err)
+	}
+	imageDigest, err := image.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rawManifest, err := image.RawManifest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	mediaType, err := image.MediaType()
+	if err != nil {
+		t.Fatal(err)
+	}
+	subject := registryv1.Descriptor{MediaType: mediaType, Digest: imageDigest, Size: int64(len(rawManifest))}
+
+	vfs := imageVFS{}
+	vfs.add(t, image)
+	ops := pushOps(host, "test/image", imageDigest, "latest")
+	var want []string
+	for range 8 {
+		attachment, err := random.Image(64, 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		referrer := mutate.Subject(attachment, subject).(registryv1.Image)
+		digest, err := referrer.Digest()
+		if err != nil {
+			t.Fatal(err)
+		}
+		vfs.add(t, referrer)
+		referrerOps := pushOps(host, "test/image", digest)
+		referrerOps[0].Referrer = true
+		ops = append(ops, referrerOps...)
+		want = append(want, digest.String())
+	}
+
+	builder := NewBuilder(vfs).WithJobs(8).WithRemoteOptions(transport)
+	if writer {
+		builder = builder.WithReferrerOptions(referrers.Options{Transport: rt})
+	}
+	if _, err := builder.Build().PushAll(context.Background(), ops, "eager"); err != nil {
+		t.Fatalf("PushAll() returned error: %v", err)
+	}
+
+	tag, err := name.NewTag(host+"/test/image:sha256-"+imageDigest.Hex, name.Insecure)
+	if err != nil {
+		t.Fatal(err)
+	}
+	index, err := remote.Index(tag, transport)
+	if err != nil {
+		t.Fatalf("reading the referrers tag: %v", err)
+	}
+	manifest, err := index.IndexManifest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, d := range manifest.Manifests {
+		got = append(got, d.Digest.String())
+	}
+	slices.Sort(got)
+	slices.Sort(want)
+	if !slices.Equal(got, want) {
+		t.Errorf("the referrers tag lists %d of the %d referrers:\ngot  %v\nwant %v", len(got), len(want), got, want)
+	}
+}
+
+// TestPushAllRestoresReferrerMissingFromTag pushes a referrer the registry
+// already has, but that the referrers tag of its subject doesn't list (because
+// an earlier push lost it): the push lists it again. go-containerregistry's
+// pusher alone skips the existing manifest, and with it the referrers tag.
+func TestPushAllRestoresReferrerMissingFromTag(t *testing.T) {
+	host, transport, rt := newTestRegistryTransport(t)
+
+	image, err := random.Image(256, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	imageDigest, err := image.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	size, err := image.Size()
+	if err != nil {
+		t.Fatal(err)
+	}
+	mediaType, err := image.MediaType()
+	if err != nil {
+		t.Fatal(err)
+	}
+	attachment, err := random.Image(64, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	referrer := mutate.Subject(attachment, registryv1.Descriptor{MediaType: mediaType, Digest: imageDigest, Size: size}).(registryv1.Image)
+	referrerDigest, err := referrer.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	vfs := imageVFS{}
+	vfs.add(t, image)
+	vfs.add(t, referrer)
+	ops := pushOps(host, "test/image", imageDigest, "latest")
+	referrerOps := pushOps(host, "test/image", referrerDigest)
+	referrerOps[0].Referrer = true
+	ops = append(ops, referrerOps...)
+
+	tag, err := name.NewTag(host+"/test/image:sha256-"+imageDigest.Hex, name.Insecure)
+	if err != nil {
+		t.Fatal(err)
+	}
+	listed := func() []string {
+		t.Helper()
+		index, err := remote.Index(tag, transport)
+		if err != nil {
+			t.Fatalf("reading the referrers tag: %v", err)
+		}
+		manifest, err := index.IndexManifest()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got []string
+		for _, d := range manifest.Manifests {
+			got = append(got, d.Digest.String())
+		}
+		return got
+	}
+	pushAll := func() {
+		t.Helper()
+		builder := NewBuilder(vfs).WithRemoteOptions(transport).WithReferrerOptions(referrers.Options{Transport: rt})
+		if _, err := builder.Build().PushAll(context.Background(), ops, "eager"); err != nil {
+			t.Fatalf("PushAll() returned error: %v", err)
+		}
+	}
+
+	pushAll()
+	if got := listed(); !slices.Equal(got, []string{referrerDigest.String()}) {
+		t.Fatalf("after the first push, the referrers tag lists %v, want [%s]", got, referrerDigest)
+	}
+	if err := remote.Put(tag, empty.Index, transport); err != nil {
+		t.Fatal(err)
+	}
+	pushAll()
+	if got := listed(); !slices.Equal(got, []string{referrerDigest.String()}) {
+		t.Errorf("after pushing again, the referrers tag lists %v, want [%s]", got, referrerDigest)
+	}
 }

@@ -2,13 +2,17 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "referrers",
-    srcs = ["referrers.go"],
+    srcs = [
+        "push.go",
+        "referrers.go",
+    ],
     importpath = "github.com/bazel-contrib/rules_img/img_tool/pkg/referrers",
     visibility = ["//visibility:public"],
     deps = [
         "@com_github_google_go_containerregistry//pkg/authn",
         "@com_github_google_go_containerregistry//pkg/name",
         "@com_github_google_go_containerregistry//pkg/v1:pkg",
+        "@com_github_google_go_containerregistry//pkg/v1/partial",
         "@com_github_google_go_containerregistry//pkg/v1/remote",
         "@com_github_google_go_containerregistry//pkg/v1/remote/transport",
         "@com_github_google_go_containerregistry//pkg/v1/types",
@@ -18,13 +22,20 @@ go_library(
 
 go_test(
     name = "referrers_test",
-    srcs = ["referrers_test.go"],
+    srcs = [
+        "push_test.go",
+        "referrers_test.go",
+    ],
     embed = [":referrers"],
     deps = [
         "@com_github_google_go_containerregistry//pkg/name",
         "@com_github_google_go_containerregistry//pkg/registry",
         "@com_github_google_go_containerregistry//pkg/v1:pkg",
+        "@com_github_google_go_containerregistry//pkg/v1/empty",
+        "@com_github_google_go_containerregistry//pkg/v1/mutate",
+        "@com_github_google_go_containerregistry//pkg/v1/random",
         "@com_github_google_go_containerregistry//pkg/v1/remote",
+        "@com_github_google_go_containerregistry//pkg/v1/static",
         "@com_github_google_go_containerregistry//pkg/v1/types",
     ],
 )

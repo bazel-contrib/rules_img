@@ -1,6 +1,6 @@
-// Package referrers lists the referrers of a manifest, following the OCI
-// distribution spec: the referrers API, falling back to the referrers tag
-// schema on registries that don't support it.
+// Package referrers lists the referrers of a manifest, and pushes them,
+// following the OCI distribution spec: the referrers API, falling back to the
+// referrers tag schema on registries that don't support it.
 //
 // See https://github.com/opencontainers/distribution-spec/blob/main/spec.md#listing-referrers
 // and https://github.com/opencontainers/distribution-spec/blob/main/spec.md#referrers-tag-schema.
@@ -51,6 +51,10 @@ type Options struct {
 	// referrers tag, and listed manifests). They should use the same transport
 	// and keychain.
 	Remote []remote.Option
+	// Backoff says how often, and after how long, a Writer sends a request
+	// again after a network error or a response that says to try again later.
+	// Unset, it tries three times.
+	Backoff remote.Backoff
 }
 
 // Source tells where a listing came from.
@@ -264,7 +268,7 @@ func listTagSchema(ctx context.Context, repo name.Repository, subject string, op
 	return index.Manifests, nil
 }
 
-func authenticatedClient(ctx context.Context, repo name.Repository, options Options) (*http.Client, error) {
+func authenticatedClient(ctx context.Context, repo name.Repository, options Options, scopes ...string) (*http.Client, error) {
 	base := options.Transport
 	if base == nil {
 		base = remote.DefaultTransport
@@ -277,7 +281,10 @@ func authenticatedClient(ctx context.Context, repo name.Repository, options Opti
 			return nil, fmt.Errorf("resolving credentials for %s: %w", repo, err)
 		}
 	}
-	rt, err := transport.NewWithContext(ctx, repo.Registry, auth, base, []string{repo.Scope(transport.PullScope)})
+	if len(scopes) == 0 {
+		scopes = []string{repo.Scope(transport.PullScope)}
+	}
+	rt, err := transport.NewWithContext(ctx, repo.Registry, auth, base, scopes)
 	if err != nil {
 		return nil, fmt.Errorf("authenticating to %s: %w", repo.RegistryStr(), err)
 	}

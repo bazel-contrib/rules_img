@@ -526,7 +526,8 @@ func DeployWithExtras(ctx context.Context, rawRequest []byte, opts DeployOptions
 				return vfsForOperation(op.Registry, op.BaseCommandOperation)
 			}).
 			WithJobs(opts.Jobs).
-			WithRemoteOptions(registryopts.Default().WithTransport(pushTransport).Remote()...)
+			WithRemoteOptions(registryopts.Default().WithTransport(pushTransport).Remote()...).
+			WithReferrerOptions(registryopts.Referrers(pushTransport))
 		if haveBlobCacheCient {
 			uploadBuilder = uploadBuilder.WithBlobcacheClient(blobcacheClient)
 		}

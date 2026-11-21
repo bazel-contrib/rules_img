@@ -9,6 +9,7 @@ import (
 
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/api"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/deployvfs"
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/gateway"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/push"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/registryopts"
 )
@@ -65,10 +66,11 @@ func pushManifest(ctx context.Context, requestFile string, ociLayouts, layerResu
 	if err != nil {
 		return fmt.Errorf("configuring pull options: %w", err)
 	}
-	pushOpts, err := registryopts.Push()
+	pushTransport, err := registryopts.Transport(gateway.ModePush)
 	if err != nil {
 		return fmt.Errorf("configuring push options: %w", err)
 	}
+	pushOpts := registryopts.Default().WithTransport(pushTransport)
 
 	builder := deployvfs.NewBuilder(req).
 		WithContainerRegistryOptions(pullOpts.Remote()...).
@@ -111,7 +113,8 @@ func pushManifest(ctx context.Context, requestFile string, ociLayouts, layerResu
 
 	uploaderBuilder := push.NewBuilder(vfs).
 		WithJobs(jobs).
-		WithRemoteOptions(pushOpts.Remote()...)
+		WithRemoteOptions(pushOpts.Remote()...).
+		WithReferrerOptions(registryopts.Referrers(pushTransport))
 	// Redirect the manifest/index (and the config uploaded alongside it) to the
 	// manifest-staging repository when configured. Layer blobs are unaffected: they
 	// are cross-mounted from wherever `push blob` put them (recorded via the

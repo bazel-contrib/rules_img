@@ -40,6 +40,14 @@ manifests whose `subject` field points at the signed image. Verifiers discover
 them through the registry's Referrers API by asking "what refers to this
 digest?", so no extra tag or naming convention is required.
 
+Registries without the Referrers API (GHCR, for one) list referrers in an index
+under a tag named after the subject's digest (`sha256-<hex>`), which clients
+maintain. `img` adds every referrer it pushes to that index with conditional
+writes (`If-Match`, `If-None-Match`), retrying when another push changed the
+index in between, so concurrent pushes don't drop each other's referrers. It
+also re-adds a referrer that the index is missing even when the registry already
+has the referrer, so pushing again repairs an index that lost one.
+
 ## How signing works in `rules_img`
 
 Signing happens as the last step of `img deploy` — the tool behind

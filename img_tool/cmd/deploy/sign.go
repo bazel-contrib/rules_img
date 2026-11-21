@@ -15,6 +15,7 @@ import (
 
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/api"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/ocilayout"
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/referrers"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/registryopts"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/signer"
 )
@@ -71,16 +72,17 @@ func applySignOperations(ctx context.Context, pushOps []api.IndexedPushDeployOpe
 	// required. The bes strategy has no deploy-time pusher (the build-event
 	// syncer owns the push), so signing is unsupported there and is reported
 	// per operation (honoring best-effort) by the precheck below.
-	var pusher *remote.Pusher
+	var writer *referrers.Writer
 	if settings.PushStrategy != "bes" {
-		pusher, err = remote.NewPusher(registryopts.Default().WithTransport(opts.pushTransport).WithJobs(opts.jobs).Remote()...)
+		pusher, err := remote.NewPusher(registryopts.Default().WithTransport(opts.pushTransport).WithJobs(opts.jobs).Remote()...)
 		if err != nil {
 			return fmt.Errorf("creating pusher for signing: %w", err)
 		}
+		writer = referrers.NewWriter(pusher, registryopts.Referrers(opts.pushTransport)).WithJobs(opts.jobs)
 	}
 
 	precheck := func(op api.IndexedPushDeployOperation) error {
-		if pusher != nil {
+		if writer != nil {
 			return nil
 		}
 		reg, repo := opRegistry(op, opts), opRepository(op, opts)
@@ -92,7 +94,7 @@ func applySignOperations(ctx context.Context, pushOps []api.IndexedPushDeployOpe
 		if err != nil {
 			return fmt.Errorf("parsing repository %q: %w", reg+"/"+repo, err)
 		}
-		pushed, err := signer.PushReferrers(ctx, pusher, repository, imgs)
+		pushed, err := signer.PushReferrers(ctx, writer, repository, imgs)
 		if err != nil {
 			return err
 		}

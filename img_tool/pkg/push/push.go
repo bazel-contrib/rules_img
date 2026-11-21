@@ -2,6 +2,7 @@ package push
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -18,6 +19,7 @@ import (
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/proto/blobcache"
 	blobcache_proto "github.com/bazel-contrib/rules_img/img_tool/pkg/proto/blobcache"
 	remoteexecution_proto "github.com/bazel-contrib/rules_img/img_tool/pkg/proto/remote-apis/build/bazel/remote/execution/v2"
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/referrers"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/registryopts"
 )
 
@@ -30,6 +32,7 @@ type builder struct {
 	overrideRepository string
 	extraTags          []string
 	remoteOptions      []remote.Option
+	referrerOptions    *referrers.Options
 	jobs               int
 }
 
@@ -80,6 +83,16 @@ func (b *builder) WithRemoteOptions(opts ...remote.Option) *builder {
 	return b
 }
 
+// WithReferrerOptions pushes referrers with a referrers.Writer that accesses
+// the registry with options, rather than with go-containerregistry's pusher
+// alone, so that the referrers tag of a subject keeps every referrer pushed to
+// it. The options should use the same transport and credentials as the remote
+// options.
+func (b *builder) WithReferrerOptions(options referrers.Options) *builder {
+	b.referrerOptions = &options
+	return b
+}
+
 func (b *builder) WithJobs(jobs int) *builder {
 	if jobs > 0 {
 		b.jobs = jobs
@@ -97,6 +110,7 @@ func (b *builder) Build() *uploader {
 		overrideRepository: b.overrideRepository,
 		extraTags:          b.extraTags,
 		remoteOptions:      b.remoteOptions,
+		referrerOptions:    b.referrerOptions,
 		jobs:               b.jobs,
 	}
 }
@@ -110,6 +124,7 @@ type uploader struct {
 	overrideRepository string
 	extraTags          []string
 	remoteOptions      []remote.Option
+	referrerOptions    *referrers.Options
 	jobs               int
 }
 
@@ -137,6 +152,7 @@ func (u *uploader) PushAll(ctx context.Context, ops []api.IndexedPushDeployOpera
 	type pushItem struct {
 		ref      name.Reference
 		taggable remote.Taggable
+		referrer bool
 	}
 	var items []pushItem
 	var allRefs []PushedReference
@@ -156,7 +172,7 @@ func (u *uploader) PushAll(ctx context.Context, ops []api.IndexedPushDeployOpera
 			return nil, err
 		}
 		for _, ref := range refs {
-			items = append(items, pushItem{ref: ref, taggable: taggable})
+			items = append(items, pushItem{ref: ref, taggable: taggable, referrer: op.Referrer})
 			_, isTag := ref.(name.Tag)
 			allRefs = append(allRefs, PushedReference{Ref: ref.String(), Tag: isTag, Referrer: op.Referrer})
 		}
@@ -177,21 +193,88 @@ func (u *uploader) PushAll(ctx context.Context, ops []api.IndexedPushDeployOpera
 		defer func() { finishProgress(retErr) }()
 	}
 
-	g, ctx := errgroup.WithContext(ctx)
-	g.SetLimit(u.jobs)
-
-	for _, item := range items {
-		item := item
-		g.Go(func() error {
-			return pusher.Push(ctx, item.ref, item.taggable)
-		})
+	// Referrers go through a referrers.Writer, which adds them to the
+	// referrers tag of their subject on registries without the referrers API
+	// (even if the registry already has the manifest), with conditional writes.
+	// Without one, go-containerregistry's pusher reads, extends and writes back
+	// the tag unconditionally.
+	pushReferrer := pusher.Push
+	if u.referrerOptions != nil {
+		pushReferrer = referrers.NewWriter(pusher, *u.referrerOptions).WithJobs(u.jobs).Push
 	}
 
+	// Images first, all at once. Then their referrers, those of one subject in
+	// one repository one after another (different subjects, or repositories, in
+	// parallel): adding two referrers to the referrers tag of a subject at once
+	// conflicts, which the Writer resolves by retrying, and go-containerregistry
+	// by losing one of them.
+	var images []pushItem
+	var referrerGroups [][]pushItem
+	groupOf := map[string]int{}
+	for _, item := range items {
+		if !item.referrer {
+			images = append(images, item)
+			continue
+		}
+		subject := subjectOf(item.taggable)
+		key := item.ref.Context().Name() + "@" + subject
+		i, ok := groupOf[key]
+		if !ok || subject == "" {
+			i = len(referrerGroups)
+			referrerGroups = append(referrerGroups, nil)
+			if subject != "" {
+				groupOf[key] = i
+			}
+		}
+		referrerGroups[i] = append(referrerGroups[i], item)
+	}
+
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(u.jobs)
+	for _, item := range images {
+		g.Go(func() error {
+			return pusher.Push(gctx, item.ref, item.taggable)
+		})
+	}
+	if err := g.Wait(); err != nil {
+		return nil, err
+	}
+
+	g, gctx = errgroup.WithContext(ctx)
+	g.SetLimit(u.jobs)
+	for _, group := range referrerGroups {
+		g.Go(func() error {
+			for _, item := range group {
+				if err := pushReferrer(gctx, item.ref, item.taggable); err != nil {
+					return err
+				}
+			}
+			return nil
+		})
+	}
 	if err := g.Wait(); err != nil {
 		return nil, err
 	}
 
 	return allRefs, nil
+}
+
+// subjectOf returns the digest of a manifest's subject, or "" if it has none
+// (or can't be read, which the push itself will then report).
+func subjectOf(taggable remote.Taggable) string {
+	raw, err := taggable.RawManifest()
+	if err != nil {
+		return ""
+	}
+	var manifest struct {
+		Subject *struct {
+			Digest string `json:"digest"`
+		} `json:"subject"`
+	}
+	if json.Unmarshal(raw, &manifest) != nil || manifest.Subject == nil {
+		return ""
+	}
+	return manifest.Subject.Digest
 }
 
 // vfsFor returns the VFS an operation's blobs are served from: the per-operation

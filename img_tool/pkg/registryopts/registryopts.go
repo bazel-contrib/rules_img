@@ -45,6 +45,7 @@ import (
 
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/auth/registry"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/gateway"
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/referrers"
 )
 
 // Environment variables that tune how registry pushes and pulls retry on
@@ -263,6 +264,21 @@ func (o *Options) WithTransport(rt http.RoundTripper) *Options {
 // Write, Layer, ...).
 func (o *Options) Remote() []remote.Option {
 	return o.opts
+}
+
+// Referrers returns the options for listing and pushing referrers over
+// transport (see package referrers), with the credentials and retry backoff
+// that [Default] enforces. A nil transport is [BaseTransport].
+func Referrers(transport http.RoundTripper) referrers.Options {
+	if transport == nil {
+		transport = BaseTransport()
+	}
+	return referrers.Options{
+		Transport: transport,
+		Keychain:  registry.Keychain(),
+		Remote:    Default().WithTransport(transport).Remote(),
+		Backoff:   RetryBackoff(),
+	}
 }
 
 // Transport builds the base transport for the given gateway mode: gateway

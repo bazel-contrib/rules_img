@@ -13,7 +13,6 @@ import (
 	"strings"
 	"sync"
 
-	registryauth "github.com/bazel-contrib/rules_img/img_tool/pkg/auth/registry"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/blobstore"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/gateway"
 	imgreferrers "github.com/bazel-contrib/rules_img/img_tool/pkg/referrers"
@@ -547,11 +546,7 @@ func discoverReferrers(registry, repository string, subjects, referrers []string
 // ReferrersOptions returns the options for listing referrers over transport,
 // with the same credentials as every other registry operation of the img tool.
 func ReferrersOptions(transport http.RoundTripper) imgreferrers.Options {
-	return imgreferrers.Options{
-		Transport: transport,
-		Keychain:  registryauth.Keychain(),
-		Remote:    registryopts.Default().WithTransport(transport).Remote(),
-	}
+	return registryopts.Referrers(transport)
 }
 
 // emptyJSONDigest is the digest of the blob "{}", see

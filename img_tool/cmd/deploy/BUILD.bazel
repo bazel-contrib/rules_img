@@ -30,6 +30,7 @@ go_library(
         "//pkg/progress",
         "//pkg/proto/blobcache",
         "//pkg/push",
+        "//pkg/referrers",
         "//pkg/registryopts",
         "//pkg/signer",
         "@com_github_google_go_containerregistry//pkg/name",
