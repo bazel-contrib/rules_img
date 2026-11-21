@@ -9,6 +9,7 @@ load("//img/private/providers:manifest_info.bzl", _ImageManifestInfo = "ImageMan
 load("//img/private/providers:multiple_deploy_info.bzl", _MultipleDeployInfo = "MultipleDeployInfo")
 load("//img/private/providers:partition_info.bzl", _PartitionInfo = "PartitionInfo")
 load("//img/private/providers:pull_info.bzl", _PullInfo = "PullInfo")
+load("//img/private/providers:pulled_referrers_info.bzl", _PulledReferrersInfo = "PulledReferrersInfo", _ReferrerInfo = "ReferrerInfo")
 load("//img/private/providers:push_config_info.bzl", _PushConfigInfo = "PushConfigInfo")
 load("//img/private/providers:single_layer_info.bzl", _SingleLayerInfo = "SingleLayerInfo")
 
@@ -28,6 +29,10 @@ ImageIndexInfo = _ImageIndexInfo
 
 # providers with metadata about pulled base images
 PullInfo = _PullInfo
+
+# providers describing the referrers (SBOMs, signatures, ...) of pulled images
+PulledReferrersInfo = _PulledReferrersInfo
+ReferrerInfo = _ReferrerInfo
 
 # providers describing disk images and their partitions
 DiskImageInfo = _DiskImageInfo

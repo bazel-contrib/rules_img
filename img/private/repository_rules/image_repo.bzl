@@ -3,6 +3,7 @@
 load("@bazel_skylib//lib:sets.bzl", "sets")
 load("//img/private/platforms:constraints.bzl", "map_os_arch_to_constraints")
 load("//img/private/platforms:platforms.bzl", "has_constraint_setting")
+load(":referrers.bzl", "build_referrer_artifacts", "referrer_blob_digests", "referrer_subject", "subject_descriptors")
 load(":registry.bzl", "image_purl")
 
 def _image_repo_impl(rctx):
@@ -75,6 +76,34 @@ def _image_repo_impl(rctx):
     # Build target_compatible_with based on discovered platforms
     target_compatible_with = map_os_arch_to_constraints(sets.to_list(platforms_set))
 
+    # Referrers from registries: the extension attributed them already; checking
+    # again here keeps the repository from trusting a stale lockfile.
+    image_name = "{}@{}".format(rctx.attr.repository, root_digest)
+    subjects = subject_descriptors(root_digest, data[root_digest])
+    for referrer in rctx.attr.referrers:
+        if referrer not in rctx.attr.files:
+            fail("Referrer manifest {} not found in files.".format(referrer))
+        data[referrer] = rctx.read(rctx.path(rctx.attr.files[referrer]))
+        referrer_subject(referrer, json.decode(data[referrer]), subjects, image_name)
+
+    # Referrers from artifact specs, built locally into blobs/ and bound to the
+    # anchor manifest (or a manifest of its tree that the spec names).
+    local_referrers = []
+    local_files = {}
+    for anchor, labels in rctx.attr.referrer_artifacts.items():
+        if anchor not in subjects:
+            fail("Referrer artifacts apply to {}, which is not part of {}.".format(anchor, image_name))
+        allowed = subjects if anchor == root_digest else {anchor: subjects[anchor]}
+        for artifact in build_referrer_artifacts(rctx, specs = [Label(label) for label in labels], subjects = allowed, default_subject = anchor):
+            if artifact.digest in data:
+                continue
+            content = rctx.read("blobs/" + artifact.digest.replace("sha256:", "sha256/"))
+            data[artifact.digest] = content
+            local_referrers.append(artifact.digest)
+            for blob in [artifact.digest] + referrer_blob_digests(json.decode(content)):
+                if blob not in rctx.attr.files:
+                    local_files[blob] = "//:blobs/" + blob.replace("sha256:", "sha256/")
+
     # Construct purl for package_metadata
     identifier = rctx.attr.digest
     if not identifier:
@@ -86,6 +115,8 @@ def _image_repo_impl(rctx):
     files_strs = []
     for digest, label in rctx.attr.files.items():
         files_strs.append("        {}: \"{}\",".format(repr(digest), str(label)))
+    for digest, label in local_files.items():
+        files_strs.append("        {}: \"{}\",".format(repr(digest), label))
     files_str = "{\n" + "\n".join(files_strs) + "\n}"
 
     rctx.file(
@@ -105,6 +136,8 @@ image_import(
     digest = {digest},
     data = {data},
     files = {files},
+    referrers = {referrers},
+    local_referrers = {local_referrers},
     registries = {registries},
     repository = {repository},
     tag = {tag},
@@ -120,6 +153,8 @@ image_import(
             repository = repr(rctx.attr.repository),
             tag = repr(rctx.attr.tag) if rctx.attr.tag else "None",
             target_compatible_with = target_compatible_with,
+            referrers = json.encode(rctx.attr.referrers),
+            local_referrers = json.encode(local_referrers),
         ),
     )
     rctx.file("REPO.bazel", """\
@@ -154,6 +189,12 @@ and layers.""",
         ),
         "tag": attr.string(
             doc = "The image tag (optional).",
+        ),
+        "referrers": attr.string_list(
+            doc = "Digests of the referrer manifests (fetched from registries) of the image. Their manifests and blobs are in `files`.",
+        ),
+        "referrer_artifacts": attr.string_list_dict(
+            doc = "Maps the digest of a manifest in the image's tree to the labels of referrer artifact specs that apply to it.",
         ),
     },
 )

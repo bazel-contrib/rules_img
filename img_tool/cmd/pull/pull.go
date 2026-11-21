@@ -3,16 +3,20 @@ package pull
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 
+	registryauth "github.com/bazel-contrib/rules_img/img_tool/pkg/auth/registry"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/blobstore"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/gateway"
+	imgreferrers "github.com/bazel-contrib/rules_img/img_tool/pkg/referrers"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/registryopts"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/transport/cachedblob"
 	"github.com/containerd/platforms"
@@ -28,6 +32,9 @@ func PullProcess(ctx context.Context, args []string) {
 	var outputDir string
 	var registries stringSliceFlag
 	var requestedPlatforms stringSliceFlag
+	var referrers stringSliceFlag
+	var referrerArtifactTypes stringSliceFlag
+	var discoveredReferrersPath string
 	var layerHandling string
 	var concurrency int
 	var airgapped bool
@@ -53,6 +60,9 @@ func PullProcess(ctx context.Context, args []string) {
 	flagSet.StringVar(&outputDir, "output", ".", "Output directory to save the downloaded image to")
 	flagSet.Var(&registries, "registry", "Registry to use (can be specified multiple times, defaults to docker.io)")
 	flagSet.Var(&requestedPlatforms, "platform", "Platform to download from an image index as os/arch[/variant] (can be specified multiple times, defaults to all platforms)")
+	flagSet.Var(&referrers, "referrer", "Digest of a referrer manifest to download along with its config and layers, regardless of --layer-handling (can be specified multiple times)")
+	flagSet.Var(&referrerArtifactTypes, "referrer-artifact-type", "Discover the referrers of this artifact type (* for any) of the root and of every downloaded child manifest, and download them like --referrer (can be specified multiple times)")
+	flagSet.StringVar(&discoveredReferrersPath, "discovered-referrers", "", "Path to write the discovered referrers to, as JSON mapping each manifest digest to an object of artifact type to referrer digests")
 	flagSet.StringVar(&layerHandling, "layer-handling", "shallow", "Method used for handling layer data. \"eager\" causes layer data to be materialized.")
 	flagSet.IntVar(&concurrency, "j", 10, "Number of concurrent download workers")
 	flagSet.BoolVar(&airgapped, "airgapped", false, "Enable airgapped mode (only use local cached blobs, no network access)")
@@ -114,7 +124,8 @@ func PullProcess(ctx context.Context, args []string) {
 	// Try each registry until success
 	var lastErr error
 	for _, registry := range registries {
-		err := pullFromRegistry(ctx, registry, repository, reference, digest, store, transport, layerHandling, concurrency, platformFilters)
+		discovery := referrerDiscovery{artifactTypes: referrerArtifactTypes, outputPath: discoveredReferrersPath}
+		err := pullFromRegistry(ctx, registry, repository, reference, digest, store, transport, layerHandling, concurrency, platformFilters, referrers, discovery)
 		lastErr = err
 		if err == nil {
 			return
@@ -181,11 +192,20 @@ func (wp *workerPool) wait() {
 	close(wp.results)
 }
 
-func pullFromRegistry(ctx context.Context, registry, repository, tag, digest string, store *blobstore.Store, transport http.RoundTripper, layerHandling string, concurrency int, platformFilters []platformFilter) error {
+// referrerDiscovery configures the discovery of referrers by artifact type.
+type referrerDiscovery struct {
+	artifactTypes []string
+	outputPath    string
+}
+
+func pullFromRegistry(ctx context.Context, registry, repository, tag, digest string, store *blobstore.Store, transport http.RoundTripper, layerHandling string, concurrency int, platformFilters []platformFilter, referrers []string, discovery referrerDiscovery) error {
 	desc, err := downloadManifest(registry, repository, tag, digest, store, transport)
 	if err != nil {
 		return fmt.Errorf("downloading manifest: %w", err)
 	}
+	// The manifests whose referrers are discovered: the root and the children
+	// that are downloaded (a platform filter keeps cutting requests).
+	subjects := []string{desc.Descriptor.Digest.String()}
 	var layers []registryv1.Layer
 	if desc.Descriptor.MediaType.IsImage() {
 		image, err := desc.Image()
@@ -205,10 +225,33 @@ func pullFromRegistry(ctx context.Context, registry, repository, tag, digest str
 		if err != nil {
 			return fmt.Errorf("downloading index: %w", err)
 		}
+		indexManifest, err := index.IndexManifest()
+		if err != nil {
+			return fmt.Errorf("getting index manifest: %w", err)
+		}
+		for _, child := range filterManifests(indexManifest.Manifests, platformFilters) {
+			subjects = append(subjects, child.Digest.String())
+		}
 	} else {
 		return fmt.Errorf("unsupported media type: %s", desc.Descriptor.MediaType)
 	}
+	referrers, err = discoverReferrers(registry, repository, subjects, referrers, discovery, transport)
+	if err != nil {
+		return fmt.Errorf("discovering referrers: %w", err)
+	}
+
+	// Referrers are read during the build (an SBOM, a signature), so their
+	// blobs are fetched whatever the layer handling of the image itself is.
+	referrerLayers, err := downloadReferrers(registry, repository, referrers, store, transport)
+	if err != nil {
+		return fmt.Errorf("downloading referrers: %w", err)
+	}
 	if layerHandling != "eager" {
+		layers = referrerLayers
+	} else {
+		layers = append(layers, referrerLayers...)
+	}
+	if len(layers) == 0 {
 		return nil
 	}
 
@@ -419,6 +462,101 @@ func downloadImage(image registryv1.Image, store *blobstore.Store) ([]registryv1
 
 	return image.Layers()
 }
+
+// downloadReferrers stores each referrer manifest and its config, and returns
+// its layers. The empty JSON blob (the config of most artifacts, and the only
+// layer of an artifact without content) is written locally instead of being
+// fetched: its content is known, and not every registry serves it.
+// The manifests are not validated here: the repository rule checks that each
+// one refers to the pulled image, with an error that names the attribute.
+func downloadReferrers(registry, repository string, digests []string, store *blobstore.Store, transport http.RoundTripper) ([]registryv1.Layer, error) {
+	if len(digests) == 0 {
+		return nil, nil
+	}
+	repo, err := name.NewRepository(fmt.Sprintf("%s/%s", registry, repository), registryopts.NameOptions()...)
+	if err != nil {
+		return nil, fmt.Errorf("creating repository reference: %w", err)
+	}
+	var layers []registryv1.Layer
+	for _, referrer := range digests {
+		desc, err := downloadManifest(registry, repository, "", referrer, store, transport)
+		if err != nil {
+			return nil, fmt.Errorf("referrer %s: %w", referrer, err)
+		}
+		if !desc.Descriptor.MediaType.IsImage() {
+			continue
+		}
+		var manifest registryv1.Manifest
+		if err := json.Unmarshal(desc.Manifest, &manifest); err != nil {
+			return nil, fmt.Errorf("parsing referrer %s: %w", referrer, err)
+		}
+		for _, blob := range append([]registryv1.Descriptor{manifest.Config}, manifest.Layers...) {
+			if blob.Digest.String() == emptyJSONDigest {
+				if err := store.WriteSmallWithDigest(emptyJSONDigest, []byte("{}")); err != nil {
+					return nil, err
+				}
+				continue
+			}
+			layer, err := remote.Layer(repo.Digest(blob.Digest.String()), registryopts.Default().WithTransport(transport).Remote()...)
+			if err != nil {
+				return nil, fmt.Errorf("referrer %s blob %s: %w", referrer, blob.Digest, err)
+			}
+			layers = append(layers, layer)
+		}
+	}
+	return layers, nil
+}
+
+// discoverReferrers lists the referrers of the requested artifact types for
+// every subject, writes them to the discovery output, and returns them merged
+// into the explicitly requested referrers.
+func discoverReferrers(registry, repository string, subjects, referrers []string, discovery referrerDiscovery, transport http.RoundTripper) ([]string, error) {
+	if len(discovery.artifactTypes) == 0 && discovery.outputPath == "" {
+		return referrers, nil
+	}
+	repo, err := name.NewRepository(fmt.Sprintf("%s/%s", registry, repository), registryopts.NameOptions()...)
+	if err != nil {
+		return nil, fmt.Errorf("creating repository reference: %w", err)
+	}
+	discovered := map[string]map[string][]string{}
+	merged := slices.Clone(referrers)
+	for _, subject := range subjects {
+		found, err := imgreferrers.Discover(context.Background(), repo, subject, discovery.artifactTypes, ReferrersOptions(transport))
+		if err != nil {
+			return nil, err
+		}
+		discovered[subject] = found
+		for _, referrer := range imgreferrers.Flatten(found) {
+			if !slices.Contains(merged, referrer) {
+				merged = append(merged, referrer)
+			}
+		}
+	}
+	if discovery.outputPath != "" {
+		data, err := json.Marshal(discovered)
+		if err != nil {
+			return nil, err
+		}
+		if err := os.WriteFile(discovery.outputPath, data, 0o644); err != nil {
+			return nil, fmt.Errorf("writing discovered referrers: %w", err)
+		}
+	}
+	return merged, nil
+}
+
+// ReferrersOptions returns the options for listing referrers over transport,
+// with the same credentials as every other registry operation of the img tool.
+func ReferrersOptions(transport http.RoundTripper) imgreferrers.Options {
+	return imgreferrers.Options{
+		Transport: transport,
+		Keychain:  registryauth.Keychain(),
+		Remote:    registryopts.Default().WithTransport(transport).Remote(),
+	}
+}
+
+// emptyJSONDigest is the digest of the blob "{}", see
+// https://github.com/opencontainers/image-spec/blob/main/manifest.md#guidance-for-an-empty-descriptor.
+const emptyJSONDigest = "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
 
 func downloadLayer(layer registryv1.Layer, store *blobstore.Store) error {
 	digest, err := layer.Digest()

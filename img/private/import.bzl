@@ -8,6 +8,7 @@ load("//img/private/common:sparse_oci_layout.bzl", "build_sparse_oci_layout_for_
 load("//img/private/providers:index_info.bzl", "ImageIndexInfo")
 load("//img/private/providers:manifest_info.bzl", "ImageManifestInfo")
 load("//img/private/providers:pull_info.bzl", "PullInfo")
+load("//img/private/providers:pulled_referrers_info.bzl", "PulledReferrersInfo", "ReferrerInfo")
 load("//img/private/providers:single_layer_info.bzl", "SingleLayerInfo")
 load(":manifest_media_type.bzl", "get_media_type")
 
@@ -90,7 +91,7 @@ def _normalize_history_entry(entry):
             normalized[field] = entry[field]
     return normalized
 
-def _write_layer_info(ctx, blobs, manifest, config, history, layer_index, index_position = None):
+def _write_layer_info(ctx, blobs, manifest, config, history, layer_index, index_position = None, referrer = None):
     """Write layer info to file and return SingleLayerInfo provider."""
     layers = manifest.get("layers", [])
     if layer_index >= len(layers):
@@ -147,16 +148,18 @@ def _write_layer_info(ctx, blobs, manifest, config, history, layer_index, index_
     # content-addressed by its own digest). This is attached to all imported
     # layers -- shallow and eager alike -- so a missing blob can later be fetched
     # from its original source at deploy time.
+    # A referrer built locally from an artifact spec has no upstream source.
     sources = [
         struct(registry = registry, repository = ctx.attr.repository)
         for registry in ctx.attr.registries
-    ]
+    ] if referrer == None or not referrer.local else []
 
     # Render an mtree from the layer blob whenever we actually have it (an eagerly
     # imported / pulled layer) and it is a tar. A shallow image whose layer blob is
-    # missing can't be described, so its mtree stays None.
+    # missing can't be described, so its mtree stays None. The layers of a referrer
+    # are artifact content, not a filesystem.
     mtree = None
-    if blob != None and media_type_is_tar(media_type):
+    if blob != None and media_type_is_tar(media_type) and referrer == None:
         mtree = build_layer_mtree(
             ctx,
             "{}_{}{}_layer".format(ctx.attr.name, index_position_str, layer_index),
@@ -193,7 +196,22 @@ def _write_manifest_descriptor(ctx, digest, manifest, platform, descriptor = Non
     ctx.actions.write(out, json.encode(descriptor))
     return out
 
-def _build_manifest_info(ctx, blobs, digest, descriptor = None, index_position = None, platform = None):
+def _build_manifest_info(ctx, blobs, digest, descriptor = None, index_position = None, platform = None, referrer = None):
+    """Build the ImageManifestInfo of an image manifest of the pulled image.
+
+    Args:
+        ctx: Rule context.
+        blobs: The image's blobs, as returned by _image_blobs.
+        digest: Digest of the manifest.
+        descriptor: Descriptor to write for the manifest, or None to derive one.
+        index_position: Unique suffix for the files of a manifest other than the root.
+        platform: Platform of the manifest, or None to read it from the config.
+        referrer: For a referrer, struct(local = bool). Its config is an artifact
+            config: a blob that is not inlined into `data`, and not image config.
+
+    Returns:
+        ImageManifestInfo.
+    """
     if not digest in ctx.attr.data:
         fail("missing blob for digest: " + digest)
     manifest = json.decode(ctx.attr.data[digest])
@@ -201,9 +219,14 @@ def _build_manifest_info(ctx, blobs, digest, descriptor = None, index_position =
     if not media_type in [MEDIA_TYPE_MANIFEST, DOCKER_MANIFEST_V2]:
         fail("invalid mediaType in manifest: {}".format(media_type))
     config_digest = manifest.get("config", {}).get("digest", "missing config digest")
-    if not config_digest in ctx.attr.data:
+    if referrer != None:
+        if blobs.file.get(config_digest) == None:
+            fail("missing blob for config digest of referrer {}: {}".format(digest, config_digest))
+        config = {}
+    elif not config_digest in ctx.attr.data:
         fail("missing blob for config digest: " + config_digest)
-    config = json.decode(ctx.attr.data[config_digest])
+    else:
+        config = json.decode(ctx.attr.data[config_digest])
 
     # Extract platform information
     if platform == None:
@@ -242,7 +265,7 @@ def _build_manifest_info(ctx, blobs, digest, descriptor = None, index_position =
         elif manifest.get("layers", []):
             history_by_layer.append(current_layer)
     for layer_index in range(len(manifest.get("layers", []))):
-        layer_info = _write_layer_info(ctx, blobs, manifest, config, history_by_layer, layer_index, index_position)
+        layer_info = _write_layer_info(ctx, blobs, manifest, config, history_by_layer, layer_index, index_position, referrer)
         layers.append(layer_info)
 
     manifest_file = blobs.file.get(digest)
@@ -266,12 +289,79 @@ def _build_manifest_info(ctx, blobs, digest, descriptor = None, index_position =
         os = platform.get("os", "unknown"),
         variant = variant,
         layers = layers,
-        mtree = image_mtree_or_none(ctx, mtree_name, layers),
+        mtree = image_mtree_or_none(ctx, mtree_name, layers) if referrer == None else None,
         sparse_oci_layout = sparse_layout,
         soci_manifest = None,
         soci_config = None,
         soci_descriptor = None,
         soci_ztocs = [],
+    )
+
+def _build_pulled_referrers_info(ctx, blobs, root_blob, media_type):
+    """Build the PulledReferrersInfo of the pulled image.
+
+    Every referrer is attributed to the manifest its own `subject` names, which
+    must be the root or one of the children the root index lists. The repository
+    rule already checked that when fetching; this keeps a hand-written
+    image_import honest too.
+    """
+    manifest_digests = []
+    subjects = {ctx.attr.digest: None}
+    if media_type in [MEDIA_TYPE_INDEX, DOCKER_MANIFEST_LIST_V2]:
+        omitted = {digest: None for digest in ctx.attr.omitted_manifests}
+        for child in root_blob.get("manifests", []):
+            subjects[child["digest"]] = None
+            if child["digest"] not in omitted:
+                manifest_digests.append(child["digest"])
+
+    referrers = {}
+    all_referrers = [(digest, False) for digest in ctx.attr.referrers] + [(digest, True) for digest in ctx.attr.local_referrers]
+    for (position, (digest, local)) in enumerate(all_referrers):
+        if digest not in ctx.attr.data:
+            fail("missing manifest for referrer: " + digest)
+        manifest = json.decode(ctx.attr.data[digest])
+        referrer_media_type = get_media_type(manifest)
+        if referrer_media_type != MEDIA_TYPE_MANIFEST:
+            fail("referrer {} has media type {}; only image manifests are supported as referrers".format(digest, referrer_media_type))
+        subject = manifest.get("subject", {}).get("digest")
+        if subject == None:
+            fail("referrer {} has no subject".format(digest))
+        if subject not in subjects:
+            fail("referrer {} applies to {}, which is neither {} nor one of its children".format(digest, subject, ctx.attr.digest))
+
+        # Per the referrers API, the artifact type falls back to the config's media type.
+        artifact_type = manifest.get("artifactType") or manifest.get("config", {}).get("mediaType", "")
+        annotations = manifest.get("annotations", {})
+        descriptor = dict(
+            mediaType = referrer_media_type,
+            digest = digest,
+            size = len(ctx.attr.data[digest]),
+            artifactType = artifact_type,
+        )
+        if annotations:
+            descriptor["annotations"] = annotations
+        referrers.setdefault(subject, []).append(ReferrerInfo(
+            digest = digest,
+            media_type = referrer_media_type,
+            size = descriptor["size"],
+            artifact_type = artifact_type,
+            annotations = annotations,
+            subject = subject,
+            manifest = _build_manifest_info(
+                ctx,
+                blobs,
+                digest,
+                descriptor = descriptor,
+                index_position = "referrer_{}".format(position),
+                platform = {},
+                referrer = struct(local = local),
+            ),
+        ))
+
+    return PulledReferrersInfo(
+        digest = ctx.attr.digest,
+        manifest_digests = manifest_digests,
+        referrers = referrers,
     )
 
 def _image_import_impl(ctx):
@@ -290,6 +380,7 @@ def _image_import_impl(ctx):
             tag = ctx.attr.tag,
             digest = ctx.attr.digest,
         ),
+        _build_pulled_referrers_info(ctx, blobs, root_blob, media_type),
     ]
     if media_type in [MEDIA_TYPE_MANIFEST, DOCKER_MANIFEST_V2]:
         # this is a single-platform manifest
@@ -333,6 +424,16 @@ image_import = rule(
 A platform-filtered pull downloads only some children of an image index, but stores the
 index blob verbatim, so it keeps referring to all of them. Listing the skipped digests here
 makes them be ignored; any other missing blob is still an error.""",
+        ),
+        "referrers": attr.string_list(
+            doc = """Digests of referrer manifests fetched from the image's registries.
+
+Their manifests are in `data`, their configs and layers in `files`.""",
+        ),
+        "local_referrers": attr.string_list(
+            doc = """Digests of referrer manifests built at fetch time from referrer artifact specs.
+
+Like `referrers`, but their blobs have no upstream source to fetch them from.""",
         ),
         "registries": attr.string_list(
             doc = "List of registry mirrors used to pull the image.",

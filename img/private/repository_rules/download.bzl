@@ -1,6 +1,7 @@
 """Repository rules for downloading container image components."""
 
 load("@img_toolchain//:defs.bzl", "tool_for_repository_os")
+load("//img/private:manifest_media_type.bzl", "EMPTY_JSON_CONTENT", "EMPTY_JSON_DIGEST")
 load(":registry.bzl", "get_registries", "get_sources_list")
 
 def _configured_attr(ctx, name):
@@ -239,6 +240,17 @@ def download_blob(rctx, *, downloader, digest, sources, wait_and_read = True, ou
     sha256 = digest.removeprefix("sha256:")
     if output == None:
         output = "blobs/sha256/" + sha256
+
+    # The empty JSON blob is written instead of downloaded: its content is known,
+    # and not every registry serves it.
+    if digest == EMPTY_JSON_DIGEST:
+        rctx.file(output, EMPTY_JSON_CONTENT, executable = False)
+        return struct(
+            digest = digest,
+            path = output,
+            data = EMPTY_JSON_CONTENT if wait_and_read else None,
+            waiter = None,
+        )
 
     # Only check for existing blob in default location if using default output path
     if output == "blobs/sha256/" + sha256:
@@ -567,7 +579,7 @@ def download_layers(rctx, downloader, digests, sources):
             layer.waiter.wait()
     return [downloaded_layer for downloaded_layer in downloaded_layers]
 
-def download_with_tool(rctx, *, tool_path, reference, platforms = []):
+def download_with_tool(rctx, *, tool_path, reference, platforms = [], referrers = [], referrer_artifact_types = [], discovered_referrers = None):
     """Download an image using the img tool.
 
     Args:
@@ -576,6 +588,11 @@ def download_with_tool(rctx, *, tool_path, reference, platforms = []):
         reference: The image reference to download.
         platforms: Optional list of "os/architecture[/variant]" strings. If non-empty, only
                    matching children of an image index are downloaded.
+        referrers: Optional list of referrer manifest digests to download, with their blobs.
+        referrer_artifact_types: Optional list of artifact types of referrers to discover
+                   (for the root and every downloaded child) and download.
+        discovered_referrers: Path to write the discovered referrers to, as JSON mapping each
+                   manifest digest to an object of artifact type to referrer digests.
 
     Returns:
         A struct containing manifest and layers of the downloaded image.
@@ -587,7 +604,9 @@ def download_with_tool(rctx, *, tool_path, reference, platforms = []):
         "--reference=" + reference,
         "--repository=" + rctx.attr.repository,
         "--layer-handling=" + rctx.attr.layer_handling,
-    ] + ["--registry=" + r for r in registries] + ["--platform=" + p for p in platforms]
+    ] + ["--registry=" + r for r in registries] + ["--platform=" + p for p in platforms] + ["--referrer=" + r for r in referrers] + ["--referrer-artifact-type=" + t for t in referrer_artifact_types]
+    if discovered_referrers:
+        args.append("--discovered-referrers=" + discovered_referrers)
     result = rctx.execute(args, environment = auth_environment(rctx), quiet = False, **execute_kwargs(rctx))
     if result.return_code != 0:
         fail("img tool failed with exit code {} and message {}".format(result.return_code, result.stderr))

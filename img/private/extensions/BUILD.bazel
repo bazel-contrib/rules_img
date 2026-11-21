@@ -7,9 +7,18 @@ bzl_library(
     srcs = ["images_helpers.bzl"],
     visibility = ["//img/private/extensions:__pkg__"],
     deps = [
+        ":images_referrers",
         "//img/private:manifest_media_type",
         "//img/private/repository_rules:download",
+        "//img/private/repository_rules:referrers",
     ],
+)
+
+bzl_library(
+    name = "images_referrers",
+    srcs = ["images_referrers.bzl"],
+    visibility = ["//img/private/extensions:__pkg__"],
+    deps = ["//img/private/repository_rules:referrers"],
 )
 
 bzl_library(
@@ -18,6 +27,7 @@ bzl_library(
     visibility = ["//img:__pkg__"],
     deps = [
         ":images_helpers",
+        ":images_referrers",
         "//img/private/repository_rules:image_repo",
         "//img/private/repository_rules:pull_blob",
         "@bazel_skylib//lib:sets",

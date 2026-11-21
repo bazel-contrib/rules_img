@@ -36,6 +36,7 @@ bzl_library(
         "//img/private/providers:multiple_deploy_info",
         "//img/private/providers:partition_info",
         "//img/private/providers:pull_info",
+        "//img/private/providers:pulled_referrers_info",
         "//img/private/providers:push_config_info",
         "//img/private/providers:single_layer_info",
     ],

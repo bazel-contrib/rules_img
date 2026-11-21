@@ -1,0 +1,25 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "referrerartifacts",
+    srcs = ["referrerartifacts.go"],
+    importpath = "github.com/bazel-contrib/rules_img/img_tool/cmd/referrerartifacts",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/blobstore",
+        "@com_github_opencontainers_go_digest//:go-digest",
+        "@com_github_opencontainers_image_spec//specs-go",
+        "@com_github_opencontainers_image_spec//specs-go/v1:specs-go",
+    ],
+)
+
+go_test(
+    name = "referrerartifacts_test",
+    srcs = ["referrerartifacts_test.go"],
+    embed = [":referrerartifacts"],
+    deps = [
+        "//pkg/blobstore",
+        "@com_github_opencontainers_go_digest//:go-digest",
+        "@com_github_opencontainers_image_spec//specs-go/v1:specs-go",
+    ],
+)

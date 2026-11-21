@@ -1,7 +1,8 @@
 """Module extension for pulling container images."""
 
 load("@bazel_skylib//lib:sets.bzl", "sets")
-load("//img/private/extensions:images_helpers.bzl", "build_facts_to_store", "build_image_files_dict", "build_reverse_blob_mappings", "collect_blobs_to_create", "get_merged_sources_from_images", "get_registries_from_image", "merge_pull_attrs", "normalize_repository_name", "pull_tag_to_struct", "sync_oci_ref_graph")
+load("//img/private/extensions:images_helpers.bzl", "build_facts_to_store", "build_image_files_dict", "build_reverse_blob_mappings", "collect_blobs_to_create", "get_merged_sources_from_images", "get_registries_from_image", "merge_pull_attrs", "merge_sources", "normalize_repository_name", "pull_tag_to_struct", "sync_oci_ref_graph")
+load("//img/private/extensions:images_referrers.bzl", "discovery_facts", "images_containing", "referrer_request", "referrers_for_image", "resolve_referrers")
 load("//img/private/repository_rules:download.bzl", "learn_digest_from_tag", "resolve_docker_config_path")
 load("//img/private/repository_rules:image_repo.bzl", "image_repo")
 load("//img/private/repository_rules:pull_blob.bzl", "pull_blob_file", "pull_manifest_blob")
@@ -56,6 +57,7 @@ def _images_impl(ctx):
     expose_image_repos = expose_image_repos == "enabled" or (expose_image_repos == "auto" and support_dict_in_root_module_direct_deps)
 
     resolved_any_tag = False
+    referrer_requests = []
     for mod in ctx.modules:
         names = sets.make()
         digests = sets.make()
@@ -93,9 +95,26 @@ def _images_impl(ctx):
             digest_visibility[digest].append(visibility_identifier)
             if mod.is_root:
                 root_module_images_by_name[normalize_repository_name(img.name, img.repository)] = digest
+            request = referrer_request(
+                anchor = digest,
+                tag = img,
+                is_root = mod.is_root,
+                where = "images.pull of '{}' in module '{}@{}'".format(name, mod.name, mod.version),
+            )
+            if request != None:
+                referrer_requests.append(request)
+        for tag in mod.tags.referrers:
+            request = referrer_request(
+                anchor = tag.manifest,
+                tag = tag,
+                is_root = mod.is_root,
+                where = "images.referrers of {} in module '{}@{}'".format(tag.manifest, mod.name, mod.version),
+            )
+            if request != None:
+                referrer_requests.append(request)
 
-    # Sync OCI reference graph by downloading manifests
-    oci_ref_graph = sync_oci_ref_graph(
+    # Sync OCI reference graph by downloading manifests (and referrer manifests)
+    synced = sync_oci_ref_graph(
         ctx,
         images_by_digest,
         facts,
@@ -103,13 +122,20 @@ def _images_impl(ctx):
         credential_helper = credential_helper,
         docker_config_path = extension_docker_config_path,
         timeout = timeout,
+        referrer_requests = referrer_requests,
     )
+    oci_ref_graph = synced.graph
+
+    # Attribute every referrer to the manifest named by its subject.
+    resolved_referrers = resolve_referrers(referrer_requests, images_by_digest, oci_ref_graph, synced.discovered)
 
     # Build reverse mappings from blobs to top-level images for fast lookups
     file_blob_to_images, manifest_blob_to_images = build_reverse_blob_mappings(oci_ref_graph, images_by_digest)
 
-    # Create blob repositories for all required blobs (deduplicated and content-addressable)
-    manifest_blobs, file_blobs, lazy_file_blobs = collect_blobs_to_create(oci_ref_graph, images_by_digest)
+    # Create blob repositories for all required blobs (deduplicated and content-addressable).
+    # Referrer manifests are part of the graph too, but get blob repositories of their own below.
+    image_ref_graph = {digest: entry for digest, entry in oci_ref_graph.items() if digest in manifest_blob_to_images}
+    manifest_blobs, file_blobs, lazy_file_blobs = collect_blobs_to_create(image_ref_graph, images_by_digest)
 
     # Create blob repositories for manifest/index blobs (deduplicated)
     for digest in manifest_blobs.keys():
@@ -178,12 +204,59 @@ def _images_impl(ctx):
             timeout = timeout,
         )
 
+    # Create blob repositories for the referrer manifests and all of their blobs
+    # (eager, whatever the layer handling of the image), from the sources of the
+    # images they apply to. Blobs already created above are reused.
+    referrer_manifest_sources = {}
+    referrer_blob_sources = {}
+    for subject, referrers in resolved_referrers.by_manifest.items():
+        sources = get_merged_sources_from_images(images_containing(subject, images_by_digest, oci_ref_graph), images_by_digest)
+        for referrer in referrers:
+            entry = oci_ref_graph[referrer]
+            targets = [(referrer_manifest_sources, referrer, manifest_blobs)]
+            targets += [(referrer_blob_sources, blob, file_blobs) for blob in [entry.get("config")] + entry.get("layers", []) if blob]
+            for (by_digest, blob_digest, existing) in targets:
+                if blob_digest in existing:
+                    continue
+                merge_sources(by_digest.setdefault(blob_digest, {}), sources)
+    for digest, sources in referrer_manifest_sources.items():
+        pull_manifest_blob(
+            name = "blob_{}".format(digest.replace("sha256:", "")),
+            sources = sources,
+            digest = digest,
+            downloader = downloader,
+            credential_helper = credential_helper,
+            docker_config_path = docker_config_path,
+            config = config,
+            timeout = timeout,
+        )
+    for digest, sources in referrer_blob_sources.items():
+        pull_blob_file(
+            name = "blob_{}".format(digest.replace("sha256:", "")),
+            sources = sources,
+            digest = digest,
+            downloaded_file_path = "blob",
+            handling = "eager",
+            downloader = downloader,
+            credential_helper = credential_helper,
+            docker_config_path = docker_config_path,
+            config = config,
+            timeout = timeout,
+        )
+
     # Create image repositories for each top-level image
     for digest, img in images_by_digest.items():
         repo_name = "img_{}".format(digest.replace("sha256:", ""))
 
         # Build files dict with only referenced blobs for this image
         files = build_image_files_dict(digest, oci_ref_graph, img.layer_handling)
+        image_referrers = referrers_for_image(digest, oci_ref_graph, resolved_referrers)
+        for referrer in image_referrers.referrers:
+            files[referrer] = "@blob_{}//:manifest.json".format(referrer.replace("sha256:", ""))
+            entry = oci_ref_graph[referrer]
+            for blob in [entry.get("config")] + entry.get("layers", []):
+                if blob:
+                    files[blob] = "@blob_{}//:blob".format(blob.replace("sha256:", ""))
 
         # Create the image repository
         image_repo(
@@ -193,6 +266,8 @@ def _images_impl(ctx):
             registries = json.encode(get_registries_from_image(img)),
             repository = img.repository,
             tag = img.tag if hasattr(img, "tag") else None,
+            referrers = image_referrers.referrers,
+            referrer_artifacts = image_referrers.artifacts,
         )
 
     # Create hub repository for convenient image access
@@ -220,7 +295,12 @@ def _images_impl(ctx):
         "reproducible": not resolved_any_tag,
     }
     if hasattr(ctx, "facts"):
-        kwargs["facts"] = build_facts_to_store(oci_ref_graph)
+        facts_to_store = build_facts_to_store(oci_ref_graph)
+        facts_to_store.update(discovery_facts(synced.discovered))
+        kwargs["facts"] = facts_to_store
+    elif any([request.artifact_types for request in referrer_requests]):
+        # Without facts, nothing records the discovered referrers between evaluations.
+        kwargs["reproducible"] = False
     return ctx.extension_metadata(**kwargs)
 
 def _create_hub_repo_impl(rctx):
@@ -297,6 +377,48 @@ _create_hub_repo = repository_rule(
     },
 )
 
+_REFERRER_DIGESTS_DOC = """Digests of trusted referrer manifests (SBOMs, signatures, attestations, ...) to pull.
+
+Each referrer is fetched by digest, along with its config and layers -- regardless of
+`layer_handling`, since artifacts like an SBOM are meant to be read during the build. The empty
+config most artifacts use is never fetched.
+
+A referrer is attributed to the manifest named by its own `subject` field, which must be {anchor}
+or, if that is an index, one of its child manifests. Evaluating the extension fails if a referrer
+has no subject, or applies to any other manifest. Only image manifests are supported as referrers.
+
+The referrers are exposed through the `PulledReferrersInfo` provider of every pulled image containing the
+manifest they apply to."""
+
+_REFERRER_ARTIFACT_TYPES_DOC = """Artifact types of referrers to discover and pull, without knowing their digests.
+
+For {anchor} and, if that is an index, every child manifest, the referrers of these artifact types
+are listed and pulled like those in `referrer_digests`. Listing follows the distribution spec: the
+registry's referrers API (following pagination), falling back to the referrers tag schema
+(`sha256-<hex>`) only if the API answers `404`. Since a referrers tag is maintained by clients
+rather than the registry, every manifest it lists is fetched, and kept only if its own artifact type
+matches and its `subject` is the manifest. Discovery always uses the `img` tool, even with
+`downloader = "bazel"`, because Bazel's downloader exposes neither response status nor headers.
+
+This is meant for artifacts whose digests can't be known in advance, such as every signature of an
+image, which a policy can then verify downstream. For example:
+`["application/vnd.cncf.notary.signature", "application/vnd.dev.sigstore.bundle.v0.3+json"]`.
+`"*"` stands for any artifact type: `["*"]` pulls every referrer.
+
+The discovered digests are recorded in the lockfile facts, per manifest and artifact type, so later
+evaluations reuse them instead of querying the registry again. To pick up new referrers, drop the
+`referrer_discovery@` facts of the manifest (or remove and re-add the artifact type). Without facts
+support, the extension is not reproducible when this is set."""
+
+_REFERRER_ARTIFACTS_DOC = """Referrer artifact spec files describing artifacts from other sources, such as an SBOM database.
+
+Each spec is a JSON file, typically written by your own repository rule, that lists artifacts and
+the files that make them up. When the image repository is fetched, every artifact becomes an OCI
+artifact manifest (an empty config, the files as layers) whose `subject` is {anchor} (or the
+`subject` the spec names, which must be {anchor} or one of its children), so it is exposed through
+`PulledReferrersInfo` like a referrer from `referrer_digests`. See
+[the referrers documentation](/docs/referrers.md) for the format."""
+
 _pull_tag = tag_class(
     attrs = {
         "name": attr.string(
@@ -333,6 +455,15 @@ While optional, it's recommended to also specify a digest for reproducible build
 When specified, the image is pulled by digest instead of tag, ensuring reproducible builds.
 The digest must be a full SHA256 digest starting with "sha256:".""",
         ),
+        "referrer_digests": attr.string_list(
+            doc = _REFERRER_DIGESTS_DOC.format(anchor = "the pulled manifest or index"),
+        ),
+        "referrer_artifact_types": attr.string_list(
+            doc = _REFERRER_ARTIFACT_TYPES_DOC.format(anchor = "the pulled manifest or index"),
+        ),
+        "referrer_artifacts": attr.label_list(
+            doc = _REFERRER_ARTIFACTS_DOC.format(anchor = "the pulled manifest or index"),
+        ),
         "unsafe_allow_tag_without_digest": attr.bool(
             default = False,
             doc = """Resolve `tag` to a digest each time the extension is evaluated, instead of requiring `digest`.
@@ -365,6 +496,39 @@ This attribute controls when and how layer data is fetched from the registry.
 * **`lazy`**: Layer data is downloaded in a build action when requested. This provides
   access to layers during builds while avoiding unnecessary downloads, but requires
   network access during the build phase. **EXPERIMENTAL:** Use at your own risk.""",
+        ),
+    },
+)
+
+_referrers_tag = tag_class(
+    doc = """Attaches referrers to a manifest pulled by any module.
+
+The manifest can be a pulled manifest or index, or a child manifest of a pulled index, and may be
+pulled by another module than the one declaring the referrers:
+
+```starlark
+images.referrers(
+    manifest = "sha256:...",
+    referrer_digests = ["sha256:..."],
+    referrer_artifact_types = ["application/vnd.cncf.notary.signature"],
+)
+```
+
+In the root module, it is an error if no module pulls the manifest. In other modules, the tag is
+ignored then, so a module can annotate images that only some of its users pull.""",
+    attrs = {
+        "manifest": attr.string(
+            mandatory = True,
+            doc = "Digest of the manifest or index the referrers apply to.",
+        ),
+        "referrer_digests": attr.string_list(
+            doc = _REFERRER_DIGESTS_DOC.format(anchor = "`manifest`"),
+        ),
+        "referrer_artifact_types": attr.string_list(
+            doc = _REFERRER_ARTIFACT_TYPES_DOC.format(anchor = "`manifest`"),
+        ),
+        "referrer_artifacts": attr.label_list(
+            doc = _REFERRER_ARTIFACTS_DOC.format(anchor = "`manifest`"),
         ),
     },
 )
@@ -509,6 +673,7 @@ required for reproducibility.""",
     implementation = _images_impl,
     tag_classes = {
         "pull": _pull_tag,
+        "referrers": _referrers_tag,
         "settings": _settings_tag,
     },
 )

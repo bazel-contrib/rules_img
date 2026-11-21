@@ -3,7 +3,9 @@
 load("@bazel_skylib//lib:sets.bzl", "sets")
 load("@img_toolchain//:defs.bzl", "tool_for_repository_os")
 load("//img/private:manifest_media_type.bzl", "get_media_type", manifest_kind = "kind")
+load("//img/private/extensions:images_referrers.bzl", "DISCOVERY_FACT_PREFIX", "images_containing", "referrers_tool_input", "tree_of")
 load("//img/private/repository_rules:download.bzl", "auth_environment", "download_manifest", "execute_kwargs")
+load("//img/private/repository_rules:referrers.bzl", "discover_referrers_with_tool")
 
 def pull_tag_to_struct(tag, digest = None):
     """Convert a pull tag to a struct for easier attribute access.
@@ -180,18 +182,23 @@ def get_merged_sources_from_images(image_digests, images_by_digest):
         if not hasattr(img, "sources"):
             fail("Image digest '{}' does not have sources field".format(image_digest))
 
-        # Merge sources into merged_sources
-        for repository, registries in img.sources.items():
-            if repository not in merged_sources:
-                merged_sources[repository] = []
-
-            # Add registries, avoiding duplicates using sets
-            registries_set = sets.make(merged_sources[repository])
-            for registry in registries:
-                sets.insert(registries_set, registry)
-            merged_sources[repository] = sets.to_list(registries_set)
+        merge_sources(merged_sources, img.sources)
 
     return merged_sources
+
+def merge_sources(merged, sources):
+    """Add the registries of a sources dict to those of another, in place.
+
+    Args:
+        merged: Sources dict (repository to registries) to add to.
+        sources: Sources dict whose registries to add, in order, leaving out
+            those `merged` has already.
+    """
+    for repository, registries in sources.items():
+        known = merged.setdefault(repository, [])
+        for registry in registries:
+            if registry not in known:
+                known.append(registry)
 
 def check_facts_for_manifest(facts, digest):
     """Check if manifest structure is cached in facts.
@@ -205,19 +212,22 @@ def check_facts_for_manifest(facts, digest):
     """
     return facts.get("oci_ref_graph@{}".format(digest))
 
-def download_and_parse_manifest(ctx, digest, img, facts, downloader, credential_helper = None, docker_config_path = None, timeout = None):
+def download_and_parse_manifest(ctx, digest, img, facts, downloader, credential_helper = None, docker_config_path = None, timeout = None, sources = None, require_subject = False):
     """Download a manifest and parse it into ref graph entry.
 
     Args:
         ctx: Module extension context
         digest: Manifest digest to download
-        img: Image struct with registry/repository info
+        img: Image struct with registry/repository info (unused if sources is set)
         facts: Facts dictionary for caching structure (not blob data)
         downloader: Downloader to use
         credential_helper: Optional credential helper path to pass to the img tool.
         docker_config_path: Optional Docker-compatible auth config path to pass to the img tool.
         timeout: Optional timeout in seconds for img tool executions. Ignored by the
                  "bazel" downloader.
+        sources: Optional sources dict to download from, instead of the image's.
+        require_subject: Ignore a cached entry without a subject (a referrer recorded
+                 by a version that did not store subjects).
 
     Returns:
         Tuple of (ref_graph_entry, manifest_data_string)
@@ -225,7 +235,10 @@ def download_and_parse_manifest(ctx, digest, img, facts, downloader, credential_
 
     # Check if structure is cached in facts
     cached_ref_graph_entry = check_facts_for_manifest(facts, digest)
-    sources = get_sources_from_image(img)
+    if require_subject and cached_ref_graph_entry != None and not cached_ref_graph_entry.get("subject"):
+        cached_ref_graph_entry = None
+    if sources == None:
+        sources = get_sources_from_image(img)
 
     if cached_ref_graph_entry != None:
         # Structure is cached, but we still need to download the blob
@@ -279,6 +292,9 @@ def download_and_parse_manifest(ctx, digest, img, facts, downloader, credential_
             for m in manifest.get("manifests", [])
             if "digest" in m
         ]
+    subject = manifest.get("subject")
+    if type(subject) == type({}) and subject.get("digest"):
+        ref_graph_entry["subject"] = subject["digest"]
 
     return (ref_graph_entry, manifest_data)
 
@@ -503,12 +519,14 @@ def build_facts_to_store(oci_ref_graph):
         facts_to_store["oci_ref_graph@{}".format(digest)] = oci_ref_graph[digest]
     return facts_to_store
 
-def reachable_facts_to_dict(images_by_digest, facts):
+def reachable_facts_to_dict(images_by_digest, facts, referrer_requests = []):
     """Extract reachable facts for top-level images into a dictionary.
 
     Args:
         images_by_digest: Dictionary mapping digest to image struct
         facts: Facts dictionary from previous extension evaluation
+        referrer_requests: List of referrer requests. Their pinned referrers, and those
+            previously discovered for a reachable manifest, are reachable too.
 
     Returns:
         Dictionary of reachable facts for top-level images
@@ -526,6 +544,23 @@ def reachable_facts_to_dict(images_by_digest, facts):
     # Now also include all reachable child manifests
     for child_digest in sets.to_list(children):
         fact_key = "oci_ref_graph@{}".format(child_digest)
+        if fact_key in facts:
+            reachable_facts[fact_key] = facts[fact_key]
+
+    # And the referrers: the pinned ones, and those discovered before.
+    referrers = sets.make()
+    for request in referrer_requests:
+        for digest in request.digests:
+            sets.insert(referrers, digest)
+    for digest in list(images_by_digest.keys()) + sets.to_list(children):
+        fact_key = DISCOVERY_FACT_PREFIX + digest
+        if fact_key in facts:
+            reachable_facts[fact_key] = facts[fact_key]
+            for found in facts[fact_key].values():
+                for referrer in found:
+                    sets.insert(referrers, referrer)
+    for referrer in sets.to_list(referrers):
+        fact_key = "oci_ref_graph@{}".format(referrer)
         if fact_key in facts:
             reachable_facts[fact_key] = facts[fact_key]
 
@@ -572,7 +607,7 @@ def normalize_repository_name(name, repository):
 
     return normalized
 
-def sync_oci_ref_graph(ctx, images_by_digest, facts, downloader, credential_helper = None, docker_config_path = None, timeout = None):
+def sync_oci_ref_graph(ctx, images_by_digest, facts, downloader, credential_helper = None, docker_config_path = None, timeout = None, referrer_requests = []):
     """Sync the OCI reference graph by downloading manifests.
 
     Uses parallel downloading with the img_tool, or falls back to sequential
@@ -587,17 +622,21 @@ def sync_oci_ref_graph(ctx, images_by_digest, facts, downloader, credential_help
         docker_config_path: Optional Docker-compatible auth config path to pass to the img tool.
         timeout: Optional timeout in seconds for img tool executions. Ignored by the
                  "bazel" downloader, which cannot be given a timeout from Starlark.
+        referrer_requests: List of referrer requests (see images_referrers.bzl). Their
+                 referrer manifests, pinned and discovered, are added to the graph.
 
     Returns:
-        Dictionary mapping digest to ref_graph_entry
+        struct(graph, discovered): `graph` maps digest to ref_graph_entry, and
+        `discovered` maps manifest digests to artifact types to discovered referrers.
     """
     ctx.report_progress("Syncing OCI reference graph...")
     oci_ref_graph = {}
+    discovered = {}
 
     # Use the img tool to prefetch the full OCI ref graph in parallel
     if downloader == "img_tool":
         # Prepare facts JSON (convert facts to a format expected by the tool)
-        facts_json_content = json.encode(reachable_facts_to_dict(images_by_digest, facts))
+        facts_json_content = json.encode(reachable_facts_to_dict(images_by_digest, facts, referrer_requests))
         ctx.file("facts_input.json", facts_json_content)
 
         # Prepare images JSON (convert images_by_digest to JSON)
@@ -614,6 +653,7 @@ def sync_oci_ref_graph(ctx, images_by_digest, facts, downloader, credential_help
             }
         images_json_content = json.encode(images_for_json)
         ctx.file("images_input.json", images_json_content)
+        ctx.file("referrers_input.json", json.encode(referrers_tool_input(referrer_requests)))
 
         # Execute sync-oci-ref-graph command
         tool = tool_for_repository_os(ctx)
@@ -629,6 +669,8 @@ def sync_oci_ref_graph(ctx, images_by_digest, facts, downloader, credential_help
                 "images_input.json",
                 "--output",
                 "facts_output.json",
+                "--referrers",
+                "referrers_input.json",
             ],
             environment = auth_environment(
                 ctx,
@@ -650,7 +692,9 @@ def sync_oci_ref_graph(ctx, images_by_digest, facts, downloader, credential_help
             if key.startswith("oci_ref_graph@"):
                 digest = key.removeprefix("oci_ref_graph@")
                 oci_ref_graph[digest] = value
-        return oci_ref_graph
+            elif key.startswith(DISCOVERY_FACT_PREFIX):
+                discovered[key.removeprefix(DISCOVERY_FACT_PREFIX)] = value
+        return struct(graph = oci_ref_graph, discovered = discovered)
 
     # Fallback to sequential downloading for "bazel" downloader
     # Download top-level manifests/indexes
@@ -691,5 +735,60 @@ def sync_oci_ref_graph(ctx, images_by_digest, facts, downloader, credential_help
             fail("Expected manifest for digest '{}' but got '{}'.".format(digest, ref_graph_entry["kind"]))
         oci_ref_graph[digest] = ref_graph_entry
 
+    # Discover referrers by artifact type, reusing the types recorded in the facts.
+    referrer_sources = {}
+    for request in referrer_requests:
+        containing = images_containing(request.anchor, images_by_digest, oci_ref_graph)
+        if len(containing) == 0:
+            continue
+        sources = get_merged_sources_from_images(containing, images_by_digest)
+        referrer_digests = list(request.digests)
+        missing = {}
+        for manifest in tree_of(request.anchor, oci_ref_graph):
+            found = discovered.setdefault(manifest, {})
+            cached = facts.get(DISCOVERY_FACT_PREFIX + manifest, {})
+            for artifact_type in request.artifact_types:
+                if artifact_type in found:
+                    pass
+                elif artifact_type in cached:
+                    found[artifact_type] = cached[artifact_type]
+                else:
+                    missing[artifact_type] = True
+        tree = tree_of(request.anchor, oci_ref_graph)
+        if missing:
+            for manifest, found in discover_referrers_with_tool(
+                ctx,
+                subjects = tree,
+                artifact_types = missing.keys(),
+                sources = sources,
+                credential_helper = credential_helper,
+                docker_config_path = docker_config_path,
+                timeout = timeout,
+            ).items():
+                for artifact_type, digests in found.items():
+                    discovered[manifest].setdefault(artifact_type, digests)
+        for manifest in tree:
+            for artifact_type in request.artifact_types:
+                referrer_digests.extend(discovered[manifest][artifact_type])
+        for digest in referrer_digests:
+            merge_sources(referrer_sources.setdefault(digest, {}), sources)
+    discovered = {manifest: found for manifest, found in discovered.items() if found}
+
+    # Download the referrer manifests from the sources of the images they apply to.
+    for digest, sources in referrer_sources.items():
+        ref_graph_entry, _manifest_data = download_and_parse_manifest(
+            ctx,
+            digest,
+            None,
+            facts,
+            downloader,
+            credential_helper = credential_helper,
+            docker_config_path = docker_config_path,
+            timeout = timeout,
+            sources = sources,
+            require_subject = True,
+        )
+        oci_ref_graph[digest] = ref_graph_entry
+
     ctx.report_progress("OCI reference graph synced with {} entries.".format(len(oci_ref_graph)))
-    return oci_ref_graph
+    return struct(graph = oci_ref_graph, discovered = discovered)

@@ -5,6 +5,12 @@ MEDIA_TYPE_MANIFEST = "application/vnd.oci.image.manifest.v1+json"
 DOCKER_MANIFEST_LIST_V2 = "application/vnd.docker.distribution.manifest.list.v2+json"
 DOCKER_MANIFEST_V2 = "application/vnd.docker.distribution.manifest.v2+json"
 
+# The empty JSON blob ("{}"), the config of most artifacts and the only layer of an
+# artifact without content. Its content is known, so it is never fetched. See
+# https://github.com/opencontainers/image-spec/blob/main/manifest.md#guidance-for-an-empty-descriptor.
+EMPTY_JSON_DIGEST = "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+EMPTY_JSON_CONTENT = "{}"
+
 def get_media_type(manifest):
     """Get the mediaType of a manifest, inferring if missing.
 

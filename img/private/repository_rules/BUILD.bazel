@@ -12,6 +12,7 @@ bzl_library(
     visibility = ["//img:__subpackages__"],
     deps = [
         ":download",
+        ":referrers",
         ":registry",
         "//img/private:manifest_media_type",
         "//img/private/platforms",
@@ -38,6 +39,19 @@ bzl_library(
     visibility = ["//img:__subpackages__"],
     deps = [
         ":registry",
+        "//img/private:manifest_media_type",
+        "@img_toolchain//:defs",
+    ],
+)
+
+bzl_library(
+    name = "referrers",
+    srcs = ["referrers.bzl"],
+    visibility = ["//img:__subpackages__"],
+    deps = [
+        ":download",
+        ":registry",
+        "//img/private:manifest_media_type",
         "@img_toolchain//:defs",
     ],
 )
@@ -47,6 +61,7 @@ bzl_library(
     srcs = ["image_repo.bzl"],
     visibility = ["//img:__subpackages__"],
     deps = [
+        ":referrers",
         ":registry",
         "//img/private/platforms",
         "//img/private/platforms:constraints",

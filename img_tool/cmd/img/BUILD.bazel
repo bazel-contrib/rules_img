@@ -37,6 +37,7 @@ go_library(
         "//cmd/optimize",
         "//cmd/pull",
         "//cmd/push",
+        "//cmd/referrerartifacts",
         "//cmd/soci",
         "//cmd/sparseocilayout",
         "//cmd/syncocirefgraph",

@@ -38,6 +38,7 @@ import (
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/optimize"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/pull"
 	pushcmd "github.com/bazel-contrib/rules_img/img_tool/cmd/push"
+	"github.com/bazel-contrib/rules_img/img_tool/cmd/referrerartifacts"
 	socicmd "github.com/bazel-contrib/rules_img/img_tool/cmd/soci"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/sparseocilayout"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/syncocirefgraph"
@@ -77,6 +78,8 @@ Commands:
   oci-layout-metadata      extracts per-platform config and mtree from an OCI image layout
   optimize                 rewrites image metadata after layer optimization
   pull                     pulls an image from a registry
+  discover-referrers       lists the referrers of manifests by artifact type (referrers API or tag schema)
+  referrer-artifacts       builds OCI artifact manifests that refer to a pulled image from referrer artifact specs
   sparse-oci-layout        assembles a sparse OCI layout (without layer blobs) from manifest and layers
   soci-index               creates a SOCI Index Manifest v2 from per-layer ztoc blobs
   ztoc                     generates a ztoc (SOCI table of contents) for a gzip-compressed layer
@@ -173,6 +176,10 @@ func Run(ctx context.Context, args []string) {
 		downloadmanifest.DownloadManifestProcess(ctx, args[2:])
 	case "pull":
 		pull.PullProcess(ctx, args[2:])
+	case "discover-referrers":
+		pull.DiscoverReferrersProcess(ctx, args[2:])
+	case "referrer-artifacts":
+		referrerartifacts.ReferrerArtifactsProcess(args[2:])
 	case "sync-oci-ref-graph":
 		syncocirefgraph.SyncOCIRefGraphProcess(ctx, args[2:])
 	case "hash":

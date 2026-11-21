@@ -16,6 +16,7 @@ load(
     _learn_digest_from_tag = "learn_digest_from_tag",
     _resolve_docker_config_path = "resolve_docker_config_path",
 )
+load(":referrers.bzl", "build_referrer_artifacts", "check_digests", "discover_referrers_with_tool", "flatten_discovered", "referrer_blob_digests", "referrer_subject", "subject_descriptors")
 load(":registry.bzl", "get_registries", "image_purl")
 
 def _pull_impl(rctx):
@@ -23,6 +24,7 @@ def _pull_impl(rctx):
 
     # Parse the platform filter before any network access, so a typo fails fast.
     platform_specs = [parse_platform_spec(spec) for spec in rctx.attr.platforms]
+    check_digests(rctx.attr.referrer_digests, "referrer_digests of {}".format(rctx.attr.repository))
     _resolve_docker_config_path(rctx, rctx.attr.docker_config_path, rctx.attr.config)
 
     have_valid_digest = True
@@ -58,6 +60,9 @@ def _pull_impl(rctx):
             tool_path = tool_path,
             reference = reference,
             platforms = rctx.attr.platforms,
+            referrers = rctx.attr.referrer_digests,
+            referrer_artifact_types = rctx.attr.referrer_artifact_types,
+            discovered_referrers = _DISCOVERED_REFERRERS if rctx.attr.referrer_artifact_types else None,
         )
 
     manifest_kwargs = dict(
@@ -139,6 +144,56 @@ Available platforms: {available}""".format(
         for layer in manifest.get("layers", []):
             sets.insert(layer_digests, layer["digest"])
 
+    # Referrers apply to the root or to one of its children, as named by their own
+    # `subject`. They are fetched in full whatever the layer handling: an SBOM or a
+    # signature is read during the build even if the image's layers are not.
+    image_name = "{}@{}".format(rctx.attr.repository, digest)
+    subjects = subject_descriptors(digest, root_blob_info.data)
+    referrer_digests = list(rctx.attr.referrer_digests)
+
+    # Discover referrers by artifact type, for the root and the downloaded children.
+    if rctx.attr.referrer_artifact_types:
+        if rctx.attr.downloader == "img_tool":
+            discovered = json.decode(rctx.read(_DISCOVERED_REFERRERS))
+            rctx.delete(_DISCOVERED_REFERRERS)
+        else:
+            discovered = discover_referrers_with_tool(
+                rctx,
+                subjects = [digest] + ([child["digest"] for child in manifests] if is_index else []),
+                artifact_types = rctx.attr.referrer_artifact_types,
+                sources = sources,
+            )
+        for found in discovered.values():
+            for referrer_digest in flatten_discovered(found):
+                if referrer_digest not in referrer_digests:
+                    referrer_digests.append(referrer_digest)
+
+    referrers = []
+    referrer_blobs = {}
+    for referrer_digest in referrer_digests:
+        if referrer_digest in data:
+            continue
+        referrer_info = _download_manifest_rctx(rctx, downloader = rctx.attr.downloader, reference = referrer_digest)
+        referrer_manifest = json.decode(referrer_info.data)
+        referrer_subject(referrer_digest, referrer_manifest, subjects, image_name)
+        data[referrer_digest] = referrer_info.data
+        referrers.append(referrer_digest)
+        for blob_digest in referrer_blob_digests(referrer_manifest):
+            referrer_blobs[blob_digest] = True
+    for blob in _download_layers(rctx, downloader = rctx.attr.downloader, digests = referrer_blobs.keys(), sources = sources):
+        referrer_blobs[blob.digest] = "//:{}".format(blob.path)
+
+    # Artifacts from other sources, built locally into blobs/ and bound to their subject.
+    local_referrers = []
+    for artifact in build_referrer_artifacts(rctx, specs = rctx.attr.referrer_artifacts, subjects = subjects, default_subject = digest):
+        if artifact.digest in data:
+            continue
+        artifact_data = rctx.read("blobs/" + artifact.digest.replace("sha256:", "sha256/"))
+        data[artifact.digest] = artifact_data
+        local_referrers.append(artifact.digest)
+        for blob_digest in referrer_blob_digests(json.decode(artifact_data)):
+            referrer_blobs[blob_digest] = "//:blobs/{}".format(blob_digest.replace("sha256:", "sha256/"))
+
     files = {
         digest: "//:blobs/{}".format(digest.replace("sha256:", "sha256/"))
         for digest in data.keys()
@@ -155,6 +210,7 @@ Available platforms: {available}""".format(
             digest: "//:{}".format(digest.replace("sha256:", "sha256_"))
             for digest in sets.to_list(layer_digests)
         })
+    files.update(referrer_blobs)
 
     name = getattr(rctx, "original_name", rctx.attr.name)
     if not hasattr(rctx, "original_name"):
@@ -226,6 +282,8 @@ image_import(
     data = {data},
     files = {files},
     omitted_manifests = {omitted_manifests},
+    referrers = {referrers},
+    local_referrers = {local_referrers},
     registries = {registries},
     repository = {repository},
     tag = {tag},
@@ -282,6 +340,16 @@ image_load(
                 prefix = "    ",
                 indent = "    ",
             ),
+            referrers = json.encode_indent(
+                referrers,
+                prefix = "    ",
+                indent = "    ",
+            ),
+            local_referrers = json.encode_indent(
+                local_referrers,
+                prefix = "    ",
+                indent = "    ",
+            ),
             registries = json.encode_indent(
                 registries,
                 prefix = "    ",
@@ -299,11 +367,14 @@ repo(
 )
 """)
     if len(rctx.attr.digest) > 0 and hasattr(rctx, "repo_metadata"):
-        # allows participating in repo contents cache
-        return rctx.repo_metadata(reproducible = True)
+        # allows participating in repo contents cache, unless the referrers depend on
+        # what the registry lists right now
+        return rctx.repo_metadata(reproducible = len(rctx.attr.referrer_artifact_types) == 0)
 
     # only to make buildifier happy
     return None
+
+_DISCOVERED_REFERRERS = "discovered_referrers.json"
 
 pull = repository_rule(
     implementation = _pull_impl,
@@ -385,6 +456,52 @@ there is nothing to skip).
 **Note:** the index blob is stored verbatim, so it keeps listing every platform while only
 the selected children are available locally. A filtered image is meant to be used as a base
 image; pushing or loading its unmodified index is not supported.""",
+        ),
+        "referrer_digests": attr.string_list(
+            doc = """Digests of trusted referrer manifests (SBOMs, signatures, attestations, ...) to pull with the image.
+
+Each referrer is fetched by digest from the image's registries and repository, along with its
+config and layers -- regardless of `layer_handling`, since artifacts like an SBOM are meant to be
+read during the build. The empty config most artifacts use is never fetched.
+
+A referrer is attributed to the manifest named by its own `subject` field: the pulled manifest or
+index, or one of the child manifests of the index. Fetching fails if a referrer has no subject, or
+if its subject is not part of the pulled image. Only image manifests are supported as referrers.
+
+The referrers are exposed through the image's `PulledReferrersInfo` provider. Use, for example,
+`oras discover` or `crane manifest` on the referrers API to find the digests to list.""",
+        ),
+        "referrer_artifact_types": attr.string_list(
+            doc = """Artifact types of referrers to discover and pull, without knowing their digests.
+
+For the pulled manifest or index and, for an index, every child manifest that is downloaded (see
+`platforms`), the referrers of these artifact types are listed and pulled like those in
+`referrer_digests`. Listing uses the registry's referrers API, falling back to the referrers tag
+schema (`sha256-<hex>`) on registries that don't support it.
+
+This is meant for artifacts whose digests can't be known in advance, such as every signature of an
+image, which a policy can then verify downstream. For example:
+`["application/vnd.cncf.notary.signature", "application/vnd.dev.sigstore.bundle.v0.3+json"]`.
+`"*"` stands for any artifact type: `["*"]` pulls every referrer.
+
+Listing follows the distribution spec: only a `404` from the referrers API falls back to the tag
+schema, paginated responses are followed, and a referrers tag that is not an image index means
+there are no referrers. Since a referrers tag is maintained by clients rather than the registry,
+every manifest it lists is fetched, and kept only if its own artifact type matches and its
+`subject` is the manifest. Discovery always uses the `img` tool, even with `downloader = "bazel"`,
+because Bazel's downloader exposes neither response status nor headers.
+
+Because the result depends on what the registry lists at fetch time, the repository is not
+reproducible when this is set (it does not participate in the repository contents cache).""",
+        ),
+        "referrer_artifacts": attr.label_list(
+            doc = """Referrer artifact spec files describing artifacts from other sources, such as an SBOM database.
+
+Each spec is a JSON file, typically written by your own repository rule, that lists artifacts and
+the files that make them up. At fetch time, every artifact becomes an OCI artifact manifest (an
+empty config, the files as layers) whose `subject` is the pulled manifest, so it is exposed through
+`PulledReferrersInfo` exactly like a referrer from `referrer_digests`. See
+[the referrers documentation](/docs/referrers.md) for the format.""",
         ),
         "layer_handling": attr.string(
             default = "shallow",

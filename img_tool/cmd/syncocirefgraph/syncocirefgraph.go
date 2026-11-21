@@ -6,12 +6,15 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 
+	"github.com/bazel-contrib/rules_img/img_tool/cmd/pull"
+	imgreferrers "github.com/bazel-contrib/rules_img/img_tool/pkg/referrers"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/registryopts"
 )
 
@@ -34,12 +37,45 @@ type RefGraphEntry struct {
 	Config    string   `json:"config,omitempty"`
 	Layers    []string `json:"layers,omitempty"`
 	Manifests []string `json:"manifests,omitempty"`
+	// Subject is the digest in the manifest's subject descriptor, if any. It
+	// is what attributes a referrer to the manifest it applies to.
+	Subject string `json:"subject,omitempty"`
 }
+
+// ReferrerRequest asks for a referrer manifest that must apply to the tree of
+// the anchor manifest: the anchor itself or, for an index, one of its children.
+// It is fetched from the sources of every image whose tree contains the anchor.
+type ReferrerRequest struct {
+	Digest string `json:"digest"`
+	Anchor string `json:"anchor"`
+}
+
+// DiscoveryRequest asks for the referrers of the given artifact types of every
+// manifest in the tree of the anchor manifest.
+type DiscoveryRequest struct {
+	Anchor        string   `json:"anchor"`
+	ArtifactTypes []string `json:"artifact_types"`
+}
+
+// ReferrersInput is the format of the --referrers file.
+type ReferrersInput struct {
+	Referrers []ReferrerRequest  `json:"referrers"`
+	Discover  []DiscoveryRequest `json:"discover"`
+}
+
+// discoveryFactPrefix keys the referrers discovered for a manifest, as an
+// object mapping each requested artifact type to the referrer digests found.
+// Recording them makes later evaluations reuse the discovered set instead of
+// querying the registries again.
+const discoveryFactPrefix = "referrer_discovery@"
 
 // ManifestDownloadJob represents a job to download a manifest
 type ManifestDownloadJob struct {
 	Digest string
 	Img    ImageInfo
+	// RequireSubject rejects a cached entry without a subject (as written by
+	// versions that did not record one), so a referrer gets re-fetched.
+	RequireSubject bool
 }
 
 // ManifestDownloadResult represents the result of downloading a manifest
@@ -54,6 +90,7 @@ func SyncOCIRefGraphProcess(ctx context.Context, args []string) {
 	var factsPath string
 	var imagesPath string
 	var outputPath string
+	var referrersPath string
 
 	flagSet := flag.NewFlagSet("sync-oci-ref-graph", flag.ExitOnError)
 	flagSet.Usage = func() {
@@ -72,6 +109,7 @@ func SyncOCIRefGraphProcess(ctx context.Context, args []string) {
 	flagSet.StringVar(&factsPath, "facts", "", "Path to the facts JSON file from previous run")
 	flagSet.StringVar(&imagesPath, "images", "", "Path to the images JSON file (images_by_digest)")
 	flagSet.StringVar(&outputPath, "output", "", "Path to write updated facts JSON")
+	flagSet.StringVar(&referrersPath, "referrers", "", "Path to a JSON object with referrer requests ({\"referrers\": [{\"digest\", \"anchor\"}], \"discover\": [{\"anchor\", \"artifact_types\"}]}) to add to the graph")
 
 	if err := flagSet.Parse(args); err != nil {
 		flagSet.Usage()
@@ -157,11 +195,55 @@ func SyncOCIRefGraphProcess(ctx context.Context, args []string) {
 		}
 	}
 
+	// Phase 3: Download the referrer manifests. A referrer lives in the
+	// repository of its subject, so it is fetched from the sources of the images
+	// containing its anchor. Requests whose anchor is not part of any image are
+	// skipped; the module extension decides whether that is an error.
+	discovered := map[string]map[string][]string{}
+	if referrersPath != "" {
+		referrersData, err := os.ReadFile(referrersPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: Failed to read referrers file: %v\n", err)
+			os.Exit(1)
+		}
+		var input ReferrersInput
+		if err := json.Unmarshal(referrersData, &input); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: Failed to parse referrers JSON: %v\n", err)
+			os.Exit(1)
+		}
+		discovered, err = discoverReferrers(input.Discover, imagesByDigest, ociRefGraph, facts)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: Failed to discover referrers: %v\n", err)
+			os.Exit(1)
+		}
+		requests := input.Referrers
+		for _, discovery := range input.Discover {
+			for _, manifest := range treeOf(discovery.Anchor, ociRefGraph) {
+				for _, artifactType := range discovery.ArtifactTypes {
+					for _, referrer := range discovered[manifest][artifactType] {
+						requests = append(requests, ReferrerRequest{Digest: referrer, Anchor: discovery.Anchor})
+					}
+				}
+			}
+		}
+		referrerJobs := referrerJobs(requests, imagesByDigest, ociRefGraph)
+		for _, result := range downloadManifestsParallel(referrerJobs, facts) {
+			if result.Error != nil {
+				fmt.Fprintf(os.Stderr, "Error: Failed to download referrer manifest %s: %v\n", result.Digest, result.Error)
+				os.Exit(1)
+			}
+			ociRefGraph[result.Digest] = result.RefGraphEntry
+		}
+	}
+
 	// Build updated facts with oci_ref_graph entries
 	updatedFacts := make(Facts)
 	for digest, refGraphEntry := range ociRefGraph {
 		key := fmt.Sprintf("oci_ref_graph@%s", digest)
 		updatedFacts[key] = refGraphEntry
+	}
+	for manifest, found := range discovered {
+		updatedFacts[discoveryFactPrefix+manifest] = found
 	}
 
 	// Write updated facts to output file
@@ -192,7 +274,7 @@ func downloadManifestsParallel(jobs []ManifestDownloadJob, facts Facts) []Manife
 		go func() {
 			defer wg.Done()
 			for job := range jobsChan {
-				result := downloadAndParseManifest(job.Digest, job.Img, facts)
+				result := downloadAndParseManifest(job, facts)
 				resultsChan <- result
 			}
 		}()
@@ -219,8 +301,195 @@ func downloadManifestsParallel(jobs []ManifestDownloadJob, facts Facts) []Manife
 	return results
 }
 
+// referrerJobs turns referrer requests into download jobs, one per referrer
+// digest, with the merged sources of every image whose tree contains an anchor.
+func referrerJobs(requests []ReferrerRequest, imagesByDigest map[string]ImageInfo, ociRefGraph map[string]RefGraphEntry) []ManifestDownloadJob {
+	sourcesByReferrer := map[string]map[string][]string{}
+	var order []string
+	for _, request := range requests {
+		anchorSources := mergedSources(request.Anchor, imagesByDigest, ociRefGraph)
+		if anchorSources == nil {
+			continue
+		}
+		sources, ok := sourcesByReferrer[request.Digest]
+		if !ok {
+			sources = map[string][]string{}
+			sourcesByReferrer[request.Digest] = sources
+			order = append(order, request.Digest)
+		}
+		for repository, registries := range anchorSources {
+			for _, registry := range registries {
+				if !slices.Contains(sources[repository], registry) {
+					sources[repository] = append(sources[repository], registry)
+				}
+			}
+		}
+	}
+	jobs := make([]ManifestDownloadJob, 0, len(order))
+	for _, digest := range order {
+		jobs = append(jobs, ManifestDownloadJob{
+			Digest:         digest,
+			Img:            ImageInfo{Sources: sourcesByReferrer[digest]},
+			RequireSubject: true,
+		})
+	}
+	return jobs
+}
+
+// treeOf returns the anchor and, if it is an index, its children.
+func treeOf(anchor string, ociRefGraph map[string]RefGraphEntry) []string {
+	tree := []string{anchor}
+	if entry, ok := ociRefGraph[anchor]; ok && entry.Kind == "index" {
+		tree = append(tree, entry.Manifests...)
+	}
+	return tree
+}
+
+// mergedSources returns the merged sources of every image whose tree contains digest.
+func mergedSources(digest string, imagesByDigest map[string]ImageInfo, ociRefGraph map[string]RefGraphEntry) map[string][]string {
+	var sources map[string][]string
+	for rootDigest, img := range imagesByDigest {
+		if !treeContains(rootDigest, digest, ociRefGraph) {
+			continue
+		}
+		if sources == nil {
+			sources = map[string][]string{}
+		}
+		for repository, registries := range img.Sources {
+			for _, registry := range registries {
+				if !slices.Contains(sources[repository], registry) {
+					sources[repository] = append(sources[repository], registry)
+				}
+			}
+		}
+	}
+	return sources
+}
+
+type discoveryJob struct {
+	manifest      string
+	artifactTypes []string
+	sources       map[string][]string
+}
+
+// discoverReferrers resolves the discovery requests to the referrers of each
+// requested artifact type, per manifest. Artifact types recorded in the facts
+// for a manifest are reused; only the others are queried, with one query per
+// manifest. Requests whose anchor is not part of any image are skipped.
+func discoverReferrers(requests []DiscoveryRequest, imagesByDigest map[string]ImageInfo, ociRefGraph map[string]RefGraphEntry, facts Facts) (map[string]map[string][]string, error) {
+	discovered := map[string]map[string][]string{}
+	missing := map[string][]string{}
+	sources := map[string]map[string][]string{}
+	var order []string
+	for _, request := range requests {
+		anchorSources := mergedSources(request.Anchor, imagesByDigest, ociRefGraph)
+		if anchorSources == nil {
+			continue
+		}
+		for _, manifest := range treeOf(request.Anchor, ociRefGraph) {
+			if _, ok := discovered[manifest]; !ok {
+				discovered[manifest] = map[string][]string{}
+				order = append(order, manifest)
+			}
+			sources[manifest] = anchorSources
+			cached := cachedDiscovery(facts, manifest)
+			for _, artifactType := range request.ArtifactTypes {
+				if _, ok := discovered[manifest][artifactType]; ok {
+					continue
+				}
+				if digests, ok := cached[artifactType]; ok {
+					discovered[manifest][artifactType] = digests
+				} else if !slices.Contains(missing[manifest], artifactType) {
+					missing[manifest] = append(missing[manifest], artifactType)
+				}
+			}
+		}
+	}
+
+	var jobs []discoveryJob
+	for _, manifest := range order {
+		if len(missing[manifest]) > 0 {
+			jobs = append(jobs, discoveryJob{manifest: manifest, artifactTypes: missing[manifest], sources: sources[manifest]})
+		}
+	}
+	results := make([]map[string][]string, len(jobs))
+	errs := make([]error, len(jobs))
+	var wg sync.WaitGroup
+	semaphore := make(chan struct{}, 10)
+	for i, job := range jobs {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			semaphore <- struct{}{}
+			defer func() { <-semaphore }()
+			results[i], errs[i] = discoverFromSources(job)
+		}()
+	}
+	wg.Wait()
+	for i, job := range jobs {
+		if errs[i] != nil {
+			return nil, fmt.Errorf("manifest %s: %w", job.manifest, errs[i])
+		}
+		for artifactType, digests := range results[i] {
+			discovered[job.manifest][artifactType] = digests
+		}
+	}
+	return discovered, nil
+}
+
+func cachedDiscovery(facts Facts, manifest string) map[string][]string {
+	cached, ok := facts[discoveryFactPrefix+manifest]
+	if !ok {
+		return nil
+	}
+	data, err := json.Marshal(cached)
+	if err != nil {
+		return nil
+	}
+	var found map[string][]string
+	if err := json.Unmarshal(data, &found); err != nil {
+		return nil
+	}
+	return found
+}
+
+// discoverFromSources queries the sources in turn until one answers.
+func discoverFromSources(job discoveryJob) (map[string][]string, error) {
+	var lastErr error
+	for repository, registries := range job.sources {
+		for _, registry := range registries {
+			repo, err := name.NewRepository(fmt.Sprintf("%s/%s", registry, repository), registryopts.NameOptions()...)
+			if err != nil {
+				return nil, fmt.Errorf("creating repository reference: %w", err)
+			}
+			found, err := imgreferrers.Discover(context.Background(), repo, job.manifest, job.artifactTypes, pull.ReferrersOptions(registryopts.DirectTransport()))
+			if err == nil {
+				return found, nil
+			}
+			lastErr = err
+			fmt.Fprintf(os.Stderr, "Warning: Failed to discover referrers from %s/%s: %v\n", registry, repository, err)
+		}
+	}
+	if lastErr != nil {
+		return nil, fmt.Errorf("failed to discover referrers from all sources: %w", lastErr)
+	}
+	return nil, fmt.Errorf("no sources available")
+}
+
+// treeContains reports whether digest is the image rooted at rootDigest, or one
+// of its children if that is an index.
+func treeContains(rootDigest, digest string, ociRefGraph map[string]RefGraphEntry) bool {
+	if rootDigest == digest {
+		return true
+	}
+	entry, ok := ociRefGraph[rootDigest]
+	return ok && entry.Kind == "index" && slices.Contains(entry.Manifests, digest)
+}
+
 // downloadAndParseManifest downloads a manifest and parses it into a ref graph entry
-func downloadAndParseManifest(digest string, img ImageInfo, facts Facts) ManifestDownloadResult {
+func downloadAndParseManifest(job ManifestDownloadJob, facts Facts) ManifestDownloadResult {
+	digest := job.Digest
+	img := job.Img
 	result := ManifestDownloadResult{
 		Digest: digest,
 	}
@@ -232,7 +501,7 @@ func downloadAndParseManifest(digest string, img ImageInfo, facts Facts) Manifes
 		cachedJSON, err := json.Marshal(cachedEntry)
 		if err == nil {
 			var refGraphEntry RefGraphEntry
-			if err := json.Unmarshal(cachedJSON, &refGraphEntry); err == nil {
+			if err := json.Unmarshal(cachedJSON, &refGraphEntry); err == nil && (refGraphEntry.Subject != "" || !job.RequireSubject) {
 				result.RefGraphEntry = refGraphEntry
 				return result
 			}
@@ -289,6 +558,12 @@ func downloadAndParseManifest(digest string, img ImageInfo, facts Facts) Manifes
 					}
 				}
 			}
+		}
+	}
+
+	if subject, ok := manifest["subject"].(map[string]interface{}); ok {
+		if subjectDigest, ok := subject["digest"].(string); ok {
+			refGraphEntry.Subject = subjectDigest
 		}
 	}
 
