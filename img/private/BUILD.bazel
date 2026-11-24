@@ -1,5 +1,6 @@
 load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
 load("//img/private:blob_validation_test.bzl", "blob_validation_test_suite")
+load("//img/private:cas_input_list_test.bzl", "cas_input_list_test_suite")
 load("//img/private:compression_tuning_test.bzl", "compression_tuning_test_suite")
 load("//img/private:download_blobs_test.bzl", "download_blobs_test_suite")
 load("//img/private:import_test.bzl", "import_test_suite")
@@ -11,6 +12,8 @@ load("//img/private:tar_layer_materialize_blob_test.bzl", "tar_layer_materialize
 compression_tuning_test_suite(name = "compression_tuning_test")
 
 blob_validation_test_suite(name = "blob_validation_test")
+
+cas_input_list_test_suite(name = "cas_input_list_test")
 
 download_blobs_test_suite(name = "download_blobs_test")
 

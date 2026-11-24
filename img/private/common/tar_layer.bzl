@@ -364,7 +364,7 @@ def resolve_layer_settings(ctx):
         format_config = format_config,
     )
 
-def create_single_layer(ctx, settings, name, extra_args = [], extra_inputs = []):
+def create_single_layer(ctx, settings, name, extra_args = [], extra_inputs = [], cas_input_list = None):
     """Create a single layer using 'img layer'.
 
     Lower-level variant of create_tar_layer that accepts an explicit output
@@ -384,6 +384,15 @@ def create_single_layer(ctx, settings, name, extra_args = [], extra_inputs = [])
         extra_args: list of strings and/or ctx.actions.args() objects to insert
             between the base arguments and the output path.
         extra_inputs: list of depset objects to merge with base inputs.
+        cas_input_list: optional File that lists, one exec path per line, the
+            inputs this layer packs. With compact layers, the content-addressed
+            directory of input files is then built from these paths only, not
+            from every file in extra_inputs. This is for callers whose
+            extra_inputs are a superset of what the layer packs. Every listed path
+            must be among extra_inputs; a path that isn't staged is skipped, and
+            the layer then can't be reconstructed. Directories are walked and
+            symlinks are followed. A dangling symlink has no content to store, so
+            it may be left out. When None, every file in extra_inputs is used.
 
     Returns:
         tuple of (SingleLayerInfo, out_file_or_None, metadata_file, compact_stream_file_or_None, mtree_file, ztoc_file_or_None).
@@ -466,7 +475,7 @@ def create_single_layer(ctx, settings, name, extra_args = [], extra_inputs = [])
     # content-addressed directory of the layer's input files so the tar can be
     # reconstructed from the index by resolving CAS references against it.
     if settings.compact_layers:
-        layer_input_files_cas = _build_input_files_cas(ctx, name, extra_inputs)
+        layer_input_files_cas = _build_input_files_cas(ctx, name, extra_inputs, cas_input_list)
 
     # Produce the mtree metadata description from whichever layer artifact exists.
     # For a tar layer the mtree comes from the headers alone, so the
@@ -561,7 +570,7 @@ def _input_file_cas_arg(f):
         return ""
     return f.path
 
-def _build_input_files_cas(ctx, name, extra_inputs):
+def _build_input_files_cas(ctx, name, extra_inputs, cas_input_list = None):
     """Build a content-addressed directory (sha256/<hex>) of layer input files.
 
     Runs `img cas-dir` over everything in `extra_inputs` (the files that make up
@@ -572,14 +581,21 @@ def _build_input_files_cas(ctx, name, extra_inputs):
     Where the exec platform and Bazel version allow it, the entries are relative
     symlinks to the input files instead of copies, so a layer's inputs are not
     materialized twice.
+
+    With cas_input_list, `img cas-dir` reads that file instead of a list of every
+    file in extra_inputs; see create_single_layer.
     """
     output_dir = ctx.actions.declare_directory(name + ".inputfilecas")
     input_files = depset(transitive = extra_inputs)
 
     content_args = ctx.actions.args()
-    content_args.set_param_file_format("multiline")
-    content_args.use_param_file("--from-file=%s", use_always = True)
-    content_args.add_all(input_files, map_each = _input_file_cas_arg, expand_directories = True)
+    if cas_input_list != None:
+        content_args.add(cas_input_list, format = "--from-file=%s")
+        input_files = depset([cas_input_list], transitive = [input_files])
+    else:
+        content_args.set_param_file_format("multiline")
+        content_args.use_param_file("--from-file=%s", use_always = True)
+        content_args.add_all(input_files, map_each = _input_file_cas_arg, expand_directories = True)
 
     args = ctx.actions.args()
     args.add("cas-dir")
