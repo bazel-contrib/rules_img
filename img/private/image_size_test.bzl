@@ -302,7 +302,7 @@ value is still reported.""",
             default = "",
         ),
         "_deploy_tool": attr.label(
-            default = Label("//img/deploy_tool/for_host"),
+            default = Label("//img/deploy_tool"),
             providers = [DeployToolInfo],
         ),
     },

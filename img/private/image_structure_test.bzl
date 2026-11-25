@@ -251,7 +251,7 @@ image_structure_test(
             allow_files = [".yaml", ".yml", ".json"],
         ),
         "_deploy_tool": attr.label(
-            default = Label("//img/deploy_tool/for_host"),
+            default = Label("//img/deploy_tool"),
             providers = [DeployToolInfo],
         ),
     },
