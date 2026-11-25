@@ -303,6 +303,7 @@ value is still reported.""",
         ),
         "_deploy_tool": attr.label(
             default = Label("//img/deploy_tool"),
+            cfg = "exec",
             providers = [DeployToolInfo],
         ),
     },

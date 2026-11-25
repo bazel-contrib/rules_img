@@ -252,6 +252,7 @@ image_structure_test(
         ),
         "_deploy_tool": attr.label(
             default = Label("//img/deploy_tool"),
+            cfg = "exec",
             providers = [DeployToolInfo],
         ),
     },
