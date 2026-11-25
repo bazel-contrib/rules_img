@@ -197,6 +197,17 @@ def _parse_budget(attr_name, raw):
              "KiB/MiB/GiB/TiB suffix (e.g. \"10000000\", \"512MiB\"); got \"{}\"".format(raw))
     return int(digits) * _BYTE_UNITS[unit]
 
+def _default_deploy_tool(tool_cfg):
+    # "exec" is served by `_exec_deploy_tool`, which is built in the exec configuration.
+    return default_deploy_tool("host" if tool_cfg == "host" else "target")
+
+def _deploy_tool_info(ctx):
+    if ctx.attr.deploy_tool != None:
+        return ctx.attr.deploy_tool[DeployToolInfo]
+    if ctx.attr.tool_cfg == "exec":
+        return ctx.attr._exec_deploy_tool[DeployToolInfo]
+    return ctx.attr._deploy_tool[DeployToolInfo]
+
 def _image_size_test_impl(ctx):
     max_wasted_bytes = _parse_budget("max_wasted_bytes", ctx.attr.max_wasted_bytes)
     max_duplicated_bytes = _parse_budget("max_duplicated_bytes", ctx.attr.max_duplicated_bytes)
@@ -205,7 +216,7 @@ def _image_size_test_impl(ctx):
              "with neither budget set the test would never fail")
 
     input = ctx.attr.image[ImageSizeTestInfo]
-    deploy_tool_info = ctx.attr.deploy_tool[DeployToolInfo] if ctx.attr.deploy_tool != None else ctx.attr._deploy_tool[DeployToolInfo]
+    deploy_tool_info = _deploy_tool_info(ctx)
 
     request = ctx.actions.declare_file(ctx.label.name + ".request.json")
     ctx.actions.write(request, json.encode(struct(
@@ -306,19 +317,24 @@ value is still reported.""",
             doc = """Configuration of the launcher and `img` executable.
 
 Available options:
-- **`host`** (default): The executable matches the host platform.
+- **`exec`** (default): The executable matches the platform the test runs on, which can differ from the host platform, for example with remote execution from a macOS host to Linux workers.
+- **`host`**: The executable matches the host platform.
 - **`target`**: The executable matches the target platform(s) specified via `--platforms`.
-  Use this when the test runs on a different platform than the host, for example with remote execution from a macOS host to Linux workers.
 """,
-            default = "host",
-            values = ["host", "target"],
+            default = "exec",
+            values = ["exec", "host", "target"],
         ),
         "deploy_tool": attr.label(
             doc = "Optional label of a deploy tool target providing `DeployToolInfo` (created with `img_deploy_tool` from `@rules_img//img:deploy_tool.bzl`). When set, overrides `tool_cfg`.",
             providers = [DeployToolInfo],
         ),
         "_deploy_tool": attr.label(
-            default = default_deploy_tool,
+            default = _default_deploy_tool,
+            providers = [DeployToolInfo],
+        ),
+        "_exec_deploy_tool": attr.label(
+            default = Label("//img/deploy_tool"),
+            cfg = "exec",
             providers = [DeployToolInfo],
         ),
     },
