@@ -292,7 +292,9 @@ The `image_manifest` rule automatically provides access to the base image's conf
 
 When using a `base` image in `image_manifest`, the following template variables are available:
 
-- **`$<ENV>`** - An environment variable from the base image (like `$PATH`)
+- **`$<ENV>`** - An environment variable from the base image (like `$PATH`).\
+  Only variables whose name is made of letters, digits and underscores are exposed.\
+  Use `getkv` for the others (e.g. `{{getkv .base.config.config.env "bootstrap.memory_lock"}}`).
 - **`.base.config`** - The base image's OCI configuration JSON
 - **`.base.manifest`** - The base image's OCI manifest JSON
 
