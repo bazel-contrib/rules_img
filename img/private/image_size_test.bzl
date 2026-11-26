@@ -337,7 +337,7 @@ Available options:
         ),
         "_exec_deploy_tool": attr.label(
             default = Label("//img/deploy_tool"),
-            cfg = "exec",
+            cfg = config.exec("test"),
             providers = [DeployToolInfo],
         ),
     },
