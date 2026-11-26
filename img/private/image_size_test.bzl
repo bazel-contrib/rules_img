@@ -15,6 +15,7 @@ an OCI image layout directory) are rejected in the aspect.
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("@hermetic_launcher//launcher:lib.bzl", "launcher")
 load("//img/private/common:build.bzl", "TOOLCHAINS")
+load("//img/private/common:default_deploy_tool.bzl", "default_deploy_tool")
 load(
     "//img/private/common:layer_helper.bzl",
     "LAYER_MTREE_ATTRS",
@@ -196,6 +197,20 @@ def _parse_budget(attr_name, raw):
              "KiB/MiB/GiB/TiB suffix (e.g. \"10000000\", \"512MiB\"); got \"{}\"".format(raw))
     return int(digits) * _BYTE_UNITS[unit]
 
+def _default_deploy_tool(tool_cfg):
+    # "exec" is served by `_exec_deploy_tool`, which is built in the exec configuration.
+    # Leave `_deploy_tool` unset so no unused target-configured tool is analyzed.
+    if tool_cfg == "exec":
+        return None
+    return default_deploy_tool(tool_cfg)
+
+def _deploy_tool_info(ctx):
+    if ctx.attr.deploy_tool != None:
+        return ctx.attr.deploy_tool[DeployToolInfo]
+    if ctx.attr.tool_cfg == "exec":
+        return ctx.attr._exec_deploy_tool[DeployToolInfo]
+    return ctx.attr._deploy_tool[DeployToolInfo]
+
 def _image_size_test_impl(ctx):
     max_wasted_bytes = _parse_budget("max_wasted_bytes", ctx.attr.max_wasted_bytes)
     max_duplicated_bytes = _parse_budget("max_duplicated_bytes", ctx.attr.max_duplicated_bytes)
@@ -204,7 +219,7 @@ def _image_size_test_impl(ctx):
              "with neither budget set the test would never fail")
 
     input = ctx.attr.image[ImageSizeTestInfo]
-    deploy_tool_info = ctx.attr._deploy_tool[DeployToolInfo]
+    deploy_tool_info = _deploy_tool_info(ctx)
 
     request = ctx.actions.declare_file(ctx.label.name + ".request.json")
     ctx.actions.write(request, json.encode(struct(
@@ -301,8 +316,28 @@ A byte count, optionally with a `KiB`/`MiB`/`GiB`/`TiB` suffix (e.g. `"10000000"
 value is still reported.""",
             default = "",
         ),
+        "tool_cfg": attr.string(
+            doc = """Configuration of the launcher and `img` executable.
+
+Available options:
+- **`exec`** (default): The executable matches the platform the test runs on, which can differ from the host platform, for example with remote execution from a macOS host to Linux workers.
+- **`host`**: The executable matches the host platform.
+- **`target`**: The executable matches the target platform(s) specified via `--platforms`.
+""",
+            default = "exec",
+            values = ["exec", "host", "target"],
+        ),
+        "deploy_tool": attr.label(
+            doc = "Optional label of a deploy tool target providing `DeployToolInfo` (created with `img_deploy_tool` from `@rules_img//img:deploy_tool.bzl`). When set, overrides `tool_cfg`.",
+            providers = [DeployToolInfo],
+        ),
         "_deploy_tool": attr.label(
-            default = Label("//img/deploy_tool/for_host"),
+            default = _default_deploy_tool,
+            providers = [DeployToolInfo],
+        ),
+        "_exec_deploy_tool": attr.label(
+            default = Label("//img/deploy_tool"),
+            cfg = config.exec("test"),
             providers = [DeployToolInfo],
         ),
     },

@@ -13,7 +13,7 @@ load("@rules_img//img:test.bzl", "image_size_test", "image_structure_test")
 <pre>
 load("@rules_img//img:test.bzl", "image_size_test")
 
-image_size_test(<a href="#image_size_test-name">name</a>, <a href="#image_size_test-image">image</a>, <a href="#image_size_test-max_duplicated_bytes">max_duplicated_bytes</a>, <a href="#image_size_test-max_wasted_bytes">max_wasted_bytes</a>)
+image_size_test(<a href="#image_size_test-name">name</a>, <a href="#image_size_test-deploy_tool">deploy_tool</a>, <a href="#image_size_test-image">image</a>, <a href="#image_size_test-max_duplicated_bytes">max_duplicated_bytes</a>, <a href="#image_size_test-max_wasted_bytes">max_wasted_bytes</a>, <a href="#image_size_test-tool_cfg">tool_cfg</a>)
 </pre>
 
 Budgets the wasted and duplicated bytes an image ships across its layers.
@@ -64,9 +64,11 @@ image_size_test(
 | Name  | Description | Type | Mandatory | Default |
 | :------------- | :------------- | :------------- | :------------- | :------------- |
 | <a id="image_size_test-name"></a>name |  A unique name for this target.   | <a href="https://bazel.build/concepts/labels#target-names">Name</a> | required |  |
+| <a id="image_size_test-deploy_tool"></a>deploy_tool |  Optional label of a deploy tool target providing `DeployToolInfo` (created with `img_deploy_tool` from `@rules_img//img:deploy_tool.bzl`). When set, overrides `tool_cfg`.   | <a href="https://bazel.build/concepts/labels">Label</a> | optional |  `None`  |
 | <a id="image_size_test-image"></a>image |  Image to check: a rules_img image_manifest or image_index.   | <a href="https://bazel.build/concepts/labels">Label</a> | required |  |
 | <a id="image_size_test-max_duplicated_bytes"></a>max_duplicated_bytes |  Budget for duplicated bytes (identical file content live at multiple paths, counted once per extra copy).<br><br>A byte count, optionally with a `KiB`/`MiB`/`GiB`/`TiB` suffix (e.g. `"10000000"`, `"512MiB"`). Empty (the default) leaves duplicated bytes unchecked; the measured value is still reported.   | String | optional |  `""`  |
 | <a id="image_size_test-max_wasted_bytes"></a>max_wasted_bytes |  Budget for wasted bytes (shipped file bytes shadowed by a later layer).<br><br>A byte count, optionally with a `KiB`/`MiB`/`GiB`/`TiB` suffix (e.g. `"10000000"`, `"512MiB"`). Empty (the default) leaves wasted bytes unchecked; the measured value is still reported.   | String | optional |  `""`  |
+| <a id="image_size_test-tool_cfg"></a>tool_cfg |  Configuration of the launcher and `img` executable.<br><br>Available options: - **`exec`** (default): The executable matches the platform the test runs on, which can differ from the host platform, for example with remote execution from a macOS host to Linux workers. - **`host`**: The executable matches the host platform. - **`target`**: The executable matches the target platform(s) specified via `--platforms`.   | String | optional |  `"exec"`  |
 
 
 <a id="image_structure_test"></a>
@@ -76,7 +78,7 @@ image_size_test(
 <pre>
 load("@rules_img//img:test.bzl", "image_structure_test")
 
-image_structure_test(<a href="#image_structure_test-name">name</a>, <a href="#image_structure_test-configs">configs</a>, <a href="#image_structure_test-image">image</a>)
+image_structure_test(<a href="#image_structure_test-name">name</a>, <a href="#image_structure_test-configs">configs</a>, <a href="#image_structure_test-deploy_tool">deploy_tool</a>, <a href="#image_structure_test-image">image</a>, <a href="#image_structure_test-tool_cfg">tool_cfg</a>)
 </pre>
 
 Validates a container image's structure using its config JSON and mtree.
@@ -121,6 +123,8 @@ image_structure_test(
 | :------------- | :------------- | :------------- | :------------- | :------------- |
 | <a id="image_structure_test-name"></a>name |  A unique name for this target.   | <a href="https://bazel.build/concepts/labels#target-names">Name</a> | required |  |
 | <a id="image_structure_test-configs"></a>configs |  container-structure-test config files (YAML or JSON).   | <a href="https://bazel.build/concepts/labels">List of labels</a> | required |  |
+| <a id="image_structure_test-deploy_tool"></a>deploy_tool |  Optional label of a deploy tool target providing `DeployToolInfo` (created with `img_deploy_tool` from `@rules_img//img:deploy_tool.bzl`). When set, overrides `tool_cfg`.   | <a href="https://bazel.build/concepts/labels">Label</a> | optional |  `None`  |
 | <a id="image_structure_test-image"></a>image |  Image to validate: a rules_img image_manifest/image_index, a target exposing `mtree` + `oci_image_config` output groups, or an OCI image layout directory (rules_oci).   | <a href="https://bazel.build/concepts/labels">Label</a> | required |  |
+| <a id="image_structure_test-tool_cfg"></a>tool_cfg |  Configuration of the launcher and `img` executable.<br><br>Available options: - **`exec`** (default): The executable matches the platform the test runs on, which can differ from the host platform, for example with remote execution from a macOS host to Linux workers. - **`host`**: The executable matches the host platform. - **`target`**: The executable matches the target platform(s) specified via `--platforms`.   | String | optional |  `"exec"`  |
 
 
