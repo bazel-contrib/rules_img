@@ -173,7 +173,10 @@ _image_structure_test_aspect = aspect(
 
 def _default_deploy_tool(tool_cfg):
     # "exec" is served by `_exec_deploy_tool`, which is built in the exec configuration.
-    return default_deploy_tool("host" if tool_cfg == "host" else "target")
+    # Leave `_deploy_tool` unset so no unused target-configured tool is analyzed.
+    if tool_cfg == "exec":
+        return None
+    return default_deploy_tool(tool_cfg)
 
 def _deploy_tool_info(ctx):
     if ctx.attr.deploy_tool != None:
