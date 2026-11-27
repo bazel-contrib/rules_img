@@ -140,6 +140,15 @@ func (nopHelper) Get(ctx context.Context, uri string) (map[string][]string, time
 	return nil, time.Time{}, nil
 }
 
+// IsNop reports whether h is nil or the no-op helper returned by [NopHelper].
+func IsNop(h Helper) bool {
+	if h == nil {
+		return true
+	}
+	_, ok := h.(nopHelper)
+	return ok
+}
+
 type AuthenticatingRoundTripper struct {
 	helper Helper
 }
