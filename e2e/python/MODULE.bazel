@@ -1,5 +1,9 @@
 module(name = "python_e2e")
 
+bazel_dep(name = "rules_img_sbom", version = "0.0.1")
+
+register_toolchains("@rules_img_sbom//toolchains:cyclonedx")
+
 # BEGIN BAZEL_DEP
 bazel_dep(name = "rules_img")
 local_path_override(
@@ -14,6 +18,19 @@ local_path_override(
 )
 
 register_toolchains("@rules_img_tool//toolchain:all")
+
+local_path_override(
+    module_name = "rules_img_sbom",
+    path = "../../modules/rules_img_sbom",
+)
+
+bazel_dep(name = "gazelle", version = "0.54.0")
+
+go_deps = use_extension("@gazelle//:extensions.bzl", "go_deps")
+go_deps.gazelle_override(
+    build_file_generation = "clean",
+    path = "github.com/bazel-contrib/supply-chain/lib/supplychain-go",
+)
 # END BAZEL_DEP
 
 bazel_dep(name = "rules_python", version = "1.9.2")
@@ -41,7 +58,8 @@ pull = use_repo_rule("@rules_img//img:pull.bzl", "pull")
 
 pull(
     name = "ubuntu",
-    digest = "sha256:c35e29c9450151419d9448b0fd75374fec4fff364a27f176fb458d472dfc9e54",
+    digest = "sha256:d66b366dac61b575bee2aef07e9c26e8070096fbe84a3d4d3eb0da069b5d76db",
+    referrer_buildkit_attestations = True,
     registries = [
         "mirror.gcr.io",
         "index.docker.io",
