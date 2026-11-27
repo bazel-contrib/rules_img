@@ -32,7 +32,7 @@ def referrer_request(*, anchor, tag, is_root, where):
     Returns:
         A struct, or None if the tag requests no referrers.
     """
-    if not tag.referrer_digests and not tag.referrer_artifact_types and not tag.referrer_cosign_tags and not tag.referrer_artifacts:
+    if not tag.referrer_digests and not tag.referrer_artifact_types and not tag.referrer_cosign_tags and not tag.referrer_buildkit_attestations and not tag.referrer_artifacts:
         return None
     if not is_valid_digest(anchor):
         fail("Invalid manifest digest '{}' in {}. Must be of the form 'sha256:<64-hex-chars>'.".format(anchor, where))
@@ -41,7 +41,7 @@ def referrer_request(*, anchor, tag, is_root, where):
         anchor = anchor,
         digests = list(tag.referrer_digests),
         # The img tool discovers cosign's tag-scheme artifacts for pseudo artifact types.
-        artifact_types = discovery_types(tag.referrer_artifact_types, tag.referrer_cosign_tags, where),
+        artifact_types = discovery_types(tag.referrer_artifact_types, tag.referrer_cosign_tags, where, tag.referrer_buildkit_attestations),
         artifacts = [str(label) for label in tag.referrer_artifacts],
         is_root = is_root,
         where = where,

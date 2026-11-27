@@ -325,13 +325,7 @@ func referrerJobs(requests []ReferrerRequest, imagesByDigest map[string]ImageInf
 			sourcesByReferrer[request.Digest] = sources
 			order = append(order, request.Digest)
 		}
-		for repository, registries := range anchorSources {
-			for _, registry := range registries {
-				if !slices.Contains(sources[repository], registry) {
-					sources[repository] = append(sources[repository], registry)
-				}
-			}
-		}
+		addSources(sources, anchorSources)
 	}
 	jobs := make([]ManifestDownloadJob, 0, len(order))
 	for _, digest := range order {
@@ -344,15 +338,16 @@ func referrerJobs(requests []ReferrerRequest, imagesByDigest map[string]ImageInf
 	return jobs
 }
 
-// attributeCosignArtifacts records the subject of the cosign tag-scheme
-// artifacts that were discovered: the manifest whose cosign tag they were found
-// under, which their signed payloads were checked to name (their manifests have
-// no subject field to record).
+// attributeCosignArtifacts records the subject of the artifacts discovered by
+// a pseudo artifact type, whose manifests may have no subject field to record:
+// cosign's tag-scheme artifacts, about the manifest whose cosign tag they were
+// found under (which their signed payloads were checked to name), and BuildKit
+// attestation manifests, about the manifest the image index lists them for.
 func attributeCosignArtifacts(requests []DiscoveryRequest, discovered map[string]map[string][]string, ociRefGraph map[string]RefGraphEntry) {
 	for _, discovery := range requests {
 		for _, manifest := range treeOf(discovery.Anchor, ociRefGraph) {
 			for _, artifactType := range discovery.ArtifactTypes {
-				if !imgreferrers.IsCosignTagType(artifactType) {
+				if !imgreferrers.IsCosignTagType(artifactType) && artifactType != imgreferrers.BuildKitAttestationType {
 					continue
 				}
 				for _, referrer := range discovered[manifest][artifactType] {
@@ -371,30 +366,43 @@ func attributeCosignArtifacts(requests []DiscoveryRequest, discovered map[string
 // their anchor's tree that their signed payloads name. Their layers are read
 // from the sources of the images containing the anchor.
 func attributePinnedCosignArtifacts(requests []ReferrerRequest, manifests map[string][]byte, imagesByDigest map[string]ImageInfo, ociRefGraph map[string]RefGraphEntry) error {
+	indexes := newIndexCache()
+	options := pull.ReferrersOptions(registryopts.DirectTransport())
 	for _, request := range requests {
 		entry, ok := ociRefGraph[request.Digest]
 		raw := manifests[request.Digest]
 		if !ok || entry.Subject != "" || entry.Kind != "manifest" || raw == nil {
 			continue
 		}
-		sources := mergedSources(request.Anchor, imagesByDigest, ociRefGraph)
-		if sources == nil {
+		sources := orderedSources(mergedSources(request.Anchor, imagesByDigest, ociRefGraph))
+		if len(sources) == 0 {
 			continue
+		}
+		// A BuildKit attestation manifest (oci-artifact=false) of the anchor index:
+		// the index names its subject.
+		if anchor, ok := ociRefGraph[request.Anchor]; ok && anchor.Kind == "index" {
+			subject, found, err := buildKitAttestationSubject(indexes, request.Anchor, request.Digest, sources)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: %v (not attributing %s as a BuildKit attestation)\n", err, request.Digest)
+			}
+			if found {
+				entry.Subject = subject
+				ociRefGraph[request.Digest] = entry
+				continue
+			}
 		}
 		read := func(layer registryv1.Descriptor) ([]byte, error) {
 			var lastErr error
-			for repository, registries := range sources {
-				for _, registry := range registries {
-					repo, err := name.NewRepository(fmt.Sprintf("%s/%s", registry, repository), registryopts.NameOptions()...)
-					if err != nil {
-						return nil, err
-					}
-					data, err := imgreferrers.RemoteLayers(context.Background(), repo, pull.ReferrersOptions(registryopts.DirectTransport()))(layer)
-					if err == nil {
-						return data, nil
-					}
-					lastErr = err
+			for _, src := range sources {
+				repo, err := src.repository()
+				if err != nil {
+					return nil, err
 				}
+				data, err := imgreferrers.RemoteLayers(context.Background(), repo, options)(layer)
+				if err == nil {
+					return data, nil
+				}
+				lastErr = err
 			}
 			return nil, lastErr
 		}
@@ -408,6 +416,113 @@ func attributePinnedCosignArtifacts(requests []ReferrerRequest, manifests map[st
 	return nil
 }
 
+// buildKitAttestationSubject returns the manifest that the image index lists
+// the BuildKit attestation manifest digest for.
+func buildKitAttestationSubject(indexes *indexCache, index, digest string, sources []source) (string, bool, error) {
+	raw, err := indexes.get(index, sources)
+	if err != nil {
+		return "", false, err
+	}
+	return imgreferrers.BuildKitAttestationSubject(raw, digest)
+}
+
+// source is a registry serving a repository.
+type source struct {
+	repo     string
+	registry string
+}
+
+func (s source) String() string { return s.registry + "/" + s.repo }
+
+func (s source) repository() (name.Repository, error) {
+	repo, err := name.NewRepository(s.String(), registryopts.NameOptions()...)
+	if err != nil {
+		return name.Repository{}, fmt.Errorf("creating repository reference: %w", err)
+	}
+	return repo, nil
+}
+
+// orderedSources lists the sources in the order to try them: repositories
+// sorted (a map has no order of its own), each one's registries in the given
+// order. That keeps what a fetch finds independent of map iteration order.
+func orderedSources(sources map[string][]string) []source {
+	repositories := make([]string, 0, len(sources))
+	for repository := range sources {
+		repositories = append(repositories, repository)
+	}
+	slices.Sort(repositories)
+	var ordered []source
+	for _, repository := range repositories {
+		for _, registry := range sources[repository] {
+			ordered = append(ordered, source{repo: repository, registry: registry})
+		}
+	}
+	return ordered
+}
+
+// indexCache fetches every image index once, however many manifests of its
+// tree need it.
+type indexCache struct {
+	// fetch gets the manifest digest from src.
+	fetch func(src source, digest string) ([]byte, error)
+
+	mu      sync.Mutex
+	entries map[string]*cachedIndex
+}
+
+type cachedIndex struct {
+	once sync.Once
+	raw  []byte
+	err  error
+}
+
+func newIndexCache() *indexCache {
+	options := pull.ReferrersOptions(registryopts.DirectTransport())
+	return &indexCache{
+		fetch: func(src source, digest string) ([]byte, error) {
+			repo, err := src.repository()
+			if err != nil {
+				return nil, err
+			}
+			descriptor, err := remote.Get(repo.Digest(digest), options.Remote...)
+			if err != nil {
+				return nil, err
+			}
+			return descriptor.Manifest, nil
+		},
+		entries: map[string]*cachedIndex{},
+	}
+}
+
+// get returns the image index digest, from the first of sources that has it.
+// go-containerregistry checks its content against the digest, so it doesn't
+// matter which source that is.
+func (c *indexCache) get(digest string, sources []source) ([]byte, error) {
+	c.mu.Lock()
+	entry, ok := c.entries[digest]
+	if !ok {
+		entry = &cachedIndex{}
+		c.entries[digest] = entry
+	}
+	c.mu.Unlock()
+	entry.once.Do(func() {
+		var lastErr error
+		for _, src := range sources {
+			raw, err := c.fetch(src, digest)
+			if err == nil {
+				entry.raw = raw
+				return
+			}
+			lastErr = err
+		}
+		if lastErr == nil {
+			lastErr = fmt.Errorf("no sources available")
+		}
+		entry.err = fmt.Errorf("fetching the image index %s: %w", digest, lastErr)
+	})
+	return entry.raw, entry.err
+}
+
 // treeOf returns the anchor and, if it is an index, its children.
 func treeOf(anchor string, ociRefGraph map[string]RefGraphEntry) []string {
 	tree := []string{anchor}
@@ -417,31 +532,47 @@ func treeOf(anchor string, ociRefGraph map[string]RefGraphEntry) []string {
 	return tree
 }
 
-// mergedSources returns the merged sources of every image whose tree contains digest.
+// mergedSources returns the merged sources of every image whose tree contains
+// digest, or nil if none does. The images are visited in digest order, so the
+// registries of a repository are in the same order every time.
 func mergedSources(digest string, imagesByDigest map[string]ImageInfo, ociRefGraph map[string]RefGraphEntry) map[string][]string {
+	roots := make([]string, 0, len(imagesByDigest))
+	for rootDigest := range imagesByDigest {
+		roots = append(roots, rootDigest)
+	}
+	slices.Sort(roots)
 	var sources map[string][]string
-	for rootDigest, img := range imagesByDigest {
+	for _, rootDigest := range roots {
 		if !treeContains(rootDigest, digest, ociRefGraph) {
 			continue
 		}
 		if sources == nil {
 			sources = map[string][]string{}
 		}
-		for repository, registries := range img.Sources {
-			for _, registry := range registries {
-				if !slices.Contains(sources[repository], registry) {
-					sources[repository] = append(sources[repository], registry)
-				}
+		addSources(sources, imagesByDigest[rootDigest].Sources)
+	}
+	return sources
+}
+
+// addSources adds the registries of from to those of into, keeping their order
+// and leaving out the ones into has already.
+func addSources(into, from map[string][]string) {
+	for repository, registries := range from {
+		for _, registry := range registries {
+			if !slices.Contains(into[repository], registry) {
+				into[repository] = append(into[repository], registry)
 			}
 		}
 	}
-	return sources
 }
 
 type discoveryJob struct {
 	manifest      string
 	artifactTypes []string
-	sources       map[string][]string
+	sources       []source
+	// index is the image index the manifest belongs to (the anchor, if it is
+	// an index), whose entries name its BuildKit attestations.
+	index string
 }
 
 // discoverReferrers resolves the discovery requests to the referrers of each
@@ -453,6 +584,7 @@ func discoverReferrers(requests []DiscoveryRequest, imagesByDigest map[string]Im
 	missing := map[string][]string{}
 	sources := map[string]map[string][]string{}
 	var order []string
+	indexes := map[string]string{}
 	for _, request := range requests {
 		anchorSources := mergedSources(request.Anchor, imagesByDigest, ociRefGraph)
 		if anchorSources == nil {
@@ -464,6 +596,9 @@ func discoverReferrers(requests []DiscoveryRequest, imagesByDigest map[string]Im
 				order = append(order, manifest)
 			}
 			sources[manifest] = anchorSources
+			if entry, ok := ociRefGraph[request.Anchor]; ok && entry.Kind == "index" && manifest != request.Anchor {
+				indexes[manifest] = request.Anchor
+			}
 			cached := cachedDiscovery(facts, manifest)
 			for _, artifactType := range request.ArtifactTypes {
 				if _, ok := discovered[manifest][artifactType]; ok {
@@ -481,11 +616,12 @@ func discoverReferrers(requests []DiscoveryRequest, imagesByDigest map[string]Im
 	var jobs []discoveryJob
 	for _, manifest := range order {
 		if len(missing[manifest]) > 0 {
-			jobs = append(jobs, discoveryJob{manifest: manifest, artifactTypes: missing[manifest], sources: sources[manifest]})
+			jobs = append(jobs, discoveryJob{manifest: manifest, artifactTypes: missing[manifest], sources: orderedSources(sources[manifest]), index: indexes[manifest]})
 		}
 	}
 	results := make([]map[string][]string, len(jobs))
 	errs := make([]error, len(jobs))
+	indexCache := newIndexCache()
 	var wg sync.WaitGroup
 	semaphore := make(chan struct{}, 10)
 	for i, job := range jobs {
@@ -494,7 +630,7 @@ func discoverReferrers(requests []DiscoveryRequest, imagesByDigest map[string]Im
 			defer wg.Done()
 			semaphore <- struct{}{}
 			defer func() { <-semaphore }()
-			results[i], errs[i] = discoverFromSources(job)
+			results[i], errs[i] = discoverFromSources(job, indexCache)
 		}()
 	}
 	wg.Wait()
@@ -526,21 +662,27 @@ func cachedDiscovery(facts Facts, manifest string) map[string][]string {
 }
 
 // discoverFromSources queries the sources in turn until one answers.
-func discoverFromSources(job discoveryJob) (map[string][]string, error) {
-	var lastErr error
-	for repository, registries := range job.sources {
-		for _, registry := range registries {
-			repo, err := name.NewRepository(fmt.Sprintf("%s/%s", registry, repository), registryopts.NameOptions()...)
-			if err != nil {
-				return nil, fmt.Errorf("creating repository reference: %w", err)
-			}
-			found, err := imgreferrers.Discover(context.Background(), repo, job.manifest, job.artifactTypes, pull.ReferrersOptions(registryopts.DirectTransport()))
-			if err == nil {
-				return found, nil
-			}
-			lastErr = err
-			fmt.Fprintf(os.Stderr, "Warning: Failed to discover referrers from %s/%s: %v\n", registry, repository, err)
+func discoverFromSources(job discoveryJob, indexes *indexCache) (map[string][]string, error) {
+	options := pull.ReferrersOptions(registryopts.DirectTransport())
+	if job.index != "" && slices.Contains(job.artifactTypes, imgreferrers.BuildKitAttestationType) {
+		index, err := indexes.get(job.index, job.sources)
+		if err != nil {
+			return nil, err
 		}
+		options.Index = index
+	}
+	var lastErr error
+	for _, src := range job.sources {
+		repo, err := src.repository()
+		if err != nil {
+			return nil, err
+		}
+		found, err := imgreferrers.Discover(context.Background(), repo, job.manifest, job.artifactTypes, options)
+		if err == nil {
+			return found, nil
+		}
+		lastErr = err
+		fmt.Fprintf(os.Stderr, "Warning: Failed to discover referrers from %s: %v\n", src, err)
 	}
 	if lastErr != nil {
 		return nil, fmt.Errorf("failed to discover referrers from all sources: %w", lastErr)

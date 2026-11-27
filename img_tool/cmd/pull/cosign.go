@@ -6,8 +6,8 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"slices"
 
-	"github.com/google/go-containerregistry/pkg/name"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/gateway"
@@ -25,6 +25,10 @@ type CosignSubjectsInput struct {
 	// Sources (repository@registry) to fetch the layers that Blobs doesn't
 	// have from.
 	Sources []string `json:"sources,omitempty"`
+	// Index is the digest of the image index the tree is rooted at, if it is
+	// one: an artifact it lists as a BuildKit attestation manifest is about the
+	// manifest the index names. It is fetched from Sources.
+	Index string `json:"index,omitempty"`
 }
 
 // CosignSubjectsArtifact is a referrer manifest to attribute.
@@ -38,10 +42,11 @@ type CosignSubjectsArtifact struct {
 }
 
 // CosignSubjectsProcess implements `img cosign-subjects`, which attributes
-// pinned referrers that have no subject field: cosign's tag-scheme signatures
-// and attestations, which their signed payloads tie to the manifest they're
-// about. The repository rules use it, since Starlark can't decode a DSSE
-// payload.
+// pinned referrers that have no subject field: BuildKit attestation manifests
+// (oci-artifact=false), which the image index ties to the manifest they're
+// about, and cosign's tag-scheme signatures and attestations, which their
+// signed payloads tie to it. The repository rules use it, since Starlark can't
+// decode a DSSE payload.
 func CosignSubjectsProcess(ctx context.Context, args []string) {
 	var inputPath, outputPath string
 	flagSet := flag.NewFlagSet("cosign-subjects", flag.ExitOnError)
@@ -50,7 +55,7 @@ func CosignSubjectsProcess(ctx context.Context, args []string) {
 		fmt.Fprintf(flagSet.Output(), "Usage: img cosign-subjects --input=<json> --output=<json>\n")
 		flagSet.PrintDefaults()
 	}
-	flagSet.StringVar(&inputPath, "input", "", `Path to a JSON object {"tree": [digests], "artifacts": [{"digest", "manifest": path, "blobs": {digest: path}}], "sources": ["repository@registry"]} (required)`)
+	flagSet.StringVar(&inputPath, "input", "", `Path to a JSON object {"tree": [digests], "artifacts": [{"digest", "manifest": path, "blobs": {digest: path}}], "sources": ["repository@registry"], "index": digest} (required)`)
 	flagSet.StringVar(&outputPath, "output", "", "Path to write the result to, as JSON mapping each artifact to its subject and cosign tag suffix (required)")
 	if err := flagSet.Parse(args); err != nil {
 		flagSet.Usage()
@@ -86,8 +91,24 @@ func cosignSubjects(ctx context.Context, inputPath, outputPath string) error {
 	if err != nil {
 		return err
 	}
+	var index []byte
+	if input.Index != "" {
+		if index, err = fetchIndexFromSources(ctx, input.Index, input.Sources); err != nil {
+			return fmt.Errorf("fetching the image index %s: %w", input.Index, err)
+		}
+	}
 	result := map[string]CosignSubject{}
 	for _, artifact := range input.Artifacts {
+		// A BuildKit attestation manifest of the index: the index names its subject.
+		if subject, ok, err := imgreferrers.BuildKitAttestationSubject(index, artifact.Digest); err != nil {
+			return err
+		} else if ok {
+			if !slices.Contains(input.Tree, subject) {
+				return fmt.Errorf("BuildKit attestation manifest %s is about %s, which is not part of the image", artifact.Digest, subject)
+			}
+			result[artifact.Digest] = CosignSubject{Subject: subject}
+			continue
+		}
 		raw, err := os.ReadFile(artifact.Manifest)
 		if err != nil {
 			return err
@@ -127,13 +148,9 @@ func remoteBlobReader(ctx context.Context, sources []string) (func(v1.Descriptor
 	options := ReferrersOptions(transport)
 	var readers []func(v1.Descriptor) ([]byte, error)
 	for _, source := range sources {
-		repository, registry, ok := cutLast(source, "@")
-		if !ok {
-			return nil, fmt.Errorf("invalid source %q, want repository@registry", source)
-		}
-		repo, err := name.NewRepository(fmt.Sprintf("%s/%s", registry, repository), registryopts.NameOptions()...)
+		repo, err := sourceRepository(source)
 		if err != nil {
-			return nil, fmt.Errorf("invalid source %q: %w", source, err)
+			return nil, err
 		}
 		readers = append(readers, imgreferrers.RemoteLayers(ctx, repo, options))
 	}
@@ -149,3 +166,14 @@ func remoteBlobReader(ctx context.Context, sources []string) (func(v1.Descriptor
 		return nil, lastErr
 	}, nil
 }
+
+// fetchIndexFromSources returns the image index with the given digest from the first of sources
+// that has it.
+func fetchIndexFromSources(ctx context.Context, digest string, sources []string) ([]byte, error) {
+	transport, err := registryopts.Transport(gateway.ModePull)
+	if err != nil {
+		return nil, fmt.Errorf("configuring registry gateway: %w", err)
+	}
+	return fetchManifestFromSources(ctx, digest, sources, ReferrersOptions(transport))
+}
+

@@ -91,7 +91,8 @@ pull(
 ```
 
 `"*"` stands for any artifact type: `referrer_artifact_types = ["*"]` pulls every referrer of the
-image, whatever it is, and its [cosign tag-scheme artifacts](#cosigns-tag-scheme) too.
+image, whatever it is, its [cosign tag-scheme artifacts](#cosigns-tag-scheme) too, and the
+[BuildKit attestations](#buildkit-attestations) of its index.
 
 Listing follows the [distribution spec](https://github.com/opencontainers/distribution-spec/blob/main/spec.md#listing-referrers):
 
@@ -187,6 +188,67 @@ Find the digests with `crane digest <repository>:sha256-<hex>.att`, or `cosign t
 attestation <repository>@sha256:<hex>` for the tag. Cosign appends to these manifests when an
 image is signed or attested again, which gives them a new digest: a pinned one stays valid as long
 as the registry keeps the manifest, but new signatures and attestations need new pins.
+
+## BuildKit attestations
+
+`docker buildx build --sbom=true --provenance=true` (and `docker/build-push-action`, which attaches
+provenance by default) doesn't attach the attestations it makes as referrers either. BuildKit
+stores them [in the image index](https://github.com/moby/buildkit/blob/master/docs/attestations/attestation-storage.md):
+after the runnable manifests comes an attestation manifest for each of them, with the platform
+`unknown/unknown` (so that nothing runs it) and the annotations
+
+```json
+"vnd.docker.reference.type": "attestation-manifest",
+"vnd.docker.reference.digest": "<digest of the platform manifest it is about>"
+```
+
+Each layer of an attestation manifest is an in-toto statement (`application/vnd.in-toto+json`):
+typically an SPDX SBOM (predicate type `https://spdx.dev/Document`) and SLSA provenance, each
+named by the layer's `in-toto.io/predicate-type` annotation. Since BuildKit 0.31 (with OCI media
+types, the default), an attestation manifest is also an OCI artifact: artifact type
+`application/vnd.docker.attestation.manifest.v1+json`, with a `subject`. With `oci-artifact=false`
+it has neither, and only the index ties it to its manifest.
+
+`referrer_buildkit_attestations = True` (on `pull`, `images.pull` and `images.referrers`) pulls
+them as referrers of the manifests they are about, for every child manifest of the pulled index
+(for `pull`, every child that the `platforms` filter keeps), with or without a `subject`:
+
+```starlark
+pull(
+    name = "app_base",
+    digest = "sha256:...",  # an index built with docker buildx build --sbom=true
+    platforms = ["linux/amd64", "linux/arm64"],
+    registry = "ghcr.io",
+    repository = "example/app-base",
+    referrer_buildkit_attestations = True,
+)
+```
+
+They are exposed through `PulledReferrersInfo` like other referrers: an attestation manifest's
+`artifact_type` is `application/vnd.docker.attestation.manifest.v1+json` (or its config's media
+type, without OCI artifacts), and the predicate type of each statement is in the
+`in-toto.io/predicate-type` entry of its layer's annotations (`layer_annotations`). With the
+[SBOM toolchain](/modules/rules_img_sbom/README.md), an image built on such a base inherits the
+packages of its BuildKit SBOM (see [automatic referrers](automatic-referrers.md)).
+
+The attestation manifests are listed by the index, which its digest pins, so this asks the
+registry for nothing more than their content: a `pull` that sets it stays reproducible, and the
+`images` extension records them in the lockfile facts (as the artifact type `buildkit:attestation`)
+like other discovered referrers. A pinned attestation manifest (in `referrer_digests`) without a
+`subject` is attributed by the index too.
+
+Registries with the referrers API list BuildKit's OCI artifact attestation manifests as referrers
+of their manifests too, and some images keep their attestations only there (the attestations of
+[Docker Hardened Images](https://docs.docker.com/dhi/), for example, are referrers of artifact type
+`application/vnd.in-toto+json`). Discover those by artifact type, or with `"*"` (which includes the
+BuildKit attestations of the index as well):
+
+```starlark
+    referrer_artifact_types = [
+        "application/vnd.docker.attestation.manifest.v1+json",
+        "application/vnd.in-toto+json",
+    ],
+```
 
 ## Artifacts from other sources
 

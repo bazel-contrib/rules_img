@@ -16,7 +16,7 @@ load(
     _learn_digest_from_tag = "learn_digest_from_tag",
     _resolve_docker_config_path = "resolve_docker_config_path",
 )
-load(":referrers.bzl", "build_referrer_artifacts", "check_digests", "cosign_attribution", "cosign_subjects_with_tool", "discover_referrers_with_tool", "discovery_types", "flatten_discovered", "has_subject", "referrer_blob_digests", "referrer_subject", "subject_descriptors")
+load(":referrers.bzl", "build_referrer_artifacts", "buildkit_attestation_subjects", "check_digests", "cosign_attribution", "cosign_subjects_with_tool", "discover_referrers_with_tool", "discovery_types", "flatten_discovered", "has_subject", "queries_registry", "referrer_blob_digests", "referrer_subject", "subject_descriptors")
 load(":registry.bzl", "get_registries", "image_purl")
 
 def _pull_impl(rctx):
@@ -27,7 +27,7 @@ def _pull_impl(rctx):
     check_digests(rctx.attr.referrer_digests, "referrer_digests of {}".format(rctx.attr.repository))
 
     # The img tool discovers cosign's tag-scheme artifacts for pseudo artifact types.
-    referrer_discovery_types = discovery_types(rctx.attr.referrer_artifact_types, rctx.attr.referrer_cosign_tags, rctx.attr.repository)
+    referrer_discovery_types = discovery_types(rctx.attr.referrer_artifact_types, rctx.attr.referrer_cosign_tags, rctx.attr.repository, rctx.attr.referrer_buildkit_attestations)
     _resolve_docker_config_path(rctx, rctx.attr.docker_config_path, rctx.attr.config)
 
     have_valid_digest = True
@@ -163,6 +163,7 @@ Available platforms: {available}""".format(
         else:
             discovered = discover_referrers_with_tool(
                 rctx,
+                index = digest if is_index else None,
                 subjects = [digest] + ([child["digest"] for child in manifests] if is_index else []),
                 artifact_types = referrer_discovery_types,
                 sources = sources,
@@ -177,9 +178,15 @@ Available platforms: {available}""".format(
     referrer_blobs = {}
     unattributed = []
     for referrer_digest in referrer_digests:
-        if referrer_digest in data:
+        if referrer_digest in referrers or referrer_digest == digest:
             continue
-        referrer_info = _download_manifest_rctx(rctx, downloader = rctx.attr.downloader, reference = referrer_digest)
+
+        # A BuildKit attestation manifest is also a child of the index: if it was downloaded
+        # as one (no platform filter), it is still a referrer, with its layers in full.
+        if referrer_digest in data:
+            referrer_info = struct(data = data[referrer_digest])
+        else:
+            referrer_info = _download_manifest_rctx(rctx, downloader = rctx.attr.downloader, reference = referrer_digest)
         referrer_manifest = json.decode(referrer_info.data)
         if has_subject(referrer_manifest) or referrer_digest in attributed:
             referrer_subject(referrer_digest, referrer_manifest, subjects, image_name, attributed)
@@ -194,8 +201,13 @@ Available platforms: {available}""".format(
         referrer_blobs[blob.digest] = "//:{}".format(blob.path)
         blob_paths[blob.digest] = str(rctx.path(blob.path))
 
-    # Pinned referrers without a subject: cosign's tag-scheme artifacts, which
-    # their (downloaded) signed payloads attribute.
+    # Pinned referrers without a subject: BuildKit attestation manifests of the index
+    # (oci-artifact=false), which the index attributes, and cosign's tag-scheme
+    # artifacts, which their (downloaded) signed payloads attribute.
+    in_index = buildkit_attestation_subjects(root_blob)
+    for referrer_digest in [d for d in unattributed if d in in_index]:
+        attributed[referrer_digest] = in_index[referrer_digest]
+    unattributed = [d for d in unattributed if d not in in_index]
     attributed.update(cosign_subjects_with_tool(
         rctx,
         tree = subjects.keys(),
@@ -403,7 +415,7 @@ repo(
     if len(rctx.attr.digest) > 0 and hasattr(rctx, "repo_metadata"):
         # allows participating in repo contents cache, unless the referrers depend on
         # what the registry lists right now
-        return rctx.repo_metadata(reproducible = len(referrer_discovery_types) == 0)
+        return rctx.repo_metadata(reproducible = not queries_registry(referrer_discovery_types))
 
     # only to make buildifier happy
     return None
@@ -522,8 +534,9 @@ schema (`sha256-<hex>`) on registries that don't support it.
 This is meant for artifacts whose digests can't be known in advance, such as every signature of an
 image, which a policy can then verify downstream. For example:
 `["application/vnd.cncf.notary.signature", "application/vnd.dev.sigstore.bundle.v0.3+json"]`.
-`"*"` stands for any artifact type: `["*"]` pulls every referrer, and cosign's tag-scheme
-signatures and attestations too (as `referrer_cosign_tags = ["sig", "att"]` does).
+`"*"` stands for any artifact type: `["*"]` pulls every referrer, cosign's tag-scheme signatures
+and attestations too (as `referrer_cosign_tags = ["sig", "att"]` does), and the BuildKit
+attestations of the index (as `referrer_buildkit_attestations = True` does).
 
 Listing follows the distribution spec: only a `404` from the referrers API falls back to the tag
 schema, paginated responses are followed, and a referrers tag that is not an image index means
@@ -534,6 +547,25 @@ because Bazel's downloader exposes neither response status nor headers.
 
 Because the result depends on what the registry lists at fetch time, the repository is not
 reproducible when this is set (it does not participate in the repository contents cache).""",
+        ),
+        "referrer_buildkit_attestations": attr.bool(
+            doc = """Pull the BuildKit attestations (SBOMs, SLSA provenance) of the pulled index's manifests as their referrers.
+
+`docker buildx build --sbom=true --provenance=true` doesn't attach attestations as referrers: it
+stores them in the image index, as an attestation manifest per platform manifest, with the
+platform `unknown/unknown` and the annotations `vnd.docker.reference.type = attestation-manifest`
+and `vnd.docker.reference.digest` naming the manifest it is about. Each of its layers is an in-toto
+statement whose predicate type the layer's `in-toto.io/predicate-type` annotation names. With this
+set, the attestation manifests that the index lists for the manifests that are downloaded (see
+`platforms`) are pulled like referrers of those manifests (whether or not the attestation
+manifest has a `subject`; BuildKit's `oci-artifact=false` format has none), and the SBOMs among
+them are found by the SBOM toolchain of an image built on this one.
+
+They are listed by the index, which the digest pins, so this doesn't make the repository
+irreproducible. Attestation manifests that a registry lists as referrers (where the BuildKit
+attestations were copied to referrers, or as Docker Hardened Images publish them) are found with
+`referrer_artifact_types = ["application/vnd.docker.attestation.manifest.v1+json",
+"application/vnd.in-toto+json"]` instead.""",
         ),
         "referrer_cosign_tags": attr.string_list(
             doc = """Cosign tag-scheme artifacts to discover and pull: `"sig"` for signatures, `"att"` for attestations.

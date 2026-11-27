@@ -55,6 +55,10 @@ type Options struct {
 	// again after a network error or a response that says to try again later.
 	// Unset, it tries three times.
 	Backoff remote.Backoff
+	// Index is the image index (raw) whose entries BuildKitAttestationType
+	// searches: the index the subjects of Discover belong to. Unset, they
+	// have no BuildKit attestations.
+	Index []byte
 }
 
 // Source tells where a listing came from.
@@ -316,12 +320,22 @@ const AnyArtifactType = "*"
 // artifacts instead (see discoverCosign), which aren't referrers in the OCI
 // sense: they're found by a tag named after subject, and only their signed
 // payloads tie them to it. AnyArtifactType doesn't select them: request them
-// next to it.
+// next to it. So does BuildKitAttestationType, which finds the BuildKit
+// attestation manifests that options.Index lists for subject (see
+// BuildKitAttestations): no request is made for those.
 func Discover(ctx context.Context, repo name.Repository, subject string, artifactTypes []string, options Options) (map[string][]string, error) {
 	found := make(map[string][]string, len(artifactTypes))
 	var ociTypes []string
 	for _, artifactType := range artifactTypes {
 		found[artifactType] = []string{}
+		if artifactType == BuildKitAttestationType {
+			attestations, err := BuildKitAttestations(options.Index, subject)
+			if err != nil {
+				return nil, err
+			}
+			found[artifactType] = attestations
+			continue
+		}
 		suffix, ok := cosignTagSuffix(artifactType)
 		if !ok {
 			ociTypes = append(ociTypes, artifactType)

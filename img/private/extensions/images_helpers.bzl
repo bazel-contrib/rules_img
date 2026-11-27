@@ -759,6 +759,7 @@ def sync_oci_ref_graph(ctx, images_by_digest, facts, downloader, credential_help
             for manifest, found in discover_referrers_with_tool(
                 ctx,
                 subjects = tree,
+                index = request.anchor if oci_ref_graph.get(request.anchor, {}).get("kind") == "index" else None,
                 artifact_types = missing.keys(),
                 sources = sources,
                 credential_helper = credential_helper,
@@ -792,15 +793,17 @@ def sync_oci_ref_graph(ctx, images_by_digest, facts, downloader, credential_help
         oci_ref_graph[digest] = ref_graph_entry
         referrer_manifests[digest] = manifest_data
 
-    # Cosign's tag-scheme artifacts have no subject field. They apply to the manifest
-    # whose tag they were found under, which the img tool checked their signed
-    # payloads to name when discovering them.
+    # Cosign's tag-scheme artifacts and BuildKit attestation manifests (oci-artifact=false)
+    # have no subject field. They apply to the manifest they were found for: whose tag
+    # they were found under (which the img tool checked their signed payloads to name),
+    # or which the index lists them for.
     for digest, subject in cosign_attribution(discovered).items():
         entry = oci_ref_graph.get(digest)
         if entry != None and not entry.get("subject"):
             oci_ref_graph[digest] = dict(entry, subject = subject)
 
-    # Pinned referrers without a subject field: cosign's tag-scheme artifacts,
+    # Pinned referrers without a subject field: BuildKit attestation manifests, about
+    # the manifest their anchor index lists them for, and cosign's tag-scheme artifacts,
     # about the manifest of their anchor's tree that their signed payloads name.
     for request in referrer_requests:
         for digest in request.digests:
@@ -812,6 +815,7 @@ def sync_oci_ref_graph(ctx, images_by_digest, facts, downloader, credential_help
             attributed = cosign_subjects_with_tool(
                 ctx,
                 tree = tree_of(request.anchor, oci_ref_graph),
+                index = request.anchor if oci_ref_graph.get(request.anchor, {}).get("kind") == "index" else None,
                 artifacts = [dict(digest = digest, manifest = str(ctx.path(manifest_path)), blobs = {})],
                 sources = referrer_sources[digest],
                 credential_helper = credential_helper,

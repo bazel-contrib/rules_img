@@ -55,6 +55,10 @@ def subject_descriptors(root_digest, root_data):
 
 COSIGN_TAGS = ["sig", "att"]
 
+# The pseudo artifact type with which the img tool discovers the BuildKit attestation manifests
+# that the image index lists for a manifest (see buildkit_attestation_subjects).
+BUILDKIT_ATTESTATION_TYPE = "buildkit:attestation"
+
 def cosign_tag_types(tags, what):
     """Return the pseudo artifact types with which the img tool discovers cosign's tag-scheme artifacts.
 
@@ -70,31 +74,77 @@ def cosign_tag_types(tags, what):
             fail("Invalid cosign tag '{}' in {}. Must be one of {}.".format(tag, what, COSIGN_TAGS))
     return ["cosign:" + tag for tag in tags]
 
-def discovery_types(artifact_types, cosign_tags, where):
+def discovery_types(artifact_types, cosign_tags, where, buildkit_attestations = False):
     """Return the (pseudo) artifact types with which the img tool discovers the referrers a rule or tag asks for.
 
-    `"*"` among the artifact types stands for every referrer: those of any artifact type, and
-    cosign's tag-scheme artifacts.
+    `"*"` among the artifact types stands for every referrer: those of any artifact type, cosign's
+    tag-scheme artifacts, and the BuildKit attestation manifests of the image index.
 
     Args:
         artifact_types: The `referrer_artifact_types` attribute.
         cosign_tags: The `referrer_cosign_tags` attribute.
         where: Description of the rule or tag, for error messages.
+        buildkit_attestations: The `referrer_buildkit_attestations` attribute.
 
     Returns:
-        List of artifact types and cosign pseudo artifact types, without duplicates.
+        List of artifact types and pseudo artifact types, without duplicates.
     """
     types = list(artifact_types)
     tags = list(cosign_tags)
     if "*" in artifact_types:
         tags.extend([tag for tag in COSIGN_TAGS if tag not in tags])
+        buildkit_attestations = True
     for artifact_type in cosign_tag_types(tags, "referrer_cosign_tags of " + where):
         if artifact_type not in types:
             types.append(artifact_type)
+    if buildkit_attestations and BUILDKIT_ATTESTATION_TYPE not in types:
+        types.append(BUILDKIT_ATTESTATION_TYPE)
     return types
 
+def queries_registry(artifact_types):
+    """Whether discovering referrers of these (pseudo) artifact types asks the registry what it has.
+
+    Everything but the BuildKit attestations does: those are listed by the image index, which the
+    pull pins by digest.
+
+    Args:
+        artifact_types: As returned by discovery_types.
+
+    Returns:
+        True if the result of the discovery depends on the registry.
+    """
+    return len([t for t in artifact_types if t != BUILDKIT_ATTESTATION_TYPE]) > 0
+
+def buildkit_attestation_subjects(index):
+    """Return the BuildKit attestation manifests an image index lists, with the manifest each is about.
+
+    BuildKit stores the attestations of an image (SBOMs, provenance) in its index: an attestation
+    manifest per platform manifest, with the platform unknown/unknown, the annotation
+    `vnd.docker.reference.type = attestation-manifest`, and `vnd.docker.reference.digest` naming
+    the manifest it is about. With `oci-artifact=false`, that is the only thing that ties it to the
+    manifest: it has no subject field.
+
+    Args:
+        index: The decoded image index (or manifest, which lists none).
+
+    Returns:
+        Dict of attestation manifest digest to the digest of the manifest it is about.
+    """
+    subjects = {}
+    for descriptor in index.get("manifests", []):
+        annotations = descriptor.get("annotations", {})
+        if annotations.get("vnd.docker.reference.type") != "attestation-manifest":
+            continue
+        subject = annotations.get("vnd.docker.reference.digest")
+        if subject:
+            subjects[descriptor["digest"]] = subject
+    return subjects
+
 def cosign_attribution(discovered):
-    """Attribute the cosign tag-scheme artifacts of a discovery result to the manifests they were found for.
+    """Attribute the artifacts a discovery found by pseudo artifact type to the manifests they were found for.
+
+    These may have no subject field: cosign's tag-scheme artifacts, and BuildKit attestation
+    manifests (oci-artifact=false).
 
     Args:
         discovered: Dict mapping manifest digests to (pseudo) artifact types to referrer digests.
@@ -105,7 +155,7 @@ def cosign_attribution(discovered):
     subjects = {}
     for subject, found in discovered.items():
         for artifact_type, digests in found.items():
-            if artifact_type.startswith("cosign:"):
+            if artifact_type.startswith("cosign:") or artifact_type == BUILDKIT_ATTESTATION_TYPE:
                 for digest in digests:
                     subjects[digest] = subject
     return subjects
@@ -122,12 +172,12 @@ def has_subject(manifest):
     subject = manifest.get("subject")
     return type(subject) == type({}) and bool(subject.get("digest"))
 
-def cosign_subjects_with_tool(ctx, *, tree, artifacts, sources = {}, credential_helper = None, docker_config_path = None, timeout = None):
+def cosign_subjects_with_tool(ctx, *, tree, artifacts, sources = {}, index = None, credential_helper = None, docker_config_path = None, timeout = None):
     """Attribute pinned referrers without a subject field, with `img cosign-subjects`.
 
-    Such a referrer must be one of cosign's tag-scheme signatures or attestations,
-    whose signed payloads name the manifest it is about. Starlark can't decode
-    a DSSE payload, so the img tool reads them.
+    Such a referrer must be a BuildKit attestation manifest that `index` lists, or one of
+    cosign's tag-scheme signatures or attestations, whose signed payloads name the manifest it is
+    about. Starlark can't decode a DSSE payload, so the img tool reads them.
 
     Args:
         ctx: Repository or module context.
@@ -136,6 +186,7 @@ def cosign_subjects_with_tool(ctx, *, tree, artifacts, sources = {}, credential_
             path of its manifest, and a dict of the paths of its downloaded layers.
         sources: Sources dict mapping repositories to registries, to fetch layers
             that weren't downloaded from.
+        index: Digest of the image index the tree is rooted at, if it is one.
         credential_helper: Optional credential helper, as in auth_environment.
         docker_config_path: Optional Docker-compatible auth config path, as in auth_environment.
         timeout: Optional timeout in seconds, as in execute_kwargs.
@@ -150,6 +201,7 @@ def cosign_subjects_with_tool(ctx, *, tree, artifacts, sources = {}, credential_
         tree = tree,
         artifacts = artifacts,
         sources = get_sources_list(sources) if sources else [],
+        index = index or "",
     )), executable = False)
     result = ctx.execute(
         [ctx.path(tool_for_repository_os(ctx)), "cosign-subjects", "--input=" + name + ".in.json", "--output=" + name + ".out.json"],
@@ -258,7 +310,7 @@ def build_referrer_artifacts(rctx, *, specs, subjects, default_subject):
             rctx.watch(path)
     return [struct(digest = artifact["digest"], subject = artifact["subject"]) for artifact in output["artifacts"]]
 
-def discover_referrers_with_tool(ctx, *, subjects, artifact_types, sources, credential_helper = None, docker_config_path = None, timeout = None):
+def discover_referrers_with_tool(ctx, *, subjects, artifact_types, sources, index = None, credential_helper = None, docker_config_path = None, timeout = None):
     """Discover the referrers of manifests by artifact type, with `img discover-referrers`.
 
     Listing referrers per the distribution spec needs the response status (only a
@@ -271,6 +323,8 @@ def discover_referrers_with_tool(ctx, *, subjects, artifact_types, sources, cred
         subjects: Digests of the manifests whose referrers to list.
         artifact_types: List of artifact types to keep.
         sources: Sources dict mapping repositories to registries, tried in order.
+        index: Digest of the image index the subjects belong to, whose entries name their BuildKit
+            attestation manifests, if the root is one.
         credential_helper: Optional credential helper, as in auth_environment.
         docker_config_path: Optional Docker-compatible auth config path, as in auth_environment.
         timeout: Optional timeout in seconds, as in execute_kwargs.
@@ -286,6 +340,8 @@ def discover_referrers_with_tool(ctx, *, subjects, artifact_types, sources, cred
     args.extend(["--subject=" + subject for subject in subjects])
     args.extend(["--artifact-type=" + artifact_type for artifact_type in artifact_types])
     args.extend(["--source=" + source for source in get_sources_list(sources)])
+    if index:
+        args.append("--index=" + index)
     result = ctx.execute(
         args,
         environment = auth_environment(ctx, credential_helper = credential_helper, docker_config_path = docker_config_path),

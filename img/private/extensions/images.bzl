@@ -406,8 +406,9 @@ matches and its `subject` is the manifest. Discovery always uses the `img` tool,
 This is meant for artifacts whose digests can't be known in advance, such as every signature of an
 image, which a policy can then verify downstream. For example:
 `["application/vnd.cncf.notary.signature", "application/vnd.dev.sigstore.bundle.v0.3+json"]`.
-`"*"` stands for any artifact type: `["*"]` pulls every referrer, and cosign's tag-scheme
-signatures and attestations too (as `referrer_cosign_tags = ["sig", "att"]` does).
+`"*"` stands for any artifact type: `["*"]` pulls every referrer, cosign's tag-scheme signatures
+and attestations too (as `referrer_cosign_tags = ["sig", "att"]` does), and the BuildKit
+attestations of the index (as `referrer_buildkit_attestations = True` does).
 
 The discovered digests are recorded in the lockfile facts, per manifest and artifact type, so later
 evaluations reuse them instead of querying the registry again. To pick up new referrers, drop the
@@ -427,6 +428,25 @@ fails the evaluation. Signatures are not verified.
 
 The discovered digests are recorded in the lockfile facts like those of `referrer_artifact_types`
 (as the artifact types `cosign:sig` and `cosign:att`)."""
+
+_REFERRER_BUILDKIT_ATTESTATIONS_DOC = """Pull the BuildKit attestations (SBOMs, SLSA provenance) of the manifests of {anchor} as their referrers.
+
+`docker buildx build --sbom=true --provenance=true` doesn't attach attestations as referrers: it
+stores them in the image index, as an attestation manifest per platform manifest, with the
+platform `unknown/unknown` and the annotations `vnd.docker.reference.type = attestation-manifest`
+and `vnd.docker.reference.digest` naming the manifest it is about. Each of its layers is an in-toto
+statement whose predicate type the layer's `in-toto.io/predicate-type` annotation names. With this
+set, the attestation manifests that the index lists for its child manifests are pulled like
+referrers of those manifests (whether or not the attestation manifest has a `subject`; BuildKit's
+`oci-artifact=false` format has none), and the SBOMs among them are found by the SBOM toolchain of
+an image built on one.
+
+They are listed by the index, which its digest pins, so they are reproducible; they are recorded in
+the lockfile facts like those of `referrer_artifact_types` (as the artifact type
+`buildkit:attestation`). Attestation manifests that a registry lists as referrers (where the
+BuildKit attestations were copied to referrers, or as Docker Hardened Images publish them) are
+found with `referrer_artifact_types = ["application/vnd.docker.attestation.manifest.v1+json",
+"application/vnd.in-toto+json"]` instead."""
 
 _REFERRER_ARTIFACTS_DOC = """Referrer artifact spec files describing artifacts from other sources, such as an SBOM database.
 
@@ -478,6 +498,9 @@ The digest must be a full SHA256 digest starting with "sha256:".""",
         ),
         "referrer_artifact_types": attr.string_list(
             doc = _REFERRER_ARTIFACT_TYPES_DOC.format(anchor = "the pulled manifest or index"),
+        ),
+        "referrer_buildkit_attestations": attr.bool(
+            doc = _REFERRER_BUILDKIT_ATTESTATIONS_DOC.format(anchor = "the pulled index"),
         ),
         "referrer_cosign_tags": attr.string_list(
             doc = _REFERRER_COSIGN_TAGS_DOC.format(anchor = "the pulled manifest or index"),
@@ -547,6 +570,9 @@ ignored then, so a module can annotate images that only some of its users pull."
         ),
         "referrer_artifact_types": attr.string_list(
             doc = _REFERRER_ARTIFACT_TYPES_DOC.format(anchor = "`manifest`"),
+        ),
+        "referrer_buildkit_attestations": attr.bool(
+            doc = _REFERRER_BUILDKIT_ATTESTATIONS_DOC.format(anchor = "`manifest`, if it is an index,"),
         ),
         "referrer_cosign_tags": attr.string_list(
             doc = _REFERRER_COSIGN_TAGS_DOC.format(anchor = "`manifest`"),

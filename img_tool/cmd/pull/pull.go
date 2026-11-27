@@ -60,7 +60,7 @@ func PullProcess(ctx context.Context, args []string) {
 	flagSet.Var(&registries, "registry", "Registry to use (can be specified multiple times, defaults to docker.io)")
 	flagSet.Var(&requestedPlatforms, "platform", "Platform to download from an image index as os/arch[/variant] (can be specified multiple times, defaults to all platforms)")
 	flagSet.Var(&referrers, "referrer", "Digest of a referrer manifest to download along with its config and layers, regardless of --layer-handling (can be specified multiple times)")
-	flagSet.Var(&referrerArtifactTypes, "referrer-artifact-type", "Discover the referrers of this artifact type (* for referrers of any type, or cosign:sig / cosign:att for cosign's tag-scheme signatures / attestations) of the root and of every downloaded child manifest, and download them like --referrer (can be specified multiple times)")
+	flagSet.Var(&referrerArtifactTypes, "referrer-artifact-type", "Discover the referrers of this artifact type (* for referrers of any type, cosign:sig / cosign:att for cosign's tag-scheme signatures / attestations, or buildkit:attestation for the BuildKit attestation manifests the root index lists) of the root and of every downloaded child manifest, and download them like --referrer (can be specified multiple times)")
 	flagSet.StringVar(&discoveredReferrersPath, "discovered-referrers", "", "Path to write the discovered referrers to, as JSON mapping each manifest digest to an object of artifact type to referrer digests")
 	flagSet.StringVar(&layerHandling, "layer-handling", "shallow", "Method used for handling layer data. \"eager\" causes layer data to be materialized.")
 	flagSet.IntVar(&concurrency, "j", 10, "Number of concurrent download workers")
@@ -205,6 +205,8 @@ func pullFromRegistry(ctx context.Context, registry, repository, tag, digest str
 	// The manifests whose referrers are discovered: the root and the children
 	// that are downloaded (a platform filter keeps cutting requests).
 	subjects := []string{desc.Descriptor.Digest.String()}
+	// The root index, whose entries name the BuildKit attestations of its children.
+	var rootIndex []byte
 	var layers []registryv1.Layer
 	if desc.Descriptor.MediaType.IsImage() {
 		image, err := desc.Image()
@@ -231,10 +233,11 @@ func pullFromRegistry(ctx context.Context, registry, repository, tag, digest str
 		for _, child := range filterManifests(indexManifest.Manifests, platformFilters) {
 			subjects = append(subjects, child.Digest.String())
 		}
+		rootIndex = desc.Manifest
 	} else {
 		return fmt.Errorf("unsupported media type: %s", desc.Descriptor.MediaType)
 	}
-	referrers, err = discoverReferrers(registry, repository, subjects, referrers, discovery, transport)
+	referrers, err = discoverReferrers(registry, repository, subjects, rootIndex, referrers, discovery, transport)
 	if err != nil {
 		return fmt.Errorf("discovering referrers: %w", err)
 	}
@@ -508,8 +511,9 @@ func downloadReferrers(registry, repository string, digests []string, store *blo
 
 // discoverReferrers lists the referrers of the requested artifact types for
 // every subject, writes them to the discovery output, and returns them merged
-// into the explicitly requested referrers.
-func discoverReferrers(registry, repository string, subjects, referrers []string, discovery referrerDiscovery, transport http.RoundTripper) ([]string, error) {
+// into the explicitly requested referrers. rootIndex (raw, if the root is an
+// index) lists the BuildKit attestations of the subjects.
+func discoverReferrers(registry, repository string, subjects []string, rootIndex []byte, referrers []string, discovery referrerDiscovery, transport http.RoundTripper) ([]string, error) {
 	if len(discovery.artifactTypes) == 0 && discovery.outputPath == "" {
 		return referrers, nil
 	}
@@ -520,7 +524,9 @@ func discoverReferrers(registry, repository string, subjects, referrers []string
 	discovered := map[string]map[string][]string{}
 	merged := slices.Clone(referrers)
 	for _, subject := range subjects {
-		found, err := imgreferrers.Discover(context.Background(), repo, subject, discovery.artifactTypes, ReferrersOptions(transport))
+		options := ReferrersOptions(transport)
+		options.Index = rootIndex
+		found, err := imgreferrers.Discover(context.Background(), repo, subject, discovery.artifactTypes, options)
 		if err != nil {
 			return nil, err
 		}
