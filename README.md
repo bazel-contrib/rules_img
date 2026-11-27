@@ -689,6 +689,7 @@ linux/arm64).
     - [`layer_from_file`](docs/layer.md#layer_from_file) - Create layers from custom blobs (not tar files)
     - [`oras_file_layer`](docs/oras.md#oras_file_layer) - Create oras artifact layers from individual files
     - [`oras_layer`](docs/oras.md#oras_layer) - Create oras tree layers from files and directories
+- [Maintaining Pulled Images](docs/maintaining-pulled-images.md) - `bazel run @rules_img//img/pull:update` (and `:pin`, `:referrers`, `:list`) to update pulled base images to newer versions, and pin their tags and referrers (signatures, SBOMs), with buildozer
 - [Platforms Guide](docs/platforms.md) - Working with Bazel platforms, architecture variants, and multi-platform builds
 - [Image Signing Guide](docs/image-signing.md) - Sign pushed images with pluggable signer plugins (Notation, cosign, or your own)
 - [Push Strategies](docs/push-strategies.md) - Push strategies and [push at build time](docs/push-strategies.md#push-at-build-time)

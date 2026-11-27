@@ -58,10 +58,14 @@ def _images_impl(ctx):
 
     resolved_any_tag = False
     referrer_requests = []
+
+    # Every tag as written, for the commands in @rules_img//img/pull.
+    inventory = {"images": [], "referrers": []}
     for mod in ctx.modules:
         names = sets.make()
         digests = sets.make()
         for img in mod.tags.pull:
+            inventory["images"].append(_inventory_tag(mod, img, _INVENTORY_PULL_ATTRS))
             digest = img.digest
             if not digest and img.unsafe_allow_tag_without_digest:
                 if not img.tag:
@@ -83,7 +87,9 @@ def _images_impl(ctx):
             sets.insert(names, name)
 
             # check that digest is well-formed
-            if not digest or not digest.startswith("sha256:") or len(digest) != 71:
+            if not digest:
+                fail("Image '{}' has no digest. Pin it with `bazel run @rules_img//img/pull:pin`, or set unsafe_allow_tag_without_digest = True to follow its tag.".format(img.repository))
+            if not digest.startswith("sha256:") or len(digest) != 71:
                 fail("Invalid digest '{}' for image '{}'. Must be of the form 'sha256:<64-hex-chars>'.".format(digest, img.repository))
             if digest not in images_by_digest:
                 images_by_digest[digest] = pull_tag_to_struct(img, digest)
@@ -104,6 +110,7 @@ def _images_impl(ctx):
             if request != None:
                 referrer_requests.append(request)
         for tag in mod.tags.referrers:
+            inventory["referrers"].append(_inventory_tag(mod, tag, _INVENTORY_REFERRERS_ATTRS))
             request = referrer_request(
                 anchor = tag.manifest,
                 tag = tag,
@@ -275,6 +282,7 @@ def _images_impl(ctx):
     _create_hub_repo(
         name = "rules_img_images.bzl",
         digest_visibility = digest_visibility,
+        inventory = json.encode(inventory),
     )
 
     # ctx.root_module_has_non_dev_dependency
@@ -303,6 +311,22 @@ def _images_impl(ctx):
         # Without facts, nothing records the discovered referrers between evaluations.
         kwargs["reproducible"] = False
     return ctx.extension_metadata(**kwargs)
+
+_INVENTORY_REFERRER_ATTRS = ["referrer_digests", "referrer_artifact_types", "referrer_cosign_tags", "referrer_buildkit_attestations"]
+_INVENTORY_PULL_ATTRS = ["name", "registry", "registries", "repository", "tag", "digest", "layer_handling", "unsafe_allow_tag_without_digest"] + _INVENTORY_REFERRER_ATTRS
+_INVENTORY_REFERRERS_ATTRS = ["manifest"] + _INVENTORY_REFERRER_ATTRS
+
+def _inventory_tag(mod, tag, attrs):
+    """Describes a tag of a module for the inventory of the hub repository."""
+    entry = {
+        "module": mod.name,
+        "version": mod.version,
+        "is_root": mod.is_root,
+        "has_referrer_artifacts": len(tag.referrer_artifacts) > 0,
+    }
+    for attr in attrs:
+        entry[attr] = getattr(tag, attr)
+    return entry
 
 def _create_hub_repo_impl(rctx):
     """Implementation of the hub repository rule."""
@@ -358,6 +382,10 @@ def image(name):
 
     rctx.file("rules_img_images.bzl", content)
 
+    # Every images.pull and images.referrers tag of every module, as written.
+    # Read by the commands in @rules_img//img/pull.
+    rctx.file("inventory.json", rctx.attr.inventory)
+
     # Create a BUILD file
     rctx.file("BUILD.bazel", """
 load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
@@ -367,6 +395,11 @@ bzl_library(
     srcs = ["rules_img_images.bzl"],
     visibility = ["//visibility:public"],
 )
+
+exports_files(
+    ["inventory.json"],
+    visibility = ["//visibility:public"],
+)
 """)
 
 _create_hub_repo = repository_rule(
@@ -374,6 +407,10 @@ _create_hub_repo = repository_rule(
     attrs = {
         "digest_visibility": attr.string_list_dict(
             doc = "Maps from image digest to list of: module_name/module_version/friendly_name",
+        ),
+        "inventory": attr.string(
+            default = '{"images": [], "referrers": []}',
+            doc = "JSON describing every images.pull and images.referrers tag of every module.",
         ),
     },
 )

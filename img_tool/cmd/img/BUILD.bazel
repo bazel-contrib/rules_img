@@ -41,6 +41,7 @@ go_library(
         "//cmd/soci",
         "//cmd/sparseocilayout",
         "//cmd/syncocirefgraph",
+        "//cmd/updateimages",
         "//cmd/validate",
         "//pkg/auth/protohelper",
         "//pkg/registryopts",

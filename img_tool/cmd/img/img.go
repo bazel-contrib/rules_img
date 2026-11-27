@@ -42,6 +42,7 @@ import (
 	socicmd "github.com/bazel-contrib/rules_img/img_tool/cmd/soci"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/sparseocilayout"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/syncocirefgraph"
+	"github.com/bazel-contrib/rules_img/img_tool/cmd/updateimages"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/validate"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/auth/protohelper"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/registryopts"
@@ -78,6 +79,7 @@ Commands:
   oci-layout-metadata      extracts per-platform config and mtree from an OCI image layout
   optimize                 rewrites image metadata after layer optimization
   pull                     pulls an image from a registry
+  update-images            updates the images a workspace pulls to newer versions, pins tags and referrers, lists them
   discover-referrers       lists the referrers of manifests by artifact type (referrers API or tag schema)
   cosign-subjects          attributes cosign's tag-scheme signatures and attestations to the manifests they name
   referrer-artifacts       builds OCI artifact manifests that refer to a pulled image from referrer artifact specs
@@ -177,6 +179,8 @@ func Run(ctx context.Context, args []string) {
 		downloadmanifest.DownloadManifestProcess(ctx, args[2:])
 	case "pull":
 		pull.PullProcess(ctx, args[2:])
+	case "update-images":
+		updateimages.Process(ctx, args[2:])
 	case "discover-referrers":
 		pull.DiscoverReferrersProcess(ctx, args[2:])
 	case "cosign-subjects":

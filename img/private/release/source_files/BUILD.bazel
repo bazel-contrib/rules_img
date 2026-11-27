@@ -25,6 +25,7 @@ release_files = [
     "//img/private/providers:all_files",
     "//img/private/repository_rules:all_files",
     "//img/private/settings:all_files",
+    "//img/pull:all_files",
     "//img/settings:all_files",
 ]
 

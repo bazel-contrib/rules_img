@@ -1,0 +1,17 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "modulefile",
+    srcs = [
+        "eval.go",
+        "syntax.go",
+    ],
+    importpath = "github.com/bazel-contrib/rules_img/img_tool/pkg/modulefile",
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "modulefile_test",
+    srcs = ["modulefile_test.go"],
+    embed = [":modulefile"],
+)

@@ -29,6 +29,11 @@ register_toolchains(
     "@img_toolchain//:all",
 )
 
+# The commands in @rules_img//img/pull read the inventory of every module's images
+# from the hub. Nothing is evaluated unless it is built.
+images = use_extension("@rules_img//img:extensions.bzl", "images")
+use_repo(images, "rules_img_images.bzl")
+
 ### REMOVE_BEFORE_RELEASE_START
 
 # ✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂✂

@@ -1,0 +1,52 @@
+"""Commands that maintain the container images pulled in MODULE.bazel.
+
+    bazel run @rules_img//img/pull:update     # moves images to newer versions
+    bazel run @rules_img//img/pull:pin        # adds digests to images that only have a tag
+    bazel run @rules_img//img/pull:referrers  # pins signatures, SBOMs, attestations
+    bazel run @rules_img//img/pull:list       # lists the pulled images
+
+Changes are only reported, unless run with `-- --mode=apply`. Run any of them
+with `-- --help` for its flags. See docs/maintaining-pulled-images.md.
+"""
+
+load("//img/private:pull_command.bzl", "pull_command")
+
+# The images extension's inventory lists the images of other modules, so these
+# commands look at them too. Building them evaluates the images extension.
+_INVENTORY = "@rules_img_images.bzl//:inventory.json"
+
+pull_command(
+    name = "update",
+    command = "update",
+    inventory = _INVENTORY,
+    visibility = ["//visibility:public"],
+)
+
+pull_command(
+    name = "referrers",
+    command = "referrers",
+    inventory = _INVENTORY,
+    visibility = ["//visibility:public"],
+)
+
+pull_command(
+    name = "list",
+    command = "list",
+    inventory = _INVENTORY,
+    visibility = ["//visibility:public"],
+)
+
+# Only reads the files of the root module, without evaluating the images
+# extension: it works even while the extension fails, for example because an
+# images.pull has neither a digest nor unsafe_allow_tag_without_digest.
+pull_command(
+    name = "pin",
+    command = "pin",
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "all_files",
+    srcs = glob(["**"]),
+    visibility = ["//img/private/release:__subpackages__"],
+)

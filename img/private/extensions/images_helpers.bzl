@@ -629,6 +629,10 @@ def sync_oci_ref_graph(ctx, images_by_digest, facts, downloader, credential_help
         struct(graph, discovered): `graph` maps digest to ref_graph_entry, and
         `discovered` maps manifest digests to artifact types to discovered referrers.
     """
+    if not images_by_digest and not referrer_requests:
+        # Nothing to fetch: don't require an img tool for the host either.
+        return struct(graph = {}, discovered = {})
+
     ctx.report_progress("Syncing OCI reference graph...")
     oci_ref_graph = {}
     discovered = {}
