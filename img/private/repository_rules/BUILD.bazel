@@ -47,6 +47,7 @@ bzl_library(
     srcs = ["image_repo.bzl"],
     visibility = ["//img:__subpackages__"],
     deps = [
+        ":registry",
         "//img/private/platforms",
         "//img/private/platforms:constraints",
         "@bazel_skylib//lib:sets",

@@ -80,3 +80,21 @@ def get_sources_list(sources_dict):
         for registry in registries:
             source_list.append("{}@{}".format(repository, registry))
     return source_list
+
+def image_purl(repository, identifier, registries):
+    """Return the package URL of a pulled image, for its package_metadata.
+
+    It always names the registry, the first of `registries` (or Docker Hub, where an image without
+    registries is pulled from): a `pkg:docker` package URL without `repository_url` means Docker
+    Hub, so leaving it out would claim that an image from gcr.io (say) comes from there.
+
+    Args:
+        repository: The image's repository, such as "distroless/static-debian13".
+        identifier: The digest of the image, or its tag if it has none.
+        registries: The registries the image is pulled from, in order.
+
+    Returns:
+        A `pkg:docker` package URL.
+    """
+    registry = registries[0] if registries else "index.docker.io"
+    return "pkg:docker/{}@{}?repository_url={}".format(repository, identifier, registry)

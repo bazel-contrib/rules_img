@@ -3,6 +3,7 @@
 load("@bazel_skylib//lib:sets.bzl", "sets")
 load("//img/private/platforms:constraints.bzl", "map_os_arch_to_constraints")
 load("//img/private/platforms:platforms.bzl", "has_constraint_setting")
+load(":registry.bzl", "image_purl")
 
 def _image_repo_impl(rctx):
     """Create an image repository from pulled blob repositories."""
@@ -78,10 +79,7 @@ def _image_repo_impl(rctx):
     identifier = rctx.attr.digest
     if not identifier:
         identifier = rctx.attr.tag
-    purl = "pkg:docker/{}@{}".format(rctx.attr.repository, identifier)
-    decoded_registries = json.decode(rctx.attr.registries)
-    if len(decoded_registries) == 1:
-        purl += "?repository_url={}".format(decoded_registries[0])
+    purl = image_purl(rctx.attr.repository, identifier, json.decode(rctx.attr.registries))
 
     # Generate the BUILD file that creates the image_import
     # Convert files dict to a string representation for the BUILD file

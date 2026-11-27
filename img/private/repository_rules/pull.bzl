@@ -16,7 +16,7 @@ load(
     _learn_digest_from_tag = "learn_digest_from_tag",
     _resolve_docker_config_path = "resolve_docker_config_path",
 )
-load(":registry.bzl", "get_registries")
+load(":registry.bzl", "get_registries", "image_purl")
 
 def _pull_impl(rctx):
     """Pull an image from a registry and generate a BUILD file."""
@@ -171,9 +171,7 @@ Available platforms: {available}""".format(
 
     # Construct purl for package_metadata
     identifier = digest if have_valid_digest else rctx.attr.tag
-    purl = "pkg:docker/{}@{}".format(rctx.attr.repository, identifier)
-    if len(registries) == 1:
-        purl += "?repository_url={}".format(registries[0])
+    purl = image_purl(rctx.attr.repository, identifier, registries)
 
     loads = [
         (str(Label("@package_metadata//rules:package_metadata.bzl")), "package_metadata"),
