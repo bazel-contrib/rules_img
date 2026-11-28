@@ -190,31 +190,31 @@ func WriteMulti(w io.Writer, opts Options, inputs []Input) error {
 			}
 			collected = append(collected, es...)
 		case ErofsInput:
-			es, err := collectErofs(in.ReaderAt, in.Digester, in.RangeDigester, idx)
+			es, err := collectFilesystem(ErofsInput, in.ReaderAt, in.Digester, in.RangeDigester, idx)
 			if err != nil {
 				return err
 			}
 			collected = append(collected, es...)
 		case Ext4Input:
-			es, err := collectExt4(in.ReaderAt, in.Digester, in.RangeDigester, idx)
+			es, err := collectFilesystem(Ext4Input, in.ReaderAt, in.Digester, in.RangeDigester, idx)
 			if err != nil {
 				return err
 			}
 			collected = append(collected, es...)
 		case Fat32Input:
-			es, err := collectFat32(in.ReaderAt, in.Digester, in.RangeDigester, idx)
+			es, err := collectFilesystem(Fat32Input, in.ReaderAt, in.Digester, in.RangeDigester, idx)
 			if err != nil {
 				return err
 			}
 			collected = append(collected, es...)
 		case Iso9660Input:
-			es, err := collectIso9660(in.ReaderAt, in.Digester, in.RangeDigester, idx)
+			es, err := collectFilesystem(Iso9660Input, in.ReaderAt, in.Digester, in.RangeDigester, idx)
 			if err != nil {
 				return err
 			}
 			collected = append(collected, es...)
 		case CpioInput:
-			es, err := collectCpio(in.ReaderAt, in.Digester, in.RangeDigester, idx)
+			es, err := collectFilesystem(CpioInput, in.ReaderAt, in.Digester, in.RangeDigester, idx)
 			if err != nil {
 				return err
 			}

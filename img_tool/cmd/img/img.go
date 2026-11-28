@@ -32,6 +32,7 @@ import (
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/layer"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/manifest"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/manifestfromocilayout"
+	"github.com/bazel-contrib/rules_img/img_tool/cmd/layertar"
 	mtreecmd "github.com/bazel-contrib/rules_img/img_tool/cmd/mtree"
 	ocilayoutcmd "github.com/bazel-contrib/rules_img/img_tool/cmd/ocilayoutcmd"
 	"github.com/bazel-contrib/rules_img/img_tool/cmd/ocilayoutmetadata"
@@ -75,6 +76,7 @@ Commands:
   manifest-from-archive    converts a Docker save or OCI layout tar archive to an image manifest
   manifest-from-oci-layout converts an OCI layout to an image manifest
   mtree                    writes an mtree spec of a layer's metadata and merges mtree files
+  layer-tar                writes the files of a layer, in any layer format, as an uncompressed tar
   oci-layout               assembles an OCI layout directory from manifest and layers
   oci-layout-metadata      extracts per-platform config and mtree from an OCI image layout
   optimize                 rewrites image metadata after layer optimization
@@ -143,6 +145,8 @@ func Run(ctx context.Context, args []string) {
 		flattenimage.FlattenImageProcess(ctx, args[2:])
 	case "mtree":
 		mtreecmd.MtreeProcess(ctx, args[2:])
+	case "layer-tar":
+		layertar.LayerTarProcess(ctx, args[2:])
 	case "oci-layout-metadata":
 		ocilayoutmetadata.OCILayoutMetadataProcess(ctx, args[2:])
 	case "image-structure-test":

@@ -29,6 +29,7 @@ go_library(
         "//cmd/index",
         "//cmd/indexfromocilayout",
         "//cmd/layer",
+        "//cmd/layertar",
         "//cmd/manifest",
         "//cmd/manifestfromocilayout",
         "//cmd/mtree",
