@@ -50,60 +50,51 @@ def _signing_config_impl(ctx):
 
 signing_config = rule(
     implementation = _signing_config_impl,
-    doc = """Describes how `img deploy` signs images by invoking a signer plugin.
-
-`img deploy` runs the plugin as `<tool> sign-oci-artifact [args...]`, writes the
-JSON descriptor of the artifact to sign to the plugin's stdin, and expects an OCI
-image layout tar (the signature artifact) on stdout. The signature is then
-pushed to the image's repository as an OCI referrer. `img` itself performs no
-cryptography; all signing logic lives in the plugin.
-
-The plugin is referenced either as a Bazel executable (`tool`, shipped in the
-push binary's runfiles) or as a host-installed command (`tool_command`, resolved
-on `$PATH` at deploy time). Secrets and signing hardware are provided by the
-environment `bazel run` executes in — never by Bazel.
-
-Example:
+    doc = """Configures how pushed images are signed: which signer plugin to run, and what to sign.
 
 ```python
 load("@rules_img//img:signing.bzl", "signing_config")
 
-# Use a Bazel-built plugin.
 signing_config(
-    name = "notary",
-    tool = "@rules_img//img/signer:notation",
-    args = ["--key", "release"],
-)
-
-# Use a host-installed tool.
-signing_config(
-    name = "corp",
-    tool_command = "corp-signer",
-    args = ["--profile", "prod"],
+    name = "sign",
+    tool = "@rules_img_signer_cosign",
+    targets = ["roots", "child_manifests"],
 )
 ```
 
-Referenced globally via `--@rules_img//img/settings:sign_setting=//path:notary`,
-or per target via the `sign_setting` attribute of `image_push`/`image_push_spec`.
-Signing is enabled with the `sign` attribute or the `//img/settings:sign` flag.
+Turn signing on with `--@rules_img//img/settings:sign=enabled` and select the config with
+`--@rules_img//img/settings:sign_setting=//:sign` (or the `sign` and `sign_setting` attributes of
+`image_push` and `image_push_spec`). Keys and tokens come from the environment `bazel run` runs
+in, never from Bazel.
+
+See [image signing](/docs/image-signing.md) for how signing works and how to choose a plugin, and
+[supply chain security](/docs/supply-chain.md) for signing and attesting SBOMs.
 """,
     attrs = {
         "tool": attr.label(
-            doc = "A Bazel executable implementing the `sign-oci-artifact` protocol. Shipped in the push binary's runfiles. Mutually exclusive with `tool_command`.",
+            doc = "The signer plugin, as a Bazel executable, such as `@rules_img_signer_cosign` or `@rules_img_signer_notation`. Mutually exclusive with `tool_command`.",
             executable = True,
             cfg = "target",
         ),
         "tool_command": attr.string(
-            doc = "Name or path of a host-installed signer tool, resolved on `$PATH` at deploy time. Mutually exclusive with `tool`.",
+            doc = "The signer plugin, as the name or path of a command installed on the machine that pushes, resolved on `$PATH` at deploy time. Mutually exclusive with `tool`.",
         ),
         "args": attr.string_list(
-            doc = "Arguments passed to the plugin after the `sign-oci-artifact` subcommand.",
+            doc = "Arguments for the plugin, such as `--tlog-upload=false` for cosign. See the plugin's README.",
         ),
         "env": attr.string_dict(
             doc = "Additional (non-secret) environment variables set for the plugin. Secrets should come from the deploy-time environment instead.",
         ),
         "targets": attr.string_list(
-            doc = "Default set of descriptors to sign: any of \"roots\" (the pushed root, the default), \"child_manifests\" (each child of an index), \"referrers\" (referrer artifacts such as SBOMs), and \"sbom_attestations\" (an in-toto attestation of each SBOM among the referrers, about the image it describes, for signer plugins that can attest, such as cosign's). Overridable at deploy time via `--sign_targets`.",
+            doc = """What to sign, any of:
+
+* **`roots`** (default): the pushed image or index.
+* **`child_manifests`**: each platform manifest of a pushed index.
+* **`referrers`**: the referrers pushed with the image, such as its SBOMs.
+* **`sbom_attestations`**: not a signature, but a signed in-toto attestation of each SBOM about
+  the image it describes. Needs a plugin that can attest (cosign's, not Notation's).
+
+Overridable at deploy time with `--sign_targets`.""",
             default = ["roots"],
             allow_empty = False,
         ),

@@ -40,13 +40,9 @@ manifests whose `subject` field points at the signed image. Verifiers discover
 them through the registry's Referrers API by asking "what refers to this
 digest?", so no extra tag or naming convention is required.
 
-Registries without the Referrers API (GHCR, for one) list referrers in an index
-under a tag named after the subject's digest (`sha256-<hex>`), which clients
-maintain. `img` adds every referrer it pushes to that index with conditional
-writes (`If-Match`, `If-None-Match`), retrying when another push changed the
-index in between, so concurrent pushes don't drop each other's referrers. It
-also re-adds a referrer that the index is missing even when the registry already
-has the referrer, so pushing again repairs an index that lost one.
+Registries without the Referrers API (GHCR, for one) list referrers under a tag
+named after the image's digest (`sha256-<hex>`) instead. `img` keeps that tag up
+to date for you, even when several pushes run at once.
 
 ## How signing works in `rules_img`
 
@@ -158,41 +154,17 @@ A target's own `sign_setting` attribute overrides the global
 `//img/settings:sign_setting`, so different images can be signed by different
 plugins in a single `multi_deploy`.
 
-The `targets` attribute of `signing_config` selects **which descriptors** get a
-signature: `roots` (the pushed image or index — the default), `child_manifests`
-(each per-platform child of an index), and `referrers` (referrer artifacts such
-as SBOMs).
+The `targets` attribute of `signing_config` selects **what** gets signed:
 
-One more target makes attestations instead of signatures: `sbom_attestations`.
-For each SBOM among the referrers (a CycloneDX or SPDX JSON document, such as
-the [automatic SBOMs](automatic-referrers.md)), the plugin makes a signed
-[in-toto attestation][in-toto] whose subject is the image the SBOM describes and
-whose predicate is the SBOM, with the predicate type `https://cyclonedx.org/bom`
-or `https://spdx.dev/Document/v<version>` (as GitHub's `attest-sbom` does). It's
-pushed as another referrer of the image, next to the SBOM referrer itself.
-Signing the SBOM referrer (`referrers`) proves who published the referrer; an
-attestation binds the SBOM to the image's digest inside the signed statement,
-which is what `cosign verify-attestation` and attestation-based admission
-policies check:
+| Target | Signs |
+| --- | --- |
+| `roots` (default) | The pushed image or index. |
+| `child_manifests` | Each platform manifest of a pushed index. |
+| `referrers` | The referrers pushed with the image, such as its SBOMs. |
+| `sbom_attestations` | Not a signature: a signed in-toto attestation of each SBOM about the image. cosign only. |
 
-```starlark
-signing_config(
-    name = "cosign",
-    tool = "@rules_img_signer_cosign",
-    targets = ["roots", "child_manifests", "sbom_attestations"],
-)
-```
-
-```bash
-cosign verify-attestation --new-bundle-format --type https://cyclonedx.org/bom \
-  --key cosign.pub <image>@<digest>
-```
-
-Only plugins that can attest support it: the cosign plugin makes the same
-Sigstore bundle as `cosign attest --new-bundle-format`; the Notation plugin
-can't (Notary Project signatures sign descriptors, not statements), and fails a
-deploy that asks for attestations. `all` covers the three signing targets, not
-`sbom_attestations`.
+`all` stands for the first three. For SBOMs, their signatures and attestations,
+and how to verify them, see [supply chain security](supply-chain.md).
 
 ### Deploy-time overrides
 
@@ -362,7 +334,6 @@ anything that speaks the stdin/stdout protocol above works.
 [policy-controller]: https://docs.sigstore.dev/policy-controller/overview/
 [ratify]: https://ratify.dev/
 [oci-referrers]: https://github.com/opencontainers/distribution-spec/blob/main/spec.md#listing-referrers
-[in-toto]: https://github.com/in-toto/attestation/blob/main/spec/README.md
 [oci-descriptor]: https://github.com/opencontainers/image-spec/blob/main/descriptor.md
 [notary]: https://notaryproject.dev/
 [sigstore]: https://www.sigstore.dev/

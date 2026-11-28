@@ -1,8 +1,4 @@
-"""Public API for container image signing configuration.
-
-See the `signing_config` rule for how `img deploy` signs images by delegating to
-external signer plugins.
-"""
+"""Public API for signing pushed images."""
 
 load("//img/private:signing_config.bzl", _signing_config = "signing_config")
 

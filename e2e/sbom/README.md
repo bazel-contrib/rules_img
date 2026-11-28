@@ -3,7 +3,7 @@
 This directory demonstrates how every image gets a Software Bill of Materials (SBOM), attached as
 an OCI referrer, by registering the SBOM toolchain of
 [`rules_img_sbom`](../../modules/rules_img_sbom/README.md). No per-image SBOM targets are needed:
-see [automatic referrers](../../docs/automatic-referrers.md).
+see [supply chain security](../../docs/supply-chain.md).
 
 ## Overview
 

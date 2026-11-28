@@ -589,7 +589,7 @@ Each spec is a JSON file, typically written by your own repository rule, that li
 the files that make them up. At fetch time, every artifact becomes an OCI artifact manifest (an
 empty config, the files as layers) whose `subject` is the pulled manifest, so it is exposed through
 `PulledReferrersInfo` exactly like a referrer from `referrer_digests`. See
-[the referrers documentation](/docs/referrers.md) for the format.""",
+[the supply chain security guide](/docs/supply-chain.md#attach-sboms-from-your-own-source) for the format.""",
         ),
         "layer_handling": attr.string(
             default = "shallow",

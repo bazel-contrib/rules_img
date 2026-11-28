@@ -34,7 +34,7 @@ effect.
 * **`disabled`**: never generate them, for example for an ORAS artifact or a Helm chart
   built from regular layers.
 
-See [automatic referrers](/docs/automatic-referrers.md).""",
+See [supply chain security](/docs/supply-chain.md).""",
     ),
 }
 

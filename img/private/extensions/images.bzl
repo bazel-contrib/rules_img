@@ -492,7 +492,7 @@ the files that make them up. When the image repository is fetched, every artifac
 artifact manifest (an empty config, the files as layers) whose `subject` is {anchor} (or the
 `subject` the spec names, which must be {anchor} or one of its children), so it is exposed through
 `PulledReferrersInfo` like a referrer from `referrer_digests`. See
-[the referrers documentation](/docs/referrers.md) for the format."""
+[the supply chain security guide](/docs/supply-chain.md#attach-sboms-from-your-own-source) for the format."""
 
 _pull_tag = tag_class(
     attrs = {

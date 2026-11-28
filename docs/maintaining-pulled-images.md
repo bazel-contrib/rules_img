@@ -75,15 +75,11 @@ the extension's error message then points to.
 ### `referrers`
 
 Lists the referrers of every pinned image, its child manifests if it is an
-index, and the manifest of every `images.referrers` tag:
-
-- referrers in the sense of the OCI distribution spec, from the registry's
-  referrers API, or the referrers tag schema if the registry has no such API,
-- cosign's tag-scheme signatures and attestations (`sha256-<hex>.sig` and
-  `sha256-<hex>.att`), checked to name the manifest in their signed payloads,
-  like the images extension does,
-- the BuildKit attestation manifests (SBOMs, provenance) that an index lists
-  for its child manifests.
+index, and the manifest of every `images.referrers` tag, and pins those not
+pinned yet in `referrer_digests`. It finds every kind of referrer that `pull`
+can use; see
+[supply chain security](supply-chain.md#3-get-an-sbom-for-your-base-image)
+for what they are and what the build does with them.
 
 For each referrer, it prints the artifact type, how it was found, its size,
 annotations and layers (with the `predicateType` of attestations), and whether
@@ -96,9 +92,6 @@ types `cosign:sig` and `cosign:att`, BuildKit's attestations the type
 bazel run @rules_img//img/pull:referrers -- --artifact-type=cosign:att
 bazel run @rules_img//img/pull:referrers -- --artifact-type='application/vnd.dev.sigstore.*'
 ```
-
-The referrers not pinned yet are added to `referrer_digests`. See
-[Referrers](referrers.md) for what the images extension and `pull` do with them.
 
 ### `update`
 

@@ -1,0 +1,101 @@
+<svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 830" width="1600" height="830" filter="invert(93%) hue-rotate(180deg)">
+<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#1e1e1e"/></marker></defs>
+<rect width="1600" height="830" fill="#ffffff"/>
+<text x="220.0" y="50" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="28" font-weight="bold" fill="#1e1e1e" text-anchor="middle">1 · Pull</text>
+<text x="780.0" y="50" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="28" font-weight="bold" fill="#1e1e1e" text-anchor="middle">2 · Build</text>
+<text x="1360.0" y="50" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="28" font-weight="bold" fill="#1e1e1e" text-anchor="middle">3 · Push</text>
+<rect x="40" y="80" width="360" height="560" rx="16" fill="#f1f8fe" stroke="#1e1e1e" stroke-width="2"/>
+<rect x="440" y="80" width="680" height="560" rx="16" fill="#f3fbf4" stroke="#1e1e1e" stroke-width="2"/>
+<rect x="1160" y="80" width="400" height="710" rx="16" fill="#fff8ef" stroke="#1e1e1e" stroke-width="2"/>
+<text x="220" y="114" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="19" font-weight="bold" fill="#1e1e1e" text-anchor="middle">Base image</text>
+<text x="220" y="136" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="14" font-weight="normal" fill="#495057" text-anchor="middle">pull / images.pull</text>
+<text x="780" y="114" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="19" font-weight="bold" fill="#1e1e1e" text-anchor="middle">Build graph</text>
+<text x="780" y="136" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="14" font-weight="normal" fill="#495057" text-anchor="middle">bazel build</text>
+<text x="1360" y="114" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="19" font-weight="bold" fill="#1e1e1e" text-anchor="middle">Registry</text>
+<text x="1360" y="136" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="14" font-weight="normal" fill="#495057" text-anchor="middle">image_push / multi_deploy</text>
+<rect x="81" y="156" width="290" height="64" rx="10" fill="#f1f3f5" stroke="#1e1e1e" stroke-width="2"/>
+<rect x="73" y="164" width="290" height="64" rx="10" fill="#f1f3f5" stroke="#1e1e1e" stroke-width="2"/>
+<rect x="65" y="172" width="290" height="64" rx="10" fill="#ffffff" stroke="#1e1e1e" stroke-width="2"/>
+<text x="210.0" y="200.0" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="17" font-weight="bold" fill="#1e1e1e" text-anchor="middle">Image layers</text>
+<text x="210.0" y="220.0" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="14" font-weight="normal" fill="#495057" text-anchor="middle">downloaded or shallow</text>
+<path d="M 210 236 L 210 270" fill="none" stroke="#1e1e1e" stroke-width="2" marker-end="url(#ah)"/>
+<rect x="65" y="272" width="310" height="64" rx="10" fill="#e9ecef" stroke="#1e1e1e" stroke-width="2"/>
+<text x="220.0" y="300.0" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="17" font-weight="bold" fill="#1e1e1e" text-anchor="middle">Layer scan</text>
+<text x="220.0" y="320.0" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="14" font-weight="normal" fill="#495057" text-anchor="middle">syft, once per layer</text>
+<rect x="65" y="372" width="310" height="110" rx="10" fill="#e9ecef" stroke="#1e1e1e" stroke-width="2"/>
+<text x="220.0" y="403.0" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="17" font-weight="bold" fill="#1e1e1e" text-anchor="middle">Attached SBOM</text>
+<text x="220.0" y="423.0" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="14" font-weight="normal" fill="#495057" text-anchor="middle">OCI referrers</text>
+<text x="220.0" y="443.0" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="14" font-weight="normal" fill="#495057" text-anchor="middle">cosign .att tags</text>
+<text x="220.0" y="463.0" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="14" font-weight="normal" fill="#495057" text-anchor="middle">BuildKit attestations</text>
+<rect x="65" y="512" width="310" height="100" rx="10" fill="#e9ecef" stroke="#1e1e1e" stroke-width="2"/>
+<text x="220.0" y="548.0" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="17" font-weight="bold" fill="#1e1e1e" text-anchor="middle">Custom sources</text>
+<text x="220.0" y="568.0" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="14" font-weight="normal" fill="#495057" text-anchor="middle">your own SBOM database</text>
+<text x="220.0" y="588.0" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="14" font-weight="normal" fill="#495057" text-anchor="middle">referrer_artifacts</text>
+<rect x="630" y="160" width="300" height="64" rx="10" fill="#ffffff" stroke="#1e1e1e" stroke-width="2"/>
+<text x="780.0" y="188.0" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="17" font-weight="bold" fill="#1e1e1e" text-anchor="middle">image_manifest</text>
+<text x="780.0" y="208.0" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="14" font-weight="normal" fill="#495057" text-anchor="middle">//app:image</text>
+<path d="M 630 192 L 403 192" fill="none" stroke="#1e1e1e" stroke-width="2" marker-end="url(#ah)"/>
+<text x="515" y="183" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="14" font-weight="normal" fill="#495057" text-anchor="middle" font-style="italic">base</text>
+<rect x="465" y="280" width="300" height="60" rx="10" fill="#ffffff" stroke="#1e1e1e" stroke-width="2"/>
+<text x="615.0" y="306.0" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="17" font-weight="bold" fill="#1e1e1e" text-anchor="middle">image_layer</text>
+<text x="615.0" y="326.0" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="14" font-weight="normal" fill="#495057" text-anchor="middle">//app:layer</text>
+<rect x="795" y="280" width="300" height="60" rx="10" fill="#ffffff" stroke="#1e1e1e" stroke-width="2"/>
+<text x="945.0" y="306.0" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="17" font-weight="bold" fill="#1e1e1e" text-anchor="middle">image_layer</text>
+<text x="945.0" y="326.0" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="14" font-weight="normal" fill="#495057" text-anchor="middle">//app:certs</text>
+<path d="M 740 224 L 615 277" fill="none" stroke="#1e1e1e" stroke-width="2" marker-end="url(#ah)"/>
+<path d="M 820 224 L 945 277" fill="none" stroke="#1e1e1e" stroke-width="2" marker-end="url(#ah)"/>
+<rect x="465" y="390" width="110" height="64" rx="10" fill="#e9ecef" stroke="#1e1e1e" stroke-width="2"/>
+<text x="520.0" y="418.0" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="15" font-weight="bold" fill="#1e1e1e" text-anchor="middle">Layer scan</text>
+<text x="520.0" y="438.0" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="14" font-weight="normal" fill="#495057" text-anchor="middle">syft</text>
+<rect x="590" y="390" width="175" height="64" rx="10" fill="#ffffff" stroke="#1e1e1e" stroke-width="2"/>
+<text x="677.5" y="418.0" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="15" font-weight="bold" fill="#1e1e1e" text-anchor="middle">deps</text>
+<text x="677.5" y="438.0" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="14" font-weight="normal" fill="#495057" text-anchor="middle">go_binary, files, …</text>
+<rect x="795" y="390" width="175" height="64" rx="10" fill="#ffffff" stroke="#1e1e1e" stroke-width="2"/>
+<text x="882.5" y="418.0" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="15" font-weight="bold" fill="#1e1e1e" text-anchor="middle">deps</text>
+<text x="882.5" y="438.0" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="14" font-weight="normal" fill="#495057" text-anchor="middle">@ca-certificates, …</text>
+<rect x="985" y="390" width="110" height="64" rx="10" fill="#e9ecef" stroke="#1e1e1e" stroke-width="2"/>
+<text x="1040.0" y="418.0" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="15" font-weight="bold" fill="#1e1e1e" text-anchor="middle">Layer scan</text>
+<text x="1040.0" y="438.0" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="14" font-weight="normal" fill="#495057" text-anchor="middle">syft</text>
+<path d="M 520 340 L 520 387" fill="none" stroke="#1e1e1e" stroke-width="2" marker-end="url(#ah)"/>
+<path d="M 677 340 L 677 387" fill="none" stroke="#1e1e1e" stroke-width="2" marker-end="url(#ah)"/>
+<path d="M 882 340 L 882 387" fill="none" stroke="#1e1e1e" stroke-width="2" marker-end="url(#ah)"/>
+<path d="M 1040 340 L 1040 387" fill="none" stroke="#1e1e1e" stroke-width="2" marker-end="url(#ah)"/>
+<rect x="590" y="500" width="380" height="90" rx="10" fill="#e9ecef" stroke="#1e1e1e" stroke-width="2" stroke-dasharray="8 7"/>
+<text x="780.0" y="531.0" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="bold" fill="#1e1e1e" text-anchor="middle">package_metadata</text>
+<text x="780.0" y="551.0" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="14" font-weight="normal" fill="#495057" text-anchor="middle">purl · license · version</text>
+<text x="780.0" y="571.0" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="14" font-weight="normal" fill="#495057" text-anchor="middle">collected by the @supply_chain aspect</text>
+<path d="M 677 454 L 677 497" fill="none" stroke="#1e1e1e" stroke-width="2" marker-end="url(#ah)"/>
+<path d="M 882 454 L 882 497" fill="none" stroke="#1e1e1e" stroke-width="2" marker-end="url(#ah)"/>
+<rect x="465" y="680" width="630" height="100" rx="10" fill="#fffae0" stroke="#1e1e1e" stroke-width="2"/>
+<text x="780.0" y="716.0" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="19" font-weight="bold" fill="#1e1e1e" text-anchor="middle">rules_img_sbom toolchain</text>
+<text x="780.0" y="736.0" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="14" font-weight="normal" fill="#495057" text-anchor="middle">merges base SBOM · package_metadata · layer scans</text>
+<text x="780.0" y="756.0" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="14" font-weight="normal" fill="#495057" text-anchor="middle">→ CycloneDX / SPDX SBOM for every image</text>
+<path d="M 220 640 L 220 730 L 462 730" fill="none" stroke="#1e1e1e" stroke-width="2" marker-end="url(#ah)"/>
+<text x="230" y="664" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="14" font-weight="normal" fill="#495057" text-anchor="start" font-style="italic">base SBOM + scans</text>
+<path d="M 520 454 L 520 677" fill="none" stroke="#1e1e1e" stroke-width="2" marker-end="url(#ah)"/>
+<path d="M 780 590 L 780 677" fill="none" stroke="#1e1e1e" stroke-width="2" marker-end="url(#ah)"/>
+<path d="M 1040 454 L 1040 677" fill="none" stroke="#1e1e1e" stroke-width="2" marker-end="url(#ah)"/>
+<rect x="1185" y="160" width="350" height="64" rx="10" fill="#ffffff" stroke="#1e1e1e" stroke-width="2"/>
+<text x="1360.0" y="188.0" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="17" font-weight="bold" fill="#1e1e1e" text-anchor="middle">Image</text>
+<text x="1360.0" y="208.0" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="14" font-weight="normal" fill="#495057" text-anchor="middle">manifest / index</text>
+<path d="M 930 192 L 1182 192" fill="none" stroke="#1e1e1e" stroke-width="2" marker-end="url(#ah)"/>
+<text x="1056" y="183" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="14" font-weight="normal" fill="#495057" text-anchor="middle" font-style="italic">push</text>
+<rect x="1185" y="290" width="285" height="80" rx="10" fill="#e9ecef" stroke="#1e1e1e" stroke-width="2"/>
+<text x="1327.5" y="326.0" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="17" font-weight="bold" fill="#1e1e1e" text-anchor="middle">SBOMs</text>
+<text x="1327.5" y="346.0" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="14" font-weight="normal" fill="#495057" text-anchor="middle">CycloneDX · SPDX</text>
+<path d="M 1470 330 L 1510 330" fill="none" stroke="#1e1e1e" stroke-width="2"/>
+<rect x="1185" y="420" width="285" height="80" rx="10" fill="#e9ecef" stroke="#1e1e1e" stroke-width="2"/>
+<text x="1327.5" y="456.0" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="17" font-weight="bold" fill="#1e1e1e" text-anchor="middle">SBOM attestations</text>
+<text x="1327.5" y="476.0" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="14" font-weight="normal" fill="#495057" text-anchor="middle">signed in-toto statements</text>
+<path d="M 1470 460 L 1510 460" fill="none" stroke="#1e1e1e" stroke-width="2"/>
+<rect x="1185" y="550" width="285" height="80" rx="10" fill="#e9ecef" stroke="#1e1e1e" stroke-width="2"/>
+<text x="1327.5" y="586.0" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="17" font-weight="bold" fill="#1e1e1e" text-anchor="middle">Signatures</text>
+<text x="1327.5" y="606.0" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="14" font-weight="normal" fill="#495057" text-anchor="middle">cosign · Notation</text>
+<path d="M 1470 590 L 1510 590" fill="none" stroke="#1e1e1e" stroke-width="2"/>
+<path d="M 1510 590 L 1510 227" fill="none" stroke="#1e1e1e" stroke-width="2" marker-end="url(#ah)"/>
+<text x="1530" y="410" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="14" font-style="italic" fill="#495057" text-anchor="middle" transform="rotate(-90 1530 410)">subject</text>
+<path d="M 1095 730 L 1140 730 L 1140 330 L 1182 330" fill="none" stroke="#1e1e1e" stroke-width="2" marker-end="url(#ah)"/>
+<text x="1360" y="682" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="14" font-weight="normal" fill="#495057" text-anchor="middle">OCI referrers of the image,</text>
+<text x="1360" y="702" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="14" font-weight="normal" fill="#495057" text-anchor="middle">pushed with it and signed</text>
+<text x="1360" y="722" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="14" font-weight="normal" fill="#495057" text-anchor="middle">by your signing_config</text>
+</svg>

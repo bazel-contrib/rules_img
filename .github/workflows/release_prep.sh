@@ -88,8 +88,7 @@ register_toolchains("@rules_img_sbom//toolchains:cyclonedx")  # or :spdx, or :cy
 Every \`image_manifest\` and \`image_index\` then gets an SBOM, attached as an OCI
 referrer. The toolchains run the prebuilt SBOM writer published with this
 release. See the
-[\`rules_img_sbom\` README](https://github.com/bazel-contrib/rules_img/blob/${TAG}/modules/rules_img_sbom/README.md)
-and [automatic referrers](https://github.com/bazel-contrib/rules_img/blob/${TAG}/docs/automatic-referrers.md).
+[supply chain security guide](https://github.com/bazel-contrib/rules_img/blob/${TAG}/docs/supply-chain.md).
 EOF
 }
 

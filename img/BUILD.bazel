@@ -18,7 +18,7 @@ toolchain_type(
 
 # Generates automatic referrers (such as SBOMs) for every image. No toolchain of
 # this type is registered by default: register one (for example from
-# @rules_img_sbom) to opt in. See docs/automatic-referrers.md.
+# @rules_img_sbom) to opt in. See docs/supply-chain.md.
 toolchain_type(
     name = "automatic_referrers_toolchain_type",
     visibility = ["//visibility:public"],
