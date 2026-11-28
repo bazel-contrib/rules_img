@@ -103,6 +103,9 @@ type Index struct {
 	// for children whose SBOMs aren't published with the index.
 	OmitChildReferences bool
 	Created             time.Time
+	// Destination is where the index is pushed (its manifests with it), or nil:
+	// the index and its manifests are then named there (see Destination).
+	Destination *Destination
 }
 
 // ImagePURL returns the Docker package URL of an image named name (a
@@ -129,7 +132,8 @@ func pulledImageComponent(repository, digest string, qualifiers map[string]strin
 // pushed is unknown when its SBOM is built (one SBOM serves every push of the
 // image, to any registry), so it has no package URL: every package URL type
 // for images needs the repository's name (pkg:docker even defaults to Docker
-// Hub without a repository_url). It is identified by its digest, as its SHA-256
+// Hub without a repository_url). The SBOM pushed with the image to a known
+// destination names it there instead (see Destination and SetDestination). It is identified by its digest, as its SHA-256
 // hash (it has no version), and by name@digest as its reference. name, the image
 // target's label, is the display name, followed by what the image is for: its
 // platform ("linux/amd64"), or "multi-arch" for an index.
@@ -342,12 +346,18 @@ func orderBaseSBOMs(sboms []BaseSBOM, format string) []BaseSBOM {
 // is only a list of its manifests and their SBOMs: CycloneDX gets no dependency
 // graph, and the references to the children's SBOMs no comments.
 func ComposeIndex(i Index) (Document, error) {
-	b := NewBuilder(builtImageComponent(i.Name, i.Descriptor.Digest, multiArch), i.Created)
+	imageComponent := func(digest, platform string) Component {
+		if i.Destination != nil {
+			return i.Destination.component(digest, platform)
+		}
+		return builtImageComponent(i.Name, digest, platform)
+	}
+	b := NewBuilder(imageComponent(i.Descriptor.Digest, multiArch), i.Created)
 	primary := b.Primary().Ref
 	reference := i.Mode == IndexReference
 	for _, child := range i.Children {
 		// Named after the index if the child has no SBOM to take its name from.
-		component := builtImageComponent(i.Name, child.Descriptor.Digest, platformOf(child.Descriptor))
+		component := imageComponent(child.Descriptor.Digest, platformOf(child.Descriptor))
 		var imported *Imported
 		if child.SBOM != "" {
 			data, err := os.ReadFile(child.SBOM)
@@ -360,6 +370,10 @@ func ComposeIndex(i Index) (Document, error) {
 			if len(imported.Described) > 0 && imported.Described[0].Ref != "" {
 				component.Ref = imported.Described[0].Ref
 				component.Name = imported.Described[0].Name
+				if described := imported.Described[0].PURL; described != "" {
+					// The child's SBOM names it where it is pushed.
+					component.PURL = described
+				}
 			}
 			if !i.OmitChildReferences {
 				external := imported.Reference

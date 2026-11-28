@@ -19,11 +19,14 @@ see [image signing](/docs/image-signing.md)) along with the image.
 ## What's in the SBOM
 
 - **The image** is the primary component: a `container` with the manifest digest as its SHA-256
-  hash. It has no version and no package URL: a package URL names a repository, and
-  where the image will be pushed isn't known when its SBOM is built (the same SBOM is pushed with
-  the image wherever it goes; and every package URL type for images needs the repository's name).
-  Its name is the target's label and the image's platform, such as `//app:image (linux/amd64)`, and
-  its reference (`bom-ref`) is the label and the digest.
+  hash. It has no version. Where the image will be pushed isn't known when its SBOM is built, so
+  that SBOM has no package URL (every package URL type for images needs the repository's name): its
+  name is the target's label and the image's platform, such as `//app:image (linux/amd64)`, and its
+  reference (`bom-ref`) is the label and the digest. The SBOMs pushed with the image (by its
+  `push_specs`, or an `image_push`) name it where they push it: its package URL there,
+  `pkg:docker/<repository>@<digest>?repository_url=<registry>` (the one a pull of the image
+  records), is its package URL and reference, and its name is the repository and the platform,
+  such as `buildbarn/bb-storage (linux/amd64)` (see `pushed_image_purls`).
 - **Packages** come from the `package_metadata` of everything the image's layers are built from,
   gathered as `@supply_chain_tools//gather_metadata` does. Dependencies between packages follow the
   build graph.
@@ -94,6 +97,13 @@ toolchain(
   them: one document per image, found when scanning the multi-platform tag, but none when scanning
   a platform's digest. `drop` needs `index_sbom = "aggregate"`. Either way, a manifest pushed by
   itself still pushes its own SBOMs.
+- `pushed_image_purls`: whether the SBOMs pushed with an image name it where they push it.
+  `enabled` (default): every destination (each of the image's `push_specs`, and each
+  `image_push` of it) gets SBOMs of its own, rewritten from the image's, whose image (and, for an
+  index, whose manifests) has the package URL of the image there; an index's SBOM refers to the
+  manifests' SBOMs pushed with it. The pushing target's `sbom` output group has them. A
+  `bazel run` that overrides the registry or repository (`--registry`, `--repository`) still pushes
+  SBOMs naming the destination they were made for. `disabled`: every push pushes the same SBOMs.
 - `timestamp`: the creation time the SBOMs record.
   - `none` (default): none. CycloneDX leaves out its optional timestamp; SPDX requires one, and
     gets the Unix epoch.

@@ -23,8 +23,9 @@ A single toolchain can attach several SBOMs to every image, for example one in e
 For an `image_manifest`, the toolchain describes:
 
 - the image itself as the SBOM's primary component: a `container` component with the manifest's
-  digest as its SHA-256 hash, and no package URL (one SBOM serves every push of the image, so it
-  can't name a registry or repository);
+  digest as its SHA-256 hash, and no package URL (when the SBOM is built, where the image will be
+  pushed isn't known; the SBOMs pushed with it name it there, see
+  [pushed SBOMs](#pushed-sboms-name-the-image-where-it-is-pushed));
 - the packages that make up its layers, from the `package_metadata` of everything the layers
   depend on (collected by an aspect with the shape of
   [`@supply_chain_tools//gather_metadata`](https://github.com/bazel-contrib/supply-chain));
@@ -70,6 +71,30 @@ Automatic referrers are exposed in three ways:
   `rules_img_sbom`, or `child_referrers` of `AutomaticReferrersToolchainInfo`). Turn this off per target with
   `push_automatic_referrers = "disabled"`, or for the whole build with
   `--@rules_img//img/settings:push_automatic_referrers=disabled`.
+
+### Pushed SBOMs name the image where it is pushed
+
+An image's SBOM is built before anything knows where the image will be pushed, so it names the
+image by its label. A push knows: each of an image's `push_specs` (deployed by `multi_deploy`, or
+pushed at build time) and each `image_push` of it pushes SBOMs made for its own destination.
+With `rules_img_sbom` (its `pushed_image_purls`, on by default), the image's primary component
+then has the package URL that a pull of the image records,
+`pkg:docker/<repository>@<digest>?repository_url=<registry>`, as its package URL and reference, and
+its repository in place of its label in its name (`buildbarn/bb-storage (linux/amd64)`). So an image
+that uses it as its base names it alike.
+
+For an image index, the manifests' SBOMs pushed with it are made for the same destination (the
+manifests are pushed into the index's repository), and so is the index's SBOM, which refers to
+those. Every destination gets its own SBOMs (and with them, their own referrer digests); the SBOM is
+rewritten from the one built for the image, not built again. The `sbom` output group of the target
+that pushes (the image with `push_specs`, or the `image_push`) has those it pushes.
+
+The destination is the push's registry and repository, with templates expanded (or its
+`destination_file`). A `bazel run` of the push that overrides them (`--registry`, `--repository`)
+pushes SBOMs that name the destination they were made for.
+
+A toolchain other than `rules_img_sbom` does this with an optional `for_destination` function (see
+[writing a toolchain](#writing-a-toolchain)).
 
 ### Signing
 
@@ -161,6 +186,13 @@ for the request and the artifacts, and `@rules_img_sbom//sbom:toolchain.bzl` for
 
 Only one toolchain of the type is selected. To combine generators, write a toolchain that runs all
 of them.
+
+A toolchain can make what a push pushes depend on its destination: if its
+`AutomaticReferrersToolchainInfo` has a `for_destination(ctx, toolchain, request)` function, the
+target that pushes an image (with its own `ctx`) calls it for every destination that pushes the
+image's automatic referrers, with what `generate` returned for the image and the push's
+configuration (its registry and repository), and pushes the artifacts it returns. For an index, it
+is called for each manifest first, then for the index, with the manifests' results.
 
 ### Scanning layers
 

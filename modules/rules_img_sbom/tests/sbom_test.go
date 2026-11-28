@@ -2,6 +2,9 @@ package sbom_test
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"flag"
 	"os"
 	"path/filepath"
@@ -201,4 +204,181 @@ func TestIndexSBOMs(t *testing.T) {
 		assert.True(t, namespaces[ref.URI], "%s should be a child's SPDX SBOM", ref.URI)
 	}
 	require.Contains(t, purlsOf(spdxIndex), "pkg:generic/hello@1.0.0")
+}
+
+// pushedSBOM is an SBOM pushed to a destination, as read from the file a push ships.
+type pushedSBOM struct {
+	format  string
+	primary string // the package URL of what it describes
+	name    string
+	serial  string // CycloneDX: the urn:cdx reference to it
+	refs    []string
+}
+
+func readPushedSBOM(t *testing.T, path string) pushedSBOM {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	if bytes.Contains(data, []byte(`"bomFormat"`)) {
+		bom := readCycloneDX(t, path)
+		primary := bom.Metadata.Component
+		assert.Equal(t, primary.PackageURL, primary.BOMRef, "referenced by its package URL, as a pulled image is")
+		sbom := pushedSBOM{format: "cyclonedx", primary: primary.PackageURL, name: primary.Name, serial: "urn:cdx:" + strings.TrimPrefix(bom.SerialNumber, "urn:uuid:") + "/1"}
+		// The references of the images in the same repository: an index's manifests.
+		repository, _, _ := strings.Cut(primary.PackageURL, "@")
+		if bom.Components != nil {
+			for _, c := range *bom.Components {
+				if c.ExternalReferences != nil && strings.HasPrefix(c.PackageURL, repository+"@") {
+					for _, ref := range *c.ExternalReferences {
+						sbom.refs = append(sbom.refs, ref.URL)
+					}
+				}
+			}
+		}
+		return sbom
+	}
+	doc := readSPDX(t, path)
+	for _, pkg := range doc.Packages {
+		if pkg.PackageSPDXIdentifier != "Image" {
+			continue
+		}
+		purls := 0
+		sbom := pushedSBOM{format: "spdx", name: pkg.PackageName}
+		for _, ref := range pkg.PackageExternalReferences {
+			if ref.RefType == "purl" {
+				sbom.primary = ref.Locator
+				purls++
+			}
+		}
+		assert.Equal(t, 1, purls, "one package URL: %s", path)
+		assert.True(t, strings.HasPrefix(doc.DocumentNamespace, "https://spdx.org/spdxdocs/pkg:docker"), "a namespace of its own: %s", doc.DocumentNamespace)
+		return sbom
+	}
+	t.Fatalf("%s describes no image", path)
+	return pushedSBOM{}
+}
+
+func imagePURL(registry, repository, digest string) string {
+	return "pkg:docker/" + repository + "@" + digest + "?repository_url=" + registry
+}
+
+// The multi_deploy of images with push_specs pushes, to every destination, SBOMs that name the
+// image there: what is checked is what the deploy ships, referrer by referrer.
+func TestMultiDeployPushesSBOMsNamingTheirDestination(t *testing.T) {
+	data, err := os.ReadFile(runfile(os.Getenv("DEPLOY_MANIFEST")))
+	require.NoError(t, err)
+	var deploy struct {
+		Operations []struct {
+			RootKind string `json:"root_kind"`
+			Root     struct {
+				Digest string `json:"digest"`
+			} `json:"root"`
+			RunfilesSlot string   `json:"runfiles_slot"`
+			Registry     string   `json:"registry"`
+			Repository   string   `json:"repository"`
+			Tags         []string `json:"tags"`
+		} `json:"operations"`
+	}
+	require.NoError(t, json.Unmarshal(data, &deploy))
+
+	type destination struct{ registry, repository string }
+	pushed := map[destination][]pushedSBOM{}
+	shipped := map[string]bool{}
+	for _, op := range deploy.Operations {
+		if op.RootKind != "manifest" {
+			continue
+		}
+		slots, err := filepath.Glob(filepath.Join(os.Getenv("TEST_SRCDIR"), "*", "*", op.RunfilesSlot))
+		require.NoError(t, err)
+		// Slots are content-addressed: any copy will do.
+		require.NotEmpty(t, slots, "the runfiles slot of %s", op.Root.Digest)
+		manifestData, err := os.ReadFile(filepath.Join(slots[0], "sparse_oci_layout", "blobs", "sha256", strings.TrimPrefix(op.Root.Digest, "sha256:")))
+		require.NoError(t, err)
+		var manifest struct {
+			ArtifactType string `json:"artifactType"`
+			Subject      *struct {
+				Digest string `json:"digest"`
+			} `json:"subject"`
+			Layers []struct {
+				Digest string `json:"digest"`
+			} `json:"layers"`
+		}
+		require.NoError(t, json.Unmarshal(manifestData, &manifest))
+		if manifest.Subject == nil {
+			continue // an image, not a referrer
+		}
+		assert.Empty(t, op.Tags, "a referrer is pushed by digest")
+		layer := filepath.Join(slots[0], "manifests", "0", "layer", "0")
+		layerData, err := os.ReadFile(layer)
+		require.NoError(t, err)
+		assert.Equal(t, manifest.Layers[0].Digest, "sha256:"+sha256Hex(layerData), "the shipped layer is the referrer's")
+		shipped[sha256Hex(layerData)] = true
+
+		sbom := readPushedSBOM(t, layer)
+		// It describes the image it is a referrer of, where it is pushed to.
+		assert.Equal(t, imagePURL(op.Registry, op.Repository, manifest.Subject.Digest), sbom.primary, "the SBOM pushed to %s/%s", op.Registry, op.Repository)
+		assert.True(t, strings.HasPrefix(sbom.name, op.Repository+" ("), "named after its repository: %q", sbom.name)
+		d := destination{op.Registry, op.Repository}
+		pushed[d] = append(pushed[d], sbom)
+	}
+
+	// The index's SBOMs and those of its two manifests, in both formats, to each of its
+	// destinations (the templated repository expanded); the manifest's, to its own.
+	ghcr := destination{"ghcr.io", "buildbarn/pushed"}
+	mirror := destination{"registry.example.com", "mirror/app"}
+	single := destination{"ghcr.io", "buildbarn/pushed_manifest"}
+	require.Len(t, pushed, 3, "%v", pushed)
+	assert.Len(t, pushed[ghcr], 6)
+	assert.Len(t, pushed[mirror], 6)
+	assert.Len(t, pushed[single], 2)
+
+	// Each destination's index SBOM refers to the SBOMs of the manifests pushed with it.
+	for _, d := range []destination{ghcr, mirror} {
+		serials := map[string]bool{}
+		var index *pushedSBOM
+		for i, sbom := range pushed[d] {
+			if sbom.format != "cyclonedx" {
+				continue
+			}
+			if strings.HasSuffix(sbom.name, "(multi-arch)") {
+				index = &pushed[d][i]
+			} else {
+				serials[sbom.serial] = true
+			}
+		}
+		require.NotNil(t, index, "the index SBOM pushed to %v", d)
+		require.Len(t, serials, 2)
+		require.Len(t, index.refs, 2, "references to the manifests' SBOMs")
+		for _, ref := range index.refs {
+			assert.True(t, serials[ref], "%s refers to %s, which isn't pushed to %v", index.primary, ref, d)
+		}
+	}
+
+	// Their sbom output group has exactly what the deploy ships.
+	paths := strings.Fields(os.Getenv("DEPLOY_SBOMS"))
+	assert.Len(t, paths, len(shipped))
+	for _, path := range paths {
+		data, err := os.ReadFile(runfile(path))
+		require.NoError(t, err)
+		assert.True(t, shipped[sha256Hex(data)], "%s is shipped by the deploy", path)
+	}
+}
+
+func TestImagePushPushesSBOMsNamingTheDestination(t *testing.T) {
+	paths := strings.Fields(os.Getenv("PUSH_SBOMS"))
+	require.Len(t, paths, 6, "the index's SBOMs and its manifests', in both formats")
+	for _, path := range paths {
+		sbom := readPushedSBOM(t, runfile(path))
+		assert.True(t, strings.HasPrefix(sbom.primary, "pkg:docker/buildbarn/index@sha256:"), sbom.primary)
+		assert.True(t, strings.HasSuffix(sbom.primary, "?repository_url=ghcr.io"), sbom.primary)
+	}
+}
+
+func TestImagePushWithoutDestinationSBOMsHasTheImages(t *testing.T) {
+	assert.ElementsMatch(t, strings.Fields(os.Getenv("INDEX_SBOMS")), strings.Fields(os.Getenv("UNNAMED_PUSH_SBOMS")))
+}
+
+func sha256Hex(data []byte) string {
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
 }

@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "main.go",
         "scan_layer.go",
+        "set_destination.go",
     ],
     importpath = "github.com/bazel-contrib/rules_img_sbom/cmd/img-sbom",
     visibility = ["//visibility:private"],
@@ -13,7 +14,6 @@ go_library(
         "//internal/graph",
         "//internal/layerscan",
         "//internal/scan",
-        "@com_github_google_uuid//:uuid",
     ],
 )
 

@@ -7,6 +7,7 @@ go_library(
         "compose.go",
         "created.go",
         "cyclonedx.go",
+        "destination.go",
         "license_spdx.go",
         "model.go",
         "read.go",
@@ -20,6 +21,7 @@ go_library(
         "//internal/layerscan",
         "@com_github_bazel_contrib_supply_chain_lib_supplychain_go//:supplychain-go",
         "@com_github_cyclonedx_cyclonedx_go//:cyclonedx-go",
+        "@com_github_google_uuid//:uuid",
         "@com_github_package_url_packageurl_go//:packageurl-go",
         "@com_github_spdx_tools_golang//json",
         "@com_github_spdx_tools_golang//spdx",
@@ -32,6 +34,7 @@ go_test(
     srcs = [
         "bom_test.go",
         "created_test.go",
+        "destination_test.go",
         "scan_test.go",
     ],
     deps = [

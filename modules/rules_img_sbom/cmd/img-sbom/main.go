@@ -4,6 +4,9 @@
 //
 // `img-sbom scan-layer` scans one layer for the packages it contains, for the
 // SBOMs of the images that have the layer.
+//
+// `img-sbom set-destination` rewrites the SBOM of an image manifest to name the
+// image where a push spec pushes it.
 package main
 
 import (
@@ -12,8 +15,6 @@ import (
 	"fmt"
 	"os"
 	"time"
-
-	"github.com/google/uuid"
 
 	"github.com/bazel-contrib/rules_img_sbom/internal/bom"
 	"github.com/bazel-contrib/rules_img_sbom/internal/graph"
@@ -53,11 +54,28 @@ type Request struct {
 		SBOM                   string `json:"sbom"`
 		SBOMReferrerDescriptor string `json:"sbom_referrer_descriptor"`
 	} `json:"children"`
+	// Destination is where the index is pushed, or nil (see DestinationFiles).
+	Destination *DestinationFiles `json:"destination"`
+}
+
+// DestinationFiles name the files a push's destination is read from (see
+// bom.ReadDestination).
+type DestinationFiles struct {
+	Configuration   string `json:"configuration"`
+	DestinationFile string `json:"destination_file"`
+}
+
+func (f DestinationFiles) read() (bom.Destination, error) {
+	return bom.ReadDestination(f.Configuration, f.DestinationFile)
 }
 
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "scan-layer" {
 		scanLayerMain(os.Args[2:])
+		return
+	}
+	if len(os.Args) > 1 && os.Args[1] == "set-destination" {
+		setDestinationMain(os.Args[2:])
 		return
 	}
 	requestPath := flag.String("request", "", "Path to the JSON request written by the toolchain")
@@ -114,6 +132,13 @@ func run(requestPath, outPath string) error {
 		doc, err = bom.ComposeManifest(manifest)
 	case "index":
 		index := bom.Index{Name: request.Name, Descriptor: descriptor, Mode: request.IndexMode, OmitChildReferences: !request.ReferenceChildren, Created: created}
+		if request.Destination != nil {
+			destination, err := request.Destination.read()
+			if err != nil {
+				return err
+			}
+			index.Destination = &destination
+		}
 		for _, c := range request.Children {
 			var child bom.Child
 			if err := readJSON(c.Descriptor, &child.Descriptor); err != nil {
@@ -142,7 +167,7 @@ func run(requestPath, outPath string) error {
 	var data []byte
 	switch request.Format {
 	case "cyclonedx":
-		data, err = bom.WriteCycloneDX(doc, "urn:uuid:"+uuid.NewSHA1(uuid.NameSpaceURL, []byte(doc.Primary.Ref)).String())
+		data, err = bom.WriteCycloneDX(doc, bom.CycloneDXSerial(doc.Primary.Ref))
 	case "spdx":
 		data, err = bom.WriteSPDX(doc, bom.SPDXNamespace(doc.Primary.Ref))
 	default:

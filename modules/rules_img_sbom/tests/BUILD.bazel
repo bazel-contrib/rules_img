@@ -5,6 +5,8 @@ load("@package_metadata//rules:package_metadata.bzl", "package_metadata")
 load("@rules_go//go:def.bzl", "go_test")
 load("@rules_img//img:image.bzl", "image_index", "image_manifest")
 load("@rules_img//img:layer.bzl", "image_layer")
+load("@rules_img//img:multi_deploy.bzl", "multi_deploy")
+load("@rules_img//img:push.bzl", "image_push", "image_push_spec")
 
 # A pulled image without the network: the fixture of a pull repository rule.
 load("@rules_img//img/private:import.bzl", "image_import")  # buildifier: disable=bzl-visibility
@@ -94,6 +96,94 @@ filegroup(
     output_group = "sbom",
 )
 
+# Images that carry their pushes (push_specs), deployed by a multi_deploy: the
+# SBOMs pushed to each destination name the image there.
+image_push_spec(
+    name = "ghcr",
+    registry = "ghcr.io",
+    # Expanded like the push's own repository.
+    repository = "buildbarn/{{.image_target_name}}",
+    tag = "latest",
+)
+
+image_push_spec(
+    name = "mirror",
+    registry = "registry.example.com",
+    repository = "mirror/app",
+    tag = "latest",
+)
+
+image_index(
+    name = "pushed",
+    manifests = [
+        ":image",
+        ":image_arm64",
+    ],
+    push_specs = [
+        ":ghcr",
+        ":mirror",
+    ],
+)
+
+image_manifest(
+    name = "pushed_manifest",
+    layers = [":layer"],
+    platform = ":linux_amd64",
+    push_specs = [":ghcr"],
+)
+
+multi_deploy(
+    name = "deploy",
+    operations = [
+        ":pushed",
+        ":pushed_manifest",
+    ],
+)
+
+# image_push names the image where it pushes it too.
+image_push(
+    name = "push",
+    image = ":index",
+    registry = "ghcr.io",
+    repository = "buildbarn/index",
+)
+
+filegroup(
+    name = "deploy_sboms",
+    srcs = [
+        ":pushed",
+        ":pushed_manifest",
+    ],
+    output_group = "sbom",
+)
+
+filegroup(
+    name = "push_sboms",
+    srcs = [":push"],
+    output_group = "sbom",
+)
+
+# A push that makes no SBOMs for its destination has the image's own.
+image_push(
+    name = "push_without_automatic_referrers",
+    image = ":index",
+    push_automatic_referrers = "disabled",
+    registry = "ghcr.io",
+    repository = "buildbarn/index",
+)
+
+filegroup(
+    name = "unnamed_push_sboms",
+    srcs = [":push_without_automatic_referrers"],
+    output_group = "sbom",
+)
+
+filegroup(
+    name = "deploy_manifest",
+    srcs = [":deploy"],
+    output_group = "deploy_manifest",
+)
+
 go_test(
     name = "sbom_test",
     srcs = ["sbom_test.go"],
@@ -103,13 +193,22 @@ go_test(
         "-base_sbom=" + SBOM,
     ],
     data = [
+        ":deploy",
+        ":deploy_manifest",
+        ":deploy_sboms",
         ":image_digest",
         ":image_sbom",
         ":index_sboms",
+        ":push_sboms",
+        ":unnamed_push_sboms",
     ],
     env = {
+        "DEPLOY_MANIFEST": "$(rootpath :deploy_manifest)",
+        "DEPLOY_SBOMS": "$(rootpaths :deploy_sboms)",
         "IMAGE_SBOMS": "$(rootpaths :image_sbom)",
         "INDEX_SBOMS": "$(rootpaths :index_sboms)",
+        "PUSH_SBOMS": "$(rootpaths :push_sboms)",
+        "UNNAMED_PUSH_SBOMS": "$(rootpaths :unnamed_push_sboms)",
     },
     deps = [
         "@com_github_cyclonedx_cyclonedx_go//:cyclonedx-go",

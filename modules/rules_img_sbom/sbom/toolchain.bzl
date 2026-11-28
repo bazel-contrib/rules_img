@@ -34,9 +34,68 @@ def _child_sbom(sbom_info, sbom_format):
 
 def _generate(ctx, toolchain, request):
     """Implements AutomaticReferrersToolchainInfo.generate: writes the image's SBOMs."""
-    return [_generate_format(ctx, toolchain.data, request, sbom_format) for sbom_format in toolchain.data.formats]
+    return [_generate_format(ctx, toolchain.data, request, sbom_format, prefix = ctx.label.name) for sbom_format in toolchain.data.formats]
 
-def _generate_format(ctx, data, request, sbom_format):
+def _destination_dict(destination):
+    return dict(
+        configuration = destination.configuration.path,
+        destination_file = destination.destination_file.path if destination.destination_file != None else "",
+    )
+
+def _destination_inputs(destination):
+    return [destination.configuration] + ([destination.destination_file] if destination.destination_file != None else [])
+
+def _for_destination(ctx, toolchain, request):
+    """Implements AutomaticReferrersToolchainInfo.for_destination: the SBOMs pushed to one destination.
+
+    They name the image where it is pushed: its package URL there, which a pull of it records,
+    and its repository. An image manifest's SBOMs are rewritten (they are what generate wrote,
+    but for the name of the image); an index's are written again, from its manifests' SBOMs
+    for the same destination, so it refers to those.
+    """
+    data = toolchain.data
+    if request.kind == "index":
+        formats = {f.format: f for f in data.formats}
+        return [
+            _generate_format(ctx, data, request, formats[artifact.sbom_format], prefix = request.output_prefix, destination = request.destination) if getattr(artifact, "sbom_format", None) in formats else artifact
+            for artifact in request.artifacts
+        ]
+    return [
+        _set_destination(ctx, data, request, artifact) if getattr(artifact, "sbom_format", None) != None else artifact
+        for artifact in request.artifacts
+    ]
+
+def _set_destination(ctx, data, request, artifact):
+    content = dict(
+        format = artifact.sbom_format,
+        sbom = artifact.file.path,
+        descriptor = request.descriptor.path,
+        name = request.name,
+        destination = _destination_dict(request.destination),
+    )
+    extension = _FORMATS[artifact.sbom_format].extension
+    request_file = ctx.actions.declare_file("{}.{}.sbom_destination_request.json".format(request.output_prefix, extension))
+    ctx.actions.write(request_file, json.encode(content))
+
+    # Named like the SBOM it is made from: the name is the title of the referrer's layer.
+    out = ctx.actions.declare_file("{}/{}".format(request.output_prefix, artifact.file.basename))
+    ctx.actions.run(
+        executable = data.tool,
+        arguments = ["set-destination", "--request", request_file.path, "--out", out.path],
+        inputs = [request_file, artifact.file, request.descriptor] + _destination_inputs(request.destination),
+        outputs = [out],
+        mnemonic = "ImageSbomDestination",
+        progress_message = "Naming the image where %{{label}} pushes it in the {} SBOM of {}".format(artifact.sbom_format, request.name),
+    )
+    return struct(
+        file = out,
+        media_type = artifact.media_type,
+        artifact_type = artifact.artifact_type,
+        annotations = artifact.annotations,
+        sbom_format = artifact.sbom_format,
+    )
+
+def _generate_format(ctx, data, request, sbom_format, *, prefix, destination = None):
     inputs = [request.descriptor]
     transitive = []
     content = dict(
@@ -89,10 +148,17 @@ def _generate_format(ctx, data, request, sbom_format):
 
         # The index only refers to SBOMs that are published with it.
         content["reference_children"] = data.child_sboms == "publish"
+        if destination != None:
+            content["destination"] = _destination_dict(destination)
+            inputs.extend(_destination_inputs(destination))
 
-    request_file = ctx.actions.declare_file("{}.{}.sbom_request.json".format(ctx.label.name, sbom_format.extension))
+    request_file = ctx.actions.declare_file("{}.{}.sbom_request.json".format(prefix, sbom_format.extension))
     ctx.actions.write(request_file, json.encode(content))
-    out = ctx.actions.declare_file("{}.{}".format(ctx.label.name, sbom_format.extension))
+    if destination == None:
+        out = ctx.actions.declare_file("{}.{}".format(prefix, sbom_format.extension))
+    else:
+        # Named like the image's own SBOM: the name is the title of the referrer's layer.
+        out = ctx.actions.declare_file("{}/{}.{}".format(prefix, request.label.name, sbom_format.extension))
     ctx.actions.run(
         executable = data.tool,
         arguments = ["--request", request_file.path, "--out", out.path],
@@ -183,6 +249,7 @@ def _sbom_toolchain_impl(ctx):
         automatic_referrers = AutomaticReferrersToolchainInfo(
             child_referrers = "drop" if ctx.attr.child_sboms == "drop" else "forward",
             generate = _generate,
+            for_destination = _for_destination if ctx.attr.pushed_image_purls == "enabled" else None,
             scan_layer = _scan_layer if "layer_scan" in ctx.attr.sources else None,
             data = struct(
                 formats = formats,
@@ -350,6 +417,30 @@ from them), and a manifest pushed by itself still pushes its own.
 Its value is either Unix seconds (like `BUILD_TIMESTAMP`) or an RFC 3339 time. Looked up in the
 stable status first, then in the volatile status. A stamped image fails to build if the key is
 missing.""",
+        ),
+        "pushed_image_purls": attr.string(
+            default = "enabled",
+            values = ["enabled", "disabled"],
+            doc = """Whether the SBOMs pushed with an image name it where it is pushed.
+
+Where an image will be pushed isn't known when its SBOM is built, so the SBOM names the image by
+its label and digest, without a package URL (every package URL type for images needs a
+repository). With `enabled` (the default), the SBOMs that a push of the image to a known
+registry and repository pushes (each of the image's `push_specs`, and each `image_push` of it)
+name it there instead: the image's primary component gets the package URL a pull of it records,
+`pkg:docker/<repository>@<digest>?repository_url=<registry>` (also as its reference, as a
+pulled image has), and the repository in place of the label in its name; the document gets a
+serial number (or SPDX namespace) of its own. For an image index, so do its manifests, in their
+own SBOMs and in the index's, which refers to the SBOMs pushed with them. Each destination gets
+SBOMs of its own, and the `sbom` output group of the pushing target (an `image_push`, or an image
+with `push_specs`) has those it pushes.
+
+The SBOM is rewritten, not built again, so this is cheap, even for many destinations. A
+`bazel run` of the push that overrides the registry or repository (`--registry`, `--repository`)
+pushes SBOMs that name the destination they were built for.
+
+With `disabled`, every push pushes the same SBOMs, whatever its destination, and the `sbom`
+output group has those.""",
         ),
         "artifact_types": attr.string_dict(
             doc = """Artifact type of the SBOM referrers, per format. A format defaults to its media type
