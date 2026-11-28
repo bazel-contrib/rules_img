@@ -487,6 +487,16 @@ shipped: the referenced blobs are fetched from Bazel's disk / remote cache by
 their content digest instead. This requires Bazel's digest function to be sha256
 (the default) — see [Digest Function](push-strategies.md#digest-function).
 
+Inside Bazel, every compact layer gets a `LayerInputFilesCAS` action that runs
+`cas-dir` over all the files its layer action declares as inputs. A rule that
+declares more inputs than a layer packs pays to hash the extra files too. That
+happens, for example, when several layers share one runfiles tree and an
+execution-time step decides which files each layer packs. Such a rule can pass
+`cas_input_list` to `create_single_layer`, a file with the exec path of each
+packed input, one per line, and `cas-dir` then reads only those paths. Every
+listed path must be one of the declared inputs. A path that isn't is skipped,
+and the layer can't be reconstructed.
+
 ## Inspecting a compact stream without reconstruction
 
 `compact-stream list` (alias `ls`) prints a human-readable view of a compact stream — its
