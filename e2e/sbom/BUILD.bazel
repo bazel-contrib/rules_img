@@ -1,7 +1,33 @@
 load("@bazel_skylib//rules:build_test.bzl", "build_test")
 load("@rules_img//img:image.bzl", "image_from_binary")
 load("@rules_img//img:multi_deploy.bzl", "multi_deploy")
-load("@rules_img//img:push.bzl", "image_push")
+load("@rules_img//img:push.bzl", "image_push_spec")
+load("@rules_img_sbom//sbom:toolchain.bzl", "sbom_toolchain")
+
+# The SBOM toolchain (registered in MODULE.bazel): a CycloneDX and an SPDX SBOM for
+# every image, from the base image's SBOM, the package metadata of the image's
+# layers, and what a scan of every layer finds: the base image's layers (which must
+# be available: the pulls download them) and those built here.
+sbom_toolchain(
+    name = "sbom_toolchain",
+    formats = [
+        "cyclonedx",
+        "spdx",
+    ],
+    scan_built_layers = "enabled",
+    scan_pulled_layers = "required",
+    sources = [
+        "base_sbom",
+        "layer_scan",
+        "package_metadata",
+    ],
+)
+
+toolchain(
+    name = "sbom",
+    toolchain = ":sbom_toolchain",
+    toolchain_type = "@rules_img//img:automatic_referrers_toolchain_type",
+)
 
 platform(
     name = "linux_amd64",
@@ -19,6 +45,17 @@ platform(
     ],
 )
 
+# Where //:image is pushed (by the multi_deploy targets below), together with its
+# SBOMs, each an OCI referrer of the manifest it describes.
+image_push_spec(
+    name = "push_spec",
+    # Set the destination registry per-image here, or globally in .bazelrc via
+    # --@rules_img//img/settings:destination_registry=docker.acme.tld
+    # registry = "docker.acme.tld",
+    repository = "malt3/supply-chain-example",
+    tag = "latest",
+)
+
 image_from_binary(
     name = "image",
     base = "@distroless",
@@ -27,6 +64,7 @@ image_from_binary(
         ":linux_amd64",
         ":linux_arm64",
     ],
+    push_specs = [":push_spec"],
 )
 
 # With the SBOM toolchain registered (see MODULE.bazel), the image comes with a
@@ -54,6 +92,40 @@ echo ok > $@
 """,
 )
 
+# Every SBOM lists the Go standard library of //app (a Go binary), which only the
+# scan of the image's own layer finds: no package metadata describes it.
+genrule(
+    name = "sboms_contain_scanned_packages",
+    srcs = [":image_sboms"],
+    outs = ["sboms_contain_scanned_packages.txt"],
+    cmd = """
+for sbom in $(SRCS); do
+  grep -q 'pkg:golang/stdlib@' "$$sbom" || { echo "$$sbom lacks the Go standard library found by scanning //app" >&2; exit 1; }
+done
+echo ok > $@
+""",
+)
+
+# The scans of the image's layers (the `layer_scans` output group): those of the
+# base image found its Debian packages, and that of the layer built here the Go
+# modules of //app.
+filegroup(
+    name = "image_layer_scans",
+    srcs = [":image"],
+    output_group = "layer_scans",
+)
+
+genrule(
+    name = "layer_scans_cover_base_and_app",
+    srcs = [":image_layer_scans"],
+    outs = ["layer_scans_cover_base_and_app.txt"],
+    cmd = """
+grep -l '"name": "base-files"' $(SRCS) >/dev/null || { echo "no layer scan found the Debian packages of the base image" >&2; exit 1; }
+grep -l '"purl": "pkg:golang/stdlib@' $(SRCS) >/dev/null || { echo "no layer scan found the Go standard library of //app" >&2; exit 1; }
+echo ok > $@
+""",
+)
+
 # The same on a base built with `docker buildx build --sbom=true`, whose SBOMs are
 # BuildKit attestations in its index: every SBOM lists the base's Alpine packages.
 image_from_binary(
@@ -72,6 +144,23 @@ filegroup(
     output_group = "sbom",
 )
 
+# The scans of the BuildKit base image's layers found its Alpine packages.
+filegroup(
+    name = "image_on_buildkit_base_layer_scans",
+    srcs = [":image_on_buildkit_base"],
+    output_group = "layer_scans",
+)
+
+genrule(
+    name = "layer_scans_cover_buildkit_base",
+    srcs = [":image_on_buildkit_base_layer_scans"],
+    outs = ["layer_scans_cover_buildkit_base.txt"],
+    cmd = """
+grep -l '"purl": "pkg:apk/alpine/alpine-baselayout@' $(SRCS) >/dev/null || { echo "no layer scan found the Alpine packages of the BuildKit base image" >&2; exit 1; }
+echo ok > $@
+""",
+)
+
 genrule(
     name = "sboms_contain_buildkit_base_packages",
     srcs = [":image_on_buildkit_base_sboms"],
@@ -84,41 +173,30 @@ echo ok > $@
 """,
 )
 
-image_push(
-    name = "push_image",
-    image = ":image",
-    # Set the destination registry per-image here, or globally in .bazelrc via
-    # --@rules_img//img/settings:destination_registry=docker.acme.tld
-    # registry = "docker.acme.tld",
-    repository = "malt3/supply-chain-example",
-    tag = "latest",
-    visibility = ["//visibility:public"],
-)
-
 # Standardized deploy entrypoints. The integration test runner runs `//:push`
 # against an ephemeral local registry (destination_registry injected via
 # .bazelrc.generated). `deploy` performs every operation; `push`/`load` filter.
 multi_deploy(
     name = "deploy",
-    operations = [":push_image"],
+    operations = [":image"],
 )
 
 multi_deploy(
     name = "push",
     deploy_operations = ["push"],
-    operations = [":push_image"],
+    operations = [":image"],
 )
 
 multi_deploy(
     name = "load",
     deploy_operations = ["load"],
-    operations = [":push_image"],
+    operations = [":image"],
 )
 
 # Note:
 #
-# `image_push` pushes the SBOMs as referrers of the manifests they describe (and
-# signs them along with the image when signing is enabled). You can check the
+# The push spec of //:image pushes the SBOMs as referrers of the manifests they
+# describe (and signs them along with the image when signing is enabled). You can check the
 # SBOM using common tools:
 # > trivy image --sbom-sources oci ghcr.io/malt3/supply-chain-example:latest
 #
@@ -134,10 +212,12 @@ build_test(
         "//:image_sboms",
         "//:sboms_contain_base_packages",
         "//:sboms_contain_buildkit_base_packages",
+        "//:sboms_contain_scanned_packages",
+        "//:layer_scans_cover_base_and_app",
+        "//:layer_scans_cover_buildkit_base",
         "//:deploy",
         "//:push",
         "//:load",
-        "//:push_image",
         "@rules_img_signer_cosign",
         "@rules_img_signer_notation",
     ],

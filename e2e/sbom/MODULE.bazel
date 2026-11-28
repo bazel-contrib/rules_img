@@ -62,6 +62,15 @@ go_deps.gazelle_override(
     directives = ["gazelle:go_generate_proto false"],
     path = "github.com/google/certificate-transparency-go",
 )
+go_deps.gazelle_override(
+    directives = ["gazelle:go_generate_proto false"],
+    path = "github.com/containerd/cgroups/v3",
+)
+go_deps.module_override(
+    patch_strip = 1,
+    patches = ["@rules_img_sbom//third_party:syft-cpe-index-embed.patch"],
+    path = "github.com/anchore/syft",
+)
 
 register_toolchains("@rules_img_tool//toolchain:all")
 # END BAZEL_DEP
@@ -70,14 +79,17 @@ bazel_dep(name = "bazel_skylib", version = "1.9.2")
 bazel_dep(name = "package_metadata", version = "0.0.13")
 bazel_dep(name = "platforms", version = "1.1.0")
 
-# Attach a CycloneDX and an SPDX SBOM to every image.
-register_toolchains("@rules_img_sbom//toolchains:cyclonedx_and_spdx")
+# Attach a CycloneDX and an SPDX SBOM to every image, made from the base image's
+# SBOM, the package metadata of its layers, and a scan of every layer (see
+# //:sbom_toolchain).
+register_toolchains("//:sbom")
 
 pull = use_repo_rule("@rules_img//img:pull.bzl", "pull")
 
 # distroless publishes an SBOM of every image as a cosign attestation, under the
 # tag sha256-<digest>.att (cosign's tag scheme, not an OCI referrer). Pulling it
 # along makes the SBOMs of the images built on it contain distroless's packages.
+# Its layers are downloaded too (layer_handling = "eager"), so they can be scanned.
 #
 # The attestations are pinned by digest, so the repository is reproducible (it
 # takes part in the repository contents cache). `referrer_cosign_tags = ["att"]`
@@ -86,6 +98,7 @@ pull = use_repo_rule("@rules_img//img:pull.bzl", "pull")
 pull(
     name = "distroless",
     digest = "sha256:1a64f46364620465ef9e9a8f5413757dfdf22695e050bbfd7303eeaf17a59383",
+    layer_handling = "eager",
     referrer_digests = [
         # SBOM attestation of the index (all platforms)
         "sha256:979aa44e15dd651f8be4efdf83319ea47e62914abff8f9f4397db26538c052d7",
@@ -105,10 +118,11 @@ pull(
 # `referrer_buildkit_attestations` pulls those of the selected platforms as
 # referrers of their manifests, so the SBOMs of the images built on it contain the
 # base's packages. They are listed by the index, which the digest pins, so the
-# repository stays reproducible.
+# repository stays reproducible. Its layers are downloaded to be scanned.
 pull(
     name = "buildkit_base",
     digest = "sha256:f350e8e7cc0e3b33d500e2fc462ac9273d8954327f32e2501b34b6bef5a0de3e",
+    layer_handling = "eager",
     platforms = [
         "linux/amd64",
         "linux/arm64",

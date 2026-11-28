@@ -12,8 +12,12 @@ signing is enabled).
 
 ### [MODULE.bazel](./MODULE.bazel) - SBOM Toolchain
 
-Registers `@rules_img_sbom//toolchains:cyclonedx_and_spdx`, so every image gets a CycloneDX and an
-SPDX SBOM.
+Registers `//:sbom`, an `sbom_toolchain` (in [BUILD.bazel](./BUILD.bazel)), so every image gets a
+CycloneDX and an SPDX SBOM. They are made from all three sources: the base image's SBOM, the
+`package_metadata` of the image's layers, and a scan of every layer with syft
+(`sources = ["base_sbom", "layer_scan", "package_metadata"]`). Pulled base layers must be scanned
+(`scan_pulled_layers = "required"`), so both pulls download their layers
+(`layer_handling = "eager"`). Packages found by several sources are one component each.
 
 ### [app/](./app/BUILD.bazel) - Application with Package Metadata
 
@@ -36,12 +40,20 @@ package of the image.
    would find them by tag on every fetch instead). The image's SBOMs inherit their Debian packages
    (`base-files`, `ca-certificates`, `tzdata`, ...), which `//:sboms_contain_base_packages` checks.
 
+   Scanning the layers adds what neither of the other sources knows: `//:sboms_contain_scanned_packages`
+   checks that every SBOM lists the Go standard library of `//app`, and
+   `//:layer_scans_cover_base_and_app` that the scans of the image's layers (its `layer_scans`
+   output group) found the base image's Debian packages and `//app`'s Go modules. Each layer is
+   scanned once, however many images (and platforms) have it.
+
    `//:image_on_buildkit_base` is the same on a base built with `docker buildx build --sbom=true`
    (`ghcr.io/crazy-max/diun`), whose SPDX SBOMs are BuildKit attestations stored in its index.
    The `pull` sets `referrer_buildkit_attestations`, so the image's SBOMs inherit the base's Alpine
-   packages, which `//:sboms_contain_buildkit_base_packages` checks.
-2. **Push**: `image_push` pushes the image together with all of its SBOMs, each an OCI referrer of
-   the manifest it describes.
+   packages, which `//:sboms_contain_buildkit_base_packages` checks; `//:layer_scans_cover_buildkit_base`
+   checks that the scans of its layers found them too.
+2. **Push**: the image's `push_specs` (an `image_push_spec`, deployed by the `multi_deploy`
+   targets `//:push` and `//:deploy`) push it together with all of its SBOMs, each an OCI referrer
+   of the manifest it describes.
 3. **Signing** (`--config=cosign` or `--config=notation`, see [.bazelrc](./.bazelrc)): the signing
    configs in [signer/](./signer/BUILD.bazel) sign the SBOMs too (`targets` includes `"referrers"`).
 
