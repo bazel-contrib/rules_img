@@ -6,7 +6,7 @@ load("//img:image.bzl", "image_index", "image_manifest")
 load("//img:layer.bzl", "image_layer")
 load("//img:push.bzl", "image_push")
 load("//img/private:import.bzl", "image_import")
-load(":automatic_referrers_test.bzl", "dropped_children_test", "forwarded_children_test", "index_test", "manifest_test", "none_with_toolchain_test", "none_without_toolchain_test", "pulled_base_test", "push_dropping_test", "push_test")
+load(":automatic_referrers_test.bzl", "dropped_children_test", "forwarded_children_test", "index_test", "layer_scan_test", "manifest_test", "no_layer_scan_test", "none_with_toolchain_test", "none_without_toolchain_test", "pulled_base_test", "push_dropping_test", "push_test")
 
 # Bazel 8 added the package_metadata attribute to every rule (with symbolic
 # macros, which mark the release). Bazel 7 only has its predecessor,
@@ -180,6 +180,15 @@ def automatic_referrers_test_suite(name):
         tags = ["manual"],
     )
     image_manifest(name = name + "_on_pulled", base = ":" + name + "_pulled", layers = layers, platform = linux_amd64, tags = ["manual"])
+    image_manifest(name = name + "_on_built", base = ":" + name + "_image", layers = [":" + name + "_tar"], platform = linux_amd64, tags = ["manual"])
+
+    # A plain tar file as a layer, as rules_pkg makes them.
+    native.genrule(
+        name = name + "_tar",
+        outs = [name + "_plain.tar"],
+        cmd = "tar -cf $@ -T /dev/null",
+        tags = ["manual"],
+    )
 
     image_push(name = name + "_push", image = ":" + name + "_image", registry = "registry.example.com", repository = "example/image", tags = ["manual"])
     image_push(name = name + "_push_index", image = ":" + name + "_index", registry = "registry.example.com", repository = "example/image", tags = ["manual"])
@@ -221,5 +230,26 @@ def automatic_referrers_test_suite(name):
     _test(dropped_children_test, "dropped_children_test", "index")
     _test(forwarded_children_test, "forwarded_children_test", "opted_out_index")
     _test(push_dropping_test, "push_index_dropping_test", "push_index", expected_referrers = 2)
+
+    pkg = "img/private/automatic_referrers/"
+    _test(
+        layer_scan_test,
+        "layer_scan_on_pulled_test",
+        "on_pulled",
+        expected_layers = [
+            json.encode(dict(origin = "pulled", base = True, scan = pkg + name + "_pulled_layer_scan_0.fake_scan.json")),
+            json.encode(dict(origin = "built", base = False, scan = pkg + name + "_layer_layer_scan_0.fake_scan.json")),
+        ],
+    )
+    _test(
+        layer_scan_test,
+        "layer_scan_on_built_test",
+        "on_built",
+        expected_layers = [
+            json.encode(dict(origin = "built", base = True, scan = pkg + name + "_layer_layer_scan_0.fake_scan.json")),
+            json.encode(dict(origin = "built", base = False, scan = pkg + name + "_tar_layer_scan_tar_0.fake_scan.json")),
+        ],
+    )
+    _test(no_layer_scan_test, "no_layer_scan_test", "image")
 
     native.test_suite(name = name, tests = tests)

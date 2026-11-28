@@ -77,6 +77,10 @@ A `"manifest"` request also has:
   graph JSON format of `@supply_chain_tools//gather_metadata` (the image is the root target).
 - `metadata`: TransitiveMetadataInfo the graph was serialized from.
 - `metadata_files`: depset of the package metadata files the graph refers to.
+- `layers`: the image's layers, bottom (its base image's) to top, as
+  struct(layer, origin, base, scan): the layer's SingleLayerInfo, `"pulled"` for a layer of a
+  pulled (or imported) image or `"built"` for one built by Bazel, whether it is a layer of the
+  base image, and the File `scan_layer` returned for it, or None.
 - `base`: None, or struct(image, sboms) describing the base image. `image` is
   struct(repository, registries, digest) for a pulled base (its root manifest or index),
   or None. `sboms` lists the SBOMs found for the base manifest, best match first, as
@@ -89,6 +93,26 @@ A `"manifest"` request also has:
   `digest` is the digest of the SBOM's referrer manifest, or None for an SBOM generated
   in this build, and `scope` is `"manifest"` for an SBOM of the base manifest itself, or
   `"index"` for one of the index it was selected from (which describes every platform).
+
+When the toolchain has a `scan_layer` function, rules_img calls it once for every layer of
+every image (and of its base images), from an aspect on the layer's target, so a layer shared
+by many images is scanned once. It returns a File with the result of scanning the layer, or
+None to not scan it, and gets a request with:
+
+- `label`: Label of the target that provides the layer (a layer rule, or a pulled image).
+- `name`: a prefix, unique per layer of that target, for the files the function declares.
+- `origin`: `"pulled"` for a layer of a pulled (or imported) image, `"built"` for one built
+  by Bazel.
+- `media_type`: the layer's media type (a tar, EROFS, ext4, ... layer).
+- `metadata`: File with the layer's metadata (digest, diff_id, ...), or None for a plain tar
+  file used as a layer.
+- `layer`: the layer's SingleLayerInfo, or None for a plain tar file used as a layer.
+- `contents`: None if the layer's files are not available (a pulled layer whose blob was not
+  downloaded), else struct(executable, arguments, inputs): running the File `executable` with
+  `arguments` (strings) writes the files of the layer to its standard output, as an
+  uncompressed tar, whatever the layer's format (a compressed tar, a compact stream, an EROFS
+  or ext4 filesystem image, ...). The action that runs it needs `executable` and the depset
+  `inputs`.
 
 An `"index"` request also has:
 
@@ -106,6 +130,7 @@ has automatic referrers of its own (an index SBOM that aggregates its children's
 The children's own `ReferrersInfo` is unaffected: pushing a child manifest by
 itself still pushes its referrers.""",
         generate = "Function `generate(ctx, toolchain, request)` returning a list of artifacts.",
+        scan_layer = "Optional function `scan_layer(ctx, toolchain, request)` returning a File with the result of scanning a layer, or None. Unset (or None) means layers are not scanned.",
         data = "Opaque data for `generate` (tools, settings), passed back as `toolchain.data`.",
     ),
 )
@@ -117,5 +142,16 @@ BaseSbomInfo = provider(
         referrers = "PulledReferrersInfo of a pulled base image, or None.",
         index_info = "ImageIndexInfo of the base if it is an image index, or None.",
         pull_info = "PullInfo of a pulled base image, or None.",
+    ),
+)
+
+LayerScanInfo = provider(
+    doc = "Layer scans the layer scan aspect created for the layers of an image's dependencies. Internal to rules_img.",
+    fields = dict(
+        scans = """\
+Depset of struct(keys, origin, scan), one per layer the aspect visited: `keys` is a tuple of
+the Files that identify the layer (its metadata and blob, whichever it has), `origin` is
+`"pulled"` or `"built"`, and `scan` the File the toolchain's `scan_layer` returned for it,
+or None.""",
     ),
 )

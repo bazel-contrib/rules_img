@@ -5,7 +5,7 @@ load("//img/private:annotations_util.bzl", "extract_annotations_from_pull_info")
 load("//img/private:oci_layout_action.bzl", "run_oci_layout_action")
 load("//img/private:push_metadata.bzl", "process_deploy_specs")
 load("//img/private:stamp.bzl", "expand_or_write")
-load("//img/private/automatic_referrers:aspects.bzl", "OPTIONAL_AUTOMATIC_REFERRERS_TOOLCHAIN", "base_sbom_aspect", "metadata_aspect")
+load("//img/private/automatic_referrers:aspects.bzl", "OPTIONAL_AUTOMATIC_REFERRERS_TOOLCHAIN", "base_sbom_aspect", "layer_scan_aspect", "metadata_aspect")
 load("//img/private/automatic_referrers:automatic_referrers.bzl", "AUTOMATIC_REFERRERS_ATTRS", "automatic_referrers_wanted", "manifest_automatic_referrers")
 load("//img/private/common:build.bzl", "TOOLCHAIN", "TOOLCHAINS")
 load("//img/private/common:inherit.bzl", "INHERIT_FROM_BASE")
@@ -819,11 +819,11 @@ Output groups:
     attrs = AUTOMATIC_REFERRERS_ATTRS | {
         "base": attr.label(
             doc = "Base image to inherit layers from. Should provide ImageManifestInfo or ImageIndexInfo.",
-            aspects = [base_sbom_aspect],
+            aspects = [base_sbom_aspect, layer_scan_aspect],
         ),
         "layers": attr.label_list(
             doc = "Layers to include in the image. Either a LayersInfo provider or a DefaultInfo with tar files.",
-            aspects = [metadata_aspect],
+            aspects = [metadata_aspect, layer_scan_aspect],
         ),
         "platform": attr.label(
             doc = """Optional target platform to build this manifest for.

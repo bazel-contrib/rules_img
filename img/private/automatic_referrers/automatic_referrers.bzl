@@ -13,7 +13,7 @@ load("//img/private/providers:automatic_referrers_info.bzl", "BaseSbomInfo", "Im
 load("//img/private/providers:manifest_info.bzl", "ImageManifestInfo")
 load("//img/private/supply_chain_tools/gather_metadata:providers.bzl", "TargetWithMetadataInfo", "TransitiveMetadataInfo", "null_transitive_metadata_info")
 load("//img/private/supply_chain_tools/gather_metadata:serialization.bzl", "metadata_info_to_json")
-load(":aspects.bzl", "automatic_referrers_toolchain")
+load(":aspects.bzl", "automatic_referrers_toolchain", "layer_scans")
 
 _EMPTY_JSON_MEDIA_TYPE = "application/vnd.oci.empty.v1+json"
 
@@ -350,6 +350,17 @@ def manifest_automatic_referrers(ctx, *, toolchain, manifest_info, digest, base)
     if toolchain == None:
         return struct(providers = [], output_groups = {}, referrers = [])
     graph = _metadata_graph(ctx, ctx.attr.layers)
+    scans = layer_scans([ctx.attr.base] + ctx.attr.layers) if getattr(toolchain, "scan_layer", None) != None else {}
+    base_layer_count = len(base.layers) if base != None else 0
+    layers = []
+    for (position, layer) in enumerate(manifest_info.layers):
+        scan = scans.get(layer.metadata) or (scans.get(layer.blob) if layer.blob != None else None)
+        layers.append(struct(
+            layer = layer,
+            origin = scan.origin if scan != None else ("pulled" if layer.sources else "built"),
+            base = position < base_layer_count,
+            scan = scan.scan if scan != None else None,
+        ))
     request = struct(
         kind = "manifest",
         label = ctx.label,
@@ -361,11 +372,15 @@ def manifest_automatic_referrers(ctx, *, toolchain, manifest_info, digest, base)
         metadata_graph = graph.graph,
         metadata = graph.metadata,
         metadata_files = graph.files,
+        layers = layers,
         base = _base_request(ctx, base) if base != None else None,
     )
     referrers, sboms = _wrap_artifacts(ctx, toolchain, request, manifest_info)
     providers = [ReferrersInfo(referrers = referrers)]
     output_groups = {}
+    layer_scan_files = [layer.scan for layer in layers if layer.scan != None]
+    if layer_scan_files:
+        output_groups["layer_scans"] = depset(layer_scan_files)
     if sboms:
         providers.append(ImageSbomInfo(sboms = sboms, manifests = []))
         output_groups["sbom"] = depset([sbom.sbom for sbom in sboms.values()])
@@ -433,6 +448,13 @@ def index_automatic_referrers(ctx, *, toolchain, index_info, digest, manifests):
     sbom_files = [sbom.sbom for sbom in sboms.values()] + child_sbom_files
     if sbom_files:
         output_groups["sbom"] = depset(sbom_files)
+    child_layer_scans = [
+        manifest[OutputGroupInfo].layer_scans
+        for manifest in manifests
+        if OutputGroupInfo in manifest and hasattr(manifest[OutputGroupInfo], "layer_scans")
+    ]
+    if child_layer_scans:
+        output_groups["layer_scans"] = depset(transitive = child_layer_scans)
     return struct(providers = providers, output_groups = output_groups, referrers = referrers + child_referrers)
 
 def _digest_file(manifest):

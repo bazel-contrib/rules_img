@@ -22,6 +22,7 @@ bzl_library(
         "//img/private/common:sparse_oci_layout",
         "//img/private/providers:automatic_referrers_info",
         "//img/private/providers:index_info",
+        "//img/private/providers:layers_info",
         "//img/private/providers:manifest_info",
         "//img/private/providers:pull_info",
         "//img/private/providers:pulled_referrers_info",
@@ -37,6 +38,17 @@ fake_automatic_referrers_toolchain(name = "fake_toolchain_impl")
 toolchain(
     name = "fake_toolchain",
     toolchain = ":fake_toolchain_impl",
+    toolchain_type = "//img:automatic_referrers_toolchain_type",
+)
+
+fake_automatic_referrers_toolchain(
+    name = "fake_scanning_toolchain_impl",
+    scan = True,
+)
+
+toolchain(
+    name = "fake_scanning_toolchain",
+    toolchain = ":fake_scanning_toolchain_impl",
     toolchain_type = "//img:automatic_referrers_toolchain_type",
 )
 

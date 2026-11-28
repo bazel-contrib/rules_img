@@ -16,6 +16,10 @@ def _generate(ctx, toolchain, request):
         stamp = None if request.stamp == None else [request.stamp.stable_status.basename, request.stamp.volatile_status.basename],
     )
     if request.kind == "manifest":
+        summary["layers"] = [
+            dict(origin = layer.origin, base = layer.base, scan = layer.scan.short_path if layer.scan != None else None)
+            for layer in request.layers
+        ]
         summary["metadata_graph"] = request.metadata_graph.basename
         summary["metadata_files"] = sorted([f.basename for f in request.metadata_files.to_list()])
         if request.base != None:
@@ -41,11 +45,22 @@ def _generate(ctx, toolchain, request):
         ))
     return artifacts
 
+def _scan_layer(ctx, _toolchain, request):
+    """Writes a summary of the request instead of scanning the layer."""
+    out = ctx.actions.declare_file(request.name + ".fake_scan.json")
+    ctx.actions.write(out, json.encode(dict(
+        origin = request.origin,
+        media_type = request.media_type,
+        arguments = request.contents.arguments if request.contents != None else None,
+    )))
+    return out
+
 def _fake_toolchain_impl(ctx):
     return [platform_common.ToolchainInfo(
         automatic_referrers = AutomaticReferrersToolchainInfo(
             child_referrers = ctx.attr.child_referrers,
             generate = _generate,
+            scan_layer = _scan_layer if ctx.attr.scan else None,
             data = struct(marker = ctx.attr.marker, formats = ctx.attr.formats),
         ),
     )]
@@ -56,6 +71,7 @@ fake_automatic_referrers_toolchain = rule(
         "marker": attr.string(default = "fake"),
         "formats": attr.string_list(default = ["cyclonedx", "spdx"]),
         "child_referrers": attr.string(default = "forward"),
+        "scan": attr.bool(),
     },
 )
 
@@ -72,6 +88,8 @@ def _referrer_actions(env):
     return [action for action in analysistest.target_actions(env) if action.mnemonic == "AutomaticReferrerManifest"]
 
 _WITH_TOOLCHAIN = {"//command_line_option:extra_toolchains": [_FAKE_TOOLCHAIN]}
+
+_WITH_SCANNING_TOOLCHAIN = {"//command_line_option:extra_toolchains": [str(Label("//img/private/automatic_referrers:fake_scanning_toolchain"))]}
 
 _WITH_DROPPING_TOOLCHAIN = {"//command_line_option:extra_toolchains": [str(Label("//img/private/automatic_referrers:fake_dropping_toolchain"))]}
 
@@ -248,3 +266,40 @@ push_dropping_test = analysistest.make(
     config_settings = _WITH_DROPPING_TOOLCHAIN,
     attrs = {"expected_referrers": attr.int()},
 )
+
+def _layer_scan_test_impl(ctx):
+    env = analysistest.begin(ctx)
+    target = analysistest.target_under_test(env)
+    summary = json.decode(_written(env, target.label.name + "_fake_manifest_cyclonedx.json"))
+
+    # Every layer, the base image's first, is scanned where it comes from: the scan of a layer
+    # shared by several images is the same file for all of them.
+    asserts.equals(env, [json.decode(layer) for layer in ctx.attr.expected_layers], summary["layers"])
+
+    # The scans are the image's layer_scans output group.
+    asserts.equals(
+        env,
+        sorted([layer["scan"] for layer in summary["layers"]]),
+        sorted([f.short_path for f in target[OutputGroupInfo].layer_scans.to_list()]),
+    )
+
+    # ...and not by the image itself.
+    asserts.equals(env, [], [a for a in analysistest.target_actions(env) for f in a.outputs.to_list() if f.basename.endswith(".fake_scan.json")])
+    return analysistest.end(env)
+
+layer_scan_test = analysistest.make(
+    _layer_scan_test_impl,
+    config_settings = _WITH_SCANNING_TOOLCHAIN,
+    attrs = {"expected_layers": attr.string_list(doc = "JSON of each expected request.layers entry.")},
+)
+
+def _no_layer_scan_test_impl(ctx):
+    env = analysistest.begin(ctx)
+    target = analysistest.target_under_test(env)
+    summary = json.decode(_written(env, target.label.name + "_fake_manifest_cyclonedx.json"))
+
+    # Without scan_layer, the layers are listed, but not scanned.
+    asserts.equals(env, [dict(origin = "built", base = False, scan = None)], summary["layers"])
+    return analysistest.end(env)
+
+no_layer_scan_test = analysistest.make(_no_layer_scan_test_impl, config_settings = _WITH_TOOLCHAIN)

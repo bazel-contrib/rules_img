@@ -161,3 +161,18 @@ for the request and the artifacts, and `@rules_img_sbom//sbom:toolchain.bzl` for
 
 Only one toolchain of the type is selected. To combine generators, write a toolchain that runs all
 of them.
+
+### Scanning layers
+
+A toolchain can also scan layers: if its `AutomaticReferrersToolchainInfo` has a
+`scan_layer(ctx, toolchain, request)` function, an aspect of the image rules calls it for every layer
+of every image (and of its base images), at the target that provides the layer (a layer rule, a
+pulled image), so a layer shared by many images is scanned once. It returns a File with the scan's
+result, or None, and gets the layer's origin (`"pulled"` or `"built"`), its media type and
+`SingleLayerInfo`, and `contents`: a command (`img layer-tar`) that writes the layer's files to its
+standard output as an uncompressed tar, whatever the layer's format (a compressed tar, a compact
+stream, an EROFS or ext4 filesystem image, ...), or None if they aren't available (a shallow pull).
+A manifest's `generate` request then lists its layers, base image's first, each with the result of
+its scan (`request.layers`), and the image's `layer_scans` output group has the results (an
+index's, those of its manifests). `@rules_img_sbom` uses this to scan layers with syft (see its
+`sources`).
