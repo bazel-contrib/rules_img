@@ -7,21 +7,40 @@ load("//img/private:push_metadata.bzl", "build_time_push_actions", "compute_push
 load("//img/private:root_symlinks.bzl", "calculate_root_symlinks", "symlink_name_prefix")
 load("//img/private:sign_settings.bzl", "add_sign_setting_symlinks")
 load("//img/private:stamp.bzl", "expand_or_write")
+load("//img/private/automatic_referrers:automatic_referrers.bzl", "referrers_for_destination")
 load("//img/private/common:build.bzl", "TOOLCHAINS")
 load("//img/private/common:default_deploy_tool.bzl", "default_deploy_tool")
 load("//img/private/common:deploy_attrs.bzl", "COMMON_PUSH_ATTRS")
-load("//img/private/common:deploy_helpers.bzl", "add_build_time_push_outputs", "automatic_referrers_of", "content_tracking_json_vars", "cross_mount_blob_repository", "extract_cross_mount_from", "extract_referrers", "get_image_providers", "get_tags", "image_target_vars", "push_automatic_referrers", "resolve_push_at_build_time", "resolve_push_registry", "resolve_push_strategy", "resolve_signing", "resolve_tool_settings")
+load("//img/private/common:deploy_helpers.bzl", "add_build_time_push_outputs", "content_tracking_json_vars", "cross_mount_blob_repository", "extract_cross_mount_from", "extract_referrers", "get_image_providers", "get_tags", "image_target_vars", "push_automatic_referrers", "resolve_push_at_build_time", "resolve_push_registry", "resolve_push_strategy", "resolve_signing", "resolve_tool_settings")
+load("//img/private/providers:automatic_referrers_info.bzl", "ReferrersInfo")
 load("//img/private/providers:deploy_info.bzl", "DeployInfo")
 load("//img/private/providers:deploy_tool_info.bzl", "DeployToolInfo")
 load("//img/private/providers:pull_info.bzl", "PullInfo")
 load("//img/private/providers:push_settings_info.bzl", "PushSettingsInfo")
 
-def _push_referrers(ctx):
-    """The referrers pushed with the image: `referrers`, then its automatic ones."""
+def _push_referrers(ctx, *, configuration_json):
+    """The referrers pushed with the image: `referrers`, then its automatic ones.
+
+    The automatic referrers are made for this push's destination (see
+    referrers_for_destination).
+
+    Returns:
+        struct(referrers, sbom_files).
+    """
     referrers = extract_referrers(ctx)
+    sbom_files = []
     if push_automatic_referrers(ctx):
-        referrers = referrers + automatic_referrers_of(ctx.attr.image)
-    return referrers
+        info = ctx.attr.image[ReferrersInfo] if ReferrersInfo in ctx.attr.image else None
+        automatic = referrers_for_destination(
+            ctx,
+            info,
+            configuration = configuration_json,
+            destination_file = ctx.file.destination_file,
+            key = "push",
+        )
+        referrers = referrers + automatic.referrers
+        sbom_files = automatic.sbom_files
+    return struct(referrers = referrers, sbom_files = sbom_files)
 
 def _per_child_manifest_tag_file(*, ctx, child_index, child_info):
     extra = image_target_vars(ctx.attr.image.label)
@@ -40,7 +59,7 @@ def _per_child_manifest_tag_file(*, ctx, child_index, child_info):
         extra_build_settings = extra,
     )
 
-def _compute_push_metadata(*, ctx, configuration_json, pbt, destination_file = None, signing = None):
+def _compute_push_metadata(*, ctx, configuration_json, pbt, referrers, destination_file = None, signing = None):
     manifest_info, index_info = get_image_providers(ctx)
     pull_info = ctx.attr.image[PullInfo] if PullInfo in ctx.attr.image else None
 
@@ -59,7 +78,7 @@ def _compute_push_metadata(*, ctx, configuration_json, pbt, destination_file = N
         strategy = resolve_push_strategy(ctx),
         cross_mount_strategy = ctx.attr._push_settings[PushSettingsInfo].cross_mount,
         cross_mount_from = extract_cross_mount_from(ctx),
-        referrers = _push_referrers(ctx),
+        referrers = referrers,
         manifest_tags_expanded = manifest_tags_expanded,
         pull_info = pull_info,
         destination_file = destination_file,
@@ -119,10 +138,12 @@ def _image_push_impl(ctx):
         json_path_to_root = json_path_to_root,
     )
 
+    push_referrers = _push_referrers(ctx, configuration_json = configuration_json)
     deploy_metadata, layer_hints = _compute_push_metadata(
         ctx = ctx,
         configuration_json = configuration_json,
         pbt = pbt,
+        referrers = push_referrers.referrers,
         destination_file = ctx.file.destination_file,
         signing = signing,
     )
@@ -135,7 +156,7 @@ def _image_push_impl(ctx):
         symlink_name_prefix = root_symlinks_prefix,
     )
 
-    for referrer in _push_referrers(ctx):
+    for referrer in push_referrers.referrers:
         root_symlinks.update(calculate_root_symlinks(
             referrer.index_info,
             referrer.manifest_info,
@@ -213,6 +234,13 @@ def _image_push_impl(ctx):
     # resolved per-target push_at_build_time setting; a no-op (no actions) when
     # disabled.
     output_groups = {"deploy_manifest": depset([deploy_metadata])}
+
+    # The SBOMs made for this push's destination (naming the image there), or
+    # else the image's own.
+    if push_referrers.sbom_files:
+        output_groups["sbom"] = depset(push_referrers.sbom_files)
+    elif OutputGroupInfo in ctx.attr.image and hasattr(ctx.attr.image[OutputGroupInfo], "sbom"):
+        output_groups["sbom"] = ctx.attr.image[OutputGroupInfo].sbom
     if pbt.mode in ("best_effort", "enabled"):
         push_output_groups = {}
         add_build_time_push_outputs(
@@ -249,7 +277,7 @@ def _image_push_impl(ctx):
             deploy_manifest = deploy_metadata,
             images = [image_provider] + [
                 referrer.index_info if referrer.index_info != None else referrer.manifest_info
-                for referrer in _push_referrers(ctx)
+                for referrer in push_referrers.referrers
             ],
         )],
         enabled = ctx.attr._push_settings[PushSettingsInfo].validate_cas_blobs,
@@ -274,7 +302,7 @@ def _image_push_impl(ctx):
             layer_hints = layer_hints,
             include_layers = push_strategy == "eager",
             sign_settings = sign_settings,
-            referrers = _push_referrers(ctx),
+            referrers = push_referrers.referrers,
         ),
     ]
 

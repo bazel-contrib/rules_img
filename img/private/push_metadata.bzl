@@ -8,6 +8,7 @@ load("//img/private:layer_path_hints.bzl", "layer_hints_for_deploy_metadata")
 load("//img/private:root_symlinks.bzl", "runfiles_slot")
 load("//img/private:soci_deploy.bzl", "soci_deploy_children")
 load("//img/private:stamp.bzl", "expand_or_write")
+load("//img/private/automatic_referrers:automatic_referrers.bzl", "referrers_for_destination")
 load("//img/private/common:build.bzl", "TOOLCHAIN")
 load("//img/private/common:deploy_helpers.bzl", "add_build_time_push_outputs", "add_tool_settings_args", "content_tracking_json_vars", "cross_mount_blob_repository", "resolve_tool_settings")
 load("//img/private/providers:deploy_info.bzl", "DeployInfo")
@@ -819,7 +820,7 @@ def process_deploy_specs(
         load_specs,
         allow_manifest_tags,
         sparse_layout = None,
-        automatic_referrers = []):
+        automatic_referrers = None):
     """Process push_specs and load_specs to produce a DeployInfo provider.
 
     Args:
@@ -833,8 +834,8 @@ def process_deploy_specs(
         allow_manifest_tags: If False, fail when a push spec has manifest_tags set.
         sparse_layout: The image's sparse OCI layout tree artifact (required when
             push_at_build_time is active; supplies manifest(s) + config to the push).
-        automatic_referrers: The image's automatic referrers (ReferrersInfo.referrers),
-            pushed by every push spec that pushes automatic referrers.
+        automatic_referrers: The image's ReferrersInfo, or None: its automatic referrers,
+            made for its destination, are pushed by every push spec that pushes them.
 
     Each push spec carries its own resolved push-at-build-time configuration
     (mode, content, blob/manifest repository, exec properties, gateways, output
@@ -867,9 +868,6 @@ def process_deploy_specs(
 
     for push_idx, deployment in enumerate(push_specs):
         push_config = deployment[PushConfigInfo]
-        spec_referrers = push_config.referrers
-        if push_config.push_automatic_referrers:
-            spec_referrers = spec_referrers + automatic_referrers
 
         if not allow_manifest_tags and push_config.manifest_tags:
             fail("'manifest_tags' in push spec '{}' cannot be used with image_manifest (single-platform). Use image_index instead.".format(deployment.label))
@@ -901,6 +899,22 @@ def process_deploy_specs(
             json_vars = json_vars,
             json_path_to_root = json_path_to_root,
         )
+
+        spec_referrers = push_config.referrers
+        if push_config.push_automatic_referrers:
+            # Made for this push's destination (an SBOM naming the image there, say).
+            automatic = referrers_for_destination(
+                ctx,
+                automatic_referrers,
+                configuration = configuration_json,
+                destination_file = push_config.destination_file,
+                key = "push{}".format(push_idx),
+            )
+            spec_referrers = spec_referrers + automatic.referrers
+            if automatic.sbom_files:
+                # Takes the place of the image's own `sbom` output group: the
+                # SBOMs made for its destinations, naming the image there.
+                push_output_groups.setdefault("sbom", []).extend(automatic.sbom_files)
 
         manifest_tags_expanded = []
         if push_config.manifest_tags:

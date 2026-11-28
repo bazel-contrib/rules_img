@@ -246,7 +246,7 @@ def _image_index_impl(ctx):
         load_specs = ctx.attr.load_specs,
         allow_manifest_tags = True,
         sparse_layout = sparse_layout,
-        automatic_referrers = automatic_referrers.referrers,
+        automatic_referrers = automatic_referrers.info,
     )
 
     output_groups = dict(

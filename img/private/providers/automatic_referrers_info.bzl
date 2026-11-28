@@ -14,7 +14,12 @@ referrers in the same way.
 List of struct(manifest_info, index_info, artifact_type, subject) to push: for an image
 index, the index's own referrers followed by those of every child manifest. `manifest_info`
 is the ImageManifestInfo of the artifact (`index_info` is always None), `artifact_type`
-its artifact type, and `subject` the ImageManifestInfo or ImageIndexInfo it refers to.""",
+its artifact type, and `subject` the ImageManifestInfo or ImageIndexInfo it refers to.
+
+These are the referrers as generated, for any destination. What a push pushes may differ: with
+a toolchain that has `for_destination` (see AutomaticReferrersToolchainInfo), every push spec
+and `image_push` pushes referrers made for its own destination.""",
+        destination_state = "Internal to rules_img: what is needed to make the referrers for a push destination.",
     ),
 )
 
@@ -120,6 +125,31 @@ An `"index"` request also has:
 - `manifests`: list of struct(manifest, digest, sbom), one per child manifest: its
   ImageManifestInfo, a File with its digest, and its ImageSbomInfo (or None), which has
   an SBOM per format the child's toolchain generated.
+
+When the toolchain has a `for_destination` function, rules_img calls it for every destination
+an image is pushed to (each of its `push_specs`, and each `image_push` of it) that pushes its
+automatic referrers, with the `ctx` of the target that pushes it. It returns the artifacts to
+push to that destination instead of those `generate` returned (a list like `generate`'s, in the
+same order), or None to push those. For an image index, it is first called for each child
+manifest (the children's referrers are pushed into the index's repository), then for the
+index, so the index's artifacts can refer to its children's. The request has:
+
+- `kind`, `label`, `name`, `stamp`, `digest` and `descriptor`: as for `generate`, of the image
+  (the child manifest, for a child of an index).
+- `manifest` (for a `"manifest"`) or `index` (for an `"index"`): its ImageManifestInfo or
+  ImageIndexInfo.
+- `artifacts`: what `generate` returned for the image.
+- `destination`: struct(configuration, destination_file): a File with the push's configuration
+  (a JSON object; `registry` and `repository` say where the image is pushed, with templates
+  expanded), and None or a File with the destination as `registry/repository` (a push's
+  `destination_file`), which wins over the configuration's.
+- `output_prefix`: a prefix, unique per image and destination, for the files the function
+  declares.
+- For an `"index"`, `manifests`: as for `generate`, but the ImageSbomInfo of each child
+  manifest is the one `for_destination` made for the same destination.
+
+A `bazel run` of the push can override the registry and repository (`--registry`,
+`--repository`): the artifacts still describe the destination they were made for.
 """,
     fields = dict(
         child_referrers = """\
@@ -130,6 +160,7 @@ has automatic referrers of its own (an index SBOM that aggregates its children's
 The children's own `ReferrersInfo` is unaffected: pushing a child manifest by
 itself still pushes its referrers.""",
         generate = "Function `generate(ctx, toolchain, request)` returning a list of artifacts.",
+        for_destination = "Optional function `for_destination(ctx, toolchain, request)` returning the artifacts to push to one destination, or None. Unset (or None) means every destination gets the artifacts `generate` returned.",
         scan_layer = "Optional function `scan_layer(ctx, toolchain, request)` returning a File with the result of scanning a layer, or None. Unset (or None) means layers are not scanned.",
         data = "Opaque data for `generate` (tools, settings), passed back as `toolchain.data`.",
     ),

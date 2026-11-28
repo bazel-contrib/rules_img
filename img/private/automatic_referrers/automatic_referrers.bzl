@@ -255,9 +255,12 @@ def _metadata_graph(ctx, deps):
                 files.append(provider.files)
     return struct(graph = graph, metadata = metadata, files = depset(transitive = files))
 
-def _wrap_artifact(ctx, artifact, subject_descriptor, position):
-    """Wrap an artifact into an OCI artifact manifest whose subject is the image."""
-    prefix = "{}_automatic_referrer_{}".format(ctx.label.name, position)
+def _wrap_artifact(ctx, artifact, subject_descriptor, suffix):
+    """Wrap an artifact into an OCI artifact manifest whose subject is the image.
+
+    suffix (appended to the target's name) makes the declared files unique.
+    """
+    prefix = ctx.label.name + suffix
     layer = calculate_layer_info(
         ctx = ctx,
         media_type = artifact.media_type,
@@ -303,18 +306,18 @@ def _wrap_artifact(ctx, artifact, subject_descriptor, position):
         variant = "",
         layers = [layer],
         mtree = None,
-        sparse_oci_layout = build_sparse_oci_layout_for_manifest(ctx, manifest_out, config_out, [layer], suffix = "_automatic_referrer_{}".format(position)),
+        sparse_oci_layout = build_sparse_oci_layout_for_manifest(ctx, manifest_out, config_out, [layer], suffix = suffix),
         soci_manifest = None,
         soci_config = None,
         soci_descriptor = None,
         soci_ztocs = [],
     )
 
-def _wrap_artifacts(ctx, toolchain, request, subject_info):
+def _wrap_artifacts(ctx, artifacts, subject_info, suffix):
     referrers = []
     sboms = {}
-    for (position, artifact) in enumerate(toolchain.generate(ctx, toolchain, request)):
-        manifest_info = _wrap_artifact(ctx, artifact, subject_info.descriptor, position)
+    for (position, artifact) in enumerate(artifacts):
+        manifest_info = _wrap_artifact(ctx, artifact, subject_info.descriptor, "{}_{}".format(suffix, position))
         referrers.append(struct(
             manifest_info = manifest_info,
             index_info = None,
@@ -334,6 +337,9 @@ def _wrap_artifacts(ctx, toolchain, request, subject_info):
             )
     return referrers, sboms
 
+def _sbom_files(sbom_info):
+    return [sbom.sbom for sbom in sbom_info.sboms.values()] if sbom_info != None else []
+
 def manifest_automatic_referrers(ctx, *, toolchain, manifest_info, digest, base):
     """Generate the automatic referrers of an image manifest.
 
@@ -345,10 +351,11 @@ def manifest_automatic_referrers(ctx, *, toolchain, manifest_info, digest, base)
         base: The selected base ImageManifestInfo, or None.
 
     Returns:
-        struct(providers, output_groups, referrers).
+        struct(providers, output_groups, referrers, info): `info` is the image's
+        ReferrersInfo (see referrers_for_destination), or None.
     """
     if toolchain == None:
-        return struct(providers = [], output_groups = {}, referrers = [])
+        return struct(providers = [], output_groups = {}, referrers = [], info = None)
     graph = _metadata_graph(ctx, ctx.attr.layers)
     scans = layer_scans([ctx.attr.base] + ctx.attr.layers) if getattr(toolchain, "scan_layer", None) != None else {}
     base_layer_count = len(base.layers) if base != None else 0
@@ -375,16 +382,34 @@ def manifest_automatic_referrers(ctx, *, toolchain, manifest_info, digest, base)
         layers = layers,
         base = _base_request(ctx, base) if base != None else None,
     )
-    referrers, sboms = _wrap_artifacts(ctx, toolchain, request, manifest_info)
-    providers = [ReferrersInfo(referrers = referrers)]
+    artifacts = toolchain.generate(ctx, toolchain, request)
+    referrers, sboms = _wrap_artifacts(ctx, artifacts, manifest_info, "_automatic_referrer")
+    sbom_info = ImageSbomInfo(sboms = sboms, manifests = []) if sboms else None
+    info = ReferrersInfo(
+        referrers = referrers,
+        destination_state = struct(
+            kind = "manifest",
+            toolchain = toolchain,
+            label = request.label,
+            name = request.name,
+            stamp = request.stamp,
+            digest = digest,
+            descriptor = manifest_info.descriptor,
+            subject = manifest_info,
+            artifacts = artifacts,
+            referrers = referrers,
+            sbom_info = sbom_info,
+        ),
+    )
+    providers = [info]
     output_groups = {}
     layer_scan_files = [layer.scan for layer in layers if layer.scan != None]
     if layer_scan_files:
         output_groups["layer_scans"] = depset(layer_scan_files)
-    if sboms:
-        providers.append(ImageSbomInfo(sboms = sboms, manifests = []))
-        output_groups["sbom"] = depset([sbom.sbom for sbom in sboms.values()])
-    return struct(providers = providers, output_groups = output_groups, referrers = referrers)
+    if sbom_info != None:
+        providers.append(sbom_info)
+        output_groups["sbom"] = depset(_sbom_files(sbom_info))
+    return struct(providers = providers, output_groups = output_groups, referrers = referrers, info = info)
 
 def index_automatic_referrers(ctx, *, toolchain, index_info, digest, manifests):
     """Generate the automatic referrers of an image index, and collect its children's.
@@ -402,7 +427,8 @@ def index_automatic_referrers(ctx, *, toolchain, index_info, digest, manifests):
         manifests: The child manifest targets, in the order of index_info.manifests.
 
     Returns:
-        struct(providers, output_groups, referrers).
+        struct(providers, output_groups, referrers, info): `info` is the index's
+        ReferrersInfo (see referrers_for_destination), or None.
     """
     child_sboms = [manifest[ImageSbomInfo] if ImageSbomInfo in manifest else None for manifest in manifests]
     child_referrers = []
@@ -417,7 +443,8 @@ def index_automatic_referrers(ctx, *, toolchain, index_info, digest, manifests):
     ]
 
     referrers = []
-    sboms = {}
+    artifacts = []
+    sbom_info = None
     if toolchain != None:
         request = struct(
             kind = "index",
@@ -432,20 +459,51 @@ def index_automatic_referrers(ctx, *, toolchain, index_info, digest, manifests):
                 for (manifest_info, manifest, child_sbom) in zip(index_info.manifests, manifests, child_sboms)
             ],
         )
-        referrers, sboms = _wrap_artifacts(ctx, toolchain, request, index_info)
-        if referrers and getattr(toolchain, "child_referrers", "forward") == "drop":
-            # The index's own referrers take the place of its children's (an
-            # index SBOM aggregating theirs, say): they are not published with it.
-            child_referrers = []
-            child_sbom_files = []
+        artifacts = toolchain.generate(ctx, toolchain, request)
+        referrers, sboms = _wrap_artifacts(ctx, artifacts, index_info, "_automatic_referrer")
+        if sboms:
+            sbom_info = ImageSbomInfo(sboms = sboms, manifests = child_sboms)
+    drop_children = toolchain != None and getattr(toolchain, "child_referrers", "forward") == "drop"
+    if referrers and drop_children:
+        # The index's own referrers take the place of its children's (an
+        # index SBOM aggregating theirs, say): they are not published with it.
+        child_referrers = []
+        child_sbom_files = []
 
     providers = []
+    info = None
     if referrers or child_referrers:
-        providers.append(ReferrersInfo(referrers = referrers + child_referrers))
+        info = ReferrersInfo(
+            referrers = referrers + child_referrers,
+            destination_state = struct(
+                kind = "index",
+                toolchain = toolchain,
+                label = ctx.label,
+                name = _image_name(ctx.label),
+                stamp = _stamp(ctx),
+                digest = digest,
+                descriptor = index_info.descriptor,
+                subject = index_info,
+                artifacts = artifacts,
+                own_referrers = referrers,
+                sbom_info = sbom_info,
+                drop_children = drop_children,
+                children = [
+                    struct(
+                        info = manifest[ReferrersInfo] if ReferrersInfo in manifest else None,
+                        sbom = child_sbom,
+                        digest = _digest_file(manifest),
+                        manifest = manifest_info,
+                    )
+                    for (manifest_info, manifest, child_sbom) in zip(index_info.manifests, manifests, child_sboms)
+                ],
+            ),
+        )
+        providers.append(info)
     output_groups = {}
-    if sboms:
-        providers.append(ImageSbomInfo(sboms = sboms, manifests = child_sboms))
-    sbom_files = [sbom.sbom for sbom in sboms.values()] + child_sbom_files
+    if sbom_info != None:
+        providers.append(sbom_info)
+    sbom_files = _sbom_files(sbom_info) + child_sbom_files
     if sbom_files:
         output_groups["sbom"] = depset(sbom_files)
     child_layer_scans = [
@@ -455,7 +513,117 @@ def index_automatic_referrers(ctx, *, toolchain, index_info, digest, manifests):
     ]
     if child_layer_scans:
         output_groups["layer_scans"] = depset(transitive = child_layer_scans)
-    return struct(providers = providers, output_groups = output_groups, referrers = referrers + child_referrers)
+    return struct(providers = providers, output_groups = output_groups, referrers = referrers + child_referrers, info = info)
+
+def _destination_request(ctx, state, destination, suffix, manifests = None):
+    """The request of the toolchain's `for_destination` for one image of state."""
+    fields = dict(
+        kind = state.kind,
+        label = state.label,
+        name = state.name,
+        stamp = state.stamp,
+        digest = state.digest,
+        descriptor = state.descriptor,
+        destination = destination,
+        output_prefix = ctx.label.name + suffix,
+        artifacts = state.artifacts,
+    )
+    if state.kind == "manifest":
+        fields["manifest"] = state.subject
+    else:
+        fields["index"] = state.subject
+        fields["manifests"] = manifests
+    return struct(**fields)
+
+def _hook(state):
+    return getattr(state.toolchain, "for_destination", None) if state.toolchain != None else None
+
+def _manifest_for_destination(ctx, state, destination, suffix):
+    """The automatic referrers of an image manifest, for a push to destination (see _for_destination)."""
+    sbom_info = state.sbom_info
+    referrers = state.referrers
+    hook = _hook(state)
+    if hook != None:
+        artifacts = hook(ctx, state.toolchain, _destination_request(ctx, state, destination, suffix))
+        if artifacts != None:
+            referrers, sboms = _wrap_artifacts(ctx, artifacts, state.subject, "_automatic_referrer" + suffix)
+            sbom_info = ImageSbomInfo(sboms = sboms, manifests = []) if sboms else None
+    return struct(referrers = referrers, sbom_info = sbom_info, sbom_files = _sbom_files(sbom_info))
+
+def _for_destination(ctx, state, destination, suffix):
+    """The automatic referrers of the image of state, for a push to destination.
+
+    Returns:
+        struct(referrers, sbom_info, sbom_files): the referrers to push, the
+        image's ImageSbomInfo for the destination (or None), and the SBOM files
+        pushed with it (the children's too, for an index that publishes them).
+    """
+    if state.kind == "manifest":
+        return _manifest_for_destination(ctx, state, destination, suffix)
+    hook = _hook(state)
+
+    # An index: first its children (always manifests), whose SBOMs (and their
+    # referrers) the index's own SBOM refers to, then the index.
+    children = []
+    for (position, child) in enumerate(state.children):
+        child_state = getattr(child.info, "destination_state", None) if child.info != None else None
+        if child_state != None and child_state.kind == "manifest":
+            children.append(_manifest_for_destination(ctx, child_state, destination, "{}_m{}".format(suffix, position)))
+        else:
+            children.append(struct(
+                referrers = child.info.referrers if child.info != None else [],
+                sbom_info = child.sbom,
+                sbom_files = _sbom_files(child.sbom),
+            ))
+    referrers = state.own_referrers
+    sbom_info = state.sbom_info
+    if hook != None and state.artifacts:
+        manifests = [
+            struct(manifest = child.manifest, digest = child.digest, sbom = result.sbom_info)
+            for (child, result) in zip(state.children, children)
+        ]
+        artifacts = hook(ctx, state.toolchain, _destination_request(ctx, state, destination, suffix, manifests = manifests))
+        if artifacts != None:
+            referrers, sboms = _wrap_artifacts(ctx, artifacts, state.subject, "_automatic_referrer" + suffix)
+            sbom_info = ImageSbomInfo(sboms = sboms, manifests = [result.sbom_info for result in children]) if sboms else None
+    sbom_files = _sbom_files(sbom_info)
+    if not (referrers and state.drop_children):
+        for result in children:
+            referrers = referrers + result.referrers
+            sbom_files = sbom_files + result.sbom_files
+    return struct(referrers = referrers, sbom_info = sbom_info, sbom_files = sbom_files)
+
+def referrers_for_destination(ctx, info, *, configuration, destination_file = None, key):
+    """The automatic referrers to push with an image to one destination.
+
+    When the automatic referrers toolchain has a `for_destination` function, the
+    referrers pushed to a destination (an SBOM that names the image there, say)
+    are made from those generated for the image, for that destination: for an
+    image index, those of each child manifest too. Otherwise they are the image's
+    automatic referrers.
+
+    Args:
+        ctx: Rule context of the target that pushes the image (an image with
+            push_specs, or image_push). Files are declared in its package.
+        info: The image's ReferrersInfo, or None.
+        configuration: File with the push's configuration: its expanded templates,
+            with the registry and repository pushed to.
+        destination_file: File with the destination as `registry/repository`,
+            which wins over the configuration's, or None.
+        key: A string unique among the destinations of ctx, for file names.
+
+    Returns:
+        struct(referrers, sbom_files): the referrers (as in ReferrersInfo.referrers)
+        and the SBOM files among them.
+    """
+    if info == None:
+        return struct(referrers = [], sbom_files = [])
+    state = getattr(info, "destination_state", None)
+    if state == None:
+        return struct(referrers = info.referrers, sbom_files = [])
+    destination = struct(configuration = configuration, destination_file = destination_file)
+    result = _for_destination(ctx, state, destination, "_destination_" + key)
+    return struct(referrers = result.referrers, sbom_files = result.sbom_files)
 
 def _digest_file(manifest):
     """The digest output of a child manifest target, if it exposes one."""

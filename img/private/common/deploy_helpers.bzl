@@ -1,7 +1,6 @@
 """Shared helper functions for push and load rules."""
 
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
-load("//img/private/providers:automatic_referrers_info.bzl", "ReferrersInfo")
 load("//img/private/providers:deploy_info.bzl", "DeployInfo")
 load("//img/private/providers:index_info.bzl", "ImageIndexInfo")
 load("//img/private/providers:load_settings_info.bzl", "LoadSettingsInfo")
@@ -196,19 +195,6 @@ def push_automatic_referrers(ctx):
     if mode == "auto":
         mode = ctx.attr._push_automatic_referrers[BuildSettingInfo].value
     return mode == "enabled"
-
-def automatic_referrers_of(target):
-    """The automatic referrers an image target carries, as struct(manifest_info, index_info).
-
-    Args:
-        target: An image target, or None.
-
-    Returns:
-        List of referrer structs (empty without ReferrersInfo).
-    """
-    if target == None or ReferrersInfo not in target:
-        return []
-    return target[ReferrersInfo].referrers
 
 def extract_cross_mount_from(ctx):
     """Extract cross_mount_from DeployInfo if set.
