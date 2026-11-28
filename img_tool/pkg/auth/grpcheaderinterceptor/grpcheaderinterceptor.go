@@ -176,6 +176,11 @@ func (i *authenticatingInterceptor) streamAddHeaders(ctx context.Context, desc *
 }
 
 func addCredentialsToMD(ctx context.Context, target, method string, md metadata.MD, helper credential.Helper) metadata.MD {
+	// Without a helper there is nothing to look up.
+	if credential.IsNop(helper) {
+		return md
+	}
+
 	hostname, ok := strings.CutPrefix(target, "dns:")
 	if !ok {
 		fmt.Fprintf(os.Stderr, "WARNING: authenticating gRPC: unknown target definition %s\n", target)

@@ -2,7 +2,10 @@ package grpcheaderinterceptor
 
 import (
 	"context"
+	"os"
+	"strings"
 	"testing"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -227,4 +230,168 @@ func requestMetadataFromContext(t *testing.T, ctx context.Context) *remoteexecut
 		t.Fatalf("decoding request metadata: %v", err)
 	}
 	return requestMetadata
+}
+
+type stubHelper struct {
+	headers map[string][]string
+}
+
+func (s *stubHelper) Get(_ context.Context, _ string) (map[string][]string, time.Time, error) {
+	return s.headers, time.Time{}, nil
+}
+
+// captureStderr swaps the process-wide os.Stderr, so tests using it cannot call t.Parallel.
+func captureStderr(t *testing.T) func() string {
+	t.Helper()
+	file, err := os.CreateTemp(t.TempDir(), "stderr")
+	if err != nil {
+		t.Fatalf("creating stderr capture file: %v", err)
+	}
+	previousStderr := os.Stderr
+	t.Cleanup(func() {
+		os.Stderr = previousStderr
+		file.Close()
+	})
+	os.Stderr = file
+	return func() string {
+		t.Helper()
+		data, err := os.ReadFile(file.Name())
+		if err != nil {
+			t.Fatalf("reading stderr capture: %v", err)
+		}
+		return string(data)
+	}
+}
+
+func TestNopAndNilHelperDoNotWarn(t *testing.T) {
+	tests := []struct {
+		name   string
+		helper credential.Helper
+		target string
+	}{
+		{
+			name:   "nop helper with dns target",
+			helper: credential.NopHelper(),
+			target: "dns:cache.example:50051",
+		},
+		{
+			name:   "nop helper with unix target",
+			helper: credential.NopHelper(),
+			target: "unix:///tmp/cache.sock",
+		},
+		{
+			name:   "nil helper with dns target",
+			helper: nil,
+			target: "dns:cache.example:50051",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			readStderr := captureStderr(t)
+			interceptor := &authenticatingInterceptor{helper: tc.helper}
+			conn, err := grpc.NewClient(tc.target, grpc.WithTransportCredentials(insecure.NewCredentials()))
+			if err != nil {
+				t.Fatalf("creating test client connection: %v", err)
+			}
+			defer conn.Close()
+
+			var unaryCtx, streamCtx context.Context
+			if err := interceptor.unaryAddHeaders(context.Background(), "/example.CAS/FindMissingBlobs", nil, nil, conn,
+				func(ctx context.Context, _ string, _, _ any, _ *grpc.ClientConn, _ ...grpc.CallOption) error {
+					unaryCtx = ctx
+					return nil
+				}); err != nil {
+				t.Fatalf("unary interceptor failed: %v", err)
+			}
+			if _, err := interceptor.streamAddHeaders(context.Background(), &grpc.StreamDesc{}, conn, "/google.bytestream.ByteStream/Read",
+				func(ctx context.Context, _ *grpc.StreamDesc, _ *grpc.ClientConn, _ string, _ ...grpc.CallOption) (grpc.ClientStream, error) {
+					streamCtx = ctx
+					return nil, nil
+				}); err != nil {
+				t.Fatalf("stream interceptor failed: %v", err)
+			}
+
+			if got := readStderr(); got != "" {
+				t.Errorf("unexpected stderr output: %q", got)
+			}
+			// RequestMetadata is still attached when no credential helper is configured.
+			if got := requestMetadataFromContext(t, unaryCtx); got.GetToolDetails().GetToolName() != "rules_img" {
+				t.Errorf("unary tool_name = %q, want rules_img", got.GetToolDetails().GetToolName())
+			}
+			if got := requestMetadataFromContext(t, streamCtx); got.GetToolDetails().GetToolName() != "rules_img" {
+				t.Errorf("stream tool_name = %q, want rules_img", got.GetToolDetails().GetToolName())
+			}
+		})
+	}
+}
+
+func TestConfiguredHelperAttachesHeadersWithoutWarning(t *testing.T) {
+	readStderr := captureStderr(t)
+	interceptor := &authenticatingInterceptor{
+		helper: &stubHelper{
+			headers: map[string][]string{
+				"authorization": {"Bearer secret-token"},
+			},
+		},
+	}
+	conn, err := grpc.NewClient("dns:cache.example:50051", grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("creating test client connection: %v", err)
+	}
+	defer conn.Close()
+
+	var captured context.Context
+	if err := interceptor.unaryAddHeaders(context.Background(), "/example.CAS/BatchReadBlobs", nil, nil, conn,
+		func(ctx context.Context, _ string, _, _ any, _ *grpc.ClientConn, _ ...grpc.CallOption) error {
+			captured = ctx
+			return nil
+		}); err != nil {
+		t.Fatalf("unary interceptor failed: %v", err)
+	}
+
+	if got := readStderr(); got != "" {
+		t.Errorf("unexpected stderr output: %q", got)
+	}
+	md, ok := metadata.FromOutgoingContext(captured)
+	if !ok {
+		t.Fatal("outgoing metadata is missing")
+	}
+	if got := md.Get("authorization"); len(got) != 1 || got[0] != "Bearer secret-token" {
+		t.Errorf("authorization header = %v, want [Bearer secret-token]", got)
+	}
+}
+
+func TestConfiguredHelperWithNoHeadersWarns(t *testing.T) {
+	tests := []struct {
+		name    string
+		headers map[string][]string
+	}{
+		{name: "nil headers", headers: nil},
+		{name: "empty headers", headers: map[string][]string{}},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			readStderr := captureStderr(t)
+			interceptor := &authenticatingInterceptor{helper: &stubHelper{headers: tc.headers}}
+			conn, err := grpc.NewClient("dns:cache.example:50051", grpc.WithTransportCredentials(insecure.NewCredentials()))
+			if err != nil {
+				t.Fatalf("creating test client connection: %v", err)
+			}
+			defer conn.Close()
+
+			if err := interceptor.unaryAddHeaders(context.Background(), "/example.CAS/BatchReadBlobs", nil, nil, conn,
+				func(_ context.Context, _ string, _, _ any, _ *grpc.ClientConn, _ ...grpc.CallOption) error {
+					return nil
+				}); err != nil {
+				t.Fatalf("unary interceptor failed: %v", err)
+			}
+
+			want := "WARNING: authenticating gRPC: credential helper found no headers for https://cache.example:50051/example.CAS - trying unauthenticated connection"
+			if got := readStderr(); !strings.Contains(got, want) {
+				t.Errorf("stderr = %q, want warning %q", got, want)
+			}
+		})
+	}
 }

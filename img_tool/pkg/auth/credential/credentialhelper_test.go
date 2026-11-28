@@ -411,3 +411,18 @@ func TestContainerRegistryKeychain_WithBasicAuth(t *testing.T) {
 		t.Fatalf("expected registry token to be empty, got %q", cfg.RegistryToken)
 	}
 }
+
+func TestIsNop(t *testing.T) {
+	if !IsNop(nil) {
+		t.Error("IsNop(nil) = false, want true")
+	}
+	if !IsNop(NopHelper()) {
+		t.Error("IsNop(NopHelper()) = false, want true")
+	}
+	if IsNop(New("/usr/local/bin/helper", nil)) {
+		t.Error("IsNop(New(...)) = true, want false")
+	}
+	if IsNop(&TestHelper{}) {
+		t.Error("IsNop(&TestHelper{}) = true, want false")
+	}
+}
