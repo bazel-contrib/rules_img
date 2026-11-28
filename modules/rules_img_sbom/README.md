@@ -28,6 +28,12 @@ see [image signing](/docs/image-signing.md)) along with the image.
   gathered as `@supply_chain_tools//gather_metadata` does. Dependencies between packages follow the
   build graph.
 - **The base image** is a component, and its own SBOM is incorporated (see `base_sbom`).
+- **Optionally, what a scan of the layers finds** (see [Scanning layers](#scanning-layers)): the
+  operating system and its packages, Go modules in binaries, Python, Java and npm packages, ...
+
+Which of these the SBOM is made from is up to you (see `sources`). A package that several describe
+(a Go module in rules_go's package metadata and in the Go binary built from it, a Debian package in
+the base image's SBOM and in a scan of its layers) is one component.
 
 An image index gets an SBOM that lists its manifests, refers to their SBOMs, and contains their
 packages (each once, see `index_sbom`): scanners given a multi-platform tag read the index's SBOM
@@ -107,6 +113,58 @@ toolchain(
 Base image SBOMs can be plain documents, in-toto statements, DSSE envelopes or sigstore bundles.
 Their signatures aren't verified; that's up to the policy that consumes the image's SBOM.
 
+## Scanning layers
+
+Bazel package metadata describes what Bazel built; it doesn't see what a pulled base image or a
+`.deb` unpacked into a layer installed. A scan does: add `"layer_scan"` to `sources`, and every layer
+of every image is scanned with [syft](https://github.com/anchore/syft), used as a library:
+
+```starlark
+sbom_toolchain(
+    name = "sbom_toolchain",
+    sources = ["base_sbom", "package_metadata", "layer_scan"],
+    scan_pulled_layers = "best_effort",  # or "required", or "disabled"
+    scan_built_layers = "enabled",  # or "disabled"
+)
+```
+
+- `sources`: what the SBOM of an image manifest is made from, any combination of `base_sbom` (the
+  base image's SBOM, see `base_sbom`), `package_metadata` (the Bazel package metadata of the image's
+  layers) and `layer_scan`. Defaults to `["base_sbom", "package_metadata"]`.
+- `scan_pulled_layers`: whether the layers of pulled base images are scanned: `best_effort`
+  (default) scans those whose blobs were downloaded (a base pulled with
+  `layer_handling = "shallow"` has none), `required` fails the build of an image whose base image's
+  layers aren't available, and `disabled` leaves them to the base image's SBOM.
+- `scan_built_layers`: whether the layers built by Bazel (`image_layer`, `layer_from_tar`, a tar
+  from rules_pkg, ...) are scanned: `enabled` (default) or `disabled`.
+
+How it works:
+
+- **Each layer is scanned once**, by an action of the target that provides it (a layer rule, a
+  pulled image), not of the image: a base image's layers are scanned once, however many images are
+  built on it. Only the layers of the platforms that images are built for are scanned.
+- **Every layer format**: the scan reads the layer's files as `img layer-tar` writes them, so
+  compressed tars, compact streams (reassembled from their content-addressed inputs) and EROFS,
+  ext4, FAT32, ISO 9660 and cpio layers are all scanned for their files. The scan is offline: it
+  reads nothing but the layer (no license lookups on the network, no local Go module or Maven
+  caches).
+- **Layers are combined like an image's filesystem**: a package found by files that a layer above
+  replaces or deletes is left out (an upgrade rewrites the package database, which then lists the
+  new version), and so is a package of the base image's SBOM found that way. Operating system
+  packages get the distribution of the topmost layer with an `os-release` (or of the base image's
+  SBOM), even when they are installed in a layer of their own. The packages of the base image's
+  layers are part of the base image's component.
+- **Merged with the other sources**: a scanned package is merged into the component of the Bazel
+  package metadata or base image SBOM that describes it, matched by package URL (without the
+  qualifiers that only say where it came from, keeping a package's architecture and epoch). Their
+  name and licenses win; CPEs and hashes are combined. rules_go's Go modules, for example, are one
+  component each, and the scan adds the Go standard library (`pkg:golang/stdlib`), which no package
+  metadata describes.
+
+Each scan result is a JSON file next to the layer (`<target>_layer_scan_<n>.scan.json`), in a format
+internal to this module. An image's `layer_scans` output group has those of its layers
+(`bazel build //app:image --output_groups=layer_scans`).
+
 ## The SBOM writer
 
 The toolchains run `img-sbom`, a Go binary. Released versions of this module download it prebuilt
@@ -116,16 +174,34 @@ x86_64 and arm64): the released module has no Go sources and doesn't depend on r
 ## Building from source
 
 Any other version of this module (a `git_override`, a `local_path_override`) builds `img-sbom` from
-source with rules_go. Its Go dependency `github.com/bazel-contrib/supply-chain/lib/supplychain-go`
-ships BUILD files that a Go repository can't load, so add this to your **root** `MODULE.bazel`:
+source with rules_go. Some of its Go dependencies need the help of Gazelle overrides, which only
+the root module can declare, so add this to your **root** `MODULE.bazel`:
 
 ```starlark
 go_deps = use_extension("@gazelle//:extensions.bzl", "go_deps")
+
+# supplychain-go ships BUILD files that a Go repository can't load.
 go_deps.gazelle_override(
     build_file_generation = "clean",
     path = "github.com/bazel-contrib/supply-chain/lib/supplychain-go",
 )
+
+# syft embeds its CPE dictionary from a directory that is a Go package of its own.
+go_deps.module_override(
+    patch_strip = 1,
+    patches = ["@rules_img_sbom//third_party:syft-cpe-index-embed.patch"],
+    path = "github.com/anchore/syft",
+)
+
+# Windows builds: the checked-in generated code of cgroups' metrics.
+go_deps.gazelle_override(
+    directives = ["gazelle:go_generate_proto false"],
+    path = "github.com/containerd/cgroups/v3",
+)
 ```
+
+The scanner brings syft's dependencies along (`img-sbom` is a binary of about 80 MB); rules_img's own
+`img` tool doesn't depend on it.
 
 ## Development
 

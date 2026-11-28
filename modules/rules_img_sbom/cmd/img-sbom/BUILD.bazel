@@ -2,12 +2,17 @@ load("@rules_go//go:def.bzl", "go_binary", "go_library")
 
 go_library(
     name = "img-sbom_lib",
-    srcs = ["main.go"],
+    srcs = [
+        "main.go",
+        "scan_layer.go",
+    ],
     importpath = "github.com/bazel-contrib/rules_img_sbom/cmd/img-sbom",
     visibility = ["//visibility:private"],
     deps = [
         "//internal/bom",
         "//internal/graph",
+        "//internal/layerscan",
+        "//internal/scan",
         "@com_github_google_uuid//:uuid",
     ],
 )

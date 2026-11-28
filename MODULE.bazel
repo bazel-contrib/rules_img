@@ -123,7 +123,7 @@ go_sdk.nogo(
 # from source when producing the prebuilt binaries for their releases and the e2e
 # offline bundle (see @rules_img_internal_tools//release): proto generation for
 # two sigstore deps of the cosign signer plugin, and regenerated BUILD files for
-# supplychain-go, a dep of rules_img_sbom's SBOM writer. gazelle_override is
+# supplychain-go and a patch for syft, deps of rules_img_sbom's SBOM writer. gazelle_override is
 # root-module-only, so it must live here even though those modules are only
 # transitive deps. The signer modules themselves are resolved through
 # rules_img_internal_tools; the top-level module no longer has any Go module
@@ -144,6 +144,22 @@ go_deps.gazelle_override(
 go_deps.gazelle_override(
     build_file_generation = "clean",
     path = "github.com/bazel-contrib/supply-chain/lib/supplychain-go",
+)
+
+# hcsshim (Windows builds of syft) needs the checked-in generated code of cgroups'
+# metrics, not code generated from its .proto with another protoc-gen-go.
+go_deps.gazelle_override(
+    directives = ["gazelle:go_generate_proto false"],
+    path = "github.com/containerd/cgroups/v3",
+)
+
+# syft, the layer scanner of rules_img_sbom's SBOM writer, embeds its CPE
+# dictionary from a directory that is a Go package of its own, which the BUILD
+# files Gazelle generates can't express (module_override is root-only too).
+go_deps.module_override(
+    patch_strip = 1,
+    patches = ["//:patches/syft-cpe-index-embed.patch"],
+    path = "github.com/anchore/syft",
 )
 
 http_file = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_file")

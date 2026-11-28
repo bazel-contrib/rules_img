@@ -1,6 +1,9 @@
 // Command img-sbom writes the SBOM of an image manifest or index built by
 // rules_img. The automatic referrers toolchain of rules_img_sbom runs it; see
 // //sbom:toolchain.bzl for the request it reads.
+//
+// `img-sbom scan-layer` scans one layer for the packages it contains, for the
+// SBOMs of the images that have the layer.
 package main
 
 import (
@@ -30,8 +33,11 @@ type Request struct {
 	} `json:"timestamp"`
 
 	// Manifest requests.
-	Graph    string `json:"graph"`
-	BaseMode string `json:"base_mode"`
+	// Graph is the package metadata graph, or "" to leave Bazel package metadata out.
+	Graph string `json:"graph"`
+	// Layers are the image's layers, bottom to top, with their scans.
+	Layers   []bom.Layer `json:"layers"`
+	BaseMode string      `json:"base_mode"`
 	Base     *struct {
 		Image *bom.BaseImage `json:"image"`
 		SBOMs []bom.BaseSBOM `json:"sboms"`
@@ -50,6 +56,10 @@ type Request struct {
 }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "scan-layer" {
+		scanLayerMain(os.Args[2:])
+		return
+	}
 	requestPath := flag.String("request", "", "Path to the JSON request written by the toolchain")
 	outPath := flag.String("out", "", "Path to write the SBOM to")
 	flag.Parse()
@@ -81,17 +91,21 @@ func run(requestPath, outPath string) error {
 	switch request.Kind {
 	case "manifest":
 		var g graph.GraphConfig
-		if err := readJSON(request.Graph, &g); err != nil {
-			return fmt.Errorf("reading the package metadata graph: %w", err)
+		if request.Graph != "" {
+			if err := readJSON(request.Graph, &g); err != nil {
+				return fmt.Errorf("reading the package metadata graph: %w", err)
+			}
 		}
 		manifest := bom.Manifest{
-			Name:       request.Name,
-			Descriptor: descriptor,
-			Graph:      g,
-			BaseMode:   request.BaseMode,
-			Format:     request.Format,
-			Created:    created,
-			Log:        os.Stderr,
+			Name:                request.Name,
+			Descriptor:          descriptor,
+			Graph:               g,
+			OmitPackageMetadata: request.Graph == "",
+			Layers:              request.Layers,
+			BaseMode:            request.BaseMode,
+			Format:              request.Format,
+			Created:             created,
+			Log:                 os.Stderr,
 		}
 		if request.Base != nil {
 			manifest.BaseImage = request.Base.Image

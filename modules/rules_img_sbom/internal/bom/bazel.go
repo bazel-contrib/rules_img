@@ -29,8 +29,7 @@ func AddBazelPackages(b *Builder, g graph.GraphConfig) error {
 		if err != nil {
 			return err
 		}
-		b.Add(component)
-		refOf[node.Label] = component.Ref
+		refOf[node.Label] = b.Merge(component)
 	}
 	for _, edge := range g.Edges {
 		from, fromOK := refOf[edge.From]

@@ -32,12 +32,15 @@ go_deps = use_extension("@gazelle//:extensions.bzl", "go_deps")
 go_deps.from_file(go_mod = "//:go.mod")
 use_repo(
     go_deps,
+    "com_github_anchore_stereoscope",
+    "com_github_anchore_syft",
     "com_github_bazel_contrib_supply_chain_lib_supplychain_go",
     "com_github_cyclonedx_cyclonedx_go",
     "com_github_google_uuid",
     "com_github_package_url_packageurl_go",
     "com_github_spdx_tools_golang",
     "com_github_stretchr_testify",
+    "org_modernc_sqlite",
 )
 
 # Used whenever prebuilt_lockfile.json is still the empty list `[]`.
@@ -54,6 +57,14 @@ prebuilt.source(target = "//cmd/img-sbom")
 #       build_file_generation = "clean",
 #       path = "github.com/bazel-contrib/supply-chain/lib/supplychain-go",
 #   )
+#
+# and the patch of syft's BUILD files below (module_override is root-only too):
+#
+#   go_deps.module_override(
+#       patch_strip = 1,
+#       patches = ["@rules_img_sbom//third_party:syft-cpe-index-embed.patch"],
+#       path = "github.com/anchore/syft",
+#   )
 
 ### Development ###
 
@@ -61,6 +72,21 @@ go_deps_dev = use_extension("@gazelle//:extensions.bzl", "go_deps", dev_dependen
 go_deps_dev.gazelle_override(
     build_file_generation = "clean",
     path = "github.com/bazel-contrib/supply-chain/lib/supplychain-go",
+)
+
+# hcsshim (Windows builds of syft) needs the checked-in generated code of cgroups'
+# metrics, not code generated from its .proto with another protoc-gen-go.
+go_deps_dev.gazelle_override(
+    directives = ["gazelle:go_generate_proto false"],
+    path = "github.com/containerd/cgroups/v3",
+)
+
+# syft embeds its CPE dictionary from a directory that is a Go package of its
+# own, which the BUILD files Gazelle generates can't express.
+go_deps_dev.module_override(
+    patch_strip = 1,
+    patches = ["//third_party:syft-cpe-index-embed.patch"],
+    path = "github.com/anchore/syft",
 )
 
 bazel_dep(name = "package_metadata", version = "0.0.13", dev_dependency = True)

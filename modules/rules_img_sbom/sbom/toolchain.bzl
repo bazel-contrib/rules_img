@@ -56,13 +56,23 @@ def _generate_format(ctx, data, request, sbom_format):
     content["timestamp"] = timestamp
 
     if request.kind == "manifest":
-        inputs.append(request.metadata_graph)
-        transitive.append(request.metadata_files)
-        content["graph"] = request.metadata_graph.path
-        content["base_mode"] = data.base_sbom
-        content["base"] = _base_dict(request.base, data.base_sbom)
-        if request.base != None and data.base_sbom != "ignore":
+        if "package_metadata" in data.sources:
+            inputs.append(request.metadata_graph)
+            transitive.append(request.metadata_files)
+            content["graph"] = request.metadata_graph.path
+        base_mode = data.base_sbom if "base_sbom" in data.sources else "ignore"
+        content["base_mode"] = base_mode
+        content["base"] = _base_dict(request.base, base_mode)
+        if request.base != None and base_mode != "ignore":
             inputs.extend([sbom.file for sbom in request.base.sboms])
+
+        # Only rules_img versions with layer scanning have request.layers.
+        layers = getattr(request, "layers", [])
+        content["layers"] = [
+            dict(scan = layer.scan.path if layer.scan != None else "", base = layer.base)
+            for layer in layers
+        ]
+        inputs.extend([layer.scan for layer in layers if layer.scan != None])
     else:
         children = []
         for manifest in request.manifests:
@@ -99,6 +109,53 @@ def _generate_format(ctx, data, request, sbom_format):
         sbom_format = sbom_format.format,
     )
 
+def _scan_layer(ctx, toolchain, request):
+    """Implements AutomaticReferrersToolchainInfo.scan_layer: scans a layer for packages."""
+    data = toolchain.data
+    if request.origin == "pulled":
+        mode = data.scan_pulled_layers
+    else:
+        mode = "best_effort" if data.scan_built_layers == "enabled" else "disabled"
+    if mode == "disabled":
+        return None
+    if request.contents == None and mode != "required":
+        return None
+
+    content = dict(
+        media_type = request.media_type or "",
+        metadata = request.metadata.path if request.metadata != None else "",
+    )
+    inputs = [request.metadata] if request.metadata != None else []
+    transitive = []
+    tools = []
+    if request.contents != None:
+        content["contents"] = dict(tool = request.contents.executable.path, arguments = request.contents.arguments)
+        transitive.append(request.contents.inputs)
+        tools.append(request.contents.executable)
+    else:
+        # Fails if (and only if) an image needs the scan: a pulled image's layers
+        # are all declared, those of platforms no image is built for too.
+        content["unavailable"] = (
+            "layer {} of {} must be scanned (scan_pulled_layers = \"required\"), but its blob is " +
+            "not available: pull the image with its layers (layer_handling other than \"shallow\")"
+        ).format(request.name, request.label)
+
+    request_file = ctx.actions.declare_file(request.name + ".scan_request.json")
+    ctx.actions.write(request_file, json.encode(content))
+    out = ctx.actions.declare_file(request.name + ".scan.json")
+    ctx.actions.run(
+        executable = data.tool,
+        arguments = ["scan-layer", "--request", request_file.path, "--out", out.path],
+        inputs = depset(inputs + [request_file], transitive = transitive),
+        tools = tools,
+        outputs = [out],
+        mnemonic = "LayerScan",
+        progress_message = "Scanning a layer of %{label} for packages",
+    )
+    return out
+
+_SOURCES = ["base_sbom", "layer_scan", "package_metadata"]
+
 def _sbom_toolchain_impl(ctx):
     if not ctx.attr.formats:
         fail("formats must name at least one format")
@@ -117,14 +174,21 @@ def _sbom_toolchain_impl(ctx):
     for name in ctx.attr.artifact_types:
         if name not in ctx.attr.formats:
             fail("artifact_types names {}, which is not in formats".format(repr(name)))
+    for source in ctx.attr.sources:
+        if source not in _SOURCES:
+            fail("unknown SBOM source {}: must be one of {}".format(repr(source), ", ".join(_SOURCES)))
     if ctx.attr.child_sboms == "drop" and ctx.attr.index_sbom == "reference":
         fail("child_sboms = \"drop\" needs index_sbom = \"aggregate\": an index SBOM that only refers to its manifests' SBOMs is no use without them")
     return [platform_common.ToolchainInfo(
         automatic_referrers = AutomaticReferrersToolchainInfo(
             child_referrers = "drop" if ctx.attr.child_sboms == "drop" else "forward",
             generate = _generate,
+            scan_layer = _scan_layer if "layer_scan" in ctx.attr.sources else None,
             data = struct(
                 formats = formats,
+                sources = ctx.attr.sources,
+                scan_pulled_layers = ctx.attr.scan_pulled_layers,
+                scan_built_layers = ctx.attr.scan_built_layers,
                 base_sbom = ctx.attr.base_sbom,
                 index_sbom = ctx.attr.index_sbom,
                 child_sboms = ctx.attr.child_sboms,
@@ -173,6 +237,49 @@ contains their components (see `index_sbom`).""",
 When a base image has SBOMs in several formats, each SBOM is built from the base image SBOM in
 its own format (an SBOM of the base manifest still wins over one of the index it was selected
 from), so nothing is lost in conversion.""",
+        ),
+        "sources": attr.string_list(
+            default = ["base_sbom", "package_metadata"],
+            doc = """What the SBOM of an image manifest is made from: any combination of
+
+* **`"base_sbom"`**: the base image's SBOM (found among the referrers of a pulled base image,
+  or generated for a base image built in the same build), inherited or referred to as
+  `base_sbom` says.
+* **`"package_metadata"`**: the Bazel package metadata (`package_metadata` targets, from
+  `@package_metadata` / `@supply_chain_tools`) of what went into the image's layers.
+* **`"layer_scan"`**: the packages a scan of every layer of the image (its base image's
+  too) finds, with [syft](https://github.com/anchore/syft): operating system packages (the
+  dpkg, rpm and apk databases), language packages (Go modules in binaries, Python, Java, npm,
+  ...), binaries. See `scan_pulled_layers` and `scan_built_layers`.
+
+A package that several sources describe is one component: components are merged by package
+URL (without the qualifiers that only say where a package came from), the first source's
+name and licenses winning, in the order Bazel package metadata, base SBOM, layer scan. The Go
+modules that rules_go's package metadata describes and those a scan finds in the Go binaries,
+or the operating system packages of a base SBOM and those of a scan of its layers, are one
+component each, for example.
+
+The image itself, and its base image, are always described.""",
+        ),
+        "scan_pulled_layers": attr.string(
+            default = "best_effort",
+            values = ["disabled", "best_effort", "required"],
+            doc = """With `"layer_scan"` in `sources`: whether the layers of pulled base images are scanned.
+
+* **`best_effort`** (default): those whose blobs are available, which a base image pulled
+  with `layer_handling = "shallow"` doesn't download (its SBOM, if it has one, describes it).
+* **`required`**: every one; an image whose base image's layers are not available fails to
+  build.
+* **`disabled`**: none: the base image's SBOM (see `sources`) describes it.
+
+Every layer is scanned once, however many images have it.""",
+        ),
+        "scan_built_layers": attr.string(
+            default = "enabled",
+            values = ["enabled", "disabled"],
+            doc = """With `"layer_scan"` in `sources`: whether the layers built by Bazel (by `image_layer`,
+`layer_from_tar`, rules_pkg, ...) are scanned. Every layer is scanned once, however many images
+have it.""",
         ),
         "base_sbom": attr.string(
             default = "inherit",

@@ -8,10 +8,13 @@ import (
 	"crypto/sha1"
 	"crypto/sha256"
 	"encoding/hex"
+	"slices"
 	"sort"
+	"strings"
 	"time"
 
 	supplychain "github.com/bazel-contrib/supply-chain/lib/supplychain-go"
+	packageurl "github.com/package-url/packageurl-go"
 )
 
 // Component types, named after CycloneDX's.
@@ -102,14 +105,18 @@ type Builder struct {
 	doc  Document
 	refs map[string]bool
 	deps map[string]map[string]bool
+	// identities maps the identity of each component (see identity) to its Ref,
+	// so Merge finds a component that another source describes too.
+	identities map[string]string
 }
 
 // NewBuilder starts a document describing primary.
 func NewBuilder(primary Component, created time.Time) *Builder {
 	return &Builder{
-		doc:  Document{Primary: primary, Dependencies: map[string][]string{}, Created: created},
-		refs: map[string]bool{primary.Ref: true},
-		deps: map[string]map[string]bool{},
+		doc:        Document{Primary: primary, Dependencies: map[string][]string{}, Created: created},
+		refs:       map[string]bool{primary.Ref: true},
+		deps:       map[string]map[string]bool{},
+		identities: map[string]string{},
 	}
 }
 
@@ -121,7 +128,165 @@ func (b *Builder) Add(c Component) bool {
 	}
 	b.refs[c.Ref] = true
 	b.doc.Components = append(b.doc.Components, c)
+	if id := identity(c); id != "" {
+		if _, seen := b.identities[id]; !seen {
+			b.identities[id] = c.Ref
+		}
+	}
 	return true
+}
+
+// Merge adds a component, or, if the document already has one that is the same
+// package (by package URL, see identity) or has the same Ref, completes that one
+// with what c knows and it doesn't. It returns the Ref of the component in the
+// document.
+//
+// The component added first wins where both say something different: its Ref,
+// name, type and licenses are kept. Package URLs, CPEs, hashes and references to
+// other SBOMs are combined.
+func (b *Builder) Merge(c Component) string {
+	if c.Ref == "" {
+		return ""
+	}
+	existing := b.Find(c)
+	if existing == "" {
+		b.Add(c)
+		return c.Ref
+	}
+	into := b.Component(existing)
+	if into == nil {
+		return existing
+	}
+	mergeInto(into, c)
+	return existing
+}
+
+// Remove removes a component, and the dependencies from and to it. The
+// primary component can't be removed.
+func (b *Builder) Remove(ref string) {
+	if !b.refs[ref] || ref == b.doc.Primary.Ref {
+		return
+	}
+	delete(b.refs, ref)
+	b.doc.Components = slices.DeleteFunc(b.doc.Components, func(c Component) bool { return c.Ref == ref })
+	for id, r := range b.identities {
+		if r == ref {
+			delete(b.identities, id)
+		}
+	}
+	delete(b.deps, ref)
+	for _, tos := range b.deps {
+		delete(tos, ref)
+	}
+}
+
+// Find returns the Ref of the component in the document that Merge would merge
+// c into, or "" if there is none.
+func (b *Builder) Find(c Component) string {
+	if b.refs[c.Ref] {
+		return c.Ref
+	}
+	if id := identity(c); id != "" {
+		return b.identities[id]
+	}
+	return ""
+}
+
+func mergeInto(into *Component, c Component) {
+	fill := func(field *string, value string) {
+		if *field == "" {
+			*field = value
+		}
+	}
+	fill(&into.Type, c.Type)
+	fill(&into.Group, c.Group)
+	fill(&into.Name, c.Name)
+	fill(&into.Version, c.Version)
+	fill(&into.PURL, c.PURL)
+	fill(&into.Supplier, c.Supplier)
+	fill(&into.Description, c.Description)
+	fill(&into.DownloadURL, c.DownloadURL)
+	if len(into.Licenses) == 0 {
+		into.Licenses = c.Licenses
+	}
+	for _, cpe := range c.CPEs {
+		if !slices.Contains(into.CPEs, cpe) {
+			into.CPEs = append(into.CPEs, cpe)
+		}
+	}
+	for algorithm, value := range c.Hashes {
+		if into.Hashes == nil {
+			into.Hashes = map[string]string{}
+		}
+		if _, ok := into.Hashes[algorithm]; !ok {
+			into.Hashes[algorithm] = value
+		}
+	}
+	for _, external := range c.ExternalBOMs {
+		if !slices.ContainsFunc(into.ExternalBOMs, func(e ExternalBOM) bool { return e.URL == external.URL }) {
+			into.ExternalBOMs = append(into.ExternalBOMs, external)
+		}
+	}
+}
+
+// identity is what makes two components the same package, whichever source
+// describes it: its package URL, without the qualifiers and subpath that only
+// say where it came from or how it was found (keeping those that tell builds
+// apart: the architecture and epoch of an operating system package), and with
+// the names of the package types that are case-insensitive normalized. An
+// operating system without a package URL is identified by its name and version.
+// Other components have no identity, and are only merged by Ref.
+func identity(c Component) string {
+	if c.PURL == "" {
+		if c.Type == TypeOperatingSystem && c.Name != "" {
+			return "os:" + strings.ToLower(c.Name) + "@" + c.Version
+		}
+		return ""
+	}
+	purl, err := packageurl.FromString(c.PURL)
+	if err != nil {
+		return c.PURL
+	}
+	typ := strings.ToLower(purl.Type)
+	namespace, name := purl.Namespace, purl.Name
+	switch typ {
+	case "pypi":
+		name = pypiName(name)
+		namespace = strings.ToLower(namespace)
+	case "golang", "github", "npm", "deb", "apk", "alpm", "bitbucket", "composer", "hex", "huggingface":
+		namespace, name = strings.ToLower(namespace), strings.ToLower(name)
+	}
+	if typ == "golang" {
+		// The standard library has no namespace in some generators' URLs.
+		namespace = strings.TrimSuffix(namespace, "/")
+	}
+	qualifiers := purl.Qualifiers.Map()
+	id := typ + "/" + namespace + "/" + name + "@" + purl.Version
+	for _, key := range []string{"arch", "epoch"} {
+		if value := qualifiers[key]; value != "" {
+			id += "&" + key + "=" + value
+		}
+	}
+	return id
+}
+
+// pypiName normalizes a Python package name as PEP 503 does.
+func pypiName(name string) string {
+	name = strings.ToLower(name)
+	var out strings.Builder
+	dash := false
+	for _, r := range name {
+		if r == '-' || r == '_' || r == '.' {
+			if !dash {
+				out.WriteRune('-')
+			}
+			dash = true
+			continue
+		}
+		dash = false
+		out.WriteRune(r)
+	}
+	return out.String()
 }
 
 // Has reports whether a component with the given Ref is present.

@@ -1,0 +1,37 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "scan",
+    srcs = [
+        "index.go",
+        "resolver.go",
+        "scan.go",
+    ],
+    importpath = "github.com/bazel-contrib/rules_img_sbom/internal/scan",
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//internal/layerscan",
+        "@com_github_anchore_stereoscope//pkg/file",
+        "@com_github_anchore_stereoscope//pkg/filetree",
+        "@com_github_anchore_syft//syft",
+        "@com_github_anchore_syft//syft/artifact",
+        "@com_github_anchore_syft//syft/cataloging/pkgcataloging",
+        "@com_github_anchore_syft//syft/file",
+        "@com_github_anchore_syft//syft/linux",
+        "@com_github_anchore_syft//syft/pkg",
+        "@com_github_anchore_syft//syft/source",
+        "@com_github_package_url_packageurl_go//:packageurl-go",
+        "@org_modernc_sqlite//:sqlite",
+    ],
+)
+
+go_test(
+    name = "scan_test",
+    srcs = ["scan_test.go"],
+    embed = [":scan"],
+    deps = [
+        "//internal/layerscan",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+    ],
+)

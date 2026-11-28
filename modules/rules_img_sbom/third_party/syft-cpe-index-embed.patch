@@ -1,0 +1,20 @@
+diff -ru a/syft/pkg/cataloger/internal/cpegenerate/BUILD.bazel b/syft/pkg/cataloger/internal/cpegenerate/BUILD.bazel
+--- a/syft/pkg/cataloger/internal/cpegenerate/BUILD.bazel
++++ b/syft/pkg/cataloger/internal/cpegenerate/BUILD.bazel
+@@ -23,6 +23,7 @@
+         "vendors_from_url.go",
+         "wordpress.go",
+     ],
++    embedsrcs = ["//syft/pkg/cataloger/internal/cpegenerate/dictionary:data/cpe-index.json"],
+     importpath = "github.com/anchore/syft/syft/pkg/cataloger/internal/cpegenerate",
+     visibility = ["//syft/pkg/cataloger:__subpackages__"],
+     deps = [
+diff -ru a/syft/pkg/cataloger/internal/cpegenerate/dictionary/BUILD.bazel b/syft/pkg/cataloger/internal/cpegenerate/dictionary/BUILD.bazel
+--- a/syft/pkg/cataloger/internal/cpegenerate/dictionary/BUILD.bazel
++++ b/syft/pkg/cataloger/internal/cpegenerate/dictionary/BUILD.bazel
+@@ -13,3 +13,5 @@
+     actual = ":dictionary",
+     visibility = ["//syft/pkg/cataloger:__subpackages__"],
+ )
++
++exports_files(["data/cpe-index.json"])

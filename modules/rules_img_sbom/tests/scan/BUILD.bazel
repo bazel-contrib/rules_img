@@ -1,0 +1,152 @@
+# Scanning the layers of images: the fixture is written by hand.
+# gazelle:ignore
+
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@rules_go//go:def.bzl", "go_binary", "go_test")
+load("@rules_img//img:image.bzl", "image_manifest")
+load("@rules_img//img:layer.bzl", "image_layer")
+load("//sbom:toolchain.bzl", "sbom_toolchain")
+load(":with_toolchain.bzl", "sboms_with_toolchain")
+
+platform(
+    name = "linux_amd64",
+    constraint_values = [
+        "@platforms//os:linux",
+        "@platforms//cpu:x86_64",
+    ],
+)
+
+sbom_toolchain(
+    name = "scanning_toolchain_impl",
+    formats = ["cyclonedx"],
+    sources = [
+        "base_sbom",
+        "layer_scan",
+        "package_metadata",
+    ],
+)
+
+toolchain(
+    name = "scanning_toolchain",
+    toolchain = ":scanning_toolchain_impl",
+    toolchain_type = "@rules_img//img:automatic_referrers_toolchain_type",
+)
+
+write_file(
+    name = "os_release",
+    out = "os-release",
+    content = [
+        "PRETTY_NAME=\"Debian GNU/Linux 12 (bookworm)\"",
+        "NAME=\"Debian GNU/Linux\"",
+        "VERSION_ID=\"12\"",
+        "ID=debian",
+        "",
+    ],
+)
+
+# The base image's package database, and the image's after an upgrade of openssl.
+[write_file(
+    name = "status_" + name,
+    out = "status_" + name,
+    content = [
+        "Package: libc6",
+        "Status: install ok installed",
+        "Architecture: amd64",
+        "Source: glibc",
+        "Version: 2.36-9+deb12u4",
+        "Description: GNU C Library: Shared libraries",
+        "",
+        "Package: openssl",
+        "Status: install ok installed",
+        "Architecture: amd64",
+        "Version: " + openssl,
+        "Description: Secure Sockets Layer toolkit",
+        "",
+    ],
+) for (name, openssl) in [
+    ("base", "3.0.1-1"),
+    ("upgraded", "3.0.2-1"),
+]]
+
+write_file(
+    name = "requests_metadata",
+    out = "METADATA",
+    content = [
+        "Metadata-Version: 2.1",
+        "Name: requests",
+        "Version: 2.31.0",
+        "",
+    ],
+)
+
+go_binary(
+    name = "hello",
+    srcs = ["hello.go"],
+    pure = "on",
+    deps = ["@com_github_google_uuid//:uuid"],
+)
+
+image_layer(
+    name = "base_layer",
+    srcs = {
+        "/etc/os-release": ":os_release",
+        "/var/lib/dpkg/status": ":status_base",
+    },
+)
+
+image_manifest(
+    name = "base",
+    layers = [":base_layer"],
+    platform = ":linux_amd64",
+)
+
+image_layer(
+    name = "app_layer",
+    srcs = {
+        "/app/hello": ":hello",
+        "/var/lib/dpkg/status": ":status_upgraded",
+    },
+)
+
+# Not a tar: an EROFS filesystem image.
+image_layer(
+    name = "python_layer",
+    srcs = {"/usr/lib/python3/dist-packages/requests-2.31.0.dist-info/METADATA": ":requests_metadata"},
+    format = "erofs",
+)
+
+image_manifest(
+    name = "image",
+    base = ":base",
+    layers = [
+        ":app_layer",
+        ":python_layer",
+    ],
+    platform = ":linux_amd64",
+)
+
+# Shares the base image's layer and the Python layer with :image: each is scanned once.
+image_manifest(
+    name = "other_image",
+    base = ":base",
+    layers = [":python_layer"],
+    platform = ":linux_amd64",
+)
+
+sboms_with_toolchain(
+    name = "image_sbom",
+    images = [":image"],
+    toolchain = "//tests/scan:scanning_toolchain",
+)
+
+go_test(
+    name = "scan_test",
+    srcs = ["scan_test.go"],
+    data = [":image_sbom"],
+    env = {"IMAGE_SBOM": "$(rootpath :image_sbom)"},
+    deps = [
+        "@com_github_cyclonedx_cyclonedx_go//:cyclonedx-go",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+    ],
+)

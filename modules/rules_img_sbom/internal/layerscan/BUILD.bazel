@@ -1,0 +1,9 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "layerscan",
+    srcs = ["layerscan.go"],
+    importpath = "github.com/bazel-contrib/rules_img_sbom/internal/layerscan",
+    visibility = ["//:__subpackages__"],
+    deps = ["@com_github_package_url_packageurl_go//:packageurl-go"],
+)

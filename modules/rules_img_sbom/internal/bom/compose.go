@@ -63,7 +63,11 @@ type Manifest struct {
 	BaseSBOMs  []BaseSBOM
 	BaseMode   string
 	// Format of the SBOM being written: base SBOMs in this format are preferred.
-	Format  string
+	Format string
+	// OmitPackageMetadata leaves out the Bazel packages of the Graph.
+	OmitPackageMetadata bool
+	// Layers are the image's layers, bottom to top, with their scans.
+	Layers  []Layer
 	Created time.Time
 	// Log receives warnings (an unreadable base SBOM, ...).
 	Log io.Writer
@@ -166,8 +170,9 @@ func platformOf(d Descriptor) string {
 }
 
 // ComposeManifest builds the SBOM of an image manifest: the image, the Bazel
-// packages of its layers, and its base image (with the base image's SBOM
-// inherited or referenced, as BaseMode says).
+// packages of its layers, its base image (with the base image's SBOM inherited
+// or referenced, as BaseMode says), and the packages its layers were scanned to
+// contain. A package that several of these describe is one component.
 func ComposeManifest(m Manifest) (Document, error) {
 	log := m.Log
 	if log == nil {
@@ -175,10 +180,26 @@ func ComposeManifest(m Manifest) (Document, error) {
 	}
 	b := NewBuilder(builtImageComponent(m.Name, m.Descriptor.Digest, platformOf(m.Descriptor)), m.Created)
 	primary := b.Primary().Ref
-	if err := AddBazelPackages(b, m.Graph); err != nil {
+	if !m.OmitPackageMetadata {
+		if err := AddBazelPackages(b, m.Graph); err != nil {
+			return Document{}, err
+		}
+	}
+	baseRef, inherited, err := addBase(b, m, log)
+	if err != nil {
 		return Document{}, err
 	}
+	if err := addLayerScans(b, m.Layers, primary, baseRef, inherited, distroOf(b.doc.Components)); err != nil {
+		return Document{}, err
+	}
+	return b.Document(), nil
+}
 
+// addBase adds the base image, and its SBOM as BaseMode says. It returns the
+// Ref of the base image's component, or "" if there is none, and the Refs of
+// the components inherited from its SBOM.
+func addBase(b *Builder, m Manifest, log io.Writer) (string, map[string]bool, error) {
+	primary := b.Primary().Ref
 	baseRef := ""
 	if m.BaseImage != nil && m.BaseImage.Digest != "" {
 		qualifiers := map[string]string{}
@@ -192,14 +213,14 @@ func ComposeManifest(m Manifest) (Document, error) {
 	}
 
 	if m.BaseMode == BaseIgnore {
-		return b.Document(), nil
+		return baseRef, nil, nil
 	}
 	var imported *Imported
 	var used BaseSBOM
 	for _, candidate := range orderBaseSBOMs(m.BaseSBOMs, m.Format) {
 		data, err := os.ReadFile(candidate.Path)
 		if err != nil {
-			return Document{}, fmt.Errorf("reading base SBOM: %w", err)
+			return "", nil, fmt.Errorf("reading base SBOM: %w", err)
 		}
 		doc, err := Read(data)
 		if err != nil {
@@ -210,7 +231,7 @@ func ComposeManifest(m Manifest) (Document, error) {
 		break
 	}
 	if imported == nil {
-		return b.Document(), nil
+		return baseRef, nil, nil
 	}
 
 	reference := imported.Reference
@@ -227,7 +248,7 @@ func ComposeManifest(m Manifest) (Document, error) {
 	}
 	if baseRef == "" {
 		fmt.Fprintf(log, "warning: the base SBOM %s describes nothing; it is not attributed to a base image\n", used.Path)
-		return b.Document(), nil
+		return "", nil, nil
 	}
 	base := b.Component(baseRef)
 	base.ExternalBOMs = append(base.ExternalBOMs, reference)
@@ -237,28 +258,36 @@ func ComposeManifest(m Manifest) (Document, error) {
 		base.ExternalBOMs = append(base.ExternalBOMs, imported.Described[0].ExternalBOMs...)
 	}
 
+	var inherited map[string]bool
 	if m.BaseMode == BaseInherit {
-		inherit(b, imported, baseRef)
+		inherited = inherit(b, imported, baseRef)
 	}
-	return b.Document(), nil
+	return baseRef, inherited, nil
 }
 
 // inherit copies the components of an imported SBOM, and the dependencies
 // between them, into b. What the imported SBOM describes becomes subjectRef,
-// a component of b.
-func inherit(b *Builder, imported *Imported, subjectRef string) {
+// a component of b. It returns the Refs, in b, of the components it copied.
+func inherit(b *Builder, imported *Imported, subjectRef string) map[string]bool {
 	refOf := map[string]string{}
+	copied := map[string]bool{}
 	for _, described := range imported.Described {
 		refOf[described.Ref] = subjectRef
+	}
+	for _, c := range imported.Components {
+		// A package that is already in the document (its Bazel package
+		// metadata, say) is the same package, with the base SBOM's references.
+		merged := b.Merge(c)
+		if merged != c.Ref {
+			refOf[c.Ref] = merged
+		}
+		copied[merged] = true
 	}
 	mapRef := func(ref string) string {
 		if mapped, ok := refOf[ref]; ok {
 			return mapped
 		}
 		return ref
-	}
-	for _, c := range imported.Components {
-		b.Add(c)
 	}
 	dependedOn := map[string]bool{}
 	hasSubjectDeps := false
@@ -276,11 +305,12 @@ func inherit(b *Builder, imported *Imported, subjectRef string) {
 		// part of the subject.
 		for _, c := range imported.Components {
 			if !dependedOn[c.Ref] {
-				b.Depend(subjectRef, c.Ref)
+				b.Depend(subjectRef, mapRef(c.Ref))
 			}
 		}
 	}
 	b.AddExtractedLicenses(imported.ExtractedLicenses)
+	return copied
 }
 
 // orderBaseSBOMs puts the SBOMs of the base manifest before those of the index
