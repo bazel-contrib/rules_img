@@ -169,6 +169,11 @@ type ToolSettings struct {
 	// untrusted TLS certificates (IMG_INSECURE). Only ever recorded as true: the
 	// setting is enabling only, exactly like the global --insecure flag.
 	Insecure bool `json:"insecure,omitempty"`
+	// DigestFunction is the digest function the remote cache addresses blobs by,
+	// mirroring Bazel's --digest_function ("sha256" or "blake3"), or "auto" to ask
+	// the cache which it supports (IMG_DIGEST_FUNCTION). Registries are not
+	// affected: they only ever see SHA256.
+	DigestFunction string `json:"digest_function,omitempty"`
 }
 
 // Empty reports whether these settings carry nothing, in which case they are

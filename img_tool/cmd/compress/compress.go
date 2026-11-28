@@ -16,6 +16,7 @@ import (
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/api"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/compress"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/fileopener"
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/metadata"
 )
 
 var (
@@ -33,6 +34,7 @@ func CompressProcess(ctx context.Context, args []string) {
 	var compressorJobsFlag string
 	var compressionLevelFlag int
 	var zstdWindowLogFlag int
+	var casDigestFlag string
 	flagSet := flag.NewFlagSet("compress", flag.ExitOnError)
 	flagSet.Usage = func() {
 		fmt.Fprintf(flagSet.Output(), "(Re-)compresses a layer to the chosen format.\n\n")
@@ -58,6 +60,7 @@ func CompressProcess(ctx context.Context, args []string) {
 	flagSet.IntVar(&zstdWindowLogFlag, "zstd-window-log", 0, `zstd window size as a power of two (10-29), like the zstd CLI's --long=n. Only applies to plain zstd layers. If unset, the compression level picks the window.`)
 	flagSet.Var(&annotations, "annotation", `Add an annotation as key=value. Can be specified multiple times.`)
 	flagSet.StringVar(&metadataOutputFile, "metadata", "", `Write the metadata to the specified file. The metadata is a JSON file containing info needed to use the layer as part of an OCI image.`)
+	flagSet.StringVar(&casDigestFlag, "cas-digest", "", `Also record the layer's digest in this digest function ("blake3") in the metadata, next to its SHA256, for a Bazel remote cache that is not addressed by SHA256 (--digest_function=blake3). Requires --metadata.`)
 	flagSet.StringVar(&sourceMetadataFile, "source-metadata", "", `Read existing layer metadata and preserve its annotations and history in the output metadata.`)
 
 	if err := flagSet.Parse(args); err != nil {
@@ -67,6 +70,15 @@ func CompressProcess(ctx context.Context, args []string) {
 
 	if flagSet.NArg() != 2 {
 		flagSet.Usage()
+		os.Exit(1)
+	}
+
+	if err := metadata.ValidateCASDigest(casDigestFlag); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	if casDigestFlag != "" && metadataOutputFile == "" {
+		fmt.Fprintf(os.Stderr, "Error: --cas-digest requires --metadata\n")
 		os.Exit(1)
 	}
 
@@ -134,24 +146,31 @@ func CompressProcess(ctx context.Context, args []string) {
 	}
 
 	if len(metadataOutputFile) > 0 {
-		metadataOutputHandle, err := os.OpenFile(metadataOutputFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error opening metadata output file: %v\n", err)
-			os.Exit(1)
-		}
-		defer func() {
-			if err := metadataOutputHandle.Close(); err != nil {
-				fmt.Fprintf(os.Stderr, "Error closing metadata output file: %v\n", err)
+		writeMetadataFile := func() {
+			metadataOutputHandle, err := os.OpenFile(metadataOutputFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error opening metadata output file: %v\n", err)
 				os.Exit(1)
 			}
-		}()
-		sourceMetadata, err := readSourceMetadata(sourceMetadataFile)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Reading source metadata: %v\n", err)
-			os.Exit(1)
+			defer func() {
+				if err := metadataOutputHandle.Close(); err != nil {
+					fmt.Fprintf(os.Stderr, "Error closing metadata output file: %v\n", err)
+					os.Exit(1)
+				}
+			}()
+			sourceMetadata, err := readSourceMetadata(sourceMetadataFile)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Reading source metadata: %v\n", err)
+				os.Exit(1)
+			}
+			if err := writeMetadata(compressorState, annotations, mediaType, metadataOutputHandle, sourceMetadata); err != nil {
+				fmt.Fprintf(os.Stderr, "Writing metadata: %v\n", err)
+				os.Exit(1)
+			}
 		}
-		if err := writeMetadata(compressorState, annotations, mediaType, metadataOutputHandle, sourceMetadata); err != nil {
-			fmt.Fprintf(os.Stderr, "Writing metadata: %v\n", err)
+		writeMetadataFile()
+		if err := metadata.RecordCASDigest(casDigestFlag, outputFile, metadataOutputFile); err != nil {
+			fmt.Fprintf(os.Stderr, "Recording %s digest: %v\n", casDigestFlag, err)
 			os.Exit(1)
 		}
 	}
@@ -247,7 +266,7 @@ func writeMetadata(compressorState api.AppenderState, annotations map[string]str
 		history = sourceMetadata.History
 	}
 
-	metadata := api.Descriptor{
+	descriptor := api.Descriptor{
 		DiffID:      fmt.Sprintf("sha256:%x", compressorState.ContentHash),
 		MediaType:   mediaType,
 		Digest:      fmt.Sprintf("sha256:%x", compressorState.OuterHash),
@@ -257,7 +276,7 @@ func writeMetadata(compressorState api.AppenderState, annotations map[string]str
 	}
 
 	json.NewEncoder(outputFile).SetIndent("", "  ")
-	if err := json.NewEncoder(outputFile).Encode(metadata); err != nil {
+	if err := json.NewEncoder(outputFile).Encode(descriptor); err != nil {
 		return fmt.Errorf("encoding metadata: %w", err)
 	}
 	return nil

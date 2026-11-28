@@ -12,6 +12,7 @@ go_library(
     deps = [
         "//pkg/api",
         "//pkg/fileopener",
+        "//pkg/metadata",
         "//pkg/persistentworker",
     ],
 )

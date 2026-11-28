@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -435,8 +436,13 @@ func (vfs *VFS) SizeOf(digest registryv1.Hash) (int64, error) {
 // Use NewBuilder to create one, configure with With* methods, then call Build().
 // Use Clone() to create an independent copy for per-request customization.
 type Builder struct {
-	dm                         api.DeployManifest
-	casReader                  CASReader
+	dm        api.DeployManifest
+	casReader CASReader
+	// casDigestFunctions lists the digest functions the remote CAS (and the disk
+	// cache) addresses blobs by, in the order to try them. Empty means SHA256
+	// alone, which is what a Bazel cache that was not started with another
+	// --digest_function uses.
+	casDigestFunctions         []string
 	diskCachePath              string // path to Bazel disk cache directory (contains cas/ subdirectory)
 	containerRegistryOptions   []remote.Option
 	runfilesRootSymlinksPrefix string
@@ -507,6 +513,27 @@ func (b *Builder) WithDeployManifest(dm api.DeployManifest) *Builder {
 func (b *Builder) WithCASReader(br CASReader) *Builder {
 	b.casReader = br
 	return b
+}
+
+// WithCASDigestFunctions sets the digest functions the remote CAS addresses
+// blobs by ("sha256", "blake3"), in the order to try them. A blob is only ever
+// looked up under a function if its digest in that function is known: the
+// descriptor's own digest is SHA256, and a layer carries its BLAKE3 digest if its
+// build recorded one (see [api.Descriptor.CASDigests]). Registries are
+// unaffected, as they only see the SHA256 digest.
+//
+// Without this call, only SHA256 is used.
+func (b *Builder) WithCASDigestFunctions(functions ...string) *Builder {
+	b.casDigestFunctions = slices.Clone(functions)
+	return b
+}
+
+// casDigestFunctionList is the digest functions blobs are looked up by.
+func (b *Builder) casDigestFunctionList() []string {
+	if len(b.casDigestFunctions) == 0 {
+		return []string{"sha256"}
+	}
+	return b.casDigestFunctions
 }
 
 func (b *Builder) WithDiskCache(path string) *Builder {
@@ -1003,26 +1030,7 @@ func (b *Builder) layerFromHints(desc api.Descriptor) (blobEntry, error) {
 
 // layerFromCAS tries to find the layer in the bazel remote cache.
 func (b *Builder) layerFromCAS(desc api.Descriptor) (blobEntry, error) {
-	if b.casReader == nil {
-		return blobEntry{}, &BlobSourceError{Source: "remote CAS", Digest: desc.Digest, Kind: BlobSourceUnconfigured, Message: "no CAS reader configured"}
-	}
-	digest, err := digestFromDescriptor(desc)
-	if err != nil {
-		return blobEntry{}, &BlobSourceError{Source: "remote CAS", Digest: desc.Digest, Kind: BlobSourceBlobMissing, Err: err}
-	}
-	if missing, err := b.casReader.FindMissingBlobs(b.context(), []cas.Digest{digest}); err == nil && len(missing) > 0 {
-		return blobEntry{}, &BlobSourceError{Source: "remote CAS", Digest: desc.Digest, Kind: BlobSourceBlobMissing, Message: "blob not found in remote CAS"}
-	}
-	stats := b.stats
-	return blobEntry{
-		Descriptor: desc,
-		Location:   "remote_cache",
-		stats:      stats,
-		Opener: func() (io.ReadCloser, error) {
-			stats.BlobsFromRemoteCache.Add(1)
-			return b.casReader.ReaderForBlob(b.context(), digest)
-		},
-	}, nil
+	return b.blobFromCAS(desc)
 }
 
 func stubBlob(desc api.Descriptor) blobEntry {
@@ -1089,27 +1097,93 @@ func (b *Builder) resolveConfigBlob(slot string, desc api.Descriptor) blobEntry 
 }
 
 // blobFromCAS tries to resolve a blob from the Bazel remote cache.
+//
+// The cache addresses the blob by the digest function Bazel runs with, which need
+// not be SHA256, the digest the registry knows the blob by. So the blob is looked
+// up under each digest function this deploy was configured with, using the
+// digest it has in that function, and the first one the cache holds is read.
 func (b *Builder) blobFromCAS(desc api.Descriptor) (blobEntry, error) {
 	if b.casReader == nil {
 		return blobEntry{}, &BlobSourceError{Source: "remote CAS", Digest: desc.Digest, Kind: BlobSourceUnconfigured, Message: "no CAS reader configured"}
 	}
-	digest, err := digestFromDescriptor(desc)
+	candidates, err := b.casDigests(desc)
 	if err != nil {
 		return blobEntry{}, &BlobSourceError{Source: "remote CAS", Digest: desc.Digest, Kind: BlobSourceBlobMissing, Err: err}
 	}
-	if missing, err := b.casReader.FindMissingBlobs(b.context(), []cas.Digest{digest}); err == nil && len(missing) > 0 {
-		return blobEntry{}, &BlobSourceError{Source: "remote CAS", Digest: desc.Digest, Kind: BlobSourceBlobMissing, Message: "blob not found in remote CAS"}
+	for _, digest := range candidates {
+		// A failed lookup does not rule the blob out: the read below will say.
+		if missing, err := b.casReader.FindMissingBlobs(b.context(), []cas.Digest{digest}); err == nil && len(missing) > 0 {
+			continue
+		}
+		stats := b.stats
+		return blobEntry{
+			Descriptor: desc,
+			Location:   "remote_cache",
+			stats:      stats,
+			Opener: func() (io.ReadCloser, error) {
+				stats.BlobsFromRemoteCache.Add(1)
+				return b.casReader.ReaderForBlob(b.context(), digest)
+			},
+		}, nil
 	}
-	stats := b.stats
-	return blobEntry{
-		Descriptor: desc,
-		Location:   "remote_cache",
-		stats:      stats,
-		Opener: func() (io.ReadCloser, error) {
-			stats.BlobsFromRemoteCache.Add(1)
-			return b.casReader.ReaderForBlob(b.context(), digest)
-		},
-	}, nil
+	return blobEntry{}, &BlobSourceError{Source: "remote CAS", Digest: desc.Digest, Kind: BlobSourceBlobMissing, Message: b.casMissingMessage(desc, candidates)}
+}
+
+// casMissingMessage explains that the remote cache does not hold a blob under
+// any of the digests it was looked up by.
+func (b *Builder) casMissingMessage(desc api.Descriptor, candidates []cas.Digest) string {
+	message := "blob not found in remote CAS"
+	if len(candidates) > 1 {
+		names := make([]string, len(candidates))
+		for i, digest := range candidates {
+			names[i] = digest.Algorithm()
+		}
+		return fmt.Sprintf("%s (looked up as %s)", message, strings.Join(names, ", "))
+	}
+	// The cache may well hold the blob, just not under the digest it was asked
+	// for. The usual cause is Bazel's --digest_function, so say so when the layer
+	// carries a digest that would have found it.
+	if hash := desc.BLAKE3Hex(); hash != "" && !slices.Contains(b.casDigestFunctionList(), api.DigestBLAKE3) {
+		return fmt.Sprintf("%s (looked up by its sha256 digest only; if the cache uses --digest_function=blake3, set IMG_DIGEST_FUNCTION=blake3 or --@rules_img//img/settings:digest_function=blake3 to look the layer up by %s:%s)", message, api.DigestBLAKE3, hash)
+	}
+	return message
+}
+
+// casDigests returns the digests under which the remote CAS may hold the blob,
+// in the order they are to be tried: one per configured digest function the blob
+// has a digest in.
+func (b *Builder) casDigests(desc api.Descriptor) ([]cas.Digest, error) {
+	var digests []cas.Digest
+	var errs []error
+	for _, function := range b.casDigestFunctionList() {
+		switch function {
+		case "sha256":
+			digest, err := digestFromDescriptor(desc)
+			if err != nil {
+				errs = append(errs, err)
+				continue
+			}
+			digests = append(digests, digest)
+		case api.DigestBLAKE3:
+			hash := desc.BLAKE3Hex()
+			if hash == "" {
+				errs = append(errs, fmt.Errorf("no BLAKE3 digest recorded for %s (layers record one when built with --@rules_img//img/settings:digest_function=blake3 or auto)", desc.Digest))
+				continue
+			}
+			raw, err := hex.DecodeString(hash)
+			if err != nil || len(raw) != 32 {
+				errs = append(errs, fmt.Errorf("invalid BLAKE3 digest %q recorded for %s", hash, desc.Digest))
+				continue
+			}
+			digests = append(digests, cas.BLAKE3(raw, desc.Size))
+		default:
+			errs = append(errs, fmt.Errorf("unsupported CAS digest function %q", function))
+		}
+	}
+	if len(digests) == 0 {
+		return nil, errors.Join(errs...)
+	}
+	return digests, nil
 }
 
 // blobFromDiskCache tries to resolve a blob from the Bazel disk cache.
@@ -1119,7 +1193,18 @@ func (b *Builder) blobFromDiskCache(desc api.Descriptor) (blobEntry, error) {
 		return blobEntry{}, &BlobSourceError{Source: "disk cache", Digest: desc.Digest, Kind: BlobSourceUnconfigured, Message: "no disk cache path configured"}
 	}
 	fpath := diskCacheBlobPath(b.diskCachePath, desc.Digest)
-	if _, err := os.Stat(fpath); err != nil {
+	_, err := os.Stat(fpath)
+	if err != nil && slices.Contains(b.casDigestFunctionList(), api.DigestBLAKE3) {
+		// A disk cache of a Bazel that runs with --digest_function=blake3 names the
+		// blobs by their BLAKE3 hash.
+		if hash := desc.BLAKE3Hex(); len(hash) >= 2 {
+			blake3Path := cas.DiskCacheBlobPath(b.diskCachePath, hash)
+			if _, blake3Err := os.Stat(blake3Path); blake3Err == nil {
+				fpath, err = blake3Path, nil
+			}
+		}
+	}
+	if err != nil {
 		return blobEntry{}, &BlobSourceError{Source: "disk cache", Digest: desc.Digest, Kind: BlobSourceBlobMissing, Message: fpath, Err: err}
 	}
 	stats := b.stats

@@ -1,4 +1,4 @@
-load("@rules_go//go:def.bzl", "go_library")
+load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "metadata",
@@ -7,6 +7,14 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/api",
+        "//pkg/blake3sum",
         "@com_github_opencontainers_image_spec//specs-go/v1:specs-go",
     ],
+)
+
+go_test(
+    name = "metadata_test",
+    srcs = ["casdigest_test.go"],
+    embed = [":metadata"],
+    deps = ["//pkg/api"],
 )

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 
+	"github.com/bazel-contrib/rules_img/img_tool/pkg/metadata"
 	"github.com/bazel-contrib/rules_img/img_tool/pkg/persistentworker"
 )
 
@@ -82,6 +83,10 @@ type hashRequest struct {
 	mediaType   string
 	digestModes []string
 	annotations map[string]string
+	// casDigest names a digest function whose digest of the input is recorded in
+	// the layer metadata next to the SHA256 (only used with layer-metadata
+	// encoding). Empty records none.
+	casDigest string
 }
 
 // stringSliceFlag implements flag.Value for repeated string flags.
@@ -136,6 +141,7 @@ func parseHashRequest(args []string) (*hashRequest, error) {
 	flags.Var(digestModes, "digest-mode", "Digest mode to compute (digest, diff_id, diff_id_annotation:<name>). Can be repeated. Defaults to digest+diff_id.")
 	annotations := make(annotationsFlag)
 	flags.Var(&annotations, "annotation", "Add an annotation as key=value (only used with layer-metadata encoding)")
+	casDigest := flags.String("cas-digest", "", `Also record the layer's digest in this digest function (blake3) in the layer metadata, for a remote cache that does not address blobs by SHA256 (only used with layer-metadata encoding)`)
 
 	if err := flags.Parse(args); err != nil {
 		return nil, err
@@ -144,6 +150,10 @@ func parseHashRequest(args []string) (*hashRequest, error) {
 	// Validate digest algorithm
 	if *digest != "sha256" && *digest != "sha512" {
 		return nil, fmt.Errorf("invalid digest algorithm: %s (must be sha256 or sha512)", *digest)
+	}
+
+	if err := metadata.ValidateCASDigest(*casDigest); err != nil {
+		return nil, err
 	}
 
 	// Check if layer-metadata encoding is requested
@@ -176,5 +186,6 @@ func parseHashRequest(args []string) (*hashRequest, error) {
 		mediaType:   *mediaType,
 		digestModes: modes,
 		annotations: annotations,
+		casDigest:   *casDigest,
 	}, nil
 }

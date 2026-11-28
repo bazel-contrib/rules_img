@@ -1,5 +1,6 @@
 """Layer rule for using arbitrary files as layers."""
 
+load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("//img/private/common:build.bzl", "TOOLCHAINS")
 load("//img/private/common:layer_helper.bzl", "calculate_layer_info")
 load("//img/private/common:transitions.bzl", "reset_compact_image_transition")
@@ -77,6 +78,10 @@ layer_from_file(
 ```
 """,
     attrs = {
+        "_digest_function": attr.label(
+            default = Label("//img/settings:digest_function"),
+            providers = [BuildSettingInfo],
+        ),
         "src": attr.label(
             mandatory = True,
             allow_single_file = True,

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"maps"
 	"os"
 	"sort"
 	"strconv"
@@ -44,6 +45,12 @@ var (
 	// strategy so the deploy metadata can record the .cstream's CAS digest and the
 	// syncer can reconstruct the layer from it.
 	layerCompactStreams *doubleIndexedStringFlag
+
+	// layerMetadataFiles maps manifest index -> layer index -> path of that
+	// layer's metadata file (api.Descriptor JSON). Its cas_digests (the layer's
+	// digest in a remote cache's non-SHA256 digest function) are copied into the
+	// deploy manifest so that a lazy push can find the layer in such a cache.
+	layerMetadataFiles *doubleIndexedStringFlag
 
 	crossMountStrategy             string
 	crossMountFromManifestPath     string
@@ -86,6 +93,7 @@ func DeployMetadataProcess(ctx context.Context, args []string) {
 	runfilesSlot = ""
 	referrerManifestPaths = newDoubleIndexedStringFlag()
 	layerCompactStreams = newDoubleIndexedStringFlag()
+	layerMetadataFiles = newDoubleIndexedStringFlag()
 	manifestTagFiles = nil
 	layerSourcesForManifest = nil
 	signTargets = nil
@@ -166,6 +174,7 @@ func DeployMetadataProcess(ctx context.Context, args []string) {
 	flagSet.Var(referrerRunfilesSlots, "referrer-runfiles-slot", `Runfiles directory holding a referrer's sparse layout and layers. Format: index=slot (e.g., 0=abc). Can be specified multiple times.`)
 	flagSet.Var(referrerManifestPaths, "referrer-manifest-path", `Path to a referrer child manifest file. Format: referrer_idx,manifest_idx=path (e.g., 0,0=manifest.json). Can be specified multiple times.`)
 	flagSet.Var(layerCompactStreams, "layer-compact-stream", `(Optional) compact-stream (.cstream) file for a layer. Format: manifest_idx,layer_idx=path. The file's CAS digest is recorded so the layer can be reconstructed from it (used by the bes strategy). Can be specified multiple times.`)
+	flagSet.Var(layerMetadataFiles, "layer-metadata", `(Optional) metadata file of a layer. Format: manifest_idx,layer_idx=path. The layer's digests in the remote cache's digest function (cas_digests) are recorded in the deploy manifest, so a lazy push can look the layer up in a remote cache that does not address blobs by SHA256 (--digest_function=blake3). Can be specified multiple times.`)
 	flagSet.StringVar(&signSettingFile, "sign-setting-file", "", `(Optional) path to the sign_setting config file for this push operation. Its content descriptor is recorded so the deploy tool can match it against the sign_settings shipped in runfiles.`)
 	flagSet.BoolVar(&signBestEffort, "sign-best-effort", false, `(Optional) when set, signing failures for this operation are warnings instead of hard errors.`)
 	flagSet.Func("sign-target", `(Optional) a descriptor selection to sign for this operation: "roots" (default), "child_manifests", "referrers", or "all". Can be specified multiple times.`, func(value string) error {
@@ -306,6 +315,36 @@ func compactStreamForLayer(manifestIndex, layerIndex int) (*api.Descriptor, erro
 	}, nil
 }
 
+// casDigestsForLayer returns the digests of the given layer in the remote
+// cache's digest functions other than SHA256, as recorded in the layer's
+// metadata file, or nil if there are none. The metadata must describe the same
+// blob as the manifest, since a mismatch would make the push look up (and
+// possibly stream) the wrong content.
+func casDigestsForLayer(manifestIndex, layerIndex int, digest string, size int64) (map[string]string, error) {
+	if layerMetadataFiles == nil {
+		return nil, nil
+	}
+	path, ok := layerMetadataFiles.values[manifestIndex][layerIndex]
+	if !ok || path == "" {
+		return nil, nil
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("reading layer metadata file %s: %w", path, err)
+	}
+	var descriptor api.Descriptor
+	if err := json.Unmarshal(raw, &descriptor); err != nil {
+		return nil, fmt.Errorf("decoding layer metadata file %s: %w", path, err)
+	}
+	if len(descriptor.CASDigests) == 0 {
+		return nil, nil
+	}
+	if descriptor.Digest != digest || descriptor.Size != size {
+		return nil, fmt.Errorf("layer metadata file %s describes %s (%d bytes), but layer %d of manifest %d is %s (%d bytes)", path, descriptor.Digest, descriptor.Size, layerIndex, manifestIndex, digest, size)
+	}
+	return maps.Clone(descriptor.CASDigests), nil
+}
+
 func WriteMetadata(ctx context.Context, outputPath string) error {
 	rawConfig, err := os.ReadFile(configurationPath)
 	if err != nil {
@@ -391,11 +430,16 @@ func WriteMetadata(ctx context.Context, outputPath string) error {
 			if err != nil {
 				return err
 			}
+			casDigests, err := casDigestsForLayer(i, j, layer.Digest.String(), layer.Size)
+			if err != nil {
+				return err
+			}
 			layerBlobs[j] = api.LayerBlob{
 				Descriptor: api.Descriptor{
-					MediaType: string(layer.MediaType),
-					Digest:    layer.Digest.String(),
-					Size:      layer.Size,
+					MediaType:  string(layer.MediaType),
+					Digest:     layer.Digest.String(),
+					Size:       layer.Size,
+					CASDigests: casDigests,
 				},
 				Sources:       sourcesForLayer(i, j),
 				CompactStream: compactStream,

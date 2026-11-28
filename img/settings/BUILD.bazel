@@ -267,6 +267,27 @@ string_flag(
     visibility = ["//img/private:__subpackages__"],
 )
 
+# Digest function of the remote cache that lazy pushes read layers from. It has
+# to match Bazel's startup option --digest_function.
+#
+#   auto:   record every layer's BLAKE3 digest next to its SHA256 at build time and
+#           pick the digest function the cache supports (GetCapabilities) when
+#           pushing, falling back to SHA256 (the default).
+#   sha256: record nothing extra and only look layers up by SHA256.
+#   blake3: record every layer's BLAKE3 digest and look layers up by BLAKE3.
+#
+# The registry only ever sees SHA256 digests, whatever this is set to.
+string_flag(
+    name = "digest_function",
+    build_setting_default = "auto",
+    values = [
+        "auto",
+        "sha256",
+        "blake3",
+    ],
+    visibility = ["//img/private:__subpackages__"],
+)
+
 string_flag(
     name = "remote_instance_name",
     build_setting_default = "",

@@ -441,6 +441,7 @@ def resolve_tool_settings(ctx):
     return struct(
         remote_cache = first("remote_cache"),
         remote_instance_name = first("remote_instance_name"),
+        digest_function = first("digest_function"),
         credential_helper = first("credential_helper"),
         credential_helper_oci_registry = first("credential_helper_oci_registry"),
         credential_helper_remote_cache = first("credential_helper_remote_cache"),
@@ -462,6 +463,7 @@ def add_tool_settings_args(args, tool_settings):
     for flag, value in [
         ("--tool-remote-cache", tool_settings.remote_cache),
         ("--tool-remote-instance-name", tool_settings.remote_instance_name),
+        ("--tool-digest-function", tool_settings.digest_function),
         ("--tool-credential-helper", tool_settings.credential_helper),
         ("--tool-credential-helper-oci-registry", tool_settings.credential_helper_oci_registry),
         ("--tool-credential-helper-remote-cache", tool_settings.credential_helper_remote_cache),

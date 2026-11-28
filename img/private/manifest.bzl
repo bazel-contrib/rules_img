@@ -801,6 +801,10 @@ Output groups:
   reflects only a subset of the image. Only produced when at least one layer contributes an `mtree`.
 """,
     attrs = {
+        "_digest_function": attr.label(
+            default = Label("//img/settings:digest_function"),
+            providers = [BuildSettingInfo],
+        ),
         "base": attr.label(
             doc = "Base image to inherit layers from. Should provide ImageManifestInfo or ImageIndexInfo.",
         ),

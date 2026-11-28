@@ -3,7 +3,7 @@
 load("@bazel_skylib//lib:paths.bzl", "paths")
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("//img/private/common:build.bzl", "TOOLCHAIN")
-load("//img/private/common:layer_helper.bzl", "build_layer_mtree", "compression_tuning_args", "format_config_args", "layer_history_args", "resolve_format_config", "resolve_tar_format", "tar_format_args")
+load("//img/private/common:layer_helper.bzl", "build_layer_mtree", "cas_digest_args", "compression_tuning_args", "format_config_args", "layer_history_args", "resolve_format_config", "resolve_tar_format", "tar_format_args")
 load("//img/private/common:media_types.bzl", "CPIO_GZIP_LAYER", "CPIO_LAYER", "CPIO_ZSTD_LAYER", "EROFS_LAYER", "EROFS_ZSTD_LAYER", "EXT4_LAYER", "FAT32_LAYER", "GZIP_LAYER", "ISO9660_LAYER", "UNCOMPRESSED_LAYER", "ZSTD_LAYER")
 load("//img/private/providers:layers_info.bzl", "LayersInfo")
 load("//img/private/providers:single_layer_info.bzl", "SingleLayerInfo")
@@ -414,6 +414,7 @@ def create_single_layer(ctx, settings, name, extra_args = [], extra_inputs = [])
     if ctx.attr.media_type:
         args.extend(["--media-type", ctx.attr.media_type])
     args.extend(compression_tuning_args(ctx, settings.compression, settings.tar_format))
+    args.extend(cas_digest_args(ctx))
     args.extend(tar_format_args(settings.tar_format))
     if settings.create_parent_directories:
         args.append("--create-parent-directories")
